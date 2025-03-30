@@ -9,7 +9,8 @@ Create inverse designs for your photonic devices with ease and efficiency.
 [Homepage]() •
 [Documentation](#documentation) •
 [Examples](#examples) •
-[Development](#development)
+[Development](#development) •
+[Citation](#cite)
 </div>
 
 
@@ -140,3 +141,20 @@ pytest --cov=beamz tests/
 - Use fixtures for common setup code.
 - Mock external dependencies when appropriate.
 
+
+## Citation
+
+If you use BeamZ in your research, please cite it using the following BibTeX entry:
+
+```bibtex
+@software{beamz2025,
+  author = {Wach, Quentin},
+  title = {BeamZ: A Fast and Efficient Tool for Photonic Device Inverse Design},
+  year = {2025},
+  publisher = {GitHub},
+  url = {https://github.com/QuentinWach/beamz},
+  version = {0.0.1}
+}
+```
+
+You can also cite the specific version you used by including the DOI from Zenodo (coming soon).
