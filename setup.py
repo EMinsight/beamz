@@ -37,6 +37,10 @@ setup(
             "black>=22.0.0",
             "isort>=5.0.0",
             "flake8>=4.0.0",
+            "sphinx>=6.0.0",
+            "sphinx-rtd-theme>=1.3.0",
+            "sphinx-autodoc-typehints>=1.25.0",
+            "myst-parser>=2.0.0",
         ],
     },
 ) 
