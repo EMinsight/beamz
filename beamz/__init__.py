@@ -1,14 +1,12 @@
 """
-BeamZ - Create inverse designs for your photonic devices with ease and efficiency.
+BeamZ - A Python package for electromagnetic simulations.
 """
 
-__version__ = "0.0.1"
+__version__ = "0.1.0"
 
-# Import main components
-from .fdtd import FDTD
+# Import core components
+from .sim import Simulation
 from .materials import MaterialLibrary
-from .sources import SourceLibrary
-from .structures import StructureLibrary
-from .detectors import DetectorLibrary
+from .helpers import progress_bar
 
-__all__ = ["FDTD","MaterialLibrary","SourceLibrary","StructureLibrary","DetectorLibrary"] 
+__all__ = ["Simulation", "MaterialLibrary", "progress_bar"] 

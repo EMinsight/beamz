@@ -1,27 +1,23 @@
 from beamz.sim import Simulation, StandardGrid
-from beamz.matlib import Material
-from beamz.sources import Dipole, Wave
+from beamz.materials import Material
+from beamz.sources import PointSource, Wave
 from beamz.const import LIGHT_SPEED
 
-# Materials
-Air = Material(
-    name="Air",
-    permittivity=1.0,
-    permeability=1.0,
-    conductivity=0.0,
-    color="white"
-)
-
-# Structures
-# no structures in this example
-
-
-
-# Sources
+# Parameters
 wavelength = 1550e-9 # m
 frequency = LIGHT_SPEED / wavelength # (m/s)/m = Hz
 ramp = 10 / frequency # s
+sim_time = 100 / frequency
 
+# Materials
+Air = Material(
+    permittivity=1.00058986,  # Relative permittivity at STP (0°C, 1 atm)
+    permeability=1.00000037,  # Relative permeability at STP (0°C, 1 atm)
+    conductivity=0.0,         # Perfect insulator
+    color="white"
+)
+
+# Sources
 dipole = PointSource(
     position=(0, 0),
     signal=Wave(
@@ -33,20 +29,25 @@ dipole = PointSource(
     )
 )
 
-# Detectors
-# no detectors in this example
-
 # Combine all the information into a single simulation object
 sim = Simulation(
     name="dipole_sim",
     type="2D",
     size=(100, 100),
     grid=StandardGrid(cell_size=1),
-    structures=,
+    structures=None,
     sources=[dipole],
-    monitors=[]
+    monitors=None,
+    device="cpu"
 )
 
-# Rund the simulation
-sim.run()
+# Print out and save a summary of all the simulation parameters for reproducibility
+sim_log = sim.summary()
+
+# Run the simulation
+sim_data = sim.run(save=True, animate_live=True)
+
+# Visualize the results
+sim_data.plot_field(field="Ez", t=sim_time/2)
+
 
