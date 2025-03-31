@@ -3,6 +3,7 @@
 
 [![PyPI version](https://badge.fury.io/py/beamz.svg)](https://badge.fury.io/py/beamz)
 [![Last Commit](https://img.shields.io/github/last-commit/QuentinWach/beamz)](https://github.com/QuentinWach/beamz/commits/main)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Create inverse designs for your photonic devices with ease and efficiency.
 
@@ -10,7 +11,7 @@ Create inverse designs for your photonic devices with ease and efficiency.
 [Documentation](#documentation) •
 [Examples](#examples) •
 [Development](#development) •
-[Citation](#cite)
+[Cite](#cite)
 </div>
 
 
@@ -142,7 +143,7 @@ pytest --cov=beamz tests/
 - Mock external dependencies when appropriate.
 
 
-## Citation
+## Cite
 
 If you use BeamZ in your research, please cite it using the following BibTeX entry:
 

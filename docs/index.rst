@@ -12,6 +12,7 @@ BeamZ is a powerful tool for creating inverse designs for your photonic devices 
    api
    examples
    development
+   license
    changelog
 
 Installation

@@ -27,7 +27,8 @@ setup(
     ],
     python_requires=">=3.8",
     install_requires=[
-        "numpy>=1.20.0"
+        "numpy>=1.20.0",
+        "torch>=2.0.0",
     ],
     extras_require={
         "dev": [
@@ -42,4 +43,6 @@ setup(
             "myst-parser>=2.0.0",
         ],
     },
+    license="MIT",
+    license_file="LICENSE",
 ) 
