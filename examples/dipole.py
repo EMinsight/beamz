@@ -42,12 +42,17 @@ sim = Simulation(
 )
 
 # Print out and save a summary of all the simulation parameters for reproducibility
-sim_log = sim.summary()
+sim.summary()
+
+# Save configuration for reproducibility
+#sim.save_config("simulation.json")
+# Create a new simulation from the saved configuration for reproducibility
+#new_sim = Simulation.load_config("simulation.json")
 
 # Run the simulation
-sim_data = sim.run(save=True, animate_live=True)
+results = sim.run(save=True, animate_live=True)
 
 # Visualize the results
-sim_data.plot_field(field="Ez", t=sim_time/2)
+results.plot_field(field="Ez", t=sim_time/2)
 
 
