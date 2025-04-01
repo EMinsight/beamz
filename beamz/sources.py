@@ -18,6 +18,16 @@ class Wave():
 
     def sigmoid(self, t):
         return 1 / (1 + np.exp(-t))
+    
+
+def add_source():
+    """Add a normalized Gaussian pulse source"""
+    t0 = 30e-15  # Pulse center
+    sigma = 10e-15  # Pulse width
+    # Add amplitude scaling factor
+    amplitude = 1.0  # Normalize the source amplitude
+    ##self.Ez[self.source_x, self.source_y] += amplitude * np.exp(-((self.t - t0)**2)/(2*sigma**2))
+    #self.t += self.dt
 
 # GaussianPulse: Source time dependence that describes a Gaussian pulse.
 
