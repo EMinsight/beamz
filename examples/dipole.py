@@ -114,7 +114,6 @@ times = [sim_time/100, sim_time/10, sim_time]
 for i, t in enumerate(times):
     # Find closest time step
     t_idx = np.argmin(np.abs(np.array(loaded_sim.results['t']) - t))
-    
     # Plot the field
     im = axes[i].imshow(loaded_sim.results['Ez'][t_idx], cmap='RdBu', interpolation='bicubic')
     axes[i].set_title(f"t = {loaded_sim.results['t'][t_idx]:.2e} s")
