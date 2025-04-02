@@ -48,3 +48,7 @@ build/
 # Local development settings
 .env
 .env.local 
+
+*.png
+NOTES.md
+*.pdf

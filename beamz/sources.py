@@ -1,6 +1,11 @@
 import numpy as np
 
 # PointSource: Uniform current source with a zero size.
+class PointSource():
+    def __init__(self, position, signal):
+        self.position = position
+        self.signal = signal
+    
 
 # ModeSource: Injects current source to excite modal profile on finite extent plane.
 

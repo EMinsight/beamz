@@ -20,6 +20,7 @@ pip install beamz
 ```
 
 ## Features
++ **Native integration** with GDSFactory, Nazca, and more.
 + **Fast FDTD** with native GPU-acceleration (but CPU multi-threading option).
 + **Topology optimization** using the adjoint method & auto-differentiation.
 + **Simple API** for quick .gds import and design of structures.
@@ -35,6 +36,12 @@ Coming soon...
 
 We prefer not to clutter the code with lengthy explanations but to keep the docstrings concise, covering the essentials like purpose, parameters, and return values. We expand on the details, usage examples, and tutorials within your dedicated docs/ folder.
 
+### Project Structure
++ `materials.py`: 
++ `sources.py`:
++ `sim.py`:
++ `config.py`:
+
 
 ## Development
 
@@ -46,7 +53,6 @@ git clone https://github.com/QuentinWach/beamz.git
 cd beamz
 pip install -e .
 ```
-
 
 ### Priorities
 

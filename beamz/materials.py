@@ -1,7 +1,3 @@
-"""
-Material library for BeamZ.
-"""
-
 class MaterialLibrary:
     """Library of materials and their properties."""
     

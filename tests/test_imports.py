@@ -1,7 +1,3 @@
-"""
-Test that the package can be imported correctly.
-"""
-
 def test_import_beamz():
     """Test that the main package can be imported."""
     import beamz

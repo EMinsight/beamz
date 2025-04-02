@@ -4,7 +4,7 @@ from beamz.sources import PointSource, Wave
 from beamz.const import LIGHT_SPEED
 
 # Parameters
-wavelength = 1550e-9 # m
+wavelength = 1.55 # all units in µm
 frequency = LIGHT_SPEED / wavelength # (m/s)/m = Hz
 ramp = 10 / frequency # s
 sim_time = 100 / frequency
@@ -41,18 +41,7 @@ sim = Simulation(
     device="cpu"
 )
 
-# Print out and save a summary of all the simulation parameters for reproducibility
-sim.summary()
-
-# Save configuration for reproducibility
-#sim.save_config("simulation.json")
-# Create a new simulation from the saved configuration for reproducibility
-#new_sim = Simulation.load_config("simulation.json")
-
 # Run the simulation
 results = sim.run(save=True, animate_live=True)
-
 # Visualize the results
 results.plot_field(field="Ez", t=sim_time/2)
-
-
