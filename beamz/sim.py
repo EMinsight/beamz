@@ -365,3 +365,37 @@ class Simulation:
                 sim.sources.append(source)
         
         return sim
+
+    def setup_pml(self, thickness: int = 10, sigma_max: float = 1.0, m: float = 3.0):
+        """Set up a Perfectly Matched Layer (PML) at the boundaries.
+        
+        Args:
+            thickness (int): Number of cells in the PML region
+            sigma_max (float): Maximum conductivity value in the PML
+            m (float): Polynomial grading order (typically 3-4)
+        """
+        # Initialize PML conductivity array
+        self.sigma = np.zeros((self.nx, self.ny))
+        
+        # Create PML profile
+        for i in range(thickness):
+            # Calculate normalized distance from boundary (0 to 1)
+            x = (thickness - i) / thickness
+            
+            # Calculate conductivity using polynomial grading
+            sigma = sigma_max * (x ** m)
+            
+            # Apply to all four boundaries
+            # Left and right boundaries
+            self.sigma[i, :] = sigma
+            self.sigma[-(i+1), :] = sigma
+            
+            # Top and bottom boundaries
+            self.sigma[:, i] = sigma
+            self.sigma[:, -(i+1)] = sigma
+            
+            # Corners (use maximum of both directions)
+            self.sigma[i, i] = max(self.sigma[i, i], sigma)
+            self.sigma[i, -(i+1)] = max(self.sigma[i, -(i+1)], sigma)
+            self.sigma[-(i+1), i] = max(self.sigma[-(i+1), i], sigma)
+            self.sigma[-(i+1), -(i+1)] = max(self.sigma[-(i+1), -(i+1)], sigma)

@@ -49,7 +49,7 @@ def animate_field(sim, field="Ez", save_animation=False):
 wavelength = 1.55 # all units in µm
 frequency = LIGHT_SPEED / wavelength # (m/s)/m = Hz
 ramp = 10 / frequency # s
-sim_time = 100 / frequency # Total simulation time
+sim_time = 30 / frequency # Total simulation time
 
 # Materials
 Air = Material(
@@ -62,10 +62,10 @@ Air = Material(
 
 # Sources
 dipole = PointSource(
-    position=(50, 50),  # Center of the grid
+    position=(150, 150),  # Center of the grid
     signal=Wave(
         direction=(0, 1),
-        amplitude=1.0,
+        amplitude=10.0,
         frequency=LIGHT_SPEED/wavelength,
         ramp_up_time=10*wavelength/LIGHT_SPEED,  # Convert to seconds
         ramp_down_time=10*wavelength/LIGHT_SPEED
@@ -76,8 +76,8 @@ dipole = PointSource(
 sim = Simulation(
     name="dipole_sim",
     type="2D",
-    size=(100, 100),
-    grid=StandardGrid(cell_size=wavelength/10),  # 20 cells per wavelength
+    size=(300, 300),
+    grid=StandardGrid(cell_size=wavelength/20),  # 20 cells per wavelength
     structures=None,
     sources=[dipole],
     monitors=None,
@@ -87,6 +87,9 @@ sim = Simulation(
 # Set simulation time
 sim.time = sim_time
 sim.num_steps = int(sim_time / sim.dt)
+
+# Set up PML region
+sim.setup_pml(thickness=50, sigma_max=1.0, m=3.5)
 
 # Run the simulation
 results = sim.run(save=True, animate_live=True)
