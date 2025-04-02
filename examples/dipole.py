@@ -7,10 +7,11 @@ from beamz.const import LIGHT_SPEED
 wavelength = 1.55 # all units in µm
 frequency = LIGHT_SPEED / wavelength # (m/s)/m = Hz
 ramp = 10 / frequency # s
-sim_time = 100 / frequency
+sim_time = 100 / frequency # Total simulation time
 
 # Materials
 Air = Material(
+    name="air",
     permittivity=1.00058986,  # Relative permittivity at STP (0°C, 1 atm)
     permeability=1.00000037,  # Relative permeability at STP (0°C, 1 atm)
     conductivity=0.0,         # Perfect insulator
@@ -19,13 +20,13 @@ Air = Material(
 
 # Sources
 dipole = PointSource(
-    position=(0, 0),
+    position=(50, 50),  # Center of the grid
     signal=Wave(
         direction=(0, 1),
         amplitude=1.0,
         frequency=LIGHT_SPEED/wavelength,
-        ramp_up_time=10*wavelength, # 10 wavelengths
-        ramp_down_time=10*wavelength
+        ramp_up_time=10*wavelength/LIGHT_SPEED,  # Convert to seconds
+        ramp_down_time=10*wavelength/LIGHT_SPEED
     )
 )
 
@@ -34,14 +35,19 @@ sim = Simulation(
     name="dipole_sim",
     type="2D",
     size=(100, 100),
-    grid=StandardGrid(cell_size=1),
+    grid=StandardGrid(cell_size=wavelength/20),  # 20 cells per wavelength
     structures=None,
     sources=[dipole],
     monitors=None,
     device="cpu"
 )
 
+# Set simulation time
+sim.time = sim_time
+sim.num_steps = int(sim_time / sim.dt)
+
 # Run the simulation
 results = sim.run(save=True, animate_live=True)
+
 # Visualize the results
-results.plot_field(field="Ez", t=sim_time/2)
+sim.plot_field(field="Ez", t=sim_time)

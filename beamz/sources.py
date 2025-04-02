@@ -1,4 +1,5 @@
 import numpy as np
+from typing import Tuple
 
 # PointSource: Uniform current source with a zero size.
 class PointSource():
@@ -16,14 +17,44 @@ class PointSource():
 
 # Wave: Source time dependence that ramps up to continuous oscillation and holds until end of simulation.
 class Wave():
-    def __init__(self, frequency, amplitude, phase=0):
-        self.frequency = frequency
+    def __init__(self, direction: Tuple[float, float], amplitude: float, frequency: float,
+                 ramp_up_time: float = 0, ramp_down_time: float = 0, phase: float = 0):
+        """Initialize a wave source.
+        
+        Args:
+            direction (Tuple[float, float]): Direction vector (x, y)
+            amplitude (float): Wave amplitude
+            frequency (float): Wave frequency in Hz
+            ramp_up_time (float): Time to ramp up the wave
+            ramp_down_time (float): Time to ramp down the wave
+            phase (float): Initial phase
+        """
+        self.direction = direction
         self.amplitude = amplitude
+        self.frequency = frequency
+        self.ramp_up_time = ramp_up_time
+        self.ramp_down_time = ramp_down_time
         self.phase = phase
 
-    def sigmoid(self, t):
-        return 1 / (1 + np.exp(-t))
-    
+    def get_amplitude(self, t: float) -> float:
+        """Get the wave amplitude at time t.
+        
+        Args:
+            t (float): Current time
+            
+        Returns:
+            float: Wave amplitude
+        """
+        # Calculate ramp factor
+        if t < self.ramp_up_time:
+            ramp_factor = t / self.ramp_up_time
+        else:
+            ramp_factor = 1.0
+            
+        # Calculate wave
+        wave = np.sin(2 * np.pi * self.frequency * t + self.phase)
+        
+        return self.amplitude * ramp_factor * wave
 
 def add_source():
     """Add a normalized Gaussian pulse source"""
