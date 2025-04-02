@@ -27,7 +27,10 @@ setup(
     ],
     python_requires=">=3.8",
     install_requires=[
-        "numpy>=1.20.0"
+        "numpy>=1.20.0",
+        "matplotlib>=3.4.0",
+        "h5py>=3.7.0",
+        "gdspy>=1.6.0"
     ],
     extras_require={
         "dev": [

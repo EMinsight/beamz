@@ -2,6 +2,9 @@ from typing import Dict, List, Tuple, Optional
 import json
 from datetime import datetime
 import numpy as np
+import h5py
+import os
+from .sources import PointSource, Wave
 
 class StandardGrid:
     """A standard uniform grid for FDTD simulations."""
@@ -86,6 +89,10 @@ class Simulation:
         # Version
         self.__version__ = "0.1.0"
         
+        # Create results directory if it doesn't exist
+        self.results_dir = "simulation_results"
+        os.makedirs(self.results_dir, exist_ok=True)
+        
     def update_h_fields(self):
         """Update magnetic field components with PML"""
         self.Hx[:, :] = self.Hx[:, :] - (self.dt/(self.mu_0*self.dy)) * \
@@ -124,6 +131,77 @@ class Simulation:
     def summary(self):
         """Print a summary of the simulation parameters"""
         pass
+
+    def save_results(self, filename: str = None) -> str:
+        """Save simulation results to an HDF5 file.
+        
+        Args:
+            filename (str, optional): Name of the file to save to. If None, generates a name.
+            
+        Returns:
+            str: Path to the saved file
+        """
+        if filename is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{self.name}_{timestamp}.h5"
+        
+        filepath = os.path.join(self.results_dir, filename)
+        
+        with h5py.File(filepath, 'w') as f:
+            # Save metadata
+            meta = f.create_group('metadata')
+            meta.attrs['name'] = self.name
+            meta.attrs['type'] = self.type
+            meta.attrs['size'] = self.size
+            meta.attrs['cell_size'] = self.cell_size
+            meta.attrs['dt'] = self.dt
+            meta.attrs['time'] = self.time
+            meta.attrs['num_steps'] = self.num_steps
+            meta.attrs['version'] = self.__version__
+            meta.attrs['timestamp'] = datetime.now().isoformat()
+            
+            # Save grid parameters
+            grid = f.create_group('grid')
+            grid.attrs['nx'] = self.nx
+            grid.attrs['ny'] = self.ny
+            grid.attrs['dx'] = self.dx
+            grid.attrs['dy'] = self.dy
+            
+            # Save physical constants
+            constants = f.create_group('constants')
+            constants.attrs['c0'] = self.c0
+            constants.attrs['epsilon_0'] = self.epsilon_0
+            constants.attrs['mu_0'] = self.mu_0
+            
+            # Save material properties
+            materials = f.create_group('materials')
+            for name, props in self.materials.items():
+                mat = materials.create_group(name)
+                for key, value in props.items():
+                    mat.attrs[key] = value
+            
+            # Save field data
+            fields = f.create_group('fields')
+            for field_name, field_data in self.results.items():
+                if field_name != 't':  # Time is stored separately
+                    fields.create_dataset(field_name, data=np.array(field_data))
+            
+            # Save time points
+            f.create_dataset('time', data=np.array(self.results['t']))
+            
+            # Save sources
+            sources = f.create_group('sources')
+            for i, source in enumerate(self.sources):
+                src = sources.create_group(f'source_{i}')
+                src.attrs['position'] = source.position
+                src.attrs['direction'] = source.signal.direction
+                src.attrs['amplitude'] = source.signal.amplitude
+                src.attrs['frequency'] = source.signal.frequency
+                src.attrs['ramp_up_time'] = source.signal.ramp_up_time
+                src.attrs['ramp_down_time'] = source.signal.ramp_down_time
+        
+        print(f"Results saved to {filepath}")
+        return filepath
 
     def run(self, steps: Optional[int] = None, save=True, animate_live=True) -> Dict:
         """Run the simulation.
@@ -166,6 +244,10 @@ class Simulation:
             # Show progress
             if step % 100 == 0:
                 print(f"Step {step}/{steps}")
+        
+        # Save results to file if requested
+        if save:
+            self.save_results()
         
         return self.results
     
@@ -216,3 +298,70 @@ class Simulation:
     def load_config(cls, filepath: str) -> 'Simulation':
         """Load simulation configuration from a JSON file."""
         pass
+
+    @classmethod
+    def load_results(cls, filepath: str) -> 'Simulation':
+        """Load simulation results from an HDF5 file.
+        
+        Args:
+            filepath (str): Path to the HDF5 file
+            
+        Returns:
+            Simulation: A new simulation instance with loaded results
+        """
+        with h5py.File(filepath, 'r') as f:
+            # Load metadata
+            meta = f['metadata']
+            sim = cls(
+                name=meta.attrs['name'],
+                type=meta.attrs['type'],
+                size=meta.attrs['size'],
+                grid=StandardGrid(cell_size=meta.attrs['cell_size'])
+            )
+            
+            # Load grid parameters
+            grid = f['grid']
+            sim.nx = grid.attrs['nx']
+            sim.ny = grid.attrs['ny']
+            sim.dx = grid.attrs['dx']
+            sim.dy = grid.attrs['dy']
+            
+            # Load physical constants
+            constants = f['constants']
+            sim.c0 = constants.attrs['c0']
+            sim.epsilon_0 = constants.attrs['epsilon_0']
+            sim.mu_0 = constants.attrs['mu_0']
+            
+            # Load material properties
+            materials = f['materials']
+            for name in materials.keys():
+                mat = materials[name]
+                sim.materials[name] = {
+                    key: mat.attrs[key] for key in mat.attrs.keys()
+                }
+            
+            # Load field data
+            fields = f['fields']
+            for field_name in fields.keys():
+                sim.results[field_name] = fields[field_name][:]
+            
+            # Load time points
+            sim.results['t'] = f['time'][:]
+            
+            # Load sources
+            sources = f['sources']
+            for i in range(len(sources)):
+                src = sources[f'source_{i}']
+                source = PointSource(
+                    position=src.attrs['position'],
+                    signal=Wave(
+                        direction=src.attrs['direction'],
+                        amplitude=src.attrs['amplitude'],
+                        frequency=src.attrs['frequency'],
+                        ramp_up_time=src.attrs['ramp_up_time'],
+                        ramp_down_time=src.attrs['ramp_down_time']
+                    )
+                )
+                sim.sources.append(source)
+        
+        return sim
