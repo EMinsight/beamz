@@ -8,22 +8,18 @@ from .sources import PointSource, Wave
 
 class StandardGrid:
     """A standard uniform grid for FDTD simulations."""
-    
     def __init__(self, cell_size: float = 1.0):
         """Initialize a standard grid.
-        
-        Args:
-            cell_size (float): Size of each grid cell
         """
         self.cell_size = cell_size
 
 class Simulation:
-    def __init__(self, name: str, type: str = "2D", size: Tuple[int, ...] = (100, 100), 
-                 grid: StandardGrid = None, structures: List[Dict] = None,
-                 sources: List[Dict] = None, monitors: List[Dict] = None,
+    def __init__(self, name: str = None, type: str = "2D", size: Tuple[int, ...] = (100, 100), 
+                 grid: StandardGrid = None, boundaries: List[Dict] = None, structures: List[Dict] = None,
+                 sources: List[Dict] = None, monitors: List[Dict] = None, time: float = None, dt: float = None,
                  device: str = "cpu"):
         """Initialize a simulation.
-        
+
         Args:
             name (str): Name of the simulation
             type (str): Simulation type ("2D" or "3D")
@@ -40,6 +36,7 @@ class Simulation:
         self.grid = grid or StandardGrid()
         self.cell_size = self.grid.cell_size
         self.structures = structures or []
+        self.boundaries = boundaries or []
         self.sources = sources or []
         self.monitors = monitors or []
         self.device = device
@@ -194,11 +191,34 @@ class Simulation:
             for i, source in enumerate(self.sources):
                 src = sources.create_group(f'source_{i}')
                 src.attrs['position'] = source.position
-                src.attrs['direction'] = source.signal.direction
                 src.attrs['amplitude'] = source.signal.amplitude
                 src.attrs['frequency'] = source.signal.frequency
                 src.attrs['ramp_up_time'] = source.signal.ramp_up_time
                 src.attrs['ramp_down_time'] = source.signal.ramp_down_time
+            
+            # Save boundaries configuration
+            if self.boundaries is not None:
+                boundaries = f.create_group('boundaries')
+                if self.boundaries.top is not None:
+                    top = boundaries.create_group('top')
+                    top.attrs['thickness'] = self.boundaries.top.thickness
+                    top.attrs['sigma_max'] = self.boundaries.top.sigma_max
+                    top.attrs['m'] = self.boundaries.top.m
+                if self.boundaries.bottom is not None:
+                    bottom = boundaries.create_group('bottom')
+                    bottom.attrs['thickness'] = self.boundaries.bottom.thickness
+                    bottom.attrs['sigma_max'] = self.boundaries.bottom.sigma_max
+                    bottom.attrs['m'] = self.boundaries.bottom.m
+                if self.boundaries.left is not None:
+                    left = boundaries.create_group('left')
+                    left.attrs['thickness'] = self.boundaries.left.thickness
+                    left.attrs['sigma_max'] = self.boundaries.left.sigma_max
+                    left.attrs['m'] = self.boundaries.left.m
+                if self.boundaries.right is not None:
+                    right = boundaries.create_group('right')
+                    right.attrs['thickness'] = self.boundaries.right.thickness
+                    right.attrs['sigma_max'] = self.boundaries.right.sigma_max
+                    right.attrs['m'] = self.boundaries.right.m
         
         print(f"Results saved to {filepath}")
         return filepath
@@ -366,36 +386,96 @@ class Simulation:
         
         return sim
 
-    def setup_pml(self, thickness: int = 10, sigma_max: float = 1.0, m: float = 3.0):
-        """Set up a Perfectly Matched Layer (PML) at the boundaries.
+class PML:
+    """Perfectly Matched Layer configuration for absorbing boundary conditions."""
+    def __init__(self, thickness: int = 10, sigma_max: float = 1.0, m: float = 3.0):
+        """Initialize PML parameters.
         
         Args:
-            thickness (int): Number of cells in the PML region
-            sigma_max (float): Maximum conductivity value in the PML
-            m (float): Polynomial grading order (typically 3-4)
+            thickness: Number of cells in the PML region
+            sigma_max: Maximum conductivity value in the PML
+            m: Polynomial grading order (typically 3-4)
+        """
+        self.thickness = thickness
+        self.sigma_max = sigma_max
+        self.m = m
+        self.sigma = None  # Will be set when grid size is known
+        
+    def _setup(self, nx: int, ny: int) -> None:
+        """Set up the PML conductivity profile for a grid of size (nx, ny).
+        
+        Args:
+            nx: Number of cells in x-direction
+            ny: Number of cells in y-direction
         """
         # Initialize PML conductivity array
-        self.sigma = np.zeros((self.nx, self.ny))
+        self.sigma = np.zeros((nx, ny))
         
         # Create PML profile
-        for i in range(thickness):
+        for i in range(self.thickness):
             # Calculate normalized distance from boundary (0 to 1)
-            x = (thickness - i) / thickness
+            x = (self.thickness - i) / self.thickness
             
             # Calculate conductivity using polynomial grading
-            sigma = sigma_max * (x ** m)
+            sigma_value = self.sigma_max * (x ** self.m)
             
             # Apply to all four boundaries
             # Left and right boundaries
-            self.sigma[i, :] = sigma
-            self.sigma[-(i+1), :] = sigma
+            self.sigma[i, :] = sigma_value
+            self.sigma[-(i+1), :] = sigma_value
             
             # Top and bottom boundaries
-            self.sigma[:, i] = sigma
-            self.sigma[:, -(i+1)] = sigma
+            self.sigma[:, i] = sigma_value
+            self.sigma[:, -(i+1)] = sigma_value
             
             # Corners (use maximum of both directions)
-            self.sigma[i, i] = max(self.sigma[i, i], sigma)
-            self.sigma[i, -(i+1)] = max(self.sigma[i, -(i+1)], sigma)
-            self.sigma[-(i+1), i] = max(self.sigma[-(i+1), i], sigma)
-            self.sigma[-(i+1), -(i+1)] = max(self.sigma[-(i+1), -(i+1)], sigma)
+            self.sigma[i, i] = max(self.sigma[i, i], sigma_value)
+            self.sigma[i, -(i+1)] = max(self.sigma[i, -(i+1)], sigma_value)
+            self.sigma[-(i+1), i] = max(self.sigma[-(i+1), i], sigma_value)
+            self.sigma[-(i+1), -(i+1)] = max(self.sigma[-(i+1), -(i+1)], sigma_value)
+
+class Boundaries:
+    """Container for PML boundary conditions on each side of the simulation domain."""
+    def __init__(self, top: 'PML' = None, bottom: 'PML' = None, 
+                 left: 'PML' = None, right: 'PML' = None, all: 'PML' = None):
+        """Initialize boundary conditions.
+        
+        Args:
+            top: PML configuration for top boundary
+            bottom: PML configuration for bottom boundary
+            left: PML configuration for left boundary
+            right: PML configuration for right boundary
+            all: PML configuration to apply to all boundaries (overrides individual settings)
+        """
+        if all is not None:
+            self.top = self.bottom = self.left = self.right = all
+        else:
+            self.top = top
+            self.bottom = bottom
+            self.left = left
+            self.right = right
+        self.sigma = None  # Will be set when grid size is known
+        
+    def _setup(self, nx: int, ny: int) -> None:
+        """Set up the combined PML conductivity profile for all boundaries.
+        
+        Args:
+            nx: Number of cells in x-direction
+            ny: Number of cells in y-direction
+        """
+        # Initialize combined conductivity array
+        self.sigma = np.zeros((nx, ny))
+        
+        # Apply PML from each boundary
+        if self.top is not None:
+            self.top._setup(nx, ny)
+            self.sigma[:, :self.top.thickness] = self.top.sigma[:, :self.top.thickness]
+        if self.bottom is not None:
+            self.bottom._setup(nx, ny)
+            self.sigma[:, -self.bottom.thickness:] = self.bottom.sigma[:, -self.bottom.thickness:]
+        if self.left is not None:
+            self.left._setup(nx, ny)
+            self.sigma[:self.left.thickness, :] = self.left.sigma[:self.left.thickness, :]
+        if self.right is not None:
+            self.right._setup(nx, ny)
+            self.sigma[-self.right.thickness:, :] = self.right.sigma[-self.right.thickness:, :]

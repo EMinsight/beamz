@@ -1,4 +1,4 @@
-from beamz.helpers import image_to_gds
+from beamz.structures import image_to_gds
 import numpy as np
 
 # Sample 3x3 binary image

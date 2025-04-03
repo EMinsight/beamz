@@ -56,3 +56,4 @@ simulation_results/
 *.h5
 *.gds
 mat_lib.txt
+tape_coupler.py

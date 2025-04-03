@@ -17,7 +17,7 @@ class PointSource():
 
 # Wave: Source time dependence that ramps up to continuous oscillation and holds until end of simulation.
 class Wave():
-    def __init__(self, direction: Tuple[float, float], amplitude: float, frequency: float,
+    def __init__(self, direction: Tuple[float, float]=(0, 1), amplitude: float=1, frequency: float=1,
                  ramp_up_time: float = 0, ramp_down_time: float = 0, phase: float = 0):
         """Initialize a wave source.
         

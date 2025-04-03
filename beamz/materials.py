@@ -44,7 +44,7 @@ class MaterialLibrary:
     
 
 class Material():
-    def __init__(self, name, permittivity, permeability, conductivity, color):
+    def __init__(self, name=None, permittivity=1, permeability=1, conductivity=0, color=None):
         self.name = name
         self.permittivity = permittivity
         self.permeability = permeability
@@ -53,9 +53,6 @@ class Material():
 
 
 # Medium: Dispersionless medium.
-class Medium(Material):
-    def __init__(self, name, permittivity, permeability, conductivity, color):
-        super().__init__(name, permittivity, permeability, conductivity, color) 
 
 # CustomMedium: Medium with user-supplied permittivity distribution.
 
@@ -71,3 +68,6 @@ class Medium(Material):
 
 # Debye: A dispersive medium described by the Debye model.
 
+
+# ================================
+# Material Library
