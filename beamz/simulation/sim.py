@@ -5,31 +5,27 @@ import numpy as np
 import h5py
 import os
 from .sources import PointSource, Wave
+from beamz.simulation.const import *
 
 class StandardGrid:
-    """A standard uniform grid for FDTD simulations."""
     def __init__(self, cell_size: float = 1.0):
-        """Initialize a standard grid.
-        """
         self.cell_size = cell_size
 
 class Simulation:
-    def __init__(self, name: str = None, type: str = "2D", size: Tuple[int, ...] = (100, 100), 
-                 grid: StandardGrid = None, boundaries: List[Dict] = None, structures: List[Dict] = None,
-                 sources: List[Dict] = None, monitors: List[Dict] = None, time: float = None, dt: float = None,
-                 device: str = "cpu"):
-        """Initialize a simulation.
-
-        Args:
-            name (str): Name of the simulation
-            type (str): Simulation type ("2D" or "3D")
-            size (tuple): Grid size (nx, ny) or (nx, ny, nz)
-            grid (StandardGrid): Grid configuration
-            structures (List[Dict]): List of structures in the simulation
-            sources (List[Dict]): List of sources
-            monitors (List[Dict]): List of monitors
-            device (str): Device to run simulation on ("cpu" or "cuda")
-        """
+    def __init__(self,
+                 name: str = None,
+                 type: str = "2D",
+                 size: Tuple[int, ...] = (100, 100), 
+                 grid: StandardGrid = None,
+                 boundaries: List[Dict] = None,
+                 structures: List[Dict] = None,
+                 sources: List[Dict] = None,
+                 monitors: List[Dict] = None,
+                 time: float = None,
+                 dt: float = None,
+                 device: str = "cpu",
+                 animate_live: bool = False):
+        """Initialize a simulation."""
         self.name = name
         self.type = type
         self.size = size
@@ -40,37 +36,29 @@ class Simulation:
         self.sources = sources or []
         self.monitors = monitors or []
         self.device = device
-        
         # Physical constants
-        self.c0 = 3e8  # Speed of light in vacuum
-        self.epsilon_0 = 8.85e-12  # Vacuum permittivity
-        self.mu_0 = 1.256e-6  # Vacuum permeability
-        
+        self.c0 = LIGHT_SPEED  # Speed of light in vacuum
+        self.epsilon_0 = VAC_PERMITTIVITY  # Vacuum permittivity
+        self.mu_0 = VAC_PERMEABILITY  # Vacuum permeability
         # Grid parameters
         self.nx, self.ny = size
         self.dx = self.dy = self.cell_size
-        
         # Initialize fields
         self.Ez = np.zeros((self.nx, self.ny))
         self.Hx = np.zeros((self.nx, self.ny-1))
         self.Hy = np.zeros((self.nx-1, self.ny))
-        
         # Material properties (default: vacuum)
         self.epsilon_r = np.ones((self.nx, self.ny))
-        
-        # Add conductivity array for PML
+        # Add conductivity array (e.g. for PML)
         self.sigma = np.zeros((self.nx, self.ny))
-        
         # Add PML field components
         self.Ezx = np.zeros((self.nx, self.ny))
         self.Ezy = np.zeros((self.nx, self.ny))
-        
         # Time parameters
         self.t = 0
         self.dt = self.cell_size / (self.c0 * np.sqrt(2))  # CFL condition
         self.time = 0
         self.num_steps = int(self.time / self.dt)  # Initialize num_steps
-        
         # Results storage
         self.results = {
             'Ez': [],
@@ -78,14 +66,11 @@ class Simulation:
             'Hy': [],
             't': []
         }
-        
         # Initialize simulation components
         self.materials: Dict[str, Dict] = {}
         self.boundaries: List[Dict] = []
-        
         # Version
         self.__version__ = "0.1.0"
-        
         # Create results directory if it doesn't exist
         self.results_dir = "simulation_results"
         os.makedirs(self.results_dir, exist_ok=True)
@@ -104,7 +89,6 @@ class Simulation:
             (self.dt/(self.epsilon_0*self.epsilon_r[1:-1, 1:-1])) * \
             ((self.Hy[1:, 1:-1] - self.Hy[:-1, 1:-1])/self.dx - \
              (self.Hx[1:-1, 1:] - self.Hx[1:-1, :-1])/self.dy)
-        
         # Then apply PML only at the boundaries where sigma > 0
         mask = self.sigma[1:-1, 1:-1] > 0
         if np.any(mask):
@@ -130,20 +114,14 @@ class Simulation:
         pass
 
     def save_results(self, filename: str = None) -> str:
-        """Save simulation results to an HDF5 file.
-        
-        Args:
-            filename (str, optional): Name of the file to save to. If None, generates a name.
-            
-        Returns:
-            str: Path to the saved file
-        """
+        """Save simulation results to an HDF5 file."""
+        # Define the filename
         if filename is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"{self.name}_{timestamp}.h5"
-        
+        # Define the filepath
         filepath = os.path.join(self.results_dir, filename)
-        
+        # Create the file
         with h5py.File(filepath, 'w') as f:
             # Save metadata
             meta = f.create_group('metadata')
@@ -156,36 +134,30 @@ class Simulation:
             meta.attrs['num_steps'] = self.num_steps
             meta.attrs['version'] = self.__version__
             meta.attrs['timestamp'] = datetime.now().isoformat()
-            
             # Save grid parameters
             grid = f.create_group('grid')
             grid.attrs['nx'] = self.nx
             grid.attrs['ny'] = self.ny
             grid.attrs['dx'] = self.dx
             grid.attrs['dy'] = self.dy
-            
             # Save physical constants
             constants = f.create_group('constants')
             constants.attrs['c0'] = self.c0
             constants.attrs['epsilon_0'] = self.epsilon_0
             constants.attrs['mu_0'] = self.mu_0
-            
             # Save material properties
             materials = f.create_group('materials')
             for name, props in self.materials.items():
                 mat = materials.create_group(name)
                 for key, value in props.items():
                     mat.attrs[key] = value
-            
             # Save field data
             fields = f.create_group('fields')
             for field_name, field_data in self.results.items():
                 if field_name != 't':  # Time is stored separately
                     fields.create_dataset(field_name, data=np.array(field_data))
-            
             # Save time points
             f.create_dataset('time', data=np.array(self.results['t']))
-            
             # Save sources
             sources = f.create_group('sources')
             for i, source in enumerate(self.sources):
@@ -195,7 +167,6 @@ class Simulation:
                 src.attrs['frequency'] = source.signal.frequency
                 src.attrs['ramp_up_time'] = source.signal.ramp_up_time
                 src.attrs['ramp_down_time'] = source.signal.ramp_down_time
-            
             # Save boundaries configuration
             if self.boundaries is not None:
                 boundaries = f.create_group('boundaries')
@@ -219,73 +190,111 @@ class Simulation:
                     right.attrs['thickness'] = self.boundaries.right.thickness
                     right.attrs['sigma_max'] = self.boundaries.right.sigma_max
                     right.attrs['m'] = self.boundaries.right.m
-        
         print(f"Results saved to {filepath}")
         return filepath
 
+    def _animate_step(self, frame):
+        """Perform one simulation step and update the animation."""
+        # Update fields
+        self.update_h_fields()
+        self.update_e_field()
+        # Apply sources
+        for source in self.sources:
+            x, y = source.position
+            if 0 <= x < self.nx and 0 <= y < self.ny:
+                amplitude = source.signal.get_amplitude(self.t)
+                self.Ez[x, y] += amplitude
+        # Save results if requested
+        if self._save_results and frame % 10 == 0:
+            self.results['Ez'].append(self.Ez.copy())
+            self.results['Hx'].append(self.Hx.copy())
+            self.results['Hy'].append(self.Hy.copy())
+            self.results['t'].append(self.t)
+        # Update time
+        self.t += self.dt
+        # Update the image
+        self._animation_im.set_array(self.Ez)
+        self._animation_im.set_clim(self.Ez.min(), self.Ez.max())
+        # Print progress
+        if frame % 100 == 0:
+            print(f"Step {frame}/{self._total_steps}")
+        return [self._animation_im]
+
     def run(self, steps: Optional[int] = None, save=True, animate_live=True) -> Dict:
-        """Run the simulation.
-        
-        Args:
-            steps (int, optional): Number of steps to run. If None, runs for full duration.
-            save (bool): Whether to save field data
-            animate_live (bool): Whether to show live animation
-            
-        Returns:
-            Dict: Simulation results
-        """
+        """Run the simulation."""
         if steps is None:
             steps = self.num_steps
+        # Initialize simulation state
+        self.t = 0
+        self._total_steps = steps
+        self._save_results = save
+        # Initialize results storage
+        if save:
+            self.results = {
+                'Ez': [],
+                'Hx': [],
+                'Hy': [],
+                't': []
+            }
             
+        if animate_live:
+            import matplotlib.pyplot as plt
+            from matplotlib.animation import FuncAnimation
+            print("Animating live...")
+            # Ensure Ez is initialized
+            assert self.Ez is not None and self.Ez.size > 0, "Error: self.Ez must be initialized"
+            # Create figure and axes
+            fig, ax = plt.subplots(figsize=(8, 6), dpi=100)
+            # Create initial plot
+            self._animation_im = ax.imshow(self.Ez, cmap='RdBu', aspect='equal',
+                                         interpolation='bicubic', animated=True)
+            # Add colorbar
+            colorbar = plt.colorbar(self._animation_im, ax=ax, label='Ez Field (V/m)')
+            # Set title and layout
+            ax.set_title('Electric Field (Ez)')
+            plt.tight_layout()
+            # Create animation with explicit list of frames
+            frames = list(range(steps))  # Ensure steps > 0
+            anim = FuncAnimation(fig, self._animate_step, frames=frames,
+                               interval=1, blit=True, repeat=False)
+            # Show the animation
+            plt.show()
+            # After animation is closed, save results if requested
+            if save: self.save_results()
+            return self.results
+            
+        # If not animating, run normally
         for step in range(steps):
             # Update fields
             self.update_h_fields()
             self.update_e_field()
-            
             # Apply sources
             for source in self.sources:
                 x, y = source.position
                 if 0 <= x < self.nx and 0 <= y < self.ny:
-                    # Get wave amplitude at current time
                     amplitude = source.signal.get_amplitude(self.t)
-                    # Apply source with direction
                     self.Ez[x, y] += amplitude
-            
             # Save results if requested
-            if save and step % 10 == 0:  # Save every 10th step
+            if save and step % 10 == 0:
                 self.results['Ez'].append(self.Ez.copy())
                 self.results['Hx'].append(self.Hx.copy())
                 self.results['Hy'].append(self.Hy.copy())
                 self.results['t'].append(self.t)
-            
             # Update time
             self.t += self.dt
-            
             # Show progress
             if step % 100 == 0:
                 print(f"Step {step}/{steps}")
-        
         # Save results to file if requested
-        if save:
-            self.save_results()
-        
+        if save: self.save_results()
         return self.results
     
     def plot_field(self, field: str = "Ez", t: float = None) -> None:
-        """Plot a field at a given time.
-        
-        Args:
-            field (str): Field to plot ("Ez", "Hx", or "Hy")
-            t (float, optional): Time to plot. If None, plots last saved time.
-        """
+        """Plot a field at a given time."""
         import matplotlib.pyplot as plt
-        
-        if t is None:
-            t = self.results['t'][-1]
-            
+        if t is None: t = self.results['t'][-1]
         # Find closest time step
-        t_idx = np.argmin(np.abs(np.array(self.results['t']) - t))
-        
+        t_idx = np.argmin(np.abs(np.array(self.results['t']) - t)) 
         plt.figure(figsize=(10, 8))
         plt.imshow(self.results[field][t_idx], cmap='RdBu')
         plt.colorbar(label=field)
@@ -321,14 +330,7 @@ class Simulation:
 
     @classmethod
     def load_results(cls, filepath: str) -> 'Simulation':
-        """Load simulation results from an HDF5 file.
-        
-        Args:
-            filepath (str): Path to the HDF5 file
-            
-        Returns:
-            Simulation: A new simulation instance with loaded results
-        """
+        """Load simulation results from an HDF5 file."""
         with h5py.File(filepath, 'r') as f:
             # Load metadata
             meta = f['metadata']
@@ -345,13 +347,11 @@ class Simulation:
             sim.ny = grid.attrs['ny']
             sim.dx = grid.attrs['dx']
             sim.dy = grid.attrs['dy']
-            
             # Load physical constants
             constants = f['constants']
             sim.c0 = constants.attrs['c0']
             sim.epsilon_0 = constants.attrs['epsilon_0']
             sim.mu_0 = constants.attrs['mu_0']
-            
             # Load material properties
             materials = f['materials']
             for name in materials.keys():
@@ -359,15 +359,12 @@ class Simulation:
                 sim.materials[name] = {
                     key: mat.attrs[key] for key in mat.attrs.keys()
                 }
-            
             # Load field data
             fields = f['fields']
             for field_name in fields.keys():
                 sim.results[field_name] = fields[field_name][:]
-            
             # Load time points
             sim.results['t'] = f['time'][:]
-            
             # Load sources
             sources = f['sources']
             for i in range(len(sources)):
@@ -383,51 +380,34 @@ class Simulation:
                     )
                 )
                 sim.sources.append(source)
-        
         return sim
 
 class PML:
     """Perfectly Matched Layer configuration for absorbing boundary conditions."""
     def __init__(self, thickness: int = 10, sigma_max: float = 1.0, m: float = 3.0):
-        """Initialize PML parameters.
-        
-        Args:
-            thickness: Number of cells in the PML region
-            sigma_max: Maximum conductivity value in the PML
-            m: Polynomial grading order (typically 3-4)
-        """
+        """Initialize PML parameters."""
         self.thickness = thickness
         self.sigma_max = sigma_max
         self.m = m
         self.sigma = None  # Will be set when grid size is known
         
     def _setup(self, nx: int, ny: int) -> None:
-        """Set up the PML conductivity profile for a grid of size (nx, ny).
-        
-        Args:
-            nx: Number of cells in x-direction
-            ny: Number of cells in y-direction
-        """
+        """Set up the PML conductivity profile for a grid of size (nx, ny)."""
         # Initialize PML conductivity array
         self.sigma = np.zeros((nx, ny))
-        
         # Create PML profile
         for i in range(self.thickness):
             # Calculate normalized distance from boundary (0 to 1)
             x = (self.thickness - i) / self.thickness
-            
             # Calculate conductivity using polynomial grading
             sigma_value = self.sigma_max * (x ** self.m)
-            
             # Apply to all four boundaries
             # Left and right boundaries
             self.sigma[i, :] = sigma_value
             self.sigma[-(i+1), :] = sigma_value
-            
             # Top and bottom boundaries
             self.sigma[:, i] = sigma_value
             self.sigma[:, -(i+1)] = sigma_value
-            
             # Corners (use maximum of both directions)
             self.sigma[i, i] = max(self.sigma[i, i], sigma_value)
             self.sigma[i, -(i+1)] = max(self.sigma[i, -(i+1)], sigma_value)
@@ -438,15 +418,7 @@ class Boundaries:
     """Container for PML boundary conditions on each side of the simulation domain."""
     def __init__(self, top: 'PML' = None, bottom: 'PML' = None, 
                  left: 'PML' = None, right: 'PML' = None, all: 'PML' = None):
-        """Initialize boundary conditions.
-        
-        Args:
-            top: PML configuration for top boundary
-            bottom: PML configuration for bottom boundary
-            left: PML configuration for left boundary
-            right: PML configuration for right boundary
-            all: PML configuration to apply to all boundaries (overrides individual settings)
-        """
+        """Initialize boundary conditions."""
         if all is not None:
             self.top = self.bottom = self.left = self.right = all
         else:
@@ -457,15 +429,9 @@ class Boundaries:
         self.sigma = None  # Will be set when grid size is known
         
     def _setup(self, nx: int, ny: int) -> None:
-        """Set up the combined PML conductivity profile for all boundaries.
-        
-        Args:
-            nx: Number of cells in x-direction
-            ny: Number of cells in y-direction
-        """
+        """Set up the combined PML conductivity profile for all boundaries."""
         # Initialize combined conductivity array
         self.sigma = np.zeros((nx, ny))
-        
         # Apply PML from each boundary
         if self.top is not None:
             self.top._setup(nx, ny)

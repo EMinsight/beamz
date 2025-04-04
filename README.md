@@ -19,9 +19,16 @@ Create inverse designs for your photonic devices with ease and efficiency.
 pip install beamz
 ```
 
++ **COMPLETE FREE 3D SiN PHOTONICS PDK** (Maybe?)
+   - +50 building blocks
+   - component characterizations
+   - designed to be efficient and robust
+   - including the design code so you can tune it to your needs
+
 ## Features
 + **Native integration** with GDSFactory, Nazca, and more.
-+ **Fast FDTD** with native GPU-acceleration (but CPU multi-threading option).
++ **FDFD and FDTD** solvers! Most inverse design optimizitions are much faster using FDFD.
++ **Native GPU-acceleration** (but CPU multi-threading option).
 + **Topology optimization** using the adjoint method & auto-differentiation.
 + **Simple API** for quick .gds import and design of structures.
 + **Material Library** including dispersive and non-dispersive material models.
@@ -35,12 +42,6 @@ Coming soon...
 Coming soon...
 
 We prefer not to clutter the code with lengthy explanations but to keep the docstrings concise, covering the essentials like purpose, parameters, and return values. We expand on the details, usage examples, and tutorials within your dedicated docs/ folder.
-
-### Project Structure
-+ `materials.py`: 
-+ `sources.py`:
-+ `sim.py`:
-+ `config.py`:
 
 
 ## Development

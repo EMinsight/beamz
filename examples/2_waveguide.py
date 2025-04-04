@@ -1,8 +1,11 @@
-import beamz as bz
+from beamz import *
+
+µm = 1e-6
+wavelength = 1.55*µm
 
 # Define SiN and SiO2 materials
-SiN = bz.Material(name="SiN", permittivity=2.5, permeability=1.0)
-SiO2 = bz.Material(name="SiO2", permittivity=1.45, permeability=1.0)
+SiN = Material(name="SiN", permittivity=2.5, permeability=1.0)
+SiO2 = Material(name="SiO2", permittivity=1.45, permeability=1.0)
 
 # Define waveguide dimensions
 width = 100

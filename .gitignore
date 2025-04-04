@@ -57,3 +57,5 @@ simulation_results/
 *.gds
 mat_lib.txt
 tape_coupler.py
+BENCHMARKS.md
+ARTICLES.md
