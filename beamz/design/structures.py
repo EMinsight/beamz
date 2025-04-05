@@ -248,6 +248,9 @@ class Circle:
         """Shift the circle by (x,y) and return self for method chaining."""
         self.position = (self.position[0] + x, self.position[1] + y)
         return self
+    
+    def rotate(self, angle):
+        pass
 
     def scale(self, s):
         """Scale the circle radius by s and return self for method chaining."""
