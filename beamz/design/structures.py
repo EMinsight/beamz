@@ -102,13 +102,13 @@ class Design:
                     rect = MatplotlibRectangle(
                         (structure.position[0], structure.position[1]),
                         structure.width, structure.height,
-                        facecolor=structure.color, alpha=1)
+                        facecolor=structure.color, edgecolor='black', alpha=1)
                     ax.add_patch(rect)
                 elif isinstance(structure, Circle):
                     circle = plt.Circle(
                         (structure.position[0], structure.position[1]),
                         structure.radius,
-                        facecolor=structure.color, alpha=1)
+                        facecolor=structure.color, edgecolor='black', alpha=1)
                     ax.add_patch(circle)
                 elif isinstance(structure, Ring):
                     # Create points for the ring
@@ -128,7 +128,7 @@ class Design:
                                           [Path.MOVETO] + [Path.LINETO] * (N - 1)])
                     # Create the path and patch
                     path = Path(vertices, codes)
-                    ring_patch = PathPatch(path, facecolor=structure.color, alpha=1, edgecolor='none')
+                    ring_patch = PathPatch(path, facecolor=structure.color, alpha=1, edgecolor='black')
                     ax.add_patch(ring_patch)
                 elif isinstance(structure, CircularBend):
                     # Create points for the bend
@@ -162,8 +162,11 @@ class Design:
                            [Path.CLOSEPOLY]
                     # Create the path and patch
                     path = Path(vertices, codes)
-                    bend_patch = PathPatch(path, facecolor=structure.color, alpha=1, edgecolor='none')
+                    bend_patch = PathPatch(path, facecolor=structure.color, alpha=1, edgecolor='black')
                     ax.add_patch(bend_patch)
+                elif isinstance(structure, Polygon):
+                    polygon = plt.Polygon(structure.vertices, facecolor=structure.color, alpha=1, edgecolor='black')
+                    ax.add_patch(polygon)
             
             ax.set_title('2D Design')
             ax.set_xlabel(f'X ({unit})')
@@ -230,16 +233,18 @@ class CircularBend:
         return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
 
 class Polygon:
-    def __init__(self, position=(0,0), vertices=None, material=None):
-        self.position = position
+    def __init__(self, vertices=None, material=None):
         self.vertices = vertices
         self.material = material
         self.color = self.get_random_color()
 
     def get_random_color(self):
         return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
+    
+    def shift(self, x, y):
+        self.vertices = [(v[0] + x, v[1] + y) for v in self.vertices]
 
-# taper
+
 
 # ================================================ 3D structures
 
