@@ -1,6 +1,6 @@
 # Medium: Dispersionless medium.
 class Material:
-    def __init__(self, permittivity, permeability, conductivity):
+    def __init__(self, permittivity=1.0, permeability=1.0, conductivity=0.0):
         self.permittivity = permittivity
         self.permeability = permeability
         self.conductivity = conductivity

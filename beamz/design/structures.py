@@ -14,6 +14,7 @@ def get_si_scale_and_label(value):
     else: return 1e12, 'pm'
 
 class Design:
+    # TODO: Implement 3D version generalization.
     def __init__(self, width=1, height=1, depth=None, material=None):
         if material is None:
             material = Material(permittivity=1.0, permeability=1.0, conductivity=0.0)
@@ -22,14 +23,14 @@ class Design:
         self.width = width
         self.height = height
         self.depth = depth
-        
+
     def add(self, structure):
+        """Add structures on top of the design."""
         self.structures.append(structure)
-        # Check if the new structure is 3D
-        if hasattr(structure, 'z') or hasattr(structure, 'depth'):
-            self.is_3d = True
+        if hasattr(structure, 'z') or hasattr(structure, 'depth'): self.is_3d = True
 
     def scatter(self, structure, n=1000, xyrange=(-5*µm, 5*µm), scale_range=(0.05, 1)):
+        """Randomly distribute a given object over the design domain."""
         for i in range(n):
             new_structure = structure.copy()
             new_structure.shift(random.uniform(xyrange[0], xyrange[1]), random.uniform(xyrange[0], xyrange[1]))
@@ -37,7 +38,26 @@ class Design:
             new_structure.scale(random.uniform(scale_range[0], scale_range[1]))
             self.add(new_structure)
 
+    # TODO
+    def borders(self, structure=None, all=None, top=None, right=None, bottom=None, left=None):
+        """Add boundary conditions to the design area (currently only supports none or PML)."""
+        if all is PML:
+            # Apply the same PML to all borders
+            self.add(PML(position=(0, 0), width=self.width, thickness=all.thickness))
+            self.add(PML(position=(self.width - all.thickness, 0), width=all.thickness, height=self.height))
+            self.add(PML(position=(0, self.height - all.thickness), width=self.width, height=all.thickness))
+            self.add(PML(position=(0, 0), width=all.thickness, height=self.height))
+        elif all is None:
+            # Apply individual PMLs to specified borders
+            if top is PML: self.add(PML(position=(0, 0), width=self.width, thickness=top.thickness))
+            if right is PML: self.add(PML(position=(self.width - right.thickness, 0), width=right.thickness, height=self.height))
+            if bottom is PML: self.add(PML(position=(0, self.height - bottom.thickness), width=self.width, height=bottom.thickness))
+            if left is PML: self.add(PML(position=(0, 0), width=left.thickness, height=self.height))
+        else:
+            raise ValueError("PML must be specified in borders()...")
+
     def show(self):
+        """Display the design visually."""
         if not self.structures:
             print("No structures to display")
             return
@@ -376,21 +396,29 @@ class Taper(Polygon):
         return Taper(self.position, self.input_width, self.output_width, self.length, self.material)
 
 # ================================================ 2D Boundaries
+# TODO
 class PML:
     """Perfectly Matched Layer (PML) is a boundary condition that absorbs waves at the edges of the simulation domain."""
-    pass
+    def __init__(self, position=(0,0), width=1*µm, thickness=20*µm, sigma_max=1.0, m=3.0):
+        self.position = position
+        self.width = width
+        self.thickness = thickness
+        self.sigma_max = sigma_max
+        self.m = m
+        
+    def get_conductivity_profile(self, distance):
+        """Calculate the conductivity profile at a given distance from the PML boundary."""
+        if distance < 0 or distance > self.thickness: return 0.0
+        return self.sigma_max * (distance / self.thickness) ** self.m
+                
+    def __str__(self):
+        return f"PML(thickness={self.thickness}, sigma_max={self.sigma_max}, m={self.m})"
 
-class PerfectlyConducting:
-    """Perfectly Conducting (PEC) is a boundary condition that reflects waves at the edges of the simulation domain."""
-    pass
+# Perfectly Conducting (PEC)
 
-class PerfectlyReflecting:
-    """Perfectly Reflecting (PBR) is a boundary condition that reflects waves at the edges of the simulation domain."""
-    pass
+# Perfectly Reflecting (PBR)
 
-class Periodic:
-    """Periodic (PER) is a boundary condition that mirrors the simulation domain."""
-    pass 
+# Periodic (PER)
 
 # ================================================ 3D structures
 

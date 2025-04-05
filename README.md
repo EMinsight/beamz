@@ -58,6 +58,8 @@ Or just directly import a gds file!
 
 ```
 
+You can export the design as a .gds file as well as .gltf file, as a simple .png image or as a config for beamz to reuse in future simulations.
+
 
 ## Examples
 Coming soon...
@@ -191,3 +193,8 @@ If you use BeamZ in your research, please cite it using the following BibTeX ent
 ```
 
 You can also cite the specific version you used by including the DOI from Zenodo (coming soon).
+
+https://nbviewer.org/github/fancompute/workshop-invdesign/blob/master/02_Invdes_intro.ipynb
+
+https://nbviewer.org/github/fancompute/workshop-invdesign/blob/master/01_First_simulation.ipynb
+
