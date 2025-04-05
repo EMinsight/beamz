@@ -7,6 +7,10 @@ wavelength = 1.55*µm
 SiN = Material(name="SiN", permittivity=2.5, permeability=1.0)
 SiO2 = Material(name="SiO2", permittivity=1.45, permeability=1.0)
 
+
+wg = Rectangle(position=(0,0), width=100, height=100, material=SiN)
+
+
 # Define waveguide dimensions
 width = 100
 height = 100
