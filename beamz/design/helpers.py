@@ -1,6 +1,5 @@
 import gdspy
 from itertools import groupby
-import matplotlib.pyplot as plt
 
 def image_to_gds(image, output_file):
     """

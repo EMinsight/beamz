@@ -5,7 +5,7 @@ import numpy as np
 import h5py
 import os
 from .sources import PointSource, Wave
-from beamz.simulation.const import *
+from beamz.const import *
 
 class StandardGrid:
     def __init__(self, cell_size: float = 1.0):

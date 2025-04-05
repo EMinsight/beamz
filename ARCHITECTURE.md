@@ -29,6 +29,10 @@ beamz
             cpu
             gpu
             save
+        bpm
+            cpu
+            gpu
+            save
         signals
             wave
             gaussian
@@ -44,5 +48,3 @@ beamz
         animate
         save
         load
-
-

@@ -8,14 +8,10 @@ from beamz.const import µm
 
 def get_si_scale_and_label(value):
     """Convert a value to appropriate SI unit and return scale factor and label."""
-    if value >= 1e-3:  # mm
-        return 1e3, 'mm'
-    elif value >= 1e-6:  # µm
-        return 1e6, 'µm'
-    elif value >= 1e-9:  # nm
-        return 1e9, 'nm'
-    else:  # pm
-        return 1e12, 'pm'
+    if value >= 1e-3: return 1e3, 'mm'
+    elif value >= 1e-6: return 1e6, 'µm'
+    elif value >= 1e-9: return 1e9, 'nm'
+    else: return 1e12, 'pm'
 
 class Design:
     def __init__(self, width=1, height=1, depth=None, material=None):
@@ -358,7 +354,43 @@ class Polygon:
 
     def copy(self):
         return Polygon(self.vertices, self.material)
+    
+class Taper(Polygon):
+    """Taper is a structure that tapers from a width to a height."""
+    def __init__(self, position=(0,0), input_width=1, output_width=0.5, length=1, material=None):
+        # Calculate vertices for the trapezoid shape
+        x, y = position
+        vertices = [
+            (x, y - input_width/2),  # Bottom left
+            (x + length, y - output_width/2),  # Bottom right
+            (x + length, y + output_width/2),  # Top right
+            (x, y + input_width/2),  # Top left
+        ]
+        super().__init__(vertices=vertices, material=material)
+        self.position = position
+        self.input_width = input_width
+        self.output_width = output_width
+        self.length = length
 
+    def copy(self):
+        return Taper(self.position, self.input_width, self.output_width, self.length, self.material)
+
+# ================================================ 2D Boundaries
+class PML:
+    """Perfectly Matched Layer (PML) is a boundary condition that absorbs waves at the edges of the simulation domain."""
+    pass
+
+class PerfectlyConducting:
+    """Perfectly Conducting (PEC) is a boundary condition that reflects waves at the edges of the simulation domain."""
+    pass
+
+class PerfectlyReflecting:
+    """Perfectly Reflecting (PBR) is a boundary condition that reflects waves at the edges of the simulation domain."""
+    pass
+
+class Periodic:
+    """Periodic (PER) is a boundary condition that mirrors the simulation domain."""
+    pass 
 
 # ================================================ 3D structures
 
