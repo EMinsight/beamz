@@ -1,21 +1,19 @@
-from beamz import *
+from beamz.design.materials import Material
+from beamz.design.structures import *
+from beamz.const import *
 
-µm = 1e-6
-wavelength = 1.55*µm
+WAVELENGTH = 1.55*µm
 
 # Define SiN and SiO2 materials
 SiN = Material(name="SiN", permittivity=2.5, permeability=1.0)
 SiO2 = Material(name="SiO2", permittivity=1.45, permeability=1.0)
 
-
-wg = Rectangle(position=(0,0), width=100, height=100, material=SiN)
+wg = Rectangle(position=(0,0), width=100*µm, height=100*µm, material=SiN)
 
 
 # Define waveguide dimensions
-width = 100
-height = 100
-wavelength = 1.55
-
+width = 100*µm
+height = 100*µm
 # Create waveguide structure
 
 # Setup the simulation

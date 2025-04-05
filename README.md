@@ -34,6 +34,31 @@ pip install beamz
 + **Material Library** including dispersive and non-dispersive material models.
 
 
+### Design
+You can design a quick layout easily using beamz's design module! Just create a design area
+and start adding like rectangles, rings, bends, circles, or any arbitrary polygon to it.
+Select the materials you want and use the `show()` method to view the design you've created.
+```python
+design = Design(width=6*µm, height=6*µm, material=SiO2)
+design.add(Rectangle(position=(0,1*µm), width=6*µm, height=0.4*µm, material=SiN))
+design.add(Ring(position=(3*µm, 3.5*µm), inner_radius=1.5*µm, outer_radius=1.9*µm, material=SiN))
+design.add(CircularBend(position=(3*µm, 3.5*µm), inner_radius=0.9*µm, outer_radius=1.3*µm, angle=90, rotation=-200, material=SiN))
+design.scatter(Circle(position=(3*µm, 3*µm), radius=0.05*µm, material=SiN), n=1000)
+design.show()
+```
+I don't think there is any easier way to create a layout than this.
+
+Alternatively, you can use GDSFactory as well!
+```python
+
+```
+
+Or just directly import a gds file!
+```python
+
+```
+
+
 ## Examples
 Coming soon...
 
