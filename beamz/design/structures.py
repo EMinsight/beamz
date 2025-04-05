@@ -77,7 +77,6 @@ class Design:
             ax_yz.set_title('YZ View')
             ax_yz.set_xlabel(f'Y ({unit})')
             ax_yz.set_ylabel(f'Z ({unit})')
-            
             # Set axis limits
             ax_xy.set_xlim(0, self.width)
             ax_xy.set_ylim(0, self.height)
@@ -85,7 +84,6 @@ class Design:
             ax_xz.set_ylim(0, self.depth)
             ax_yz.set_xlim(0, self.height)
             ax_yz.set_ylim(0, self.depth)
-            
             # Update tick labels with scaled values
             for ax in [ax_xy, ax_xz, ax_yz]:
                 ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
@@ -197,6 +195,21 @@ class Rectangle:
 
     def get_random_color(self):
         return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
+    
+    def shift(self, x, y):
+        self.position = (self.position[0] + x, self.position[1] + y)
+        return self
+    
+    # TODO
+    def rotate(self, angle):
+        pass
+
+    # TODO
+    def scale(self, s):
+        pass
+    
+    def copy(self):
+        return Rectangle(self.position, self.width, self.height, self.material)
 
 class Circle:
     def __init__(self, position=(0,0), radius=1, material=None):
@@ -207,6 +220,21 @@ class Circle:
     
     def get_random_color(self):
         return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
+    
+    # TODO
+    def shift(self, x, y):
+        pass
+
+    # TODO
+    def rotate(self, angle):
+        pass
+
+    # TODO
+    def scale(self, s):
+        pass
+    
+    def copy(self):
+        return Circle(self.position, self.radius, self.material)
 
 class Ring:
     def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, material=None):
@@ -218,6 +246,21 @@ class Ring:
 
     def get_random_color(self):
         return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
+    
+    # TODO
+    def shift(self, x, y):
+        pass
+
+    # TODO
+    def rotate(self, angle):
+        pass
+
+    # TODO
+    def scale(self, s):
+        pass
+    
+    def copy(self):
+        return Ring(self.position, self.inner_radius, self.outer_radius, self.material)
 
 class CircularBend:
     def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, angle=90, rotation=0, material=None):
@@ -232,6 +275,20 @@ class CircularBend:
     def get_random_color(self):
         return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
 
+    def shift(self, x, y):
+        pass
+
+    # TODO
+    def rotate(self, angle):
+        pass
+
+    # TODO
+    def scale(self, s):
+        pass
+    
+    def copy(self):
+        return CircularBend(self.position, self.inner_radius, self.outer_radius, self.angle, self.rotation, self.material)
+
 class Polygon:
     def __init__(self, vertices=None, material=None):
         self.vertices = vertices
@@ -242,8 +299,41 @@ class Polygon:
         return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
     
     def shift(self, x, y):
-        self.vertices = [(v[0] + x, v[1] + y) for v in self.vertices]
+        """Shift the polygon by (x,y) and return self for method chaining."""
+        if self.vertices:
+            self.vertices = [(v[0] + x, v[1] + y) for v in self.vertices]
+        return self
+    
+    def scale(self, s):
+        """Scale the polygon around its center of mass and return self for method chaining."""
+        if self.vertices:
+            # Calculate center of mass
+            x_center = sum(v[0] for v in self.vertices) / len(self.vertices)
+            y_center = sum(v[1] for v in self.vertices) / len(self.vertices)
+            # Shift to origin, scale, then shift back
+            self.vertices = [
+                (x_center + (v[0] - x_center) * s,
+                 y_center + (v[1] - y_center) * s)
+                for v in self.vertices
+            ]
+        return self
+    
+    def rotate(self, angle):
+        """Rotate the polygon around its center of mass and return self for method chaining."""
+        if self.vertices:
+            # Calculate center of mass
+            x_center = sum(v[0] for v in self.vertices) / len(self.vertices)
+            y_center = sum(v[1] for v in self.vertices) / len(self.vertices)
+            # Shift to origin, rotate, then shift back
+            self.vertices = [
+                (x_center + (v[0] - x_center) * np.cos(angle) - (v[1] - y_center) * np.sin(angle),
+                 y_center + (v[0] - x_center) * np.sin(angle) + (v[1] - y_center) * np.cos(angle))
+                for v in self.vertices
+            ]
+        return self
 
+    def copy(self):
+        return Polygon(self.vertices, self.material)
 
 
 # ================================================ 3D structures
