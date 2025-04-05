@@ -4,6 +4,8 @@ from matplotlib.path import Path
 import random
 import numpy as np
 from beamz.design.materials import Material
+from beamz.const import µm
+
 def get_si_scale_and_label(value):
     """Convert a value to appropriate SI unit and return scale factor and label."""
     if value >= 1e-3:  # mm
@@ -31,11 +33,19 @@ class Design:
         if hasattr(structure, 'z') or hasattr(structure, 'depth'):
             self.is_3d = True
 
+    def scatter(self, structure, n=1000, xyrange=(-5*µm, 5*µm), scale_range=(0.05, 1)):
+        for i in range(n):
+            new_structure = structure.copy()
+            new_structure.shift(random.uniform(xyrange[0], xyrange[1]), random.uniform(xyrange[0], xyrange[1]))
+            new_structure.rotate(random.uniform(0, 360))
+            new_structure.scale(random.uniform(scale_range[0], scale_range[1]))
+            self.add(new_structure)
+
     def show(self):
         if not self.structures:
             print("No structures to display")
             return
-            
+
         # Determine appropriate SI unit and scale
         max_dim = max(self.width, self.height)
         scale, unit = get_si_scale_and_label(max_dim)
@@ -88,7 +98,7 @@ class Design:
             for ax in [ax_xy, ax_xz, ax_yz]:
                 ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
                 ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-            
+
         else:
             print("Showing 2D design...")
             # Create single plot for 2D visualization
@@ -200,13 +210,26 @@ class Rectangle:
         self.position = (self.position[0] + x, self.position[1] + y)
         return self
     
-    # TODO
     def rotate(self, angle):
+        """Rotate the rectangle around its center of mass and return self for method chaining."""
         pass
 
-    # TODO
     def scale(self, s):
-        pass
+        """Scale the rectangle around its center of mass and return self for method chaining."""
+        # Calculate center of mass
+        x_center = self.position[0] + self.width/2
+        y_center = self.position[1] + self.height/2
+        # Get current position relative to center
+        x_rel = self.width/2
+        y_rel = self.height/2
+        # Scale relative position and dimensions
+        x_new = x_rel * s
+        y_new = y_rel * s
+        self.width *= s
+        self.height *= s
+        # Update position by adding center back
+        self.position = (x_center + x_new, y_center + y_new)
+        return self
     
     def copy(self):
         return Rectangle(self.position, self.width, self.height, self.material)
@@ -221,17 +244,15 @@ class Circle:
     def get_random_color(self):
         return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
     
-    # TODO
     def shift(self, x, y):
-        pass
+        """Shift the circle by (x,y) and return self for method chaining."""
+        self.position = (self.position[0] + x, self.position[1] + y)
+        return self
 
-    # TODO
-    def rotate(self, angle):
-        pass
-
-    # TODO
     def scale(self, s):
-        pass
+        """Scale the circle radius by s and return self for method chaining."""
+        self.radius *= s
+        return self
     
     def copy(self):
         return Circle(self.position, self.radius, self.material)
