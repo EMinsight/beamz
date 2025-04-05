@@ -3,7 +3,7 @@ from matplotlib.patches import Rectangle as MatplotlibRectangle, PathPatch, Circ
 from matplotlib.path import Path
 import random
 import numpy as np
-
+from beamz.design.materials import Material
 def get_si_scale_and_label(value):
     """Convert a value to appropriate SI unit and return scale factor and label."""
     if value >= 1e-3:  # mm
@@ -16,8 +16,10 @@ def get_si_scale_and_label(value):
         return 1e12, 'pm'
 
 class Design:
-    def __init__(self, width=1, height=1, depth=None):
-        self.structures = []
+    def __init__(self, width=1, height=1, depth=None, material=None):
+        if material is None:
+            material = Material(permittivity=1.0, permeability=1.0, conductivity=0.0)
+        self.structures = [Rectangle(position=(0,0), width=width, height=height, material=material)]
         self.is_3d = False
         self.width = width
         self.height = height
@@ -112,36 +114,63 @@ class Design:
                     # Create points for the ring
                     N = 100  # Number of points for each circle
                     theta = np.linspace(0, 2 * np.pi, N, endpoint=True)
-                    
                     # Outer circle points (counterclockwise)
                     x_outer = structure.position[0] + structure.outer_radius * np.cos(theta)
                     y_outer = structure.position[1] + structure.outer_radius * np.sin(theta)
-                    
                     # Inner circle points (clockwise)
                     x_inner = structure.position[0] + structure.inner_radius * np.cos(theta[::-1])
                     y_inner = structure.position[1] + structure.inner_radius * np.sin(theta[::-1])
-                    
                     # Combine vertices
                     vertices = np.vstack([np.column_stack([x_outer, y_outer]),
                                         np.column_stack([x_inner, y_inner])])
-                    
                     # Define path codes
                     codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (N - 1),
                                           [Path.MOVETO] + [Path.LINETO] * (N - 1)])
-                    
                     # Create the path and patch
                     path = Path(vertices, codes)
                     ring_patch = PathPatch(path, facecolor=structure.color, alpha=1, edgecolor='none')
                     ax.add_patch(ring_patch)
+                elif isinstance(structure, CircularBend):
+                    # Create points for the bend
+                    N = 100  # Number of points for each arc
+                    # Convert angles to radians
+                    angle_rad = np.radians(structure.angle)
+                    rotation_rad = np.radians(structure.rotation)
+                    theta = np.linspace(rotation_rad, rotation_rad + angle_rad, N, endpoint=True)
+                    # Outer arc points
+                    x_outer = structure.position[0] + structure.outer_radius * np.cos(theta)
+                    y_outer = structure.position[1] + structure.outer_radius * np.sin(theta)
+                    # Inner arc points
+                    x_inner = structure.position[0] + structure.inner_radius * np.cos(theta)
+                    y_inner = structure.position[1] + structure.inner_radius * np.sin(theta)
+                    # Create a closed path by combining points and adding connecting lines
+                    vertices = np.vstack([
+                        # Start at outer arc beginning
+                        [x_outer[0], y_outer[0]],
+                        # Draw outer arc
+                        *np.column_stack([x_outer[1:], y_outer[1:]]),
+                        # Connect to inner arc end
+                        [x_inner[-1], y_inner[-1]],
+                        # Draw inner arc backwards
+                        *np.column_stack([x_inner[-2::-1], y_inner[-2::-1]]),
+                        # Close the path by returning to start
+                        [x_outer[0], y_outer[0]]
+                    ])
+                    # Define path codes for a single continuous path
+                    codes = [Path.MOVETO] + \
+                           [Path.LINETO] * (len(vertices) - 2) + \
+                           [Path.CLOSEPOLY]
+                    # Create the path and patch
+                    path = Path(vertices, codes)
+                    bend_patch = PathPatch(path, facecolor=structure.color, alpha=1, edgecolor='none')
+                    ax.add_patch(bend_patch)
             
             ax.set_title('2D Design')
             ax.set_xlabel(f'X ({unit})')
             ax.set_ylabel(f'Y ({unit})')
-            
             # Set axis limits
             ax.set_xlim(0, self.width)
             ax.set_ylim(0, self.height)
-            
             # Update tick labels with scaled values
             ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
             ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
@@ -154,10 +183,7 @@ class Design:
         return f"Design with {len(self.structures)} structures ({'3D' if self.is_3d else '2D'})"
 
 
-
-
 # ================================================ 2D structures
-# rectangle
 class Rectangle:
     def __init__(self, position=(0,0), width=1, height=1, material=None):
         self.position = position
@@ -190,16 +216,28 @@ class Ring:
     def get_random_color(self):
         return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
 
-# bend
-class Bend:
-    def __init__(self, position=(0,0), radius=1, material=None):
+class CircularBend:
+    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, angle=90, rotation=0, material=None):
         self.position = position
-        self.radius = radius
+        self.inner_radius = inner_radius
+        self.outer_radius = outer_radius
+        self.angle = angle
+        self.rotation = rotation
         self.material = material
         self.color = self.get_random_color()
 
-# polygon
+    def get_random_color(self):
+        return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
 
+class Polygon:
+    def __init__(self, position=(0,0), vertices=None, material=None):
+        self.position = position
+        self.vertices = vertices
+        self.material = material
+        self.color = self.get_random_color()
+
+    def get_random_color(self):
+        return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
 
 # taper
 
