@@ -4,6 +4,17 @@ from matplotlib.path import Path
 import random
 import numpy as np
 
+def get_si_scale_and_label(value):
+    """Convert a value to appropriate SI unit and return scale factor and label."""
+    if value >= 1e-3:  # mm
+        return 1e3, 'mm'
+    elif value >= 1e-6:  # µm
+        return 1e6, 'µm'
+    elif value >= 1e-9:  # nm
+        return 1e9, 'nm'
+    else:  # pm
+        return 1e12, 'pm'
+
 class Design:
     def __init__(self, width=1, height=1, depth=None):
         self.structures = []
@@ -17,16 +28,21 @@ class Design:
         # Check if the new structure is 3D
         if hasattr(structure, 'z') or hasattr(structure, 'depth'):
             self.is_3d = True
-            
+
     def show(self):
         if not self.structures:
             print("No structures to display")
             return
             
+        # Determine appropriate SI unit and scale
+        max_dim = max(self.width, self.height)
+        scale, unit = get_si_scale_and_label(max_dim)
+            
         if self.is_3d:
             print("Showing 3D design...")
             # Create 3 subplots for 3D visualization
             fig, (ax_xy, ax_xz, ax_yz) = plt.subplots(1, 3, figsize=(15, 5))
+            
             # Plot each structure in all three views
             for structure in self.structures:
                 if isinstance(structure, Rectangle):
@@ -34,41 +50,49 @@ class Design:
                     rect = MatplotlibRectangle(
                         (structure.position[0], structure.position[1]),
                         structure.width, structure.height,
-                        facecolor=structure.color, alpha=0.5)
+                        facecolor=structure.color, alpha=1)
                     ax_xy.add_patch(rect)
                     # XZ view
                     rect = MatplotlibRectangle(
                         (structure.position[0], structure.position[2]),
                         structure.width, structure.depth,
-                        facecolor=structure.color, alpha=0.5)
+                        facecolor=structure.color, alpha=1)
                     ax_xz.add_patch(rect)
                     # YZ view
                     rect = MatplotlibRectangle(
                         (structure.position[1], structure.position[2]),
                         structure.height, structure.depth,
-                        facecolor=structure.color, alpha=0.5)
+                        facecolor=structure.color, alpha=1)
                     ax_yz.add_patch(rect)
             
-            # Set labels and titles
+            # Set labels and titles with SI units
             ax_xy.set_title('XY View')
-            ax_xy.set_xlabel('X')
-            ax_xy.set_ylabel('Y')
+            ax_xy.set_xlabel(f'X ({unit})')
+            ax_xy.set_ylabel(f'Y ({unit})')
             ax_xz.set_title('XZ View')
-            ax_xz.set_xlabel('X')
-            ax_xz.set_ylabel('Z')
+            ax_xz.set_xlabel(f'X ({unit})')
+            ax_xz.set_ylabel(f'Z ({unit})')
             ax_yz.set_title('YZ View')
-            ax_yz.set_xlabel('Y')
-            ax_yz.set_ylabel('Z')
+            ax_yz.set_xlabel(f'Y ({unit})')
+            ax_yz.set_ylabel(f'Z ({unit})')
+            
+            # Set axis limits
+            ax_xy.set_xlim(0, self.width)
+            ax_xy.set_ylim(0, self.height)
+            ax_xz.set_xlim(0, self.width)
+            ax_xz.set_ylim(0, self.depth)
+            ax_yz.set_xlim(0, self.height)
+            ax_yz.set_ylim(0, self.depth)
+            
+            # Update tick labels with scaled values
+            for ax in [ax_xy, ax_xz, ax_yz]:
+                ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+                ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
             
         else:
             print("Showing 2D design...")
             # Create single plot for 2D visualization
             fig, ax = plt.subplots(figsize=(8, 8))
-            # Set axis limits based on predefined dimensions
-            ax.set_xlim(0, self.width)
-            ax.set_ylim(0, self.height)
-            # Add grid
-            ax.grid(True, linestyle='--', alpha=0.7)
             
             # Plot each structure
             for structure in self.structures:
@@ -88,27 +112,39 @@ class Design:
                     # Create points for the ring
                     N = 100  # Number of points for each circle
                     theta = np.linspace(0, 2 * np.pi, N, endpoint=True)
+                    
                     # Outer circle points (counterclockwise)
                     x_outer = structure.position[0] + structure.outer_radius * np.cos(theta)
                     y_outer = structure.position[1] + structure.outer_radius * np.sin(theta)
+                    
                     # Inner circle points (clockwise)
                     x_inner = structure.position[0] + structure.inner_radius * np.cos(theta[::-1])
                     y_inner = structure.position[1] + structure.inner_radius * np.sin(theta[::-1])
+                    
                     # Combine vertices
                     vertices = np.vstack([np.column_stack([x_outer, y_outer]),
                                         np.column_stack([x_inner, y_inner])])
+                    
                     # Define path codes
                     codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (N - 1),
                                           [Path.MOVETO] + [Path.LINETO] * (N - 1)])
+                    
                     # Create the path and patch
                     path = Path(vertices, codes)
                     ring_patch = PathPatch(path, facecolor=structure.color, alpha=1, edgecolor='none')
                     ax.add_patch(ring_patch)
             
             ax.set_title('2D Design')
-            ax.set_xlabel('X')
-            ax.set_ylabel('Y')
-            ax.set_aspect('equal')
+            ax.set_xlabel(f'X ({unit})')
+            ax.set_ylabel(f'Y ({unit})')
+            
+            # Set axis limits
+            ax.set_xlim(0, self.width)
+            ax.set_ylim(0, self.height)
+            
+            # Update tick labels with scaled values
+            ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+            ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
         
         # Set equal aspect ratio and adjust layout
         plt.tight_layout()
@@ -133,8 +169,6 @@ class Rectangle:
     def get_random_color(self):
         return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
 
-# taper
-
 class Circle:
     def __init__(self, position=(0,0), radius=1, material=None):
         self.position = position
@@ -157,8 +191,17 @@ class Ring:
         return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
 
 # bend
+class Bend:
+    def __init__(self, position=(0,0), radius=1, material=None):
+        self.position = position
+        self.radius = radius
+        self.material = material
+        self.color = self.get_random_color()
+
+# polygon
 
 
+# taper
 
 # ================================================ 3D structures
 
