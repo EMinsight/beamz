@@ -2,67 +2,46 @@ import math as m
 import numpy as np
 import matplotlib.pyplot as plt
 
-class Wave:
-    def __init__(self, amplitude=1, frequency=1, phase=0):
-        self.amplitude = amplitude
-        self.frequency = frequency
-        self.phase = phase
+def cosine(t,amplitude, frequency, phase):
+    return amplitude * np.cos(2 * np.pi * frequency * t + phase)
 
-    def get_amplitude(self, t):
-        """Get the wave amplitude at time t."""
-        return self.amplitude * np.cos(2 * np.pi * self.frequency * t + self.phase)
-    
-
-# TODO:
-class SigmoidRamp:
-    def __init__(self, carrier=None, duration=0, padding=0):
-        self.carrier = carrier
-        self.duration = duration
-        self.padding = padding
-
-    def sigmoid(self, t, k=10):
-        """Sigmoid function centered at duration/2 with steepness k."""
-        # Compute the argument
-        x = k * (t - self.duration/2)
-        mask_neg = x < -100
-        mask_pos = x > 100
-        mask_mid = ~(mask_neg | mask_pos)
-        result = np.zeros_like(x)
-        result[mask_neg] = 0
-        result[mask_pos] = 1
-        result[mask_mid] = 1 / (1 + np.exp(-x[mask_mid]))
-        return result
-
-    def ramp_up_sigmoid(self, t):
-        """Ramp up from 0 to 1 using sigmoid."""
-        result = np.zeros_like(t)
-        mask = (t >= 0) & (t <= self.duration)
-        result[mask] = self.sigmoid(t[mask])
-        result[t > self.duration] = 1
-        return result
-
-    def ramp_down_sigmoid(self, t):
-        """Ramp down from 1 to 0 using sigmoid."""
-        result = np.ones_like(t)
-        mask = (t >= self.padding) & (t <= self.duration + self.padding)
-        result[mask] = 1 - self.sigmoid(t[mask] - self.padding)
-        result[t > self.duration + self.padding] = 0
-        return result
-
-    def get_amplitude(self, t):
-        """Get the wave amplitude at time t."""
-        if self.carrier is None:
-            return np.zeros_like(t)
-        # Get the carrier signal
-        carrier_signal = self.carrier.get_amplitude(t)
-        # Get the ramp up and down factors
-        ramp_up = self.ramp_up_sigmoid(t)
-        ramp_down = self.ramp_down_sigmoid(t)
-        # Apply the ramps while preserving the sign of the carrier signal
-        return carrier_signal * ramp_up * ramp_down
-    
-
+def sigmoid(t, duration=1, min=0, max=1, t0=0):
+    return min + (max - min) * (1 / (1 + np.exp(-10 * (t - duration/2 - t0) / duration)))
 
 # GaussianPulse: Source time dependence that describes a Gaussian pulse.
 
 # CustomSourceTime: Custom source time dependence consisting of a real or complex envelope modulated at a central frequency, as shown below.
+
+
+
+def plot_signal(signal, t):
+    # Convert time to seconds
+    t_seconds = t
+    # Determine appropriate time unit and scaling factor
+    if t_seconds[-1] < 1e-12:
+        t_scaled = t_seconds * 1e15  # Convert to fs
+        unit = 'fs'
+    elif t_seconds[-1] < 1e-9:  # Less than 1 ns
+        t_scaled = t_seconds * 1e12  # Convert to ps
+        unit = 'ps'
+    elif t_seconds[-1] < 1e-6:  # Less than 1 µs
+        t_scaled = t_seconds * 1e9   # Convert to ns
+        unit = 'ns'
+    elif t_seconds[-1] < 1e-3:  # Less than 1 ms
+        t_scaled = t_seconds * 1e6   # Convert to µs
+        unit = 'µs'
+    elif t_seconds[-1] < 1:     # Less than 1 s
+        t_scaled = t_seconds * 1e3   # Convert to ms
+        unit = 'ms'
+    else:
+        t_scaled = t_seconds
+        unit = 's'
+    # Create the figure and axis
+    fig, ax = plt.subplots(figsize=(9, 4))
+    ax.plot(t_scaled, signal, color='black')
+    ax.set_xlim(t_scaled[0], t_scaled[-1])
+    ax.set_xlabel(f'Time ({unit})')
+    ax.set_ylabel('Amplitude')
+    ax.set_title('Signal')
+    plt.tight_layout()
+    plt.show()
