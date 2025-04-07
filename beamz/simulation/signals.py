@@ -14,7 +14,8 @@ def sigmoid(t, duration=1, min=0, max=1, t0=0):
 
 
 
-def plot_signal(signal, t):
+def plot_signal(signals, t):
+    """Create a single signal or a list of signals on the same plot."""
     # Convert time to seconds
     t_seconds = t
     # Determine appropriate time unit and scaling factor
@@ -38,7 +39,14 @@ def plot_signal(signal, t):
         unit = 's'
     # Create the figure and axis
     fig, ax = plt.subplots(figsize=(9, 4))
-    ax.plot(t_scaled, signal, color='black')
+    if isinstance(signals, list):
+        i = 0
+        for signal in signals:
+            ax.plot(t_scaled, signal, label=f'Signal {i}')
+            i += 1
+        ax.legend()
+    else:
+        ax.plot(t_scaled, signals, color='black')
     ax.set_xlim(t_scaled[0], t_scaled[-1])
     ax.set_xlabel(f'Time ({unit})')
     ax.set_ylabel('Amplitude')

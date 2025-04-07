@@ -1,28 +1,17 @@
 from typing import Dict, List, Tuple, Optional
-import json
-from datetime import datetime
 import numpy as np
-import h5py
-import os
-from .sources import PointSource, Wave
 from beamz.const import *
+from beamz.simulation.meshing import RegularGrid
 
 class Simulation:
-    def __init__(self,
-                 name: str = None,
-                 type: str = "2D",
-                 size: Tuple[int, ...] = (100, 100), 
-                 grid: StandardGrid = None,
-                 boundaries: List[Dict] = None,
-                 structures: List[Dict] = None,
-                 sources: List[Dict] = None,
-                 monitors: List[Dict] = None,
-                 device: str = "cpu"):
-        """Initialize a simulation."""
+    def __init__(self, name: str = None, type: str = "2D", size: Tuple[int, ...] = (100, 100), 
+                 grid: RegularGrid = None, boundaries: List[Dict] = None,
+                 structures: List[Dict] = None, sources: List[Dict] = None,
+                 monitors: List[Dict] = None, device: str = "cpu"):
         self.name = name
         self.type = type
         self.size = size
-        self.grid = grid or StandardGrid()
+        self.grid = grid
         self.cell_size = self.grid.cell_size
         self.structures = structures or []
         self.boundaries = boundaries or []
@@ -40,22 +29,11 @@ class Simulation:
         self.Ez = np.zeros((self.nx, self.ny))
         self.Hx = np.zeros((self.nx, self.ny-1))
         self.Hy = np.zeros((self.nx-1, self.ny))
-        # Material properties (default: vacuum)
-        self.epsilon_r = np.ones((self.nx, self.ny))
-        # Add conductivity array (e.g. for PML)
-        self.sigma = np.zeros((self.nx, self.ny))
-        # Add PML field components
-        self.Ezx = np.zeros((self.nx, self.ny))
-        self.Ezy = np.zeros((self.nx, self.ny))
         # Time parameters
         self.t = 0
         self.dt = self.cell_size / (self.c0 * np.sqrt(2))  # CFL condition
         self.time = 0
         self.num_steps = int(self.time / self.dt)  # Initialize num_steps
-
-        # Create results directory if it doesn't exist
-        self.results_dir = "simulation_results"
-        os.makedirs(self.results_dir, exist_ok=True)
         
     def update_h_fields(self):
         """Update magnetic field components with PML"""
@@ -99,8 +77,7 @@ class Simulation:
         # If not animating, run normally
         for step in range(steps):
             # Update fields
-            self.update_h_fields()
-            self.update_e_field()
+            self.simulate_step()
             # Apply sources
             for source in self.sources:
                 x, y = source.position
@@ -112,8 +89,7 @@ class Simulation:
             # Show progress
             if step % 100 == 0:
                 print(f"Step {step}/{steps}")
-        # Save results to file if requested
-        if save: self.save_results()
+
         return self.results
     
     def plot_field(self, field: str = "Ez", t: float = None) -> None:
