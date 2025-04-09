@@ -6,6 +6,25 @@ import numpy as np
 from beamz.design.materials import Material
 from beamz.const import µm
 
+def rgb_to_hex(r, g, b):
+    """Convert RGB values to the hex color format used in get_random_color().
+    Returns a string in the format '#{:06x}'."""
+    return f'#{(r << 16) + (g << 8) + b:06x}'
+
+def is_dark(color):
+    """Check if a color is dark using relative luminance calculation. """
+    # Remove '#' if present
+    color = color.lstrip('#')
+    # Convert hex to RGB components
+    r = int(color[0:2], 16) / 255.0
+    g = int(color[2:4], 16) / 255.0
+    b = int(color[4:6], 16) / 255.0
+    # Calculate relative luminance using sRGB coefficients
+    # These coefficients account for human perception of brightness
+    luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    # Return True if luminance is less than 0.5 (midpoint)
+    return luminance < 0.5
+
 def get_si_scale_and_label(value):
     """Convert a value to appropriate SI unit and return scale factor and label."""
     if value >= 1e-3: return 1e3, 'mm'
@@ -15,14 +34,15 @@ def get_si_scale_and_label(value):
 
 class Design:
     # TODO: Implement 3D version generalization.
-    def __init__(self, width=1, height=1, depth=None, material=None):
+    def __init__(self, width=1, height=1, depth=None, material=None, color=None, border_color=None):
         if material is None:
             material = Material(permittivity=1.0, permeability=1.0, conductivity=0.0)
-        self.structures = [Rectangle(position=(0,0), width=width, height=height, material=material)]
+        self.structures = [Rectangle(position=(0,0), width=width, height=height, material=material, color=color)]
         self.is_3d = False
         self.width = width
         self.height = height
         self.depth = depth
+        self.border_color = border_color
 
     def add(self, structure):
         """Add structures on top of the design."""
@@ -78,19 +98,19 @@ class Design:
                     rect = MatplotlibRectangle(
                         (structure.position[0], structure.position[1]),
                         structure.width, structure.height,
-                        facecolor=structure.color, alpha=1)
+                        facecolor=structure.color, edgecolor=self.border_color, alpha=1)
                     ax_xy.add_patch(rect)
                     # XZ view
                     rect = MatplotlibRectangle(
                         (structure.position[0], structure.position[2]),
                         structure.width, structure.depth,
-                        facecolor=structure.color, alpha=1)
+                        facecolor=structure.color, edgecolor=self.border_color, alpha=1)
                     ax_xz.add_patch(rect)
                     # YZ view
                     rect = MatplotlibRectangle(
                         (structure.position[1], structure.position[2]),
                         structure.height, structure.depth,
-                        facecolor=structure.color, alpha=1)
+                        facecolor=structure.color, edgecolor=self.border_color, alpha=1)
                     ax_yz.add_patch(rect)
             
             # Set labels and titles with SI units
@@ -126,13 +146,13 @@ class Design:
                     rect = MatplotlibRectangle(
                         (structure.position[0], structure.position[1]),
                         structure.width, structure.height,
-                        facecolor=structure.color, edgecolor='black', alpha=1)
+                        facecolor=structure.color, edgecolor=self.border_color, alpha=1)
                     ax.add_patch(rect)
                 elif isinstance(structure, Circle):
                     circle = plt.Circle(
                         (structure.position[0], structure.position[1]),
                         structure.radius,
-                        facecolor=structure.color, edgecolor='black', alpha=1)
+                        facecolor=structure.color, edgecolor=self.border_color, alpha=1)
                     ax.add_patch(circle)
                 elif isinstance(structure, Ring):
                     # Create points for the ring
@@ -152,7 +172,7 @@ class Design:
                                           [Path.MOVETO] + [Path.LINETO] * (N - 1)])
                     # Create the path and patch
                     path = Path(vertices, codes)
-                    ring_patch = PathPatch(path, facecolor=structure.color, alpha=1, edgecolor='black')
+                    ring_patch = PathPatch(path, facecolor=structure.color, alpha=1, edgecolor=self.border_color)
                     ax.add_patch(ring_patch)
                 elif isinstance(structure, CircularBend):
                     # Create points for the bend
@@ -186,10 +206,10 @@ class Design:
                            [Path.CLOSEPOLY]
                     # Create the path and patch
                     path = Path(vertices, codes)
-                    bend_patch = PathPatch(path, facecolor=structure.color, alpha=1, edgecolor='black')
+                    bend_patch = PathPatch(path, facecolor=structure.color, alpha=1, edgecolor=self.border_color)
                     ax.add_patch(bend_patch)
                 elif isinstance(structure, Polygon):
-                    polygon = plt.Polygon(structure.vertices, facecolor=structure.color, alpha=1, edgecolor='black')
+                    polygon = plt.Polygon(structure.vertices, facecolor=structure.color, alpha=1, edgecolor=self.border_color)
                     ax.add_patch(polygon)
             
             ax.set_title('2D Design')
@@ -212,12 +232,12 @@ class Design:
 
 # ================================================ 2D structures
 class Rectangle:
-    def __init__(self, position=(0,0), width=1, height=1, material=None):
+    def __init__(self, position=(0,0), width=1, height=1, material=None, color=None):
         self.position = position
         self.width = width
         self.height = height
         self.material = material
-        self.color = self.get_random_color()
+        self.color = color if color is not None else self.get_random_color()
 
     def get_random_color(self):
         return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
@@ -251,11 +271,11 @@ class Rectangle:
         return Rectangle(self.position, self.width, self.height, self.material)
 
 class Circle:
-    def __init__(self, position=(0,0), radius=1, material=None):
+    def __init__(self, position=(0,0), radius=1, material=None, color=None):
         self.position = position
         self.radius = radius
         self.material = material
-        self.color = self.get_random_color()
+        self.color = color if color is not None else self.get_random_color()
     
     def get_random_color(self):
         return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
@@ -277,12 +297,12 @@ class Circle:
         return Circle(self.position, self.radius, self.material)
 
 class Ring:
-    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, material=None):
+    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, material=None, color=None):
         self.position = position
         self.inner_radius = inner_radius
         self.outer_radius = outer_radius
         self.material = material
-        self.color = self.get_random_color()
+        self.color = color if color is not None else self.get_random_color()
 
     def get_random_color(self):
         return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
@@ -303,14 +323,14 @@ class Ring:
         return Ring(self.position, self.inner_radius, self.outer_radius, self.material)
 
 class CircularBend:
-    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, angle=90, rotation=0, material=None):
+    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, angle=90, rotation=0, material=None, color=None):
         self.position = position
         self.inner_radius = inner_radius
         self.outer_radius = outer_radius
         self.angle = angle
         self.rotation = rotation
         self.material = material
-        self.color = self.get_random_color()
+        self.color = color if color is not None else self.get_random_color()
 
     def get_random_color(self):
         return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
@@ -330,10 +350,10 @@ class CircularBend:
         return CircularBend(self.position, self.inner_radius, self.outer_radius, self.angle, self.rotation, self.material)
 
 class Polygon:
-    def __init__(self, vertices=None, material=None):
+    def __init__(self, vertices=None, material=None, color=None):
         self.vertices = vertices
         self.material = material
-        self.color = self.get_random_color()
+        self.color = color if color is not None else self.get_random_color()
 
     def get_random_color(self):
         return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
@@ -374,10 +394,10 @@ class Polygon:
 
     def copy(self):
         return Polygon(self.vertices, self.material)
-    
+
 class Taper(Polygon):
     """Taper is a structure that tapers from a width to a height."""
-    def __init__(self, position=(0,0), input_width=1, output_width=0.5, length=1, material=None):
+    def __init__(self, position=(0,0), input_width=1, output_width=0.5, length=1, material=None, color=None):
         # Calculate vertices for the trapezoid shape
         x, y = position
         vertices = [
@@ -386,7 +406,7 @@ class Taper(Polygon):
             (x + length, y + output_width/2),  # Top right
             (x, y + input_width/2),  # Top left
         ]
-        super().__init__(vertices=vertices, material=material)
+        super().__init__(vertices=vertices, material=material, color=color)
         self.position = position
         self.input_width = input_width
         self.output_width = output_width
