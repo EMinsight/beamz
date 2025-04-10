@@ -16,16 +16,12 @@ def solve_modes(eps, omega, dL, m=2):
     """ Solve for the modes of a simple 1D waveguide. """
     k0 = omega / C_0
     N = eps.size
-
     # Compute derivative matrices
     Dxf, Dxb = compute_derivative_matrices(N, dL)
-
     # Define the eigenvalue problem matrix
     A = sp.diags(eps, 0) + (Dxf @ Dxb) * (1 / k0) ** 2
-
     # Solve for eigenmodes
     vals, vecs = spl.eigs(A, k=m, sigma=np.max(eps))
-    
     return np.sqrt(vals), vecs
 
 # Test on a simple ridge waveguide
@@ -74,3 +70,19 @@ plt.title(f'Effective index: {vals[0].real:.3f}')
 plt.legend()
 plt.grid(True)
 plt.show()
+
+# Solve for more modes
+num_modes = 5  # Number of modes to solve for
+vals, vecs = solve_modes(eps, omega, dL, m=num_modes)
+
+# Plot each mode profile
+for i in range(num_modes):
+    plt.figure(figsize=(10, 4))
+    plt.plot(x_positions, np.abs(vecs[:, i]), label=f'Mode {i+1} Profile')
+    plt.plot(x_positions, gaussian(x_positions, *params), label='Fitted Gaussian', linestyle='--')
+    plt.xlabel('x position (λ₀)')
+    plt.ylabel('Mode profile (normalized)')
+    plt.title(f'Mode {i+1} Effective index: {vals[i].real:.3f}')
+    plt.legend()
+    plt.grid(True)
+    plt.show()

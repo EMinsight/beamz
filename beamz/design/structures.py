@@ -5,6 +5,8 @@ import random
 import numpy as np
 from beamz.design.materials import Material
 from beamz.const import µm
+from beamz.design.sources import ModeSource
+from beamz.design.monitors import ModeMonitor
 
 def rgb_to_hex(r, g, b):
     """Convert RGB values to the hex color format used in get_random_color().
@@ -211,6 +213,11 @@ class Design:
                 elif isinstance(structure, Polygon):
                     polygon = plt.Polygon(structure.vertices, facecolor=structure.color, alpha=1, edgecolor=self.border_color)
                     ax.add_patch(polygon)
+                elif isinstance(structure, ModeSource):
+                    ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="crimson", label='Mode Source')
+                    ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", label='Mode Source')
+                elif isinstance(structure, ModeMonitor):
+                    ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="navy", label='Mode Monitor')
             
             ax.set_title('2D Design')
             ax.set_xlabel(f'X ({unit})')
@@ -228,6 +235,47 @@ class Design:
         
     def __str__(self):
         return f"Design with {len(self.structures)} structures ({'3D' if self.is_3d else '2D'})"
+
+    def get_material_value(self, x, y):
+        """Return the material value at a given (x, y) coordinate, prioritizing the topmost structure."""
+        for structure in reversed(self.structures):
+            if isinstance(structure, Rectangle):
+                print("In Rectangle:", x, y, structure.position[0], structure.position[1], structure.width, structure.height)
+                if (structure.position[0] <= x <= structure.position[0] + structure.width and
+                    structure.position[1] <= y <= structure.position[1] + structure.height):
+                    return structure.material.permittivity
+            elif isinstance(structure, Circle):
+                print("In Circle:", x, y, structure.position[0], structure.position[1], structure.radius)
+                if np.hypot(x - structure.position[0], y - structure.position[1]) <= structure.radius:
+                    return structure.material.permittivity
+            elif isinstance(structure, Ring):
+                print("In Ring:", x, y, structure.position[0], structure.position[1], structure.inner_radius, structure.outer_radius)
+                distance = np.hypot(x - structure.position[0], y - structure.position[1])
+                if structure.inner_radius <= distance <= structure.outer_radius:
+                    return structure.material.permittivity
+            elif isinstance(structure, Polygon):
+                print("In Polygon:", x, y, structure.vertices)
+                if self._point_in_polygon(x, y, structure.vertices):
+                    return structure.material.permittivity
+        print("In Default")
+        return 1.0  # Default permittivity if no structure contains the point
+
+    def _point_in_polygon(self, x, y, vertices):
+        """Check if a point is inside a polygon using the ray-casting algorithm."""
+        n = len(vertices)
+        inside = False
+        p1x, p1y = vertices[0]
+        for i in range(n + 1):
+            p2x, p2y = vertices[i % n]
+            if y > min(p1y, p2y):
+                if y <= max(p1y, p2y):
+                    if x <= max(p1x, p2x):
+                        if p1y != p2y:
+                            xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                        if p1x == p2x or x <= xinters:
+                            inside = not inside
+            p1x, p1y = p2x, p2y
+        return inside
 
 
 # ================================================ 2D structures
