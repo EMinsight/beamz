@@ -1,27 +1,24 @@
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, Optional
 import numpy as np
 from beamz.const import *
 from beamz.simulation.meshing import RegularGrid
 
-class Simulation:
-    def __init__(self, name: str = None, type: str = "2D", size: Tuple[int, ...] = (100, 100), 
-                 grid: RegularGrid = None, boundaries: List[Dict] = None,
-                 structures: List[Dict] = None, sources: List[Dict] = None,
-                 monitors: List[Dict] = None, device: str = "cpu"):
-        self.name = name
-        self.type = type
-        self.size = size
+class FDTD:
+    """
+    FDTD simulation class.
+
+    Args:
+        design: Design object containing the structures, sources, and monitors to simulate and measure
+        grid: RegularGrid object used to discretize the design
+        device: str, "cpu" (using numpy backend) or "gpu" (using jax backend)
+    """
+    def __init__(self, design, grid: RegularGrid = None, device: str = "cpu"):
+        # Save all the design information
+        self.design = design
         self.grid = grid
-        self.cell_size = self.grid.cell_size
-        self.structures = structures or []
-        self.boundaries = boundaries or []
-        self.sources = sources or []
-        self.monitors = monitors or []
         self.device = device
-        # Physical constants
-        self.c0 = LIGHT_SPEED  # Speed of light in vacuum
-        self.epsilon_0 = VAC_PERMITTIVITY  # Vacuum permittivity
-        self.mu_0 = VAC_PERMEABILITY  # Vacuum permeability
+
+        # Grid parameters
         # Grid parameters
         self.nx, self.ny = size
         self.dx = self.dy = self.cell_size

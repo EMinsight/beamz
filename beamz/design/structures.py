@@ -240,24 +240,24 @@ class Design:
         """Return the material value at a given (x, y) coordinate, prioritizing the topmost structure."""
         for structure in reversed(self.structures):
             if isinstance(structure, Rectangle):
-                print("In Rectangle:", x, y, structure.position[0], structure.position[1], structure.width, structure.height)
+                #print("In Rectangle:", x, y, structure.position[0], structure.position[1], structure.width, structure.height)
                 if (structure.position[0] <= x <= structure.position[0] + structure.width and
                     structure.position[1] <= y <= structure.position[1] + structure.height):
                     return structure.material.permittivity
             elif isinstance(structure, Circle):
-                print("In Circle:", x, y, structure.position[0], structure.position[1], structure.radius)
+                #print("In Circle:", x, y, structure.position[0], structure.position[1], structure.radius)
                 if np.hypot(x - structure.position[0], y - structure.position[1]) <= structure.radius:
                     return structure.material.permittivity
             elif isinstance(structure, Ring):
-                print("In Ring:", x, y, structure.position[0], structure.position[1], structure.inner_radius, structure.outer_radius)
+                #print("In Ring:", x, y, structure.position[0], structure.position[1], structure.inner_radius, structure.outer_radius)
                 distance = np.hypot(x - structure.position[0], y - structure.position[1])
                 if structure.inner_radius <= distance <= structure.outer_radius:
                     return structure.material.permittivity
             elif isinstance(structure, Polygon):
-                print("In Polygon:", x, y, structure.vertices)
+                #print("In Polygon:", x, y, structure.vertices)
                 if self._point_in_polygon(x, y, structure.vertices):
                     return structure.material.permittivity
-        print("In Default")
+        #print("In Default")
         return 1.0  # Default permittivity if no structure contains the point
 
     def _point_in_polygon(self, x, y, vertices):
