@@ -76,6 +76,9 @@ TODO:
 
 TODO: Note that, the more structures you add, the slower the rasterization will be. We can speed this up massively by only considering structures close to the point we want to sample. 
 
+
+TODO: Add and benchmark different kinds of sub-pixel smoothing in the rasterization: https://math.mit.edu/~stevenj/papers/FarjadpourRo06-SPIE.pdf
+
 ## Examples
 Coming soon...
 

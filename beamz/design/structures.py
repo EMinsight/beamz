@@ -36,10 +36,13 @@ def get_si_scale_and_label(value):
 
 class Design:
     # TODO: Implement 3D version generalization.
-    def __init__(self, width=1, height=1, depth=None, material=None, color=None, border_color=None):
+    def __init__(self, width=1, height=1, depth=None, material=None, color=None, border_color="black"):
         if material is None:
             material = Material(permittivity=1.0, permeability=1.0, conductivity=0.0)
         self.structures = [Rectangle(position=(0,0), width=width, height=height, material=material, color=color)]
+        self.sources = []
+        self.monitors = []
+        self.time = 0
         self.is_3d = False
         self.width = width
         self.height = height
@@ -48,7 +51,13 @@ class Design:
 
     def add(self, structure):
         """Add structures on top of the design."""
-        self.structures.append(structure)
+        if isinstance(structure, ModeSource):
+            self.sources.append(structure)
+            self.time = structure.signal.time if structure.signal > self.time else self.time
+        elif isinstance(structure, ModeMonitor):
+            self.monitors.append(structure)
+        else:
+            self.structures.append(structure)
         if hasattr(structure, 'z') or hasattr(structure, 'depth'): self.is_3d = True
 
     def scatter(self, structure, n=1000, xyrange=(-5*µm, 5*µm), scale_range=(0.05, 1)):
@@ -139,8 +148,14 @@ class Design:
 
         else:
             print("Showing 2D design...")
+            # Calculate figure size based on domain dimensions
+            aspect_ratio = self.width / self.height
+            base_size = 3  # Base size for the smaller dimension
+            if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
+            else: figsize = (base_size, base_size / aspect_ratio)
+
             # Create single plot for 2D visualization
-            fig, ax = plt.subplots(figsize=(8, 8))
+            fig, ax = plt.subplots(figsize=figsize)
             
             # Plot each structure
             for structure in self.structures:

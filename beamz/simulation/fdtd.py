@@ -12,25 +12,19 @@ class FDTD:
         grid: RegularGrid object used to discretize the design
         device: str, "cpu" (using numpy backend) or "gpu" (using jax backend)
     """
-    def __init__(self, design, mesh: str = "regular", resolution: float = 0.02*µm, device: str = "cpu"):
-        # Save all the design information
+    def __init__(self, design, mesh: str = "regular", resolution: float = 0.02*µm):
         self.design = design
-        self.device = device
-        self.mesh = mesh
+        self.sources = design.sources
+        self.monitors = design.monitors
         self.resolution = resolution
+        self.time = self.sources[0].signal.t_max
+        self.mesh = RegularGrid(design=self.design, resolution=self.resolution) if mesh == "regular" else None
+        self.Ez = np.zeros(self.mesh.shape)
+        self.Hx = np.zeros((self.mesh.shape[0], self.mesh.shape[1]-1))
+        self.Hy = np.zeros((self.mesh.shape[0]-1, self.mesh.shape[1]))
+        self.dt = self.resolution / (LIGHT_SPEED * np.sqrt(2))
+        self.num_steps = int(self.time / self.dt)
 
-        # Grid parameters
-        self.nx, self.ny = self.mesh.shape
-        self.dx = self.dy = self.cell_size
-        # Initialize fields
-        self.Ez = np.zeros((self.nx, self.ny))
-        self.Hx = np.zeros((self.nx, self.ny-1))
-        self.Hy = np.zeros((self.nx-1, self.ny))
-        # Time parameters
-        self.t = 0
-        self.dt = self.cell_size / (self.c0 * np.sqrt(2))  # CFL condition
-        self.time = 0
-        self.num_steps = int(self.time / self.dt)  # Initialize num_steps
         
     def update_h_fields(self):
         """Update magnetic field components with PML"""

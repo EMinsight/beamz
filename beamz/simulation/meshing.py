@@ -38,13 +38,39 @@ class RegularGrid:
         self.grid = np.mean(material_values, axis=2)
 
     def show(self):
-        """Display the rasterized grid."""
+        """Display the rasterized grid with properly scaled SI units."""
         if self.grid is not None:
-            plt.imshow(self.grid, origin='lower', cmap='viridis', extent=(0, self.design.width, 0, self.design.height))
+            # Determine appropriate SI unit and scale
+            max_dim = max(self.design.width, self.design.height)
+            if max_dim >= 1e-3:
+                scale, unit = 1e3, 'mm'
+            elif max_dim >= 1e-6:
+                scale, unit = 1e6, 'µm'
+            elif max_dim >= 1e-9:
+                scale, unit = 1e9, 'nm'
+            else:
+                scale, unit = 1e12, 'pm'
+
+            # Calculate figure size based on grid dimensions
+            grid_height, grid_width = self.grid.shape
+            aspect_ratio = grid_width / grid_height
+            base_size = 2.5  # Base size for the smaller dimension
+            if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
+            else: figsize = (base_size, base_size / aspect_ratio)
+
+            plt.figure(figsize=figsize)
+            plt.imshow(self.grid, origin='lower', cmap='Grays', 
+                      extent=(0, self.design.width, 0, self.design.height))
             plt.colorbar(label='Permittivity')
             plt.title('Rasterized Design Grid')
-            plt.xlabel('Width')
-            plt.ylabel('Height')
+            plt.xlabel(f'X ({unit})')
+            plt.ylabel(f'Y ({unit})')
+
+            # Update tick labels with scaled values
+            plt.gca().xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+            plt.gca().yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+
+            plt.tight_layout()
             plt.show()
         else:
             print("Grid not rasterized yet.")

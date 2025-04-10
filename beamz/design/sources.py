@@ -19,6 +19,7 @@ class ModeSource():
         self.wavelength = wavelength
         self.design = design
         self.signal = signal
+        self.time = end
 
     def get_eps_1d(self):
         """Calculate the 1D permittivity profile by stepping along the line from start to end point."""
