@@ -12,15 +12,15 @@ class FDTD:
         grid: RegularGrid object used to discretize the design
         device: str, "cpu" (using numpy backend) or "gpu" (using jax backend)
     """
-    def __init__(self, design, grid: RegularGrid = None, device: str = "cpu"):
+    def __init__(self, design, mesh: str = "regular", resolution: float = 0.02*µm, device: str = "cpu"):
         # Save all the design information
         self.design = design
-        self.grid = grid
         self.device = device
+        self.mesh = mesh
+        self.resolution = resolution
 
         # Grid parameters
-        # Grid parameters
-        self.nx, self.ny = size
+        self.nx, self.ny = self.mesh.shape
         self.dx = self.dy = self.cell_size
         # Initialize fields
         self.Ez = np.zeros((self.nx, self.ny))

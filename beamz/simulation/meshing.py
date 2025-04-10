@@ -8,37 +8,34 @@ class RegularGrid:
         self.resolution = resolution
         self.grid = None
         self.rasterize()
+        self.shape = self.grid.shape
 
     def rasterize(self):
-        """Rasterize the design into a grid with the given resolution."""
+        """Rasterize the design into a grid with the given resolution using fully vectorized operations."""
         width, height = self.design.width, self.design.height
-        print(width, height)
         grid_width, grid_height = int(width / self.resolution), int(height / self.resolution)
         cell_size = self.resolution
-        print(grid_width, grid_height)
-        self.grid = np.zeros((grid_height, grid_width))
-
-        # Iterate over each grid cell
-        for i in range(grid_height):
-            for j in range(grid_width):
-                # Calculate the center of the grid cell
-                x_center = (j + 0.5) * cell_size
-                y_center = (i + 0.5) * cell_size
-                # Sample 9 points within the grid cell for anti-aliasing
-                samples = []
-                for dx in [-0.25, 0, 0.25]:
-                    for dy in [-0.25, 0, 0.25]:
-                        x_sample = x_center + dx * cell_size
-                        y_sample = y_center + dy * cell_size
-                        print(x_sample, y_sample)
-                        samples.append(self.design.get_material_value(x_sample, y_sample))
-                # Average the samples to get the final value for the grid cell
-                self.grid[i, j] = np.mean(samples)
-
-    def print(self):
-        """Print the rasterized grid."""
-        if self.grid is not None: print(self.grid)
-        else: print("Grid not rasterized yet.")
+        # Create grid of cell centers
+        x_centers = (np.arange(grid_width) + 0.5) * cell_size
+        y_centers = (np.arange(grid_height) + 0.5) * cell_size
+        X_centers, Y_centers = np.meshgrid(x_centers, y_centers)
+        # Create sample offsets for anti-aliasing (9 points per cell)
+        offsets = np.array([-0.25, 0, 0.25]) * cell_size
+        dx, dy = np.meshgrid(offsets, offsets)
+        dx = dx.flatten()
+        dy = dy.flatten()
+        # Create arrays of all sample points
+        X_samples = X_centers[:, :, np.newaxis] + dx
+        Y_samples = Y_centers[:, :, np.newaxis] + dy
+        # Reshape for vectorized material value calculation
+        X_flat = X_samples.reshape(-1)
+        Y_flat = Y_samples.reshape(-1)
+        # Get material values for all points at once
+        material_values = np.array([self.design.get_material_value(x, y) for x, y in zip(X_flat, Y_flat)])
+        # Reshape back to grid structure with 9 samples per cell
+        material_values = material_values.reshape(grid_height, grid_width, 9)
+        # Average the 9 samples for each cell
+        self.grid = np.mean(material_values, axis=2)
 
     def show(self):
         """Display the rasterized grid."""

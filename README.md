@@ -74,6 +74,8 @@ TODO:
    + Randomly shift the polygon points e.g. to create roughness or defects.
 
 
+TODO: Note that, the more structures you add, the slower the rasterization will be. We can speed this up massively by only considering structures close to the point we want to sample. 
+
 ## Examples
 Coming soon...
 
