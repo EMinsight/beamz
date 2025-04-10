@@ -2,6 +2,7 @@ import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spl
 import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
 
 C_0 = 3e8  # Speed of light in vacuum
 
@@ -41,9 +42,35 @@ eps[wg_region] = 4  # Waveguide permittivity
 
 vals, vecs = solve_modes(eps, omega, dL, m=3)
 
-# Plot the first mode profile
-plt.plot(np.linspace(-Lx, Lx, Nx) / lambda0, np.abs(vecs[:, 0]))
+# Plot the waveguide structure
+plt.figure(figsize=(10, 4))
+plt.plot(np.linspace(-Lx, Lx, Nx) / lambda0, eps, label='Permittivity Profile')
+plt.xlabel('x position (λ₀)')
+plt.ylabel('Relative Permittivity')
+plt.title('Waveguide Structure')
+plt.grid(True)
+plt.legend()
+plt.show()
+
+# Plot the first mode profile and compare to Gaussian
+x_positions = np.linspace(-Lx, Lx, Nx) / lambda0
+mode_profile = np.abs(vecs[:, 0])
+
+# Fit a Gaussian to the mode profile
+def gaussian(x, a, x0, sigma):
+    return a * np.exp(-(x - x0)**2 / (2 * sigma**2))
+
+# Initial guess for Gaussian parameters
+initial_guess = (1, 0, wg_width / lambda0)
+params, _ = curve_fit(gaussian, x_positions, mode_profile, p0=initial_guess)
+
+# Plot mode profile and fitted Gaussian
+plt.figure(figsize=(10, 4))
+plt.plot(x_positions, mode_profile, label='Mode Profile')
+plt.plot(x_positions, gaussian(x_positions, *params), label='Fitted Gaussian', linestyle='--')
 plt.xlabel('x position (λ₀)')
 plt.ylabel('Mode profile (normalized)')
 plt.title(f'Effective index: {vals[0].real:.3f}')
+plt.legend()
+plt.grid(True)
 plt.show()
