@@ -13,21 +13,26 @@ class FDTD:
         device: str, "cpu" (using numpy backend) or "gpu" (using jax backend)
     """
     def __init__(self, design, time, mesh: str = "regular", resolution: float = 0.02*µm):
+        # Initialize the design and mesh
         self.design = design
         self.resolution = resolution
-        self.time = time
         self.mesh = RegularGrid(design=self.design, resolution=self.resolution) if mesh == "regular" else None
-        self.Ez = np.zeros(self.mesh.shape)
-        self.Hx = np.zeros((self.mesh.shape[0], self.mesh.shape[1]-1))
-        self.Hy = np.zeros((self.mesh.shape[0]-1, self.mesh.shape[1]))
-        self.dt = time[1] - time[0]
-        self.num_steps = len(time)
         self.dx = self.mesh.dx
         self.dy = self.mesh.dy
         self.epsilon_r = self.mesh.permittivity
         self.mu_r = self.mesh.permeability
         self.sigma = self.mesh.conductivity
-        
+        # Initialize the fields
+        self.Ez = np.zeros(self.mesh.shape)
+        self.Hx = np.zeros((self.mesh.shape[0], self.mesh.shape[1]-1))
+        self.Hy = np.zeros((self.mesh.shape[0]-1, self.mesh.shape[1]))
+        # Initialize the time
+        self.time = time
+        self.dt = time[1] - time[0]
+        self.num_steps = len(time)
+        # Initialize the sources
+        self.sources = self.design.sources
+
     def update_h_fields(self):
         """Update magnetic field components with PML"""
         self.Hx[:, :] = self.Hx[:, :] - (self.dt/(MU_0*self.dy)) * \
