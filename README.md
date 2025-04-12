@@ -73,11 +73,18 @@ TODO:
    + Calculate the curvature at every polygon point.
    + Randomly shift the polygon points e.g. to create roughness or defects.
 
+TODO: https://pypi.org/project/shapely/ Use shapely and introduce boolean operations and operations to simplify complex shapes etc.!
+
 
 TODO: Note that, the more structures you add, the slower the rasterization will be. We can speed this up massively by only considering structures close to the point we want to sample. 
 
+TODO: Interactive 3D view of design and data using PyVista!
 
 TODO: Add and benchmark different kinds of sub-pixel smoothing in the rasterization: https://math.mit.edu/~stevenj/papers/FarjadpourRo06-SPIE.pdf
++ If you just need quick anti-aliasing, use effective permittivity averaging.
++ If you need higher accuracy, try contour integration.
++ If you're dealing with complex curvatures, polynomial fitting or Level Set Methods could be beneficial.
+https://math.mit.edu/~stevenj/papers/OskooiKo09.pdf
 
 ## Examples
 Coming soon...

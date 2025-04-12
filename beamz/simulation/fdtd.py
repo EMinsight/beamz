@@ -12,32 +12,34 @@ class FDTD:
         grid: RegularGrid object used to discretize the design
         device: str, "cpu" (using numpy backend) or "gpu" (using jax backend)
     """
-    def __init__(self, design, mesh: str = "regular", resolution: float = 0.02*µm):
+    def __init__(self, design, time, mesh: str = "regular", resolution: float = 0.02*µm):
         self.design = design
-        self.sources = design.sources
-        self.monitors = design.monitors
         self.resolution = resolution
-        self.time = self.sources[0].signal.t_max
+        self.time = time
         self.mesh = RegularGrid(design=self.design, resolution=self.resolution) if mesh == "regular" else None
         self.Ez = np.zeros(self.mesh.shape)
         self.Hx = np.zeros((self.mesh.shape[0], self.mesh.shape[1]-1))
         self.Hy = np.zeros((self.mesh.shape[0]-1, self.mesh.shape[1]))
-        self.dt = self.resolution / (LIGHT_SPEED * np.sqrt(2))
-        self.num_steps = int(self.time / self.dt)
-
+        self.dt = time[1] - time[0]
+        self.num_steps = len(time)
+        self.dx = self.mesh.dx
+        self.dy = self.mesh.dy
+        self.epsilon_r = self.mesh.permittivity
+        self.mu_r = self.mesh.permeability
+        self.sigma = self.mesh.conductivity
         
     def update_h_fields(self):
         """Update magnetic field components with PML"""
-        self.Hx[:, :] = self.Hx[:, :] - (self.dt/(self.mu_0*self.dy)) * \
+        self.Hx[:, :] = self.Hx[:, :] - (self.dt/(MU_0*self.dy)) * \
                         (self.Ez[:, 1:] - self.Ez[:, :-1])
-        self.Hy[:, :] = self.Hy[:, :] + (self.dt/(self.mu_0*self.dx)) * \
+        self.Hy[:, :] = self.Hy[:, :] + (self.dt/(MU_0*self.dx)) * \
                         (self.Ez[1:, :] - self.Ez[:-1, :])
     
     def update_e_field(self):
         """Update electric field component with PML"""
         # First update the main field without PML
         self.Ez[1:-1, 1:-1] = self.Ez[1:-1, 1:-1] + \
-            (self.dt/(self.epsilon_0*self.epsilon_r[1:-1, 1:-1])) * \
+            (self.dt/(EPS_0*self.epsilon_r[1:-1, 1:-1])) * \
             ((self.Hy[1:, 1:-1] - self.Hy[:-1, 1:-1])/self.dx - \
              (self.Hx[1:-1, 1:] - self.Hx[1:-1, :-1])/self.dy)
         # Then apply PML only at the boundaries where sigma > 0
@@ -46,8 +48,8 @@ class FDTD:
             sigma_x = self.sigma[1:-1, 1:-1][mask]
             sigma_y = self.sigma[1:-1, 1:-1][mask]
             # Update coefficients for PML regions only
-            cx = np.exp(-sigma_x * self.dt / self.epsilon_0)
-            cy = np.exp(-sigma_y * self.dt / self.epsilon_0)
+            cx = np.exp(-sigma_x * self.dt / EPS_0)
+            cy = np.exp(-sigma_y * self.dt / EPS_0)
             # Apply PML absorption only at boundaries
             self.Ez[1:-1, 1:-1][mask] *= (cx + cy) / 2
 

@@ -9,22 +9,16 @@ from beamz.design.sources import ModeSource
 from beamz.design.monitors import ModeMonitor
 
 def rgb_to_hex(r, g, b):
-    """Convert RGB values to the hex color format used in get_random_color().
-    Returns a string in the format '#{:06x}'."""
+    """Convert RGB values to the hex color format used in get_random_color()."""
     return f'#{(r << 16) + (g << 8) + b:06x}'
 
 def is_dark(color):
     """Check if a color is dark using relative luminance calculation. """
-    # Remove '#' if present
     color = color.lstrip('#')
-    # Convert hex to RGB components
     r = int(color[0:2], 16) / 255.0
     g = int(color[2:4], 16) / 255.0
     b = int(color[4:6], 16) / 255.0
-    # Calculate relative luminance using sRGB coefficients
-    # These coefficients account for human perception of brightness
     luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
-    # Return True if luminance is less than 0.5 (midpoint)
     return luminance < 0.5
 
 def get_si_scale_and_label(value):
@@ -37,8 +31,7 @@ def get_si_scale_and_label(value):
 class Design:
     # TODO: Implement 3D version generalization.
     def __init__(self, width=1, height=1, depth=None, material=None, color=None, border_color="black"):
-        if material is None:
-            material = Material(permittivity=1.0, permeability=1.0, conductivity=0.0)
+        if material is None: material = Material(permittivity=1.0, permeability=1.0, conductivity=0.0)
         self.structures = [Rectangle(position=(0,0), width=width, height=height, material=material, color=color)]
         self.sources = []
         self.monitors = []
@@ -53,9 +46,10 @@ class Design:
         """Add structures on top of the design."""
         if isinstance(structure, ModeSource):
             self.sources.append(structure)
-            self.time = structure.signal.time if structure.signal > self.time else self.time
+            self.structures.append(structure)
         elif isinstance(structure, ModeMonitor):
             self.monitors.append(structure)
+            self.structures.append(structure)
         else:
             self.structures.append(structure)
         if hasattr(structure, 'z') or hasattr(structure, 'depth'): self.is_3d = True
@@ -258,22 +252,22 @@ class Design:
                 #print("In Rectangle:", x, y, structure.position[0], structure.position[1], structure.width, structure.height)
                 if (structure.position[0] <= x <= structure.position[0] + structure.width and
                     structure.position[1] <= y <= structure.position[1] + structure.height):
-                    return structure.material.permittivity
+                    return [structure.material.permittivity, structure.material.permeability, structure.material.conductivity]
             elif isinstance(structure, Circle):
                 #print("In Circle:", x, y, structure.position[0], structure.position[1], structure.radius)
                 if np.hypot(x - structure.position[0], y - structure.position[1]) <= structure.radius:
-                    return structure.material.permittivity
+                    return [structure.material.permittivity, structure.material.permeability, structure.material.conductivity]
             elif isinstance(structure, Ring):
                 #print("In Ring:", x, y, structure.position[0], structure.position[1], structure.inner_radius, structure.outer_radius)
                 distance = np.hypot(x - structure.position[0], y - structure.position[1])
                 if structure.inner_radius <= distance <= structure.outer_radius:
-                    return structure.material.permittivity
+                    return [structure.material.permittivity, structure.material.permeability, structure.material.conductivity]
             elif isinstance(structure, Polygon):
                 #print("In Polygon:", x, y, structure.vertices)
                 if self._point_in_polygon(x, y, structure.vertices):
-                    return structure.material.permittivity
+                    return [structure.material.permittivity, structure.material.permeability, structure.material.conductivity]
         #print("In Default")
-        return 1.0  # Default permittivity if no structure contains the point
+        return [1.0, 1.0, 0.0]  # Default permittivity if no structure contains the point
 
     def _point_in_polygon(self, x, y, vertices):
         """Check if a point is inside a polygon using the ray-casting algorithm."""

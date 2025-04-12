@@ -1,7 +1,7 @@
 from beamz.const import *
 from beamz.design.materials import Material
 from beamz.design.structures import *
-from beamz.simulation.sources import PointSource
+from beamz.design.sources import PointSource
 from beamz.simulation.signals import cosine, sigmoid, plot_signal
 from beamz.simulation.meshing import RegularGrid
 from beamz.simulation.fdtd import Simulation
