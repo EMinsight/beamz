@@ -14,6 +14,11 @@ Create inverse designs for your photonic devices with ease and efficiency.
 [Cite](#cite)
 </div>
 
+Added dispersion and material library.
+v0.0.4: May 4,    (Closed alpha.) Design, simulation, optimization in 3D.
+v0.0.3: April 27, (Closed alpha.) Added GPU backend (Jax or PyTorch).
+v0.0.2: April 20, (Closed alpha.) Adjoint method and topology optimization using FDTD.
+v0.0.1: April 13, (Closed alpha.) 2D FDTD package proof of concept on CPU (Numpy).
 
 ```bash
 pip install beamz

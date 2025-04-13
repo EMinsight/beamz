@@ -20,25 +20,77 @@ class ModeSource():
         self.design = design
         self.signal = signal
         self.time = end
+        # Calculate and store mode profiles
+        eps_1d = self.get_eps_1d()
+        self.effective_indices, self.mode_vectors = self.get_mode_profiles(eps_1d)
+        self.mode_profiles = []
+        # Store profiles for each mode
+        for mode_number in range(self.mode_vectors.shape[1]):
+            self.mode_profiles.append(self.get_xy_mode_line(self.mode_vectors, mode_number))
 
     def get_eps_1d(self):
         """Calculate the 1D permittivity profile by stepping along the line from start to end point."""
         x0, y0 = self.start
         x1, y1 = self.end
         num_points = int(np.hypot(x1 - x0, y1 - y0) / (self.wavelength / 200))  # Increase resolution
-        print("num_points:", num_points)
         x, y = np.linspace(x0, x1, num_points), np.linspace(y0, y1, num_points)
         eps_1d = np.zeros(num_points)
         for i, (x_i, y_i) in enumerate(zip(x, y)):
-            eps_1d[i] = self.design.get_material_value(x_i, y_i)
+            eps_1d[i], _, _ = self.design.get_material_value(x_i, y_i)
         return eps_1d
     
     def get_mode_profiles(self, eps_1d):
-        """Calculate the mode profiles for a cross section given a 1D permittivity profile."""
+        """Calculate the mode profiles for a cross section given a 1D permittivity profile.
+        
+        Args:
+            eps_1d: 1D array of relative permittivity values along the line
+            
+        Returns:
+            tuple: (vals, vecs)
+                vals: Complex array of effective indices (n_eff) for each mode
+                    - Real part represents the phase velocity (n_eff)
+                    - Imaginary part represents loss/gain
+                    - Shape: (num_modes,)
+                vecs: Complex array of mode field profiles
+                    - Each column represents a different mode
+                    - Each row represents a point along the line
+                    - Values are complex field amplitudes
+                    - Shape: (num_points, num_modes)
+        """
         omega = 2 * np.pi * LIGHT_SPEED / self.wavelength
         dL = self.wavelength
         vals, vecs = solve_line_modes(eps_1d, self.start, self.end, omega, dL)
         return vals, vecs
+    
+    def get_xy_mode_line(self, vecs, mode_number):
+        """Get the mode profile for a specific mode along the line.
+        
+        Args:
+            vecs: Complex array of mode field profiles
+                - Each column represents a different mode
+                - Each row represents a point along the line
+                - Values are complex field amplitudes
+            mode_number: Index of the mode to extract (0-based)
+                
+        Returns:
+            list: List of [amplitude, x, y] points for the specified mode
+                - amplitude: Absolute value of the mode field at that point
+                - x: x-coordinate of the point
+                - y: y-coordinate of the point
+        """
+        x0, y0 = self.start
+        x1, y1 = self.end
+        num_points = vecs.shape[0]  # Number of points along the line
+        x = np.linspace(x0, x1, num_points)
+        y = np.linspace(y0, y1, num_points)
+        
+        # Create mode profile for the specified mode
+        mode_profile = []
+        for j in range(num_points):  # For each point
+            amplitude = np.abs(vecs[j, mode_number])  # Absolute value of the field
+            mode_profile.append([amplitude, x[j], y[j]])
+            
+        return mode_profile
 
     def show(self):
         """Show the mode profiles for a cross section given a 1D permittivity profile."""
