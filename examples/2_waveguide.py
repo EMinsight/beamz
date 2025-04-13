@@ -12,7 +12,7 @@ design.add(Rectangle(position=(0*µm, 1.5*µm), width=8*µm, height=1*µm, mater
 design.show()
 
 
-signal = ramped_cosine(T, amplitude=1.0, frequency=LIGHT_SPEED/WL, phase=0, ramp_duration=TIME/2, t_max=TIME)
+signal = ramped_cosine(T, amplitude=1.0, frequency=2*LIGHT_SPEED/WL, phase=0, ramp_duration=TIME/2, t_max=TIME)
 source = ModeSource(design=design, start=(1.5*µm, 1.3*µm), end=(1.5*µm, 2.6*µm), wavelength=WL, signal=signal)
 source.show()
 design.add(source)

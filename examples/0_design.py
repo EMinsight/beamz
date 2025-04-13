@@ -1,14 +1,12 @@
-from beamz.design.materials import Material
-from beamz.const import µm
-from beamz.design.structures import *
+from beamz import *
+import numpy as np
 
-# Define the materials used in the design
-SiO2 = Material(permittivity=1.45, permeability=1.0, conductivity=0.0)
-SiN = Material(permittivity=2.5, permeability=1.0, conductivity=0.0)
-# Define the design and show it
-design = Design(width=6*µm, height=6*µm, material=SiO2)
-design.add(Rectangle(position=(0,1*µm), width=6*µm, height=0.4*µm, material=SiN))
-design.add(Ring(position=(3*µm, 3.5*µm), inner_radius=1.5*µm, outer_radius=1.9*µm, material=SiN))
-design.add(CircularBend(position=(3*µm, 3.5*µm), inner_radius=0.9*µm, outer_radius=1.3*µm, angle=90, rotation=-200, material=SiN))
-design.scatter(Circle(position=(3*µm, 3*µm), radius=0.05*µm, material=SiN), scale_range=(0.07, 0.5), n=2000)
-design.show()
+WL = 1.55*µm
+TIME = 40*WL/LIGHT_SPEED
+T = np.linspace(0, TIME, int(TIME/(0.015*WL/LIGHT_SPEED)))
+design = Design(width=6*µm, height=6*µm, material=Material(2.1, 1.0, 0.0))
+design.add(Rectangle(position=(0,1*µm), width=6*µm, height=0.4*µm, material=Material(6.25, 1.0, 0.0)))
+design.add(Ring(position=(3*µm, 3.35*µm), inner_radius=1.5*µm, outer_radius=1.9*µm, material=Material(6.25, 1.0, 0.0)))
+signal = ramped_cosine(T, amplitude=1.0, frequency=LIGHT_SPEED/WL, phase=0, ramp_duration=TIME/2, t_max=TIME)
+design.add(ModeSource(design=design, start=(1.5*µm, 0.8*µm), end=(1.5*µm, 1.6*µm), wavelength=WL, signal=signal))
+FDTD(design=design, time=T, mesh="regular", resolution=WL/40).run()

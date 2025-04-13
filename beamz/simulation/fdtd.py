@@ -3,6 +3,10 @@ import numpy as np
 from beamz.const import *
 from beamz.simulation.meshing import RegularGrid
 from beamz.design.sources import ModeSource
+from beamz.design.structures import *
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle as MatplotlibRectangle, Circle as MatplotlibCircle, PathPatch
+from matplotlib.path import Path
 
 class FDTD:
     """
@@ -70,7 +74,6 @@ class FDTD:
 
     def plot_field(self, field: str = "Ez", t: float = None) -> None:
         """Plot a field at a given time with proper scaling and units."""
-        import matplotlib.pyplot as plt
         # Handle the case where we're plotting current state (not from results)
         if len(self.results['t']) == 0:
             current_field = getattr(self, field)  # Get current field state
@@ -110,6 +113,81 @@ class FDTD:
         # Update tick labels with scaled values
         plt.gca().xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
         plt.gca().yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+
+        # Create an overlay of the design outlines
+        print(f"Design structures: {self.design.structures}")
+        for structure in self.design.structures:
+            print(f"Processing structure: {type(structure).__name__}")
+            if isinstance(structure, Rectangle):
+                print(f"Adding Rectangle at {structure.position} with width={structure.width}, height={structure.height}")
+                rect = MatplotlibRectangle(
+                    (structure.position[0], structure.position[1]),
+                    structure.width, structure.height,
+                    facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                plt.gca().add_patch(rect)
+            elif isinstance(structure, Circle):
+                print(f"Adding Circle at {structure.position} with radius={structure.radius}")
+                circle = MatplotlibCircle(
+                    (structure.position[0], structure.position[1]),
+                    structure.radius,
+                    facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                plt.gca().add_patch(circle)
+            elif isinstance(structure, Ring):
+                # Create points for the ring
+                N = 100  # Number of points for each circle
+                theta = np.linspace(0, 2 * np.pi, N, endpoint=True)
+                # Outer circle points (counterclockwise)
+                x_outer = structure.position[0] + structure.outer_radius * np.cos(theta)
+                y_outer = structure.position[1] + structure.outer_radius * np.sin(theta)
+                # Inner circle points (clockwise)
+                x_inner = structure.position[0] + structure.inner_radius * np.cos(theta[::-1])
+                y_inner = structure.position[1] + structure.inner_radius * np.sin(theta[::-1])
+                # Combine vertices
+                vertices = np.vstack([np.column_stack([x_outer, y_outer]),
+                                    np.column_stack([x_inner, y_inner])])
+                # Define path codes
+                codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (N - 1),
+                                      [Path.MOVETO] + [Path.LINETO] * (N - 1)])
+                # Create the path and patch
+                path = Path(vertices, codes)
+                ring_patch = PathPatch(path, facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                plt.gca().add_patch(ring_patch)
+            elif isinstance(structure, CircularBend):
+                # Create points for the bend
+                N = 100  # Number of points for each arc
+                # Convert angles to radians
+                angle_rad = np.radians(structure.angle)
+                rotation_rad = np.radians(structure.rotation)
+                theta = np.linspace(rotation_rad, rotation_rad + angle_rad, N, endpoint=True)
+                # Outer arc points
+                x_outer = structure.position[0] + structure.outer_radius * np.cos(theta)
+                y_outer = structure.position[1] + structure.outer_radius * np.sin(theta)
+                # Inner arc points
+                x_inner = structure.position[0] + structure.inner_radius * np.cos(theta)
+                y_inner = structure.position[1] + structure.inner_radius * np.sin(theta)
+                # Create a closed path by combining points and adding connecting lines
+                vertices = np.vstack([
+                    [x_outer[0], y_outer[0]],
+                    *np.column_stack([x_outer[1:], y_outer[1:]]),
+                    [x_inner[-1], y_inner[-1]],
+                    *np.column_stack([x_inner[-2::-1], y_inner[-2::-1]]),
+                    [x_outer[0], y_outer[0]]
+                ])
+                # Define path codes for a single continuous path
+                codes = [Path.MOVETO] + [Path.LINETO] * (len(vertices) - 2) + [Path.CLOSEPOLY]
+                # Create the path and patch
+                path = Path(vertices, codes)
+                bend_patch = PathPatch(path, facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                plt.gca().add_patch(bend_patch)
+            elif isinstance(structure, Polygon):
+                polygon = plt.Polygon(structure.vertices, facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                plt.gca().add_patch(polygon)
+            elif isinstance(structure, ModeSource):
+                plt.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="crimson", alpha=0.5, label='Mode Source')
+                plt.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", alpha=0.5)
+            elif isinstance(structure, ModeMonitor):
+                plt.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="navy", alpha=0.5, label='Mode Monitor')
+
         plt.tight_layout()
         plt.show()
 
@@ -119,8 +197,8 @@ class FDTD:
         self.t = 0
         self._total_steps = self.num_steps
         self._save_results = save
-        print(f"Starting simulation with {self.num_steps} steps")
-        print(f"Initial field range: min = {np.min(self.Ez):.2e}, max = {np.max(self.Ez):.2e}")
+        #print(f"Starting simulation with {self.num_steps} steps")
+        #print(f"Initial field range: min = {np.min(self.Ez):.2e}, max = {np.max(self.Ez):.2e}")
 
         # Calculate Courant number to check stability
         c = 1/np.sqrt(EPS_0 * MU_0)  # Speed of light
@@ -141,29 +219,22 @@ class FDTD:
                     mode_profile = source.mode_profiles[0]
                     # Get the time modulation for this step
                     modulation = source.signal[step]
-                    
                     # Apply the mode profile to all points
                     for point in mode_profile:
                         amplitude, x_raw, y_raw = point
                         # Convert the position to the nearest grid point using correct resolutions
                         x = int(round(x_raw / self.dx))
                         y = int(round(y_raw / self.dy))
-                        
                         # Skip points outside the grid
                         if x < 0 or x >= self.nx or y < 0 or y >= self.ny:
                             continue
-
-                        self.Ez[y, x] += amplitude * modulation
+                        # Add the source contribution to the field (don't overwrite!)
+                        self.Ez[y, x] += amplitude * modulation 
                         # Apply direction to the source
-                        if source.direction == "+x":
-                            self.Ez[y, x-1] = 0
-                        elif source.direction == "-x":
-                            self.Ez[y, x+1] = 0
-                        elif source.direction == "+y":
-                            self.Ez[y-1, x] = 0
-                        elif source.direction == "-y":
-                            self.Ez[y+1, x] = 0
-
+                        if source.direction == "+x": self.Ez[y, x-1] = 0
+                        elif source.direction == "-x": self.Ez[y, x+1] = 0
+                        elif source.direction == "+y": self.Ez[y-1, x] = 0
+                        elif source.direction == "-y": self.Ez[y+1, x] = 0
                 else:
                     # Handle other source types here if needed
                     pass
@@ -180,16 +251,10 @@ class FDTD:
             
             # Show progress and check for divergence
             if step % 100 == 0:
-                max_field = np.max(np.abs(self.Ez))
-                print(f"Step {step}/{self.num_steps}")
-                print(f"Current field range: min = {np.min(self.Ez):.2e}, max = {np.max(self.Ez):.2e}")
-                
-                # Check for divergence
-                if max_field > 1e10:  # Arbitrary threshold, adjust as needed
-                    print("Warning: Field values are diverging! Stopping simulation.")
-                    break
-                    
+                #print(f"Step {step}/{self.num_steps}")
+                #print(f"Current field range: min = {np.min(self.Ez):.2e}, max = {np.max(self.Ez):.2e}")
+                #max_field = np.max(np.abs(self.Ez))                
                 self.plot_field(field="Ez", t=self.t)
 
-        print(f"Simulation completed. Final field range: min = {np.min(self.Ez):.2e}, max = {np.max(self.Ez):.2e}")
+        #print(f"Simulation completed. Final field range: min = {np.min(self.Ez):.2e}, max = {np.max(self.Ez):.2e}")
         return self.results
