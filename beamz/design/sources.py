@@ -13,13 +13,23 @@ class PointSource():
 
 class ModeSource():
     """Calculates and injects the mode profiles for a cross section given a start and end point."""
-    def __init__(self, design, start, end, wavelength=1.55*µm, signal=0):
+    def __init__(self, design, start, end, wavelength=1.55*µm, signal=0, direction="+x"):
+        """
+        Args:
+            design: Design object containing the structures
+            start: Starting point of the source line (x,y)
+            end: End point of the source line (x,y)
+            wavelength: Source wavelength
+            signal: Time-dependent signal
+            direction: Direction of propagation ("+x", "-x", "+y", "-y")
+        """
         self.start = start
         self.end = end
         self.wavelength = wavelength
         self.design = design
         self.signal = signal
         self.time = end
+        self.direction = direction
         # Calculate and store mode profiles
         eps_1d = self.get_eps_1d()
         self.effective_indices, self.mode_vectors = self.get_mode_profiles(eps_1d)

@@ -152,9 +152,18 @@ class FDTD:
                         # Skip points outside the grid
                         if x < 0 or x >= self.nx or y < 0 or y >= self.ny:
                             continue
-                            
-                        # Add the source contribution to the field (don't overwrite!)
-                        self.Ez[y, x] += amplitude * modulation  # Note: numpy uses [row, col] = [y, x]
+
+                        self.Ez[y, x] += amplitude * modulation
+                        # Apply direction to the source
+                        if source.direction == "+x":
+                            self.Ez[y, x-1] = 0
+                        elif source.direction == "-x":
+                            self.Ez[y, x+1] = 0
+                        elif source.direction == "+y":
+                            self.Ez[y-1, x] = 0
+                        elif source.direction == "-y":
+                            self.Ez[y+1, x] = 0
+
                 else:
                     # Handle other source types here if needed
                     pass
@@ -170,7 +179,7 @@ class FDTD:
             self.t += self.dt
             
             # Show progress and check for divergence
-            if step % 10 == 0:
+            if step % 100 == 0:
                 max_field = np.max(np.abs(self.Ez))
                 print(f"Step {step}/{self.num_steps}")
                 print(f"Current field range: min = {np.min(self.Ez):.2e}, max = {np.max(self.Ez):.2e}")
