@@ -93,8 +93,6 @@ class FDTD:
             current_t = self.results['t'][t_idx]
             print(f"Plotting saved field at t = {current_t:.2e} s (index {t_idx})")
         
-        #print(f"Field range: min = {np.min(current_field):.2e}, max = {np.max(current_field):.2e}")
-        
         # Determine appropriate SI unit and scale for spatial dimensions
         max_dim = max(self.design.width, self.design.height)
         if max_dim >= 1e-3: scale, unit = 1e3, 'mm'
@@ -119,9 +117,8 @@ class FDTD:
         # Update tick labels with scaled values
         plt.gca().xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
         plt.gca().yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-
+         
         # Create an overlay of the design outlines
-        print(f"Design structures: {self.design.structures}")
         for structure in self.design.structures:
             print(f"Processing structure: {type(structure).__name__}")
             if isinstance(structure, Rectangle):
@@ -336,6 +333,11 @@ class FDTD:
                 elif isinstance(source, LineSource):
                     # Get the time modulation for this step
                     modulation = source.signal[step]
+                    # Calculate the line's angle and direction
+                    dx = source.end[0] - source.start[0]
+                    dy = source.end[1] - source.start[1]
+                    angle = np.arctan2(dy, dx)
+                    
                     # Apply the source to the grid
                     if source.distribution is None:
                         # Calculate grid indices for start and end points
@@ -359,6 +361,19 @@ class FDTD:
                             # Only apply if within grid bounds
                             if 0 <= x < self.nx and 0 <= y < self.ny:
                                 self.Ez[y, x] += modulation
+                                # Apply direction to the source
+                                if source.direction == "+x":
+                                    if angle > -np.pi/4 and angle < np.pi/4:
+                                        self.Ez[y, x-2] = 0
+                                elif source.direction == "-x":
+                                    if angle > 3*np.pi/4 or angle < -3*np.pi/4:
+                                        self.Ez[y, x+2] = 0
+                                elif source.direction == "+y":
+                                    if angle > np.pi/4 and angle < 3*np.pi/4:
+                                        self.Ez[y-2, x] = 0
+                                elif source.direction == "-y":
+                                    if angle > -3*np.pi/4 and angle < -np.pi/4:
+                                        self.Ez[y+2, x] = 0
                             if error > 0:
                                 x += x_inc
                                 error -= dy
@@ -376,6 +391,19 @@ class FDTD:
                             # Only apply if within grid bounds
                             if 0 <= x < self.nx and 0 <= y < self.ny:
                                 self.Ez[y, x] += amplitude * modulation
+                                # Apply direction to the source
+                                if source.direction == "+x":
+                                    if angle > -np.pi/4 and angle < np.pi/4:
+                                        self.Ez[y, x-1] = 0
+                                elif source.direction == "-x":
+                                    if angle > 3*np.pi/4 or angle < -3*np.pi/4:
+                                        self.Ez[y, x+1] = 0
+                                elif source.direction == "+y":
+                                    if angle > np.pi/4 and angle < 3*np.pi/4:
+                                        self.Ez[y-1, x] = 0
+                                elif source.direction == "-y":
+                                    if angle > -3*np.pi/4 and angle < -np.pi/4:
+                                        self.Ez[y+1, x] = 0
             
             # Save results if requested
             if save:

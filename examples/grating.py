@@ -17,7 +17,7 @@ design.add(Rectangle(position=(0,0), width=6*µm, height=2.5*µm, material=Mater
 
 signal = ramped_cosine(T, amplitude=1.0, frequency=LIGHT_SPEED/WL, phase=0, ramp_duration=TIME/4, t_max=TIME)
 plot_signal(signal, T)
-design.add(LineSource(start=(0,1*µm), end=(6*µm,0.5*µm), distribution=None, signal=signal))
+design.add(LineSource(start=(0.3*µm,1*µm), end=(5.7*µm,0.2*µm), distribution=None, direction="+x", signal=signal))
 
 
 design.show()

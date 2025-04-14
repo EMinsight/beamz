@@ -12,11 +12,12 @@ class PointSource():
 
 class LineSource():
     """A current distribution along a line."""
-    def __init__(self, start, end, distribution, signal=0):
+    def __init__(self, start, end, direction=None, distribution=None, signal=0):
         self.start = start
         self.end = end
         self.signal = signal
         self.distribution = distribution
+        self.direction = direction
 
 class ModeSource():
     """Calculates and injects the mode profiles for a cross section given a start and end point."""
