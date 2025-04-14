@@ -9,7 +9,7 @@ beamz
             non-dispersive
             dispersive
         structures
-            gds
+            gdsxx
                 import
                 export
                 gds to np.array
