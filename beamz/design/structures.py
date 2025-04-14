@@ -92,54 +92,7 @@ class Design:
         scale, unit = get_si_scale_and_label(max_dim)
             
         if self.is_3d:
-            print("Showing 3D design...")
-            # Create 3 subplots for 3D visualization
-            fig, (ax_xy, ax_xz, ax_yz) = plt.subplots(1, 3, figsize=(15, 5))
-            
-            # Plot each structure in all three views
-            for structure in self.structures:
-                if isinstance(structure, Rectangle):
-                    # XY view
-                    rect = MatplotlibRectangle(
-                        (structure.position[0], structure.position[1]),
-                        structure.width, structure.height,
-                        facecolor=structure.color, edgecolor=self.border_color, alpha=1)
-                    ax_xy.add_patch(rect)
-                    # XZ view
-                    rect = MatplotlibRectangle(
-                        (structure.position[0], structure.position[2]),
-                        structure.width, structure.depth,
-                        facecolor=structure.color, edgecolor=self.border_color, alpha=1)
-                    ax_xz.add_patch(rect)
-                    # YZ view
-                    rect = MatplotlibRectangle(
-                        (structure.position[1], structure.position[2]),
-                        structure.height, structure.depth,
-                        facecolor=structure.color, edgecolor=self.border_color, alpha=1)
-                    ax_yz.add_patch(rect)
-            
-            # Set labels and titles with SI units
-            ax_xy.set_title('XY View')
-            ax_xy.set_xlabel(f'X ({unit})')
-            ax_xy.set_ylabel(f'Y ({unit})')
-            ax_xz.set_title('XZ View')
-            ax_xz.set_xlabel(f'X ({unit})')
-            ax_xz.set_ylabel(f'Z ({unit})')
-            ax_yz.set_title('YZ View')
-            ax_yz.set_xlabel(f'Y ({unit})')
-            ax_yz.set_ylabel(f'Z ({unit})')
-            # Set axis limits
-            ax_xy.set_xlim(0, self.width)
-            ax_xy.set_ylim(0, self.height)
-            ax_xz.set_xlim(0, self.width)
-            ax_xz.set_ylim(0, self.depth)
-            ax_yz.set_xlim(0, self.height)
-            ax_yz.set_ylim(0, self.depth)
-            # Update tick labels with scaled values
-            for ax in [ax_xy, ax_xz, ax_yz]:
-                ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-                ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-
+            print("3D design not yet supported...")
         else:
             print("Showing 2D design...")
             # Calculate figure size based on domain dimensions
@@ -147,10 +100,8 @@ class Design:
             base_size = 3  # Base size for the smaller dimension
             if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
             else: figsize = (base_size, base_size / aspect_ratio)
-
             # Create single plot for 2D visualization
             fig, ax = plt.subplots(figsize=figsize)
-            
             # Plot each structure
             for structure in self.structures:
                 if isinstance(structure, Rectangle):

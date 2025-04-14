@@ -7,6 +7,7 @@ from beamz.design.structures import *
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle as MatplotlibRectangle, Circle as MatplotlibCircle, PathPatch
 from matplotlib.path import Path
+from matplotlib.animation import FuncAnimation
 
 class FDTD:
     """
@@ -87,7 +88,7 @@ class FDTD:
             current_t = self.results['t'][t_idx]
             print(f"Plotting saved field at t = {current_t:.2e} s (index {t_idx})")
         
-        print(f"Field range: min = {np.min(current_field):.2e}, max = {np.max(current_field):.2e}")
+        #print(f"Field range: min = {np.min(current_field):.2e}, max = {np.max(current_field):.2e}")
         
         # Determine appropriate SI unit and scale for spatial dimensions
         max_dim = max(self.design.width, self.design.height)
@@ -98,14 +99,14 @@ class FDTD:
         # Calculate figure size based on grid dimensions
         grid_height, grid_width = current_field.shape
         aspect_ratio = grid_width / grid_height
-        base_size = 2.5  # Base size for the smaller dimension
+        base_size = 6  # Base size for the smaller dimension
         if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
         else: figsize = (base_size, base_size / aspect_ratio)
         # Create the figure
         plt.figure(figsize=figsize)
         plt.imshow(current_field, origin='lower', 
                   extent=(0, self.design.width, 0, self.design.height),
-                  cmap='RdBu', aspect='equal')
+                  cmap='RdBu', aspect='equal', interpolation='bicubic')
         plt.colorbar(label=f'{field} Field Amplitude')
         plt.title(f'{field} Field at t = {current_t:.2e} s')
         plt.xlabel(f'X ({unit})')
@@ -191,15 +192,137 @@ class FDTD:
         plt.tight_layout()
         plt.show()
 
-    def run(self, steps: Optional[int] = None, save=True, animate_live=True) -> Dict:
+    def animate_live(self, field: str = "Ez", t: float = None):
+        """Animate the field in real time using matplotlib animation.
+        
+        Args:
+            field (str): Field component to animate ('Ez', 'Hx', or 'Hy')
+            t (float): Current simulation time
+        """
+        # Create figure and axis
+        aspect_ratio = self.ny / self.nx
+        base_size = 6
+        if aspect_ratio > 1:
+            figsize = (base_size, base_size * aspect_ratio)
+        else:
+            figsize = (base_size / aspect_ratio, base_size)
+            
+        fig, ax = plt.subplots(figsize=figsize)
+
+        # Get current field data
+        current_field = getattr(self, field)
+        
+        # Create initial plot with proper scaling
+        im = ax.imshow(current_field, origin='lower',
+                      extent=(0, self.design.width, 0, self.design.height),
+                      cmap='RdBu', aspect='equal', interpolation='bicubic')
+        
+        # Add colorbar
+        colorbar = plt.colorbar(im, orientation='vertical', aspect=30, extend='both')
+        colorbar.set_label(f'{field} Field Amplitude')
+        
+        # Add design structure outlines
+        patches = []
+        for structure in self.design.structures:
+            if isinstance(structure, Rectangle):
+                rect = MatplotlibRectangle(
+                    (structure.position[0], structure.position[1]),
+                    structure.width, structure.height,
+                    facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                ax.add_patch(rect)
+                patches.append(rect)
+            elif isinstance(structure, Circle):
+                circle = MatplotlibCircle(
+                    (structure.position[0], structure.position[1]),
+                    structure.radius,
+                    facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                ax.add_patch(circle)
+                patches.append(circle)
+            elif isinstance(structure, Ring):
+                # Create points for the ring
+                N = 100
+                theta = np.linspace(0, 2 * np.pi, N, endpoint=True)
+                x_outer = structure.position[0] + structure.outer_radius * np.cos(theta)
+                y_outer = structure.position[1] + structure.outer_radius * np.sin(theta)
+                x_inner = structure.position[0] + structure.inner_radius * np.cos(theta[::-1])
+                y_inner = structure.position[1] + structure.inner_radius * np.sin(theta[::-1])
+                vertices = np.vstack([np.column_stack([x_outer, y_outer]),
+                                   np.column_stack([x_inner, y_inner])])
+                codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (N - 1),
+                                     [Path.MOVETO] + [Path.LINETO] * (N - 1)])
+                path = Path(vertices, codes)
+                ring_patch = PathPatch(path, facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                ax.add_patch(ring_patch)
+                patches.append(ring_patch)
+            elif isinstance(structure, ModeSource):
+                line, = ax.plot((structure.start[0], structure.end[0]), 
+                              (structure.start[1], structure.end[1]), 
+                              '-', lw=4, color="crimson", alpha=0.5)
+                patches.append(line)
+                line2, = ax.plot((structure.start[0], structure.end[0]), 
+                               (structure.start[1], structure.end[1]), 
+                               '--', lw=2, color="black", alpha=0.5)
+                patches.append(line2)
+
+        # Set axis labels with proper scaling
+        max_dim = max(self.design.width, self.design.height)
+        if max_dim >= 1e-3: scale, unit = 1e3, 'mm'
+        elif max_dim >= 1e-6: scale, unit = 1e6, 'µm'
+        elif max_dim >= 1e-9: scale, unit = 1e9, 'nm'
+        else: scale, unit = 1e12, 'pm'
+        
+        plt.xlabel(f'X ({unit})')
+        plt.ylabel(f'Y ({unit})')
+        ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+        ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+
+        # Animation update function
+        def update(frame):
+            # Update fields
+            self.simulate_step()
+            
+            # Apply sources
+            for source in self.sources:
+                if isinstance(source, ModeSource):
+                    mode_profile = source.mode_profiles[0]
+                    modulation = source.signal[frame]
+                    for point in mode_profile:
+                        amplitude, x_raw, y_raw = point
+                        x = int(round(x_raw / self.dx))
+                        y = int(round(y_raw / self.dy))
+                        if x < 0 or x >= self.nx or y < 0 or y >= self.ny:
+                            continue
+                        self.Ez[y, x] += amplitude * modulation
+                        if source.direction == "+x": self.Ez[y, x-1] = 0
+                        elif source.direction == "-x": self.Ez[y, x+1] = 0
+                        elif source.direction == "+y": self.Ez[y-1, x] = 0
+                        elif source.direction == "-y": self.Ez[y+1, x] = 0
+            
+            # Update plot data
+            current_field = getattr(self, field)
+            im.set_array(current_field)
+            
+            # Update title with current time
+            ax.set_title(f't = {self.t:.2e} s')
+            
+            # Return all artists that need to be redrawn
+            return [im] + patches
+
+        # Create animation
+        anim = FuncAnimation(fig, update, frames=self.num_steps, 
+                           interval=0, blit=True)
+        
+        plt.tight_layout()
+        plt.show()
+        
+        return anim
+
+    def run(self, steps: Optional[int] = None, save=True, live=True) -> Dict:
         """Run the simulation."""
         # Initialize simulation state
         self.t = 0
         self._total_steps = self.num_steps
         self._save_results = save
-        #print(f"Starting simulation with {self.num_steps} steps")
-        #print(f"Initial field range: min = {np.min(self.Ez):.2e}, max = {np.max(self.Ez):.2e}")
-
         # Calculate Courant number to check stability
         c = 1/np.sqrt(EPS_0 * MU_0)  # Speed of light
         courant = c * self.dt / min(self.dx, self.dy)
@@ -239,7 +362,7 @@ class FDTD:
                     # Handle other source types here if needed
                     pass
                     
-            # Save results if requested
+            # Save results at every stepif requested
             if save:
                 self.results['Ez'].append(self.Ez.copy())
                 self.results['Hx'].append(self.Hx.copy())
@@ -250,11 +373,18 @@ class FDTD:
             self.t += self.dt
             
             # Show progress and check for divergence
-            if step % 100 == 0:
-                #print(f"Step {step}/{self.num_steps}")
-                #print(f"Current field range: min = {np.min(self.Ez):.2e}, max = {np.max(self.Ez):.2e}")
-                #max_field = np.max(np.abs(self.Ez))                
-                self.plot_field(field="Ez", t=self.t)
+            if live:
+                self.animate_live(field="Ez", t=self.t)
+            else:
+                if step % 100 == 0:            
+                    self.plot_field(field="Ez", t=self.t)
 
-        #print(f"Simulation completed. Final field range: min = {np.min(self.Ez):.2e}, max = {np.max(self.Ez):.2e}")
+        if save:
+            # save the data in a file
+            self.save_data()
+            # save the data as figures
+            self.save_figures()
+            # save the data as a video
+            self.save_video()
+
         return self.results
