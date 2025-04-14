@@ -5,7 +5,7 @@ import random
 import numpy as np
 from beamz.design.materials import Material
 from beamz.const import µm
-from beamz.design.sources import ModeSource
+from beamz.design.sources import ModeSource, LineSource
 from beamz.design.monitors import ModeMonitor
 
 def rgb_to_hex(r, g, b):
@@ -45,6 +45,9 @@ class Design:
     def add(self, structure):
         """Add structures on top of the design."""
         if isinstance(structure, ModeSource):
+            self.sources.append(structure)
+            self.structures.append(structure)
+        elif isinstance(structure, LineSource):
             self.sources.append(structure)
             self.structures.append(structure)
         elif isinstance(structure, ModeMonitor):
@@ -176,6 +179,9 @@ class Design:
                 elif isinstance(structure, ModeSource):
                     ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="crimson", label='Mode Source')
                     ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", label='Mode Source')
+                elif isinstance(structure, LineSource):
+                    ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="crimson", label='Line Source')
+                    ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", label='Line Source')
                 elif isinstance(structure, ModeMonitor):
                     ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="navy", label='Mode Monitor')
             

@@ -2,7 +2,7 @@ from typing import Dict, Optional
 import numpy as np
 from beamz.const import *
 from beamz.simulation.meshing import RegularGrid
-from beamz.design.sources import ModeSource
+from beamz.design.sources import ModeSource, LineSource
 from beamz.design.structures import *
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle as MatplotlibRectangle, Circle as MatplotlibCircle, PathPatch
@@ -191,6 +191,9 @@ class FDTD:
             elif isinstance(structure, ModeSource):
                 plt.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="crimson", alpha=0.5, label='Mode Source')
                 plt.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", alpha=0.5)
+            elif isinstance(structure, LineSource):
+                plt.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="crimson", alpha=0.5, label='Line Source')
+                plt.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", alpha=0.5)
             elif isinstance(structure, ModeMonitor):
                 plt.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="navy", alpha=0.5, label='Mode Monitor')
 
@@ -213,18 +216,17 @@ class FDTD:
             self.fig.canvas.flush_events()
             return
 
-        # Create new figure and axis if none exists
-        aspect_ratio = self.ny / self.nx
-        base_size = 6
-        if aspect_ratio > 1:
-            figsize = (base_size, base_size * aspect_ratio)
-        else:
-            figsize = (base_size / aspect_ratio, base_size)
-            
-        self.fig, self.ax = plt.subplots(figsize=figsize)
-
         # Get current field data
         current_field = getattr(self, field)
+        
+        # Calculate figure size based on grid dimensions
+        grid_height, grid_width = current_field.shape
+        aspect_ratio = grid_width / grid_height
+        base_size = 5  # Base size for the smaller dimension
+        if aspect_ratio > 1: figsize = (base_size * aspect_ratio * 1.2, base_size)
+        else: figsize = (base_size * 1.2, base_size / aspect_ratio)
+            
+        self.fig, self.ax = plt.subplots(figsize=figsize)
         
         # Create initial plot with proper scaling
         self.im = self.ax.imshow(current_field, origin='lower',
@@ -331,10 +333,50 @@ class FDTD:
                         elif source.direction == "-x": self.Ez[y, x+1] = 0
                         elif source.direction == "+y": self.Ez[y-1, x] = 0
                         elif source.direction == "-y": self.Ez[y+1, x] = 0
-                else:
-                    # Handle other source types here if needed
-                    pass
-                    
+                elif isinstance(source, LineSource):
+                    # Get the time modulation for this step
+                    modulation = source.signal[step]
+                    # Apply the source to the grid
+                    if source.distribution is None:
+                        # Calculate grid indices for start and end points
+                        x_start = int(round(source.start[0] / self.dx))
+                        y_start = int(round(source.start[1] / self.dy))
+                        x_end = int(round(source.end[0] / self.dx))
+                        y_end = int(round(source.end[1] / self.dy))
+                        
+                        # Use Bresenham's line algorithm to get all grid points along the line
+                        dx = abs(x_end - x_start)
+                        dy = abs(y_end - y_start)
+                        x, y = x_start, y_start
+                        n = 1 + dx + dy
+                        x_inc = 1 if x_end > x_start else -1
+                        y_inc = 1 if y_end > y_start else -1
+                        error = dx - dy
+                        dx *= 2
+                        dy *= 2
+                        
+                        while n > 0:
+                            # Only apply if within grid bounds
+                            if 0 <= x < self.nx and 0 <= y < self.ny:
+                                self.Ez[y, x] += modulation
+                            if error > 0:
+                                x += x_inc
+                                error -= dy
+                            else:
+                                y += y_inc
+                                error += dx
+                            n -= 1
+                    else:
+                        # Apply the source to all points in the distribution
+                        for point in source.distribution:
+                            amplitude, x_raw, y_raw = point
+                            # Convert the position to the nearest grid point
+                            x = int(round(x_raw / self.dx))
+                            y = int(round(y_raw / self.dy))
+                            # Only apply if within grid bounds
+                            if 0 <= x < self.nx and 0 <= y < self.ny:
+                                self.Ez[y, x] += amplitude * modulation
+            
             # Save results if requested
             if save:
                 self.results['Ez'].append(self.Ez.copy())

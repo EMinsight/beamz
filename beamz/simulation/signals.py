@@ -14,9 +14,14 @@ def ramped_cosine(t, amplitude, frequency, phase, ramp_duration, t_max):
     signal *= sigmoid(t, min=1, max=0, duration=ramp_duration, t0=t_max - ramp_duration)
     return signal
 
-# GaussianPulse: Source time dependence that describes a Gaussian pulse.
+def gaussian(t, amplitude, center, width):
+    return amplitude * np.exp(-(t - center)**2 / (2 * width**2))
 
-# CustomSourceTime: Custom source time dependence consisting of a real or complex envelope modulated at a central frequency, as shown below.
+def gaussian_pulse(t, amplitude, center, width, frequency, phase):
+    return gaussian(t, amplitude, center, width) * cosine(t, amplitude, frequency, phase)
+
+def chirped_gaussian():
+    pass
 
 
 

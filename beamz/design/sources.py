@@ -10,6 +10,13 @@ class PointSource():
         self.position = position
         self.signal = signal
 
+class LineSource():
+    """A current distribution along a line."""
+    def __init__(self, start, end, distribution, signal=0):
+        self.start = start
+        self.end = end
+        self.signal = signal
+        self.distribution = distribution
 
 class ModeSource():
     """Calculates and injects the mode profiles for a cross section given a start and end point."""
@@ -28,7 +35,6 @@ class ModeSource():
         self.wavelength = wavelength
         self.design = design
         self.signal = signal
-        self.time = end
         self.direction = direction
         # Calculate and store mode profiles
         eps_1d = self.get_eps_1d()
