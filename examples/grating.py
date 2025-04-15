@@ -9,7 +9,7 @@ T = np.linspace(0, TIME, int(TIME/(0.015*WL/LIGHT_SPEED)))
 
 design = Design(width=6*µm, height=6*µm, material=Material(1))
 i = 0
-while (i-1)*µm*0.4 < 6*µm:
+while (i-1)*µm*0.4 < 6*µm: 
     design.add(Rectangle(position=(1*i*µm,2.5*µm), width=0.5*µm, height=1*µm, material=Material(6.25)))
     i += 1
 design.add(Rectangle(position=(0,0), width=6*µm, height=2.5*µm, material=Material(6.25)))

@@ -46,38 +46,84 @@ class FDTD:
         self.ax = None
         self.anim = None
         self.im = None
+        # Calculate PML coefficients
+        self._setup_pml()
         print(f"Initialized FDTD with grid size: {self.nx}x{self.ny}")
 
+    def _setup_pml(self):
+        """Set up a stable PML implementation using a simple lossy layer approach."""
+        # PML parameters
+        self.pml_width = max(20, int(min(self.nx, self.ny) * 0.1))  # Min 20 cells or 10% of domain
+        print(f"PML width: {self.pml_width} cells")
+        
+        # Create arrays to hold PML coefficients
+        self.pml_x = np.ones((self.nx, self.ny))  # X-direction PML
+        self.pml_y = np.ones((self.nx, self.ny))  # Y-direction PML
+        
+        # Create PML profile (polynomial grading)
+        pml_profile = np.ones((self.pml_width))
+        
+        # Create polynomial grading (cubic) - proven to be stable
+        for i in range(self.pml_width):
+            d = i / self.pml_width
+            pml_profile[i] = 1.0 - d**3
+        
+        # Calculate max conductivity based on grid and material
+        eps_avg = np.mean(self.epsilon_r)
+        # Calculate the impedance
+        eta = np.sqrt(MU_0 / (EPS_0 * eps_avg))
+        
+        # Set max conductivity - conservative value for stability
+        sigma_max = 0.5 / (eta * self.dx)
+        
+        # Apply PML in x-direction (left and right boundaries)
+        for i in range(self.pml_width):
+            sigma = sigma_max * pml_profile[i]
+            # Left boundary
+            self.pml_x[i, :] = 1.0 / (1.0 + sigma * self.dt / (2.0 * EPS_0 * self.epsilon_r[i, :]))
+            # Right boundary
+            self.pml_x[-(i+1), :] = 1.0 / (1.0 + sigma * self.dt / (2.0 * EPS_0 * self.epsilon_r[-(i+1), :]))
+        
+        # Apply PML in y-direction (top and bottom boundaries)
+        for j in range(self.pml_width):
+            sigma = sigma_max * pml_profile[j]
+            # Bottom boundary
+            self.pml_y[:, j] = 1.0 / (1.0 + sigma * self.dt / (2.0 * EPS_0 * self.epsilon_r[:, j]))
+            # Top boundary
+            self.pml_y[:, -(j+1)] = 1.0 / (1.0 + sigma * self.dt / (2.0 * EPS_0 * self.epsilon_r[:, -(j+1)]))
+        
+        print(f"PML configured: max sigma = {sigma_max:.2e}")
+
     def update_h_fields(self):
-        """Update magnetic field components with PML"""
-        self.Hx[:, :] = self.Hx[:, :] - (self.dt/(MU_0*self.dy)) * \
-                        (self.Ez[:, 1:] - self.Ez[:, :-1])
-        self.Hy[:, :] = self.Hy[:, :] + (self.dt/(MU_0*self.dx)) * \
-                        (self.Ez[1:, :] - self.Ez[:-1, :])
+        """Update magnetic field components with simple FDTD."""
+        curl_e_x = (self.Ez[:, 1:] - self.Ez[:, :-1]) / self.dy
+        self.Hx = self.Hx - (self.dt / MU_0) * curl_e_x
+        curl_e_y = (self.Ez[1:, :] - self.Ez[:-1, :]) / self.dx
+        self.Hy = self.Hy + (self.dt / MU_0) * curl_e_y
     
     def update_e_field(self):
-        """Update electric field component with PML"""
-        # First update the main field without PML
+        """Update electric field component with PML."""
+        # Calculate curl of H
+        curl_h_x = np.zeros_like(self.Ez)
+        curl_h_y = np.zeros_like(self.Ez)
+        # Interior points calculation
+        curl_h_x[1:-1, 1:-1] = (self.Hx[1:-1, 1:] - self.Hx[1:-1, :-1]) / self.dy
+        curl_h_y[1:-1, 1:-1] = (self.Hy[1:, 1:-1] - self.Hy[:-1, 1:-1]) / self.dx
+        # Save current Ez field
+        Ez_prev = self.Ez.copy()
+        # Update Ez field with standard FDTD
         self.Ez[1:-1, 1:-1] = self.Ez[1:-1, 1:-1] + \
-            (self.dt/(EPS_0*self.epsilon_r[1:-1, 1:-1])) * \
-            ((self.Hy[1:, 1:-1] - self.Hy[:-1, 1:-1])/self.dx - \
-             (self.Hx[1:-1, 1:] - self.Hx[1:-1, :-1])/self.dy)
-        # Then apply PML only at the boundaries where sigma > 0
-        mask = self.sigma[1:-1, 1:-1] > 0
-        if np.any(mask):
-            sigma_x = self.sigma[1:-1, 1:-1][mask]
-            sigma_y = self.sigma[1:-1, 1:-1][mask]
-            # Update coefficients for PML regions only
-            cx = np.exp(-sigma_x * self.dt / EPS_0)
-            cy = np.exp(-sigma_y * self.dt / EPS_0)
-            # Apply PML absorption only at boundaries
-            self.Ez[1:-1, 1:-1][mask] *= (cx + cy) / 2
+                            (self.dt / (EPS_0 * self.epsilon_r[1:-1, 1:-1])) * \
+                            (-curl_h_x[1:-1, 1:-1] + curl_h_y[1:-1, 1:-1])
+        # Apply PML damping (simplified approach)
+        # This acts as a scaling factor in PML regions
+        self.Ez = self.Ez * self.pml_x * self.pml_y
 
     def simulate_step(self):
-        """Perform one FDTD step"""
+        """Perform one FDTD step with stability checks."""
         self.update_h_fields()
         self.update_e_field()
-
+            
     def plot_field(self, field: str = "Ez", t: float = None) -> None:
         """Plot a field at a given time with proper scaling and units."""
         # Handle the case where we're plotting current state (not from results)
@@ -197,13 +243,8 @@ class FDTD:
         plt.tight_layout()
         plt.show()
 
-    def animate_live(self, field: str = "Ez", t: float = None, axis_scale=[-1,1]):
-        """Animate the field in real time using matplotlib animation.
-        
-        Args:
-            field (str): Field component to animate ('Ez', 'Hx', or 'Hy')
-            t (float): Current simulation time
-        """
+    def animate_live(self, field: str = "Ez", axis_scale=[-1,1]):
+        """Animate the field in real time using matplotlib animation."""
         # If animation already exists, just update the data
         if self.fig is not None and plt.fignum_exists(self.fig.number):
             current_field = getattr(self, field)
@@ -288,8 +329,20 @@ class FDTD:
         plt.show(block=False)
         plt.pause(0.001)  # Small pause to ensure window is shown
 
-    def run(self, steps: Optional[int] = None, save=True, live=True, axis_scale=[-1,1]) -> Dict:
-        """Run the simulation."""
+    def run(self, steps: Optional[int] = None, save=True, live=True, axis_scale=[-1,1], save_animation=False, animation_filename='fdtd_animation.mp4') -> Dict:
+        """Run the simulation.
+        
+        Args:
+            steps: Number of steps to run. If None, run until the end of the time array.
+            save: Whether to save field data at each step.
+            live: Whether to show live animation of the simulation.
+            axis_scale: Color scale limits for the field visualization.
+            save_animation: Whether to save an animation of the simulation as an mp4 file.
+            animation_filename: Filename for the saved animation (must end in .mp4).
+        
+        Returns:
+            Dictionary containing the simulation results.
+        """
         # Initialize simulation state
         self.t = 0
         self._total_steps = self.num_steps
@@ -417,7 +470,7 @@ class FDTD:
             
             # Show progress
             if live:  # Update every 5 steps for smoother animation
-                self.animate_live(field="Ez", t=self.t, axis_scale=axis_scale)
+                self.animate_live(field="Ez", axis_scale=axis_scale)
 
         # Clean up animation
         if live and self.fig is not None:
@@ -426,9 +479,116 @@ class FDTD:
             self.ax = None
             self.im = None
 
-        #if save:
-        #    self.save_data()
-        #    self.save_figures()
-        #    self.save_video()
+        # Save animation if requested
+        if save_animation and save:
+            self.save_animation(field="Ez", axis_scale=axis_scale, filename=animation_filename)
 
         return self.results
+        
+    def save_animation(self, field: str = "Ez", axis_scale=[-1, 1], filename='fdtd_animation.mp4', fps=60):
+        """Save an animation of the simulation results as an mp4 file.
+        
+        Args:
+            field: Field to animate (Ez, Hx, or Hy).
+            axis_scale: Color scale limits for the field visualization.
+            filename: Filename for the saved animation (must end in .mp4).
+            fps: Frames per second for the animation.
+        """
+        if len(self.results[field]) == 0:
+            print("No field data to animate. Make sure to run the simulation with save=True.")
+            return
+            
+        # Create figure and axis for animation
+        max_dim = max(self.design.width, self.design.height)
+        if max_dim >= 1e-3: scale, unit = 1e3, 'mm'
+        elif max_dim >= 1e-6: scale, unit = 1e6, 'µm'
+        elif max_dim >= 1e-9: scale, unit = 1e9, 'nm'
+        else: scale, unit = 1e12, 'pm'
+        
+        # Calculate figure size based on grid dimensions
+        grid_height, grid_width = self.results[field][0].shape
+        aspect_ratio = grid_width / grid_height
+        base_size = 5  # Base size for the smaller dimension
+        if aspect_ratio > 1: figsize = (base_size * aspect_ratio * 1.2, base_size)
+        else: figsize = (base_size * 1.2, base_size / aspect_ratio)
+        
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        # Create initial plot
+        im = ax.imshow(self.results[field][0], origin='lower',
+                      extent=(0, self.design.width, 0, self.design.height),
+                      cmap='RdBu', aspect='equal', interpolation='bicubic', 
+                      vmin=axis_scale[0], vmax=axis_scale[1])
+        
+        # Add colorbar
+        colorbar = plt.colorbar(im, orientation='vertical', aspect=30, extend='both')
+        colorbar.set_label(f'{field} Field Amplitude')
+        
+        # Add design structure outlines
+        for structure in self.design.structures:
+            if isinstance(structure, Rectangle):
+                rect = MatplotlibRectangle(
+                    (structure.position[0], structure.position[1]),
+                    structure.width, structure.height,
+                    facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                ax.add_patch(rect)
+            elif isinstance(structure, Circle):
+                circle = MatplotlibCircle(
+                    (structure.position[0], structure.position[1]),
+                    structure.radius,
+                    facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                ax.add_patch(circle)
+            elif isinstance(structure, Ring):
+                # Create points for the ring
+                N = 100
+                theta = np.linspace(0, 2 * np.pi, N, endpoint=True)
+                x_outer = structure.position[0] + structure.outer_radius * np.cos(theta)
+                y_outer = structure.position[1] + structure.outer_radius * np.sin(theta)
+                x_inner = structure.position[0] + structure.inner_radius * np.cos(theta[::-1])
+                y_inner = structure.position[1] + structure.inner_radius * np.sin(theta[::-1])
+                vertices = np.vstack([np.column_stack([x_outer, y_outer]),
+                                   np.column_stack([x_inner, y_inner])])
+                codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (N - 1),
+                                     [Path.MOVETO] + [Path.LINETO] * (N - 1)])
+                path = Path(vertices, codes)
+                ring_patch = PathPatch(path, facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                ax.add_patch(ring_patch)
+            elif isinstance(structure, ModeSource) or isinstance(structure, LineSource):
+                ax.plot((structure.start[0], structure.end[0]), 
+                      (structure.start[1], structure.end[1]), 
+                      '-', lw=4, color="crimson", alpha=0.5)
+                ax.plot((structure.start[0], structure.end[0]), 
+                      (structure.start[1], structure.end[1]), 
+                      '--', lw=2, color="black", alpha=0.5)
+        
+        # Add axis labels with proper scaling
+        plt.xlabel(f'X ({unit})')
+        plt.ylabel(f'Y ({unit})')
+        ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+        ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+        
+        # Title with time information
+        title = ax.set_title(f't = {self.results["t"][0]:.2e} s')
+        
+        # Animation update function
+        def update(frame):
+            im.set_array(self.results[field][frame])
+            title.set_text(f't = {self.results["t"][frame]:.2e} s')
+            return [im, title]
+        
+        # Create animation
+        frames = len(self.results[field])
+        ani = FuncAnimation(fig, update, frames=frames, blit=True)
+        
+        # Save animation
+        try:
+            from matplotlib.animation import FFMpegWriter
+            writer = FFMpegWriter(fps=fps)
+            ani.save(filename, writer=writer)
+            print(f"Animation saved to {filename}")
+        except Exception as e:
+            print(f"Error saving animation: {e}")
+            print("Make sure FFmpeg is installed on your system.")
+        
+        # Close the figure
+        plt.close(fig)

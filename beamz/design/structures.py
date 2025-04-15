@@ -35,12 +35,14 @@ class Design:
         self.structures = [Rectangle(position=(0,0), width=width, height=height, material=material, color=color)]
         self.sources = []
         self.monitors = []
-        self.time = 0
-        self.is_3d = False
+        self.boundaries = []
         self.width = width
         self.height = height
         self.depth = depth
         self.border_color = border_color
+        self.time = 0
+        self.is_3d = False
+        self.init_boundaries()
 
     def add(self, structure):
         """Add structures on top of the design."""
@@ -66,23 +68,22 @@ class Design:
             new_structure.scale(random.uniform(scale_range[0], scale_range[1]))
             self.add(new_structure)
 
-    # TODO
-    def borders(self, structure=None, all=None, top=None, right=None, bottom=None, left=None):
-        """Add boundary conditions to the design area (currently only supports none or PML)."""
-        if all is PML:
-            # Apply the same PML to all borders
-            self.add(PML(position=(0, 0), width=self.width, thickness=all.thickness))
-            self.add(PML(position=(self.width - all.thickness, 0), width=all.thickness, height=self.height))
-            self.add(PML(position=(0, self.height - all.thickness), width=self.width, height=all.thickness))
-            self.add(PML(position=(0, 0), width=all.thickness, height=self.height))
-        elif all is None:
-            # Apply individual PMLs to specified borders
-            if top is PML: self.add(PML(position=(0, 0), width=self.width, thickness=top.thickness))
-            if right is PML: self.add(PML(position=(self.width - right.thickness, 0), width=right.thickness, height=self.height))
-            if bottom is PML: self.add(PML(position=(0, self.height - bottom.thickness), width=self.width, height=bottom.thickness))
-            if left is PML: self.add(PML(position=(0, 0), width=left.thickness, height=self.height))
-        else:
-            raise ValueError("PML must be specified in borders()...")
+    def init_boundaries(self):
+        """Add boundary conditions to the design area (currently only supports PML)."""
+        # Calculate PML size - wider PML regions absorb better
+        size = self.width/4  # Using 1/4 of the domain width for PML regions
+        
+        # Edges of the design domain
+        self.boundaries.append(RectPML(position=(0, 0), width=size, height=self.height, orientation="left"))
+        self.boundaries.append(RectPML(position=(self.width - size, 0), width=size, height=self.height, orientation="right"))
+        self.boundaries.append(RectPML(position=(0, self.height - size), width=self.width, height=size, orientation="top"))
+        self.boundaries.append(RectPML(position=(0, 0), width=self.width, height=size, orientation="bot"))
+        
+        # Corners of the design domain
+        self.boundaries.append(CircularPML(position=(0, 0), radius=size, orientation="top-left"))
+        self.boundaries.append(CircularPML(position=(self.width, 0), radius=size, orientation="top-right"))
+        self.boundaries.append(CircularPML(position=(0, self.height), radius=size, orientation="bottom-left"))
+        self.boundaries.append(CircularPML(position=(self.width, self.height), radius=size, orientation="bottom-right"))
 
     def show(self):
         """Display the design visually."""
@@ -103,8 +104,11 @@ class Design:
             base_size = 3  # Base size for the smaller dimension
             if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
             else: figsize = (base_size, base_size / aspect_ratio)
-            # Create single plot for 2D visualization
-            fig, ax = plt.subplots(figsize=figsize)
+            
+            # Create figure with two subplots: one for structures, one for PML
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(figsize[0]*2, figsize[1]))
+            
+            # First plot: Structures
             # Plot each structure
             for structure in self.structures:
                 if isinstance(structure, Rectangle):
@@ -112,13 +116,13 @@ class Design:
                         (structure.position[0], structure.position[1]),
                         structure.width, structure.height,
                         facecolor=structure.color, edgecolor=self.border_color, alpha=1)
-                    ax.add_patch(rect)
+                    ax1.add_patch(rect)
                 elif isinstance(structure, Circle):
                     circle = plt.Circle(
                         (structure.position[0], structure.position[1]),
                         structure.radius,
                         facecolor=structure.color, edgecolor=self.border_color, alpha=1)
-                    ax.add_patch(circle)
+                    ax1.add_patch(circle)
                 elif isinstance(structure, Ring):
                     # Create points for the ring
                     N = 100  # Number of points for each circle
@@ -138,7 +142,7 @@ class Design:
                     # Create the path and patch
                     path = Path(vertices, codes)
                     ring_patch = PathPatch(path, facecolor=structure.color, alpha=1, edgecolor=self.border_color)
-                    ax.add_patch(ring_patch)
+                    ax1.add_patch(ring_patch)
                 elif isinstance(structure, CircularBend):
                     # Create points for the bend
                     N = 100  # Number of points for each arc
@@ -172,28 +176,91 @@ class Design:
                     # Create the path and patch
                     path = Path(vertices, codes)
                     bend_patch = PathPatch(path, facecolor=structure.color, alpha=1, edgecolor=self.border_color)
-                    ax.add_patch(bend_patch)
+                    ax1.add_patch(bend_patch)
                 elif isinstance(structure, Polygon):
                     polygon = plt.Polygon(structure.vertices, facecolor=structure.color, alpha=1, edgecolor=self.border_color)
-                    ax.add_patch(polygon)
+                    ax1.add_patch(polygon)
                 elif isinstance(structure, ModeSource):
-                    ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="crimson", label='Mode Source')
-                    ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", label='Mode Source')
+                    ax1.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="crimson", label='Mode Source')
+                    ax1.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", label='Mode Source')
                 elif isinstance(structure, LineSource):
-                    ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="crimson", label='Line Source')
-                    ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", label='Line Source')
+                    ax1.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="crimson", label='Line Source')
+                    ax1.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", label='Line Source')
                 elif isinstance(structure, ModeMonitor):
-                    ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="navy", label='Mode Monitor')
+                    ax1.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="navy", label='Mode Monitor')
             
-            ax.set_title('2D Design')
-            ax.set_xlabel(f'X ({unit})')
-            ax.set_ylabel(f'Y ({unit})')
+            ax1.set_title('Structures')
+            ax1.set_xlabel(f'X ({unit})')
+            ax1.set_ylabel(f'Y ({unit})')
             # Set axis limits
-            ax.set_xlim(0, self.width)
-            ax.set_ylim(0, self.height)
+            ax1.set_xlim(0, self.width)
+            ax1.set_ylim(0, self.height)
             # Update tick labels with scaled values
-            ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-            ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+            ax1.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+            ax1.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+            
+            # Second plot: PML visualization
+            # Create a grid to visualize the conductivity
+            resolution = min(self.width, self.height) / 400  # Increased resolution for smoother visualization
+            x_vals = np.arange(0, self.width, resolution)
+            y_vals = np.arange(0, self.height, resolution)
+            X, Y = np.meshgrid(x_vals, y_vals)
+            conductivity = np.zeros(X.shape)
+            
+            # Calculate PML conductivity at each grid point
+            for i in range(len(y_vals)):
+                for j in range(len(x_vals)):
+                    x, y = X[i, j], Y[i, j]
+                    # Sum conductivity from all boundaries
+                    for boundary in self.boundaries:
+                        if isinstance(boundary, RectPML) or isinstance(boundary, CircularPML):
+                            conductivity[i, j] += boundary.get_conductivity(x, y)
+            
+            # Plot the conductivity as a heatmap
+            im = ax2.imshow(conductivity, origin='lower', 
+                         extent=(0, self.width, 0, self.height),
+                         cmap='viridis', aspect='equal', interpolation='bilinear')
+            
+            # Add colorbar
+            cbar = fig.colorbar(im, ax=ax2, label='PML Conductivity (r⁴ polynomial profile)')
+            
+            # Outline the PML regions for clarity
+            for boundary in self.boundaries:
+                if isinstance(boundary, RectPML):
+                    rect = MatplotlibRectangle(
+                        (boundary.position[0], boundary.position[1]),
+                        boundary.width, boundary.height,
+                        facecolor='none', edgecolor='white', linestyle='--', alpha=0.7)
+                    ax2.add_patch(rect)
+                elif isinstance(boundary, CircularPML):
+                    # For CircularPML, draw a quarter circle depending on the orientation
+                    if boundary.orientation == "top-left":
+                        theta = np.linspace(0, np.pi/2, 50)
+                        x = boundary.position[0] + boundary.radius * np.cos(theta)
+                        y = boundary.position[1] + boundary.radius * np.sin(theta)
+                    elif boundary.orientation == "top-right":
+                        theta = np.linspace(np.pi/2, np.pi, 50)
+                        x = boundary.position[0] + boundary.radius * np.cos(theta)
+                        y = boundary.position[1] + boundary.radius * np.sin(theta)
+                    elif boundary.orientation == "bottom-left":
+                        theta = np.linspace(0, -np.pi/2, 50)
+                        x = boundary.position[0] + boundary.radius * np.cos(theta)
+                        y = boundary.position[1] + boundary.radius * np.sin(theta)
+                    elif boundary.orientation == "bottom-right":
+                        theta = np.linspace(np.pi, 3*np.pi/2, 50)
+                        x = boundary.position[0] + boundary.radius * np.cos(theta)
+                        y = boundary.position[1] + boundary.radius * np.sin(theta)
+                    ax2.plot(x, y, 'w--', alpha=0.7)
+            
+            ax2.set_title('PML Absorption Profile (4th Power Polynomial)')
+            ax2.set_xlabel(f'X ({unit})')
+            ax2.set_ylabel(f'Y ({unit})')
+            # Set axis limits
+            ax2.set_xlim(0, self.width)
+            ax2.set_ylim(0, self.height)
+            # Update tick labels with scaled values
+            ax2.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+            ax2.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
         
         # Set equal aspect ratio and adjust layout
         plt.tight_layout()
@@ -204,27 +271,47 @@ class Design:
 
     def get_material_value(self, x, y):
         """Return the material value at a given (x, y) coordinate, prioritizing the topmost structure."""
+        # First check if we're in a PML boundary region
+        pml_conductivity = 0.0
+        for boundary in self.boundaries:
+            if isinstance(boundary, RectPML) or isinstance(boundary, CircularPML):
+                pml_conductivity += boundary.get_conductivity(x, y)
+        
+        # Get material values from structures
         for structure in reversed(self.structures):
             if isinstance(structure, Rectangle):
                 #print("In Rectangle:", x, y, structure.position[0], structure.position[1], structure.width, structure.height)
                 if (structure.position[0] <= x <= structure.position[0] + structure.width and
                     structure.position[1] <= y <= structure.position[1] + structure.height):
-                    return [structure.material.permittivity, structure.material.permeability, structure.material.conductivity]
+                    # Return with added PML conductivity
+                    return [structure.material.permittivity, 
+                            structure.material.permeability, 
+                            structure.material.conductivity + pml_conductivity]
             elif isinstance(structure, Circle):
                 #print("In Circle:", x, y, structure.position[0], structure.position[1], structure.radius)
                 if np.hypot(x - structure.position[0], y - structure.position[1]) <= structure.radius:
-                    return [structure.material.permittivity, structure.material.permeability, structure.material.conductivity]
+                    # Return with added PML conductivity
+                    return [structure.material.permittivity, 
+                            structure.material.permeability, 
+                            structure.material.conductivity + pml_conductivity]
             elif isinstance(structure, Ring):
                 #print("In Ring:", x, y, structure.position[0], structure.position[1], structure.inner_radius, structure.outer_radius)
                 distance = np.hypot(x - structure.position[0], y - structure.position[1])
                 if structure.inner_radius <= distance <= structure.outer_radius:
-                    return [structure.material.permittivity, structure.material.permeability, structure.material.conductivity]
+                    # Return with added PML conductivity
+                    return [structure.material.permittivity, 
+                            structure.material.permeability, 
+                            structure.material.conductivity + pml_conductivity]
             elif isinstance(structure, Polygon):
                 #print("In Polygon:", x, y, structure.vertices)
                 if self._point_in_polygon(x, y, structure.vertices):
-                    return [structure.material.permittivity, structure.material.permeability, structure.material.conductivity]
+                    # Return with added PML conductivity
+                    return [structure.material.permittivity, 
+                            structure.material.permeability, 
+                            structure.material.conductivity + pml_conductivity]
         #print("In Default")
-        return [1.0, 1.0, 0.0]  # Default permittivity if no structure contains the point
+        # Default with added PML conductivity
+        return [1.0, 1.0, pml_conductivity]  # Default permittivity if no structure contains the point
 
     def _point_in_polygon(self, x, y, vertices):
         """Check if a point is inside a polygon using the ray-casting algorithm."""
@@ -430,29 +517,81 @@ class Taper(Polygon):
         return Taper(self.position, self.input_width, self.output_width, self.length, self.material)
 
 # ================================================ 2D Boundaries
-# TODO
-class PML:
-    """Perfectly Matched Layer (PML) is a boundary condition that absorbs waves at the edges of the simulation domain."""
-    def __init__(self, position=(0,0), width=1*µm, thickness=20*µm, sigma_max=1.0, m=3.0):
+
+class RectPML:
+    """Simple rectangular Perfectly Matched Layer (PML) for absorbing boundary conditions."""
+    def __init__(self, position=(0,0), width=1, height=1, orientation="left"):
         self.position = position
         self.width = width
-        self.thickness = thickness
-        self.sigma_max = sigma_max
-        self.m = m
+        self.height = height
+        self.orientation = orientation
         
-    def get_conductivity_profile(self, distance):
-        """Calculate the conductivity profile at a given distance from the PML boundary."""
-        if distance < 0 or distance > self.thickness: return 0.0
-        return self.sigma_max * (distance / self.thickness) ** self.m
-                
-    def __str__(self):
-        return f"PML(thickness={self.thickness}, sigma_max={self.sigma_max}, m={self.m})"
+    def get_conductivity(self, x, y):
+        # Check if point is within the PML region
+        if not (self.position[0] <= x <= self.position[0] + self.width and
+                self.position[1] <= y <= self.position[1] + self.height):
+            return 0.0
+            
+        # Maximum conductivity at the boundary
+        max_conductivity = 1.0
+        
+        # Calculate distance from boundary edge based on orientation
+        if self.orientation == "left":
+            distance = (x - self.position[0]) / self.width
+        elif self.orientation == "right":
+            distance = 1.0 - (x - self.position[0]) / self.width
+        elif self.orientation == "top":
+            distance = 1.0 - (y - self.position[1]) / self.height
+        elif self.orientation == "bot":
+            distance = (y - self.position[1]) / self.height
+        else:
+            return 0.0  # Default if orientation is not recognized
+        
+        # Ensure distance is within [0,1]
+        distance = min(max(distance, 0.0), 1.0)
+        
+        # Calculate conductivity with polynomial scaling (higher power for sharper gradient)
+        # Using 4th power for stronger absorption near boundaries
+        return max_conductivity * (1.0 - distance)**4
 
-# Perfectly Conducting (PEC)
 
-# Perfectly Reflecting (PBR)
+class CircularPML:
+    """Simple circular corner PML for better wave absorption at corners."""
+    def __init__(self, position=(0,0), radius=1, orientation="top-left"):
+        self.position = position
+        self.radius = radius
+        self.orientation = orientation
+        
+    def get_conductivity(self, x, y):
+        # Calculate distance from corner to point (x,y)
+        distance_from_corner = np.hypot(x - self.position[0], y - self.position[1])
+        
+        # Scale distance based on radius
+        if distance_from_corner > self.radius: return 0.0  # Outside the PML region
+        
+        # For corners, we need to check if the point is in the correct quadrant
+        # This prevents the corner PML from extending into the non-corner regions
+        dx = x - self.position[0]
+        dy = y - self.position[1]
+        
+        if self.orientation == "top-left" and (dx > 0 or dy > 0):
+            return 0.0
+        elif self.orientation == "top-right" and (dx < 0 or dy > 0):
+            return 0.0
+        elif self.orientation == "bottom-left" and (dx > 0 or dy < 0):
+            return 0.0
+        elif self.orientation == "bottom-right" and (dx < 0 or dy < 0):
+            return 0.0
+        
+        # Maximum conductivity at the boundary
+        max_conductivity = 1.0
+        
+        # Normalize distance to [0,1] range (1 at corner, 0 at edge of PML)
+        normalized_distance = 1.0 - (distance_from_corner / self.radius)
+        
+        # Calculate conductivity with polynomial scaling for stronger absorption
+        # Using 4th power for sharper gradient
+        return max_conductivity * normalized_distance**4
 
-# Periodic (PER)
 
 # ================================================ 3D structures
-
