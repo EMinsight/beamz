@@ -485,7 +485,7 @@ class FDTD:
 
         return self.results
         
-    def save_animation(self, field: str = "Ez", axis_scale=[-1, 1], filename='fdtd_animation.mp4', fps=60):
+    def save_animation(self, field: str = "Ez", axis_scale=[-1, 1], filename='fdtd_animation.mp4', fps=60, frame_skip=4):
         """Save an animation of the simulation results as an mp4 file.
         
         Args:
@@ -493,6 +493,9 @@ class FDTD:
             axis_scale: Color scale limits for the field visualization.
             filename: Filename for the saved animation (must end in .mp4).
             fps: Frames per second for the animation.
+            frame_skip: Number of frames to skip between each frame in the animation.
+                        Use frame_skip > 1 to reduce animation file size and creation time.
+                        For example, frame_skip=10 will use only every 10th frame.
         """
         if len(self.results[field]) == 0:
             print("No field data to animate. Make sure to run the simulation with save=True.")
@@ -513,6 +516,10 @@ class FDTD:
         else: figsize = (base_size * 1.2, base_size / aspect_ratio)
         
         fig, ax = plt.subplots(figsize=figsize)
+        
+        # Create list of frame indices to use (applying frame_skip)
+        total_frames = len(self.results[field])
+        frame_indices = range(0, total_frames, frame_skip)
         
         # Create initial plot
         im = ax.imshow(self.results[field][0], origin='lower',
@@ -571,13 +578,14 @@ class FDTD:
         title = ax.set_title(f't = {self.results["t"][0]:.2e} s')
         
         # Animation update function
-        def update(frame):
+        def update(frame_idx):
+            frame = frame_indices[frame_idx]
             im.set_array(self.results[field][frame])
             title.set_text(f't = {self.results["t"][frame]:.2e} s')
             return [im, title]
         
-        # Create animation
-        frames = len(self.results[field])
+        # Create animation with only the selected frames
+        frames = len(frame_indices)
         ani = FuncAnimation(fig, update, frames=frames, blit=True)
         
         # Save animation
@@ -585,7 +593,7 @@ class FDTD:
             from matplotlib.animation import FFMpegWriter
             writer = FFMpegWriter(fps=fps)
             ani.save(filename, writer=writer)
-            print(f"Animation saved to {filename}")
+            print(f"Animation saved to {filename} (using {frames} of {total_frames} frames)")
         except Exception as e:
             print(f"Error saving animation: {e}")
             print("Make sure FFmpeg is installed on your system.")
