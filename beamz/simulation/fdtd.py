@@ -329,7 +329,7 @@ class FDTD:
         plt.show(block=False)
         plt.pause(0.001)  # Small pause to ensure window is shown
 
-    def run(self, steps: Optional[int] = None, save=True, live=True, axis_scale=[-1,1], save_animation=False, animation_filename='fdtd_animation.mp4') -> Dict:
+    def run(self, steps: Optional[int] = None, save=True, live=True, axis_scale=[-1,1], save_animation=False, animation_filename='fdtd_animation.mp4', clean_visualization=True) -> Dict:
         """Run the simulation.
         
         Args:
@@ -481,11 +481,11 @@ class FDTD:
 
         # Save animation if requested
         if save_animation and save:
-            self.save_animation(field="Ez", axis_scale=axis_scale, filename=animation_filename)
+            self.save_animation(field="Ez", axis_scale=axis_scale, filename=animation_filename, clean_visualization=clean_visualization)
 
         return self.results
         
-    def save_animation(self, field: str = "Ez", axis_scale=[-1, 1], filename='fdtd_animation.mp4', fps=60, frame_skip=4):
+    def save_animation(self, field: str = "Ez", axis_scale=[-1, 1], filename='fdtd_animation.mp4', fps=60, frame_skip=4, clean_visualization=False):
         """Save an animation of the simulation results as an mp4 file.
         
         Args:
@@ -496,17 +496,16 @@ class FDTD:
             frame_skip: Number of frames to skip between each frame in the animation.
                         Use frame_skip > 1 to reduce animation file size and creation time.
                         For example, frame_skip=10 will use only every 10th frame.
+            clean_visualization: If True, renders only the field and structure outlines without
+                                 axes, title, colorbar, or borders.
         """
         if len(self.results[field]) == 0:
             print("No field data to animate. Make sure to run the simulation with save=True.")
             return
             
-        # Create figure and axis for animation
-        max_dim = max(self.design.width, self.design.height)
-        if max_dim >= 1e-3: scale, unit = 1e3, 'mm'
-        elif max_dim >= 1e-6: scale, unit = 1e6, 'µm'
-        elif max_dim >= 1e-9: scale, unit = 1e9, 'nm'
-        else: scale, unit = 1e12, 'pm'
+        # Create list of frame indices to use (applying frame_skip)
+        total_frames = len(self.results[field])
+        frame_indices = range(0, total_frames, frame_skip)
         
         # Calculate figure size based on grid dimensions
         grid_height, grid_width = self.results[field][0].shape
@@ -515,11 +514,34 @@ class FDTD:
         if aspect_ratio > 1: figsize = (base_size * aspect_ratio * 1.2, base_size)
         else: figsize = (base_size * 1.2, base_size / aspect_ratio)
         
-        fig, ax = plt.subplots(figsize=figsize)
-        
-        # Create list of frame indices to use (applying frame_skip)
-        total_frames = len(self.results[field])
-        frame_indices = range(0, total_frames, frame_skip)
+        # Set up figure and axes based on visualization style
+        if clean_visualization:
+            # Create figure with absolutely no padding or borders
+            # Use tight_layout and adjust figure parameters to eliminate all whitespace
+            if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
+            else: figsize = (base_size, base_size / aspect_ratio)
+            fig = plt.figure(figsize=figsize, frameon=False)
+            # Use the entire figure space with no margins
+            ax = fig.add_axes([0, 0, 1, 1])
+            ax.set_axis_off()
+            # Ensure no padding or margins
+            plt.subplots_adjust(left=0, right=1, top=1, bottom=0, wspace=0, hspace=0)
+            # Explicitly turn off all spines, ticks, and labels
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['bottom'].set_visible(False)
+            ax.spines['left'].set_visible(False)
+            ax.get_xaxis().set_visible(False)
+            ax.get_yaxis().set_visible(False)
+        else:
+            # Create standard figure with normal padding
+            fig, ax = plt.subplots(figsize=figsize)
+            # Get units for axis labels
+            max_dim = max(self.design.width, self.design.height)
+            if max_dim >= 1e-3: scale, unit = 1e3, 'mm'
+            elif max_dim >= 1e-6: scale, unit = 1e6, 'µm'
+            elif max_dim >= 1e-9: scale, unit = 1e9, 'nm'
+            else: scale, unit = 1e12, 'pm'
         
         # Create initial plot
         im = ax.imshow(self.results[field][0], origin='lower',
@@ -527,9 +549,10 @@ class FDTD:
                       cmap='RdBu', aspect='equal', interpolation='bicubic', 
                       vmin=axis_scale[0], vmax=axis_scale[1])
         
-        # Add colorbar
-        colorbar = plt.colorbar(im, orientation='vertical', aspect=30, extend='both')
-        colorbar.set_label(f'{field} Field Amplitude')
+        # Add colorbar if not using clean visualization
+        if not clean_visualization:
+            colorbar = plt.colorbar(im, orientation='vertical', aspect=30, extend='both')
+            colorbar.set_label(f'{field} Field Amplitude')
         
         # Add design structure outlines
         for structure in self.design.structures:
@@ -568,21 +591,27 @@ class FDTD:
                       (structure.start[1], structure.end[1]), 
                       '--', lw=2, color="black", alpha=0.5)
         
-        # Add axis labels with proper scaling
-        plt.xlabel(f'X ({unit})')
-        plt.ylabel(f'Y ({unit})')
-        ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-        ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-        
-        # Title with time information
-        title = ax.set_title(f't = {self.results["t"][0]:.2e} s')
+        # Configure standard plot elements if not using clean visualization
+        if not clean_visualization:
+            # Add axis labels with proper scaling
+            plt.xlabel(f'X ({unit})')
+            plt.ylabel(f'Y ({unit})')
+            ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+            ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+            
+            # Title with time information
+            title = ax.set_title(f't = {self.results["t"][0]:.2e} s')
+        else:
+            title = None
         
         # Animation update function
         def update(frame_idx):
             frame = frame_indices[frame_idx]
             im.set_array(self.results[field][frame])
-            title.set_text(f't = {self.results["t"][frame]:.2e} s')
-            return [im, title]
+            if not clean_visualization:
+                title.set_text(f't = {self.results["t"][frame]:.2e} s')
+                return [im, title]
+            return [im]
         
         # Create animation with only the selected frames
         frames = len(frame_indices)
@@ -592,7 +621,11 @@ class FDTD:
         try:
             from matplotlib.animation import FFMpegWriter
             writer = FFMpegWriter(fps=fps)
-            ani.save(filename, writer=writer)
+            if clean_visualization:
+                # Use only supported parameters
+                ani.save(filename, writer=writer, dpi=300)
+            else:
+                ani.save(filename, writer=writer, dpi=100)
             print(f"Animation saved to {filename} (using {frames} of {total_frames} frames)")
         except Exception as e:
             print(f"Error saving animation: {e}")
