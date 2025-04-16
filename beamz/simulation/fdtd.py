@@ -10,14 +10,7 @@ from matplotlib.path import Path
 from matplotlib.animation import FuncAnimation
 
 class FDTD:
-    """
-    FDTD simulation class.
-
-    Args:
-        design: Design object containing the structures, sources, and monitors to simulate and measure
-        grid: RegularGrid object used to discretize the design
-        device: str, "cpu" (using numpy backend) or "gpu" (using jax backend)
-    """
+    """FDTD simulation class."""
     def __init__(self, design, time, mesh: str = "regular", resolution: float = 0.02*µm):
         # Initialize the design and mesh
         self.design = design
@@ -46,53 +39,6 @@ class FDTD:
         self.ax = None
         self.anim = None
         self.im = None
-        # Calculate PML coefficients
-        self._setup_pml()
-        print(f"Initialized FDTD with grid size: {self.nx}x{self.ny}")
-
-    def _setup_pml(self):
-        """Set up a stable PML implementation using a simple lossy layer approach."""
-        # PML parameters
-        self.pml_width = max(20, int(min(self.nx, self.ny) * 0.1))  # Min 20 cells or 10% of domain
-        print(f"PML width: {self.pml_width} cells")
-        
-        # Create arrays to hold PML coefficients
-        self.pml_x = np.ones((self.nx, self.ny))  # X-direction PML
-        self.pml_y = np.ones((self.nx, self.ny))  # Y-direction PML
-        
-        # Create PML profile (polynomial grading)
-        pml_profile = np.ones((self.pml_width))
-        
-        # Create polynomial grading (cubic) - proven to be stable
-        for i in range(self.pml_width):
-            d = i / self.pml_width
-            pml_profile[i] = 1.0 - d**3
-        
-        # Calculate max conductivity based on grid and material
-        eps_avg = np.mean(self.epsilon_r)
-        # Calculate the impedance
-        eta = np.sqrt(MU_0 / (EPS_0 * eps_avg))
-        
-        # Set max conductivity - conservative value for stability
-        sigma_max = 0.5 / (eta * self.dx)
-        
-        # Apply PML in x-direction (left and right boundaries)
-        for i in range(self.pml_width):
-            sigma = sigma_max * pml_profile[i]
-            # Left boundary
-            self.pml_x[i, :] = 1.0 / (1.0 + sigma * self.dt / (2.0 * EPS_0 * self.epsilon_r[i, :]))
-            # Right boundary
-            self.pml_x[-(i+1), :] = 1.0 / (1.0 + sigma * self.dt / (2.0 * EPS_0 * self.epsilon_r[-(i+1), :]))
-        
-        # Apply PML in y-direction (top and bottom boundaries)
-        for j in range(self.pml_width):
-            sigma = sigma_max * pml_profile[j]
-            # Bottom boundary
-            self.pml_y[:, j] = 1.0 / (1.0 + sigma * self.dt / (2.0 * EPS_0 * self.epsilon_r[:, j]))
-            # Top boundary
-            self.pml_y[:, -(j+1)] = 1.0 / (1.0 + sigma * self.dt / (2.0 * EPS_0 * self.epsilon_r[:, -(j+1)]))
-        
-        print(f"PML configured: max sigma = {sigma_max:.2e}")
 
     def update_h_fields(self):
         """Update magnetic field components with simple FDTD."""
@@ -102,22 +48,23 @@ class FDTD:
         self.Hy = self.Hy + (self.dt / MU_0) * curl_e_y
     
     def update_e_field(self):
-        """Update electric field component with PML."""
+        """Update electric field component with conductivity (including PML)."""
         # Calculate curl of H
         curl_h_x = np.zeros_like(self.Ez)
         curl_h_y = np.zeros_like(self.Ez)
         # Interior points calculation
         curl_h_x[1:-1, 1:-1] = (self.Hx[1:-1, 1:] - self.Hx[1:-1, :-1]) / self.dy
         curl_h_y[1:-1, 1:-1] = (self.Hy[1:, 1:-1] - self.Hy[:-1, 1:-1]) / self.dx
-        # Save current Ez field
-        Ez_prev = self.Ez.copy()
-        # Update Ez field with standard FDTD
-        self.Ez[1:-1, 1:-1] = self.Ez[1:-1, 1:-1] + \
-                            (self.dt / (EPS_0 * self.epsilon_r[1:-1, 1:-1])) * \
-                            (-curl_h_x[1:-1, 1:-1] + curl_h_y[1:-1, 1:-1])
-        # Apply PML damping (simplified approach)
-        # This acts as a scaling factor in PML regions
-        self.Ez = self.Ez * self.pml_x * self.pml_y
+        
+        # For better numerical stability, use semi-implicit scheme for conductivity
+        # First calculate the denominator
+        denom = 1.0 + self.sigma[1:-1, 1:-1] * self.dt / (2.0 * EPS_0 * self.epsilon_r[1:-1, 1:-1])
+        # Then the numerator factors
+        factor1 = (1.0 - self.sigma[1:-1, 1:-1] * self.dt / (2.0 * EPS_0 * self.epsilon_r[1:-1, 1:-1])) / denom
+        factor2 = (self.dt / (EPS_0 * self.epsilon_r[1:-1, 1:-1])) / denom
+        
+        # Update Ez field with FDTD, conductivity term handles PML regions
+        self.Ez[1:-1, 1:-1] = factor1 * self.Ez[1:-1, 1:-1] + factor2 * (-curl_h_x[1:-1, 1:-1] + curl_h_y[1:-1, 1:-1])
 
     def simulate_step(self):
         """Perform one FDTD step with stability checks."""
@@ -329,7 +276,8 @@ class FDTD:
         plt.show(block=False)
         plt.pause(0.001)  # Small pause to ensure window is shown
 
-    def run(self, steps: Optional[int] = None, save=True, live=True, axis_scale=[-1,1], save_animation=False, animation_filename='fdtd_animation.mp4', clean_visualization=True) -> Dict:
+    def run(self, steps: Optional[int] = None, save=True, live=True, axis_scale=[-1,1], save_animation=False, 
+            animation_filename='fdtd_animation.mp4', clean_visualization=True) -> Dict:
         """Run the simulation.
         
         Args:
@@ -347,7 +295,6 @@ class FDTD:
         self.t = 0
         self._total_steps = self.num_steps
         self._save_results = save
-
         # Calculate Courant number to check stability
         c = 1/np.sqrt(EPS_0 * MU_0)  # Speed of light
         courant = c * self.dt / min(self.dx, self.dy)
@@ -398,7 +345,7 @@ class FDTD:
                         y_start = int(round(source.start[1] / self.dy))
                         x_end = int(round(source.end[0] / self.dx))
                         y_end = int(round(source.end[1] / self.dy))
-                        
+
                         # Use Bresenham's line algorithm to get all grid points along the line
                         dx = abs(x_end - x_start)
                         dy = abs(y_end - y_start)
@@ -464,10 +411,8 @@ class FDTD:
                 self.results['Hx'].append(self.Hx.copy())
                 self.results['Hy'].append(self.Hy.copy())
                 self.results['t'].append(self.t)
-            
             # Update time
             self.t += self.dt
-            
             # Show progress
             if live:  # Update every 5 steps for smoother animation
                 self.animate_live(field="Ez", axis_scale=axis_scale)
@@ -478,27 +423,13 @@ class FDTD:
             self.fig = None
             self.ax = None
             self.im = None
-
         # Save animation if requested
         if save_animation and save:
             self.save_animation(field="Ez", axis_scale=axis_scale, filename=animation_filename, clean_visualization=clean_visualization)
-
         return self.results
         
     def save_animation(self, field: str = "Ez", axis_scale=[-1, 1], filename='fdtd_animation.mp4', fps=60, frame_skip=4, clean_visualization=False):
-        """Save an animation of the simulation results as an mp4 file.
-        
-        Args:
-            field: Field to animate (Ez, Hx, or Hy).
-            axis_scale: Color scale limits for the field visualization.
-            filename: Filename for the saved animation (must end in .mp4).
-            fps: Frames per second for the animation.
-            frame_skip: Number of frames to skip between each frame in the animation.
-                        Use frame_skip > 1 to reduce animation file size and creation time.
-                        For example, frame_skip=10 will use only every 10th frame.
-            clean_visualization: If True, renders only the field and structure outlines without
-                                 axes, title, colorbar, or borders.
-        """
+        """Save an animation of the simulation results as an mp4 file."""
         if len(self.results[field]) == 0:
             print("No field data to animate. Make sure to run the simulation with save=True.")
             return

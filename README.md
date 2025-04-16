@@ -26,6 +26,11 @@ v0.0.2: April 20, (Closed alpha.) 2D Adjoint method and topology optimization us
 v0.0.1: April 13, (Closed alpha.) 2D FDTD package proof of concept on CPU (Numpy).
 
 
+1.5 s for forward and backward simulation
+1 s for gradient computation and update
+2.5 s for step in total
+150 steps, that's 375 s = 6.25 min
+
 Future releases:
 + FDFD solver (with CPU and GPU backend).
 + BPM solver (with CPU and GPU backend).

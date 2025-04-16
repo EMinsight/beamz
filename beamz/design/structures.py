@@ -4,7 +4,7 @@ from matplotlib.path import Path
 import random
 import numpy as np
 from beamz.design.materials import Material
-from beamz.const import µm
+from beamz.const import µm, EPS_0, MU_0
 from beamz.design.sources import ModeSource, LineSource
 from beamz.design.monitors import ModeMonitor
 
@@ -30,7 +30,7 @@ def get_si_scale_and_label(value):
 
 class Design:
     # TODO: Implement 3D version generalization.
-    def __init__(self, width=1, height=1, depth=None, material=None, color=None, border_color="black"):
+    def __init__(self, width=1, height=1, depth=None, material=None, color=None, border_color="black", auto_pml=True, pml_size=None):
         if material is None: material = Material(permittivity=1.0, permeability=1.0, conductivity=0.0)
         self.structures = [Rectangle(position=(0,0), width=width, height=height, material=material, color=color)]
         self.sources = []
@@ -42,7 +42,8 @@ class Design:
         self.border_color = border_color
         self.time = 0
         self.is_3d = False
-        self.init_boundaries()
+        if auto_pml:
+            self.init_boundaries(pml_size)
 
     def add(self, structure):
         """Add structures on top of the design."""
@@ -68,22 +69,23 @@ class Design:
             new_structure.scale(random.uniform(scale_range[0], scale_range[1]))
             self.add(new_structure)
 
-    def init_boundaries(self):
-        """Add boundary conditions to the design area (currently only supports PML)."""
+    def init_boundaries(self, pml_size=None):
+        """Add boundary conditions to the design area (using PML)."""
         # Calculate PML size - wider PML regions absorb better
-        size = self.width/4  # Using 1/4 of the domain width for PML regions
+        if pml_size is None:
+            pml_size = self.width/4  # Using 1/4 of the domain width for PML regions by default
         
         # Edges of the design domain
-        self.boundaries.append(RectPML(position=(0, 0), width=size, height=self.height, orientation="left"))
-        self.boundaries.append(RectPML(position=(self.width - size, 0), width=size, height=self.height, orientation="right"))
-        self.boundaries.append(RectPML(position=(0, self.height - size), width=self.width, height=size, orientation="top"))
-        self.boundaries.append(RectPML(position=(0, 0), width=self.width, height=size, orientation="bot"))
+        self.boundaries.append(RectPML(position=(0, 0), width=pml_size, height=self.height, orientation="left"))
+        self.boundaries.append(RectPML(position=(self.width - pml_size, 0), width=pml_size, height=self.height, orientation="right"))
+        self.boundaries.append(RectPML(position=(0, self.height - pml_size), width=self.width, height=pml_size, orientation="top"))
+        self.boundaries.append(RectPML(position=(0, 0), width=self.width, height=pml_size, orientation="bot"))
         
         # Corners of the design domain
-        self.boundaries.append(CircularPML(position=(0, 0), radius=size, orientation="top-left"))
-        self.boundaries.append(CircularPML(position=(self.width, 0), radius=size, orientation="top-right"))
-        self.boundaries.append(CircularPML(position=(0, self.height), radius=size, orientation="bottom-left"))
-        self.boundaries.append(CircularPML(position=(self.width, self.height), radius=size, orientation="bottom-right"))
+        self.boundaries.append(CircularPML(position=(0, 0), radius=pml_size, orientation="top-left"))
+        self.boundaries.append(CircularPML(position=(self.width, 0), radius=pml_size, orientation="top-right"))
+        self.boundaries.append(CircularPML(position=(0, self.height), radius=pml_size, orientation="bottom-left"))
+        self.boundaries.append(CircularPML(position=(self.width, self.height), radius=pml_size, orientation="bottom-right"))
 
     def show(self):
         """Display the design visually."""
@@ -216,13 +218,19 @@ class Design:
                         if isinstance(boundary, RectPML) or isinstance(boundary, CircularPML):
                             conductivity[i, j] += boundary.get_conductivity(x, y)
             
+            # Find the highest polynomial order used in PML regions
+            max_order = 3  # Default to cubic
+            for boundary in self.boundaries:
+                if hasattr(boundary, 'polynomial_order'):
+                    max_order = max(max_order, boundary.polynomial_order)
+            
             # Plot the conductivity as a heatmap
             im = ax2.imshow(conductivity, origin='lower', 
                          extent=(0, self.width, 0, self.height),
                          cmap='viridis', aspect='equal', interpolation='bilinear')
             
             # Add colorbar
-            cbar = fig.colorbar(im, ax=ax2, label='PML Conductivity (r⁴ polynomial profile)')
+            cbar = fig.colorbar(im, ax=ax2, label=f'PML Conductivity (r^{max_order} polynomial profile)')
             
             # Outline the PML regions for clarity
             for boundary in self.boundaries:
@@ -252,7 +260,7 @@ class Design:
                         y = boundary.position[1] + boundary.radius * np.sin(theta)
                     ax2.plot(x, y, 'w--', alpha=0.7)
             
-            ax2.set_title('PML Absorption Profile (4th Power Polynomial)')
+            ax2.set_title('PML Absorption Profile')
             ax2.set_xlabel(f'X ({unit})')
             ax2.set_ylabel(f'Y ({unit})')
             # Set axis limits
@@ -262,25 +270,36 @@ class Design:
             ax2.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
             ax2.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
         
-        # Set equal aspect ratio and adjust layout
-        plt.tight_layout()
-        plt.show()
+            # Set equal aspect ratio and adjust layout
+            plt.tight_layout()
+            plt.show()
         
     def __str__(self):
         return f"Design with {len(self.structures)} structures ({'3D' if self.is_3d else '2D'})"
 
-    def get_material_value(self, x, y):
+    def get_material_value(self, x, y, dx=None, dt=None):
         """Return the material value at a given (x, y) coordinate, prioritizing the topmost structure."""
         # First check if we're in a PML boundary region
         pml_conductivity = 0.0
+        
+        # Calculate average permittivity in the domain for PML calculation
+        if dx is not None:
+            eps_values = []
+            for structure in self.structures:
+                if hasattr(structure, 'material') and hasattr(structure.material, 'permittivity'):
+                    eps_values.append(structure.material.permittivity)
+            eps_avg = np.mean(eps_values) if eps_values else 1.0
+        else:
+            eps_avg = None
+            
+        # Apply all PML boundaries
         for boundary in self.boundaries:
             if isinstance(boundary, RectPML) or isinstance(boundary, CircularPML):
-                pml_conductivity += boundary.get_conductivity(x, y)
+                pml_conductivity += boundary.get_conductivity(x, y, dx=dx, dt=dt, eps_avg=eps_avg)
         
         # Get material values from structures
         for structure in reversed(self.structures):
             if isinstance(structure, Rectangle):
-                #print("In Rectangle:", x, y, structure.position[0], structure.position[1], structure.width, structure.height)
                 if (structure.position[0] <= x <= structure.position[0] + structure.width and
                     structure.position[1] <= y <= structure.position[1] + structure.height):
                     # Return with added PML conductivity
@@ -288,14 +307,12 @@ class Design:
                             structure.material.permeability, 
                             structure.material.conductivity + pml_conductivity]
             elif isinstance(structure, Circle):
-                #print("In Circle:", x, y, structure.position[0], structure.position[1], structure.radius)
                 if np.hypot(x - structure.position[0], y - structure.position[1]) <= structure.radius:
                     # Return with added PML conductivity
                     return [structure.material.permittivity, 
                             structure.material.permeability, 
                             structure.material.conductivity + pml_conductivity]
             elif isinstance(structure, Ring):
-                #print("In Ring:", x, y, structure.position[0], structure.position[1], structure.inner_radius, structure.outer_radius)
                 distance = np.hypot(x - structure.position[0], y - structure.position[1])
                 if structure.inner_radius <= distance <= structure.outer_radius:
                     # Return with added PML conductivity
@@ -303,13 +320,11 @@ class Design:
                             structure.material.permeability, 
                             structure.material.conductivity + pml_conductivity]
             elif isinstance(structure, Polygon):
-                #print("In Polygon:", x, y, structure.vertices)
                 if self._point_in_polygon(x, y, structure.vertices):
                     # Return with added PML conductivity
                     return [structure.material.permittivity, 
                             structure.material.permeability, 
                             structure.material.conductivity + pml_conductivity]
-        #print("In Default")
         # Default with added PML conductivity
         return [1.0, 1.0, pml_conductivity]  # Default permittivity if no structure contains the point
 
@@ -519,23 +534,42 @@ class Taper(Polygon):
 # ================================================ 2D Boundaries
 
 class RectPML:
-    """Simple rectangular Perfectly Matched Layer (PML) for absorbing boundary conditions."""
-    def __init__(self, position=(0,0), width=1, height=1, orientation="left"):
+    """Rectangular Perfectly Matched Layer (PML) for absorbing boundary conditions."""
+    def __init__(self, position=(0,0), width=1, height=1, orientation="left", max_conductivity=None, polynomial_order=3):
         self.position = position
         self.width = width
         self.height = height
         self.orientation = orientation
+        self.polynomial_order = polynomial_order
         
-    def get_conductivity(self, x, y):
+        # Default max conductivity or let it be calculated later
+        self.max_conductivity = max_conductivity if max_conductivity is not None else 1.0
+        
+    def get_conductivity(self, x, y, dx=None, dt=None, eps_avg=None):
+        """Calculate PML conductivity at a point.
+        
+        Args:
+            x, y: Position to evaluate
+            dx: Grid cell size (if None, use default max_conductivity)
+            dt: Time step size (if None, use default max_conductivity)
+            eps_avg: Average permittivity (if None, use default max_conductivity)
+            
+        Returns:
+            Conductivity value at the point
+        """
         # Check if point is within the PML region
         if not (self.position[0] <= x <= self.position[0] + self.width and
                 self.position[1] <= y <= self.position[1] + self.height):
             return 0.0
             
-        # Maximum conductivity at the boundary
-        max_conductivity = 1.0
-        
-        # Calculate distance from boundary edge based on orientation
+        # Calculate max conductivity based on grid parameters if provided
+        sigma_max = self.max_conductivity
+        if dx is not None and eps_avg is not None:
+            # Calculate impedance and max conductivity as in pml.py
+            eta = np.sqrt(MU_0 / (EPS_0 * eps_avg))
+            sigma_max = 0.5 / (eta * dx)
+            
+        # Calculate normalized distance from boundary based on orientation
         if self.orientation == "left":
             distance = (x - self.position[0]) / self.width
         elif self.orientation == "right":
@@ -550,24 +584,39 @@ class RectPML:
         # Ensure distance is within [0,1]
         distance = min(max(distance, 0.0), 1.0)
         
-        # Calculate conductivity with polynomial scaling (higher power for sharper gradient)
-        # Using 4th power for stronger absorption near boundaries
-        return max_conductivity * (1.0 - distance)**4
+        # Calculate conductivity with polynomial scaling (default cubic as in pml.py)
+        return sigma_max * (1.0 - distance) ** self.polynomial_order
 
 
 class CircularPML:
-    """Simple circular corner PML for better wave absorption at corners."""
-    def __init__(self, position=(0,0), radius=1, orientation="top-left"):
+    """Circular corner PML for better wave absorption at corners."""
+    def __init__(self, position=(0,0), radius=1, orientation="top-left", max_conductivity=None, polynomial_order=3):
         self.position = position
         self.radius = radius
         self.orientation = orientation
+        self.polynomial_order = polynomial_order
         
-    def get_conductivity(self, x, y):
+        # Default max conductivity or let it be calculated later
+        self.max_conductivity = max_conductivity if max_conductivity is not None else 1.0
+        
+    def get_conductivity(self, x, y, dx=None, dt=None, eps_avg=None):
+        """Calculate PML conductivity at a point.
+        
+        Args:
+            x, y: Position to evaluate
+            dx: Grid cell size (if None, use default max_conductivity)
+            dt: Time step size (if None, use default max_conductivity)
+            eps_avg: Average permittivity (if None, use default max_conductivity)
+            
+        Returns:
+            Conductivity value at the point
+        """
         # Calculate distance from corner to point (x,y)
         distance_from_corner = np.hypot(x - self.position[0], y - self.position[1])
         
         # Scale distance based on radius
-        if distance_from_corner > self.radius: return 0.0  # Outside the PML region
+        if distance_from_corner > self.radius: 
+            return 0.0  # Outside the PML region
         
         # For corners, we need to check if the point is in the correct quadrant
         # This prevents the corner PML from extending into the non-corner regions
@@ -583,15 +632,18 @@ class CircularPML:
         elif self.orientation == "bottom-right" and (dx < 0 or dy < 0):
             return 0.0
         
-        # Maximum conductivity at the boundary
-        max_conductivity = 1.0
-        
+        # Calculate max conductivity based on grid parameters if provided
+        sigma_max = self.max_conductivity
+        if dx is not None and eps_avg is not None:
+            # Calculate impedance and max conductivity as in pml.py
+            eta = np.sqrt(MU_0 / (EPS_0 * eps_avg))
+            sigma_max = 0.5 / (eta * dx)
+            
         # Normalize distance to [0,1] range (1 at corner, 0 at edge of PML)
         normalized_distance = 1.0 - (distance_from_corner / self.radius)
         
-        # Calculate conductivity with polynomial scaling for stronger absorption
-        # Using 4th power for sharper gradient
-        return max_conductivity * normalized_distance**4
+        # Calculate conductivity with polynomial scaling (default cubic as in pml.py)
+        return sigma_max * normalized_distance ** self.polynomial_order
 
 
 # ================================================ 3D structures
