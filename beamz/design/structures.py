@@ -74,17 +74,65 @@ class Design:
             
             print(f"Auto-selected PML size: {pml_size:.2e} m (~{pml_size/wavelength_estimate:.1f} wavelengths)")
         
-        # Edges of the design domain
+        # Create transparent material for PML outlines
+        pml_material = Material(permittivity=1.0, permeability=1.0, conductivity=0.0)
+        
+        # Edges of the design domain - create functional PML boundaries
         self.boundaries.append(RectPML(position=(0, 0), width=pml_size, height=self.height, orientation="left"))
         self.boundaries.append(RectPML(position=(self.width - pml_size, 0), width=pml_size, height=self.height, orientation="right"))
         self.boundaries.append(RectPML(position=(0, self.height - pml_size), width=self.width, height=pml_size, orientation="top"))
         self.boundaries.append(RectPML(position=(0, 0), width=self.width, height=pml_size, orientation="bot"))
         
-        # Corners of the design domain
+        # Corners of the design domain - create functional PML boundaries
         self.boundaries.append(CircularPML(position=(0, 0), radius=pml_size, orientation="top-left"))
         self.boundaries.append(CircularPML(position=(self.width, 0), radius=pml_size, orientation="top-right"))
         self.boundaries.append(CircularPML(position=(0, self.height), radius=pml_size, orientation="bottom-left"))
         self.boundaries.append(CircularPML(position=(self.width, self.height), radius=pml_size, orientation="bottom-right"))
+        
+        # Add visual representations of PML regions to the structures list
+        # Left PML region
+        left_pml = Rectangle(
+            position=(0, 0),
+            width=pml_size,
+            height=self.height,
+            material=pml_material,
+            color='none',
+            is_pml=True  # Mark as PML region
+        )
+        self.structures.append(left_pml)
+        
+        # Right PML region
+        right_pml = Rectangle(
+            position=(self.width - pml_size, 0),
+            width=pml_size,
+            height=self.height,
+            material=pml_material,
+            color='none',
+            is_pml=True
+        )
+        self.structures.append(right_pml)
+        
+        # Bottom PML region
+        bottom_pml = Rectangle(
+            position=(0, 0),
+            width=self.width,
+            height=pml_size,
+            material=pml_material,
+            color='none',
+            is_pml=True
+        )
+        self.structures.append(bottom_pml)
+        
+        # Top PML region
+        top_pml = Rectangle(
+            position=(0, self.height - pml_size),
+            width=self.width,
+            height=pml_size,
+            material=pml_material,
+            color='none',
+            is_pml=True
+        )
+        self.structures.append(top_pml)
 
     def show(self):
         """Display the design visually."""
@@ -102,28 +150,38 @@ class Design:
             print("Showing 2D design...")
             # Calculate figure size based on domain dimensions
             aspect_ratio = self.width / self.height
-            base_size = 3  # Base size for the smaller dimension
+            base_size = 5  # Slightly larger base size for single plot
             if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
             else: figsize = (base_size, base_size / aspect_ratio)
             
-            # Create figure with two subplots: one for structures, one for PML
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(figsize[0]*2, figsize[1]))
+            # Create a single figure for all structures
+            fig, ax = plt.subplots(figsize=figsize)
             
-            # First plot: Structures
-            # Plot each structure
+            # Set equal aspect ratio explicitly
+            ax.set_aspect('equal')
+            
+            # Now plot each structure
             for structure in self.structures:
                 if isinstance(structure, Rectangle):
-                    rect = MatplotlibRectangle(
-                        (structure.position[0], structure.position[1]),
-                        structure.width, structure.height,
-                        facecolor=structure.color, edgecolor=self.border_color, alpha=1)
-                    ax1.add_patch(rect)
+                    if structure.is_pml:
+                        # PML regions get outlined with dashed lines
+                        rect = MatplotlibRectangle(
+                            (structure.position[0], structure.position[1]),
+                            structure.width, structure.height,
+                            facecolor='none', edgecolor='black', linestyle=':', alpha=1.0, linewidth=1.0, zorder=10)
+                    else:
+                        # Normal structures get solid fill
+                        rect = MatplotlibRectangle(
+                            (structure.position[0], structure.position[1]),
+                            structure.width, structure.height,
+                            facecolor=structure.color, edgecolor=self.border_color, alpha=1)
+                    ax.add_patch(rect)
                 elif isinstance(structure, Circle):
                     circle = plt.Circle(
                         (structure.position[0], structure.position[1]),
                         structure.radius,
                         facecolor=structure.color, edgecolor=self.border_color, alpha=1)
-                    ax1.add_patch(circle)
+                    ax.add_patch(circle)
                 elif isinstance(structure, Ring):
                     # Create points for the ring
                     N = 100  # Number of points for each circle
@@ -143,7 +201,7 @@ class Design:
                     # Create the path and patch
                     path = Path(vertices, codes)
                     ring_patch = PathPatch(path, facecolor=structure.color, alpha=1, edgecolor=self.border_color)
-                    ax1.add_patch(ring_patch)
+                    ax.add_patch(ring_patch)
                 elif isinstance(structure, CircularBend):
                     # Create points for the bend
                     N = 100  # Number of points for each arc
@@ -177,99 +235,33 @@ class Design:
                     # Create the path and patch
                     path = Path(vertices, codes)
                     bend_patch = PathPatch(path, facecolor=structure.color, alpha=1, edgecolor=self.border_color)
-                    ax1.add_patch(bend_patch)
+                    ax.add_patch(bend_patch)
                 elif isinstance(structure, Polygon):
                     polygon = plt.Polygon(structure.vertices, facecolor=structure.color, alpha=1, edgecolor=self.border_color)
-                    ax1.add_patch(polygon)
+                    ax.add_patch(polygon)
                 elif isinstance(structure, ModeSource):
-                    ax1.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="crimson", label='Mode Source')
-                    ax1.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", label='Mode Source')
+                    ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="crimson", label='Mode Source')
+                    ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", label='Mode Source')
                 elif isinstance(structure, LineSource):
-                    ax1.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="crimson", label='Line Source')
-                    ax1.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", label='Line Source')
+                    ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="crimson", label='Line Source')
+                    ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", label='Line Source')
                 elif isinstance(structure, ModeMonitor):
-                    ax1.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="navy", label='Mode Monitor')
+                    ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="navy", label='Mode Monitor')
             
-            ax1.set_title('Structures')
-            ax1.set_xlabel(f'X ({unit})')
-            ax1.set_ylabel(f'Y ({unit})')
-            # Set axis limits
-            ax1.set_xlim(0, self.width)
-            ax1.set_ylim(0, self.height)
+            # Set proper limits, title and labels
+            ax.set_title('Design Layout')
+            ax.set_xlabel(f'X ({unit})')
+            ax.set_ylabel(f'Y ({unit})')
+            
+            # Set axis limits and ensure the full design is visible
+            ax.set_xlim(0, self.width)
+            ax.set_ylim(0, self.height)
+            
             # Update tick labels with scaled values
-            ax1.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-            ax1.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+            ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+            ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
             
-            # Second plot: PML visualization
-            # Create a grid to visualize the conductivity
-            resolution = min(self.width, self.height) / 400  # Increased resolution for smoother visualization
-            x_vals = np.arange(0, self.width, resolution)
-            y_vals = np.arange(0, self.height, resolution)
-            X, Y = np.meshgrid(x_vals, y_vals)
-            conductivity = np.zeros(X.shape)
-            
-            # Calculate PML conductivity at each grid point
-            for i in range(len(y_vals)):
-                for j in range(len(x_vals)):
-                    x, y = X[i, j], Y[i, j]
-                    # Sum conductivity from all boundaries
-                    for boundary in self.boundaries:
-                        if isinstance(boundary, RectPML) or isinstance(boundary, CircularPML):
-                            conductivity[i, j] += boundary.get_conductivity(x, y)
-            
-            # Find the highest polynomial order used in PML regions
-            max_order = 3  # Default to cubic
-            for boundary in self.boundaries:
-                if hasattr(boundary, 'polynomial_order'):
-                    max_order = max(max_order, boundary.polynomial_order)
-            
-            # Plot the conductivity as a heatmap
-            im = ax2.imshow(conductivity, origin='lower', 
-                         extent=(0, self.width, 0, self.height),
-                         cmap='viridis', aspect='equal', interpolation='bilinear')
-            
-            # Add colorbar
-            cbar = fig.colorbar(im, ax=ax2, label=f'PML Conductivity (r^{max_order} polynomial profile)')
-            
-            # Outline the PML regions for clarity
-            for boundary in self.boundaries:
-                if isinstance(boundary, RectPML):
-                    rect = MatplotlibRectangle(
-                        (boundary.position[0], boundary.position[1]),
-                        boundary.width, boundary.height,
-                        facecolor='none', edgecolor='white', linestyle='--', alpha=0.7)
-                    ax2.add_patch(rect)
-                elif isinstance(boundary, CircularPML):
-                    # For CircularPML, draw a quarter circle depending on the orientation
-                    if boundary.orientation == "top-left":
-                        theta = np.linspace(0, np.pi/2, 50)
-                        x = boundary.position[0] + boundary.radius * np.cos(theta)
-                        y = boundary.position[1] + boundary.radius * np.sin(theta)
-                    elif boundary.orientation == "top-right":
-                        theta = np.linspace(np.pi/2, np.pi, 50)
-                        x = boundary.position[0] + boundary.radius * np.cos(theta)
-                        y = boundary.position[1] + boundary.radius * np.sin(theta)
-                    elif boundary.orientation == "bottom-left":
-                        theta = np.linspace(0, -np.pi/2, 50)
-                        x = boundary.position[0] + boundary.radius * np.cos(theta)
-                        y = boundary.position[1] + boundary.radius * np.sin(theta)
-                    elif boundary.orientation == "bottom-right":
-                        theta = np.linspace(np.pi, 3*np.pi/2, 50)
-                        x = boundary.position[0] + boundary.radius * np.cos(theta)
-                        y = boundary.position[1] + boundary.radius * np.sin(theta)
-                    ax2.plot(x, y, 'w--', alpha=0.7)
-            
-            ax2.set_title('PML Absorption Profile')
-            ax2.set_xlabel(f'X ({unit})')
-            ax2.set_ylabel(f'Y ({unit})')
-            # Set axis limits
-            ax2.set_xlim(0, self.width)
-            ax2.set_ylim(0, self.height)
-            # Update tick labels with scaled values
-            ax2.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-            ax2.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-        
-            # Set equal aspect ratio and adjust layout
+            # Adjust layout for clean appearance
             plt.tight_layout()
             plt.show()
         
@@ -347,11 +339,12 @@ class Design:
 
 # ================================================ 2D structures
 class Rectangle:
-    def __init__(self, position=(0,0), width=1, height=1, material=None, color=None):
+    def __init__(self, position=(0,0), width=1, height=1, material=None, color=None, is_pml=False):
         self.position = position
         self.width = width
         self.height = height
         self.material = material
+        self.is_pml = is_pml
         self.color = color if color is not None else self.get_random_color()
 
     def get_random_color(self):
@@ -383,7 +376,7 @@ class Rectangle:
         return self
     
     def copy(self):
-        return Rectangle(self.position, self.width, self.height, self.material)
+        return Rectangle(self.position, self.width, self.height, self.material, self.color, self.is_pml)
 
 class Circle:
     def __init__(self, position=(0,0), radius=1, material=None, color=None):

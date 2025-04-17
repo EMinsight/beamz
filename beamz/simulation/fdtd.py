@@ -134,11 +134,16 @@ class FDTD:
         for structure in self.design.structures:
             print(f"Processing structure: {type(structure).__name__}")
             if isinstance(structure, Rectangle):
-                print(f"Adding Rectangle at {structure.position} with width={structure.width}, height={structure.height}")
-                rect = MatplotlibRectangle(
-                    (structure.position[0], structure.position[1]),
-                    structure.width, structure.height,
-                    facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                if structure.is_pml:
+                    rect = MatplotlibRectangle(
+                        (structure.position[0], structure.position[1]),
+                        structure.width, structure.height,
+                        facecolor='none', edgecolor='black', alpha=1, linestyle=':')
+                else:
+                    rect = MatplotlibRectangle(
+                        (structure.position[0], structure.position[1]),
+                        structure.width, structure.height,
+                        facecolor=structure.color, edgecolor=self.border_color, alpha=1)
                 plt.gca().add_patch(rect)
             elif isinstance(structure, Circle):
                 print(f"Adding Circle at {structure.position} with radius={structure.radius}")
@@ -244,10 +249,16 @@ class FDTD:
         # Add design structure outlines
         for structure in self.design.structures:
             if isinstance(structure, Rectangle):
-                rect = MatplotlibRectangle(
-                    (structure.position[0], structure.position[1]),
-                    structure.width, structure.height,
-                    facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                if structure.is_pml:
+                    rect = MatplotlibRectangle(
+                        (structure.position[0], structure.position[1]),
+                        structure.width, structure.height,
+                        facecolor='none', edgecolor='black', alpha=1.0, linestyle=':')
+                else:
+                    rect = MatplotlibRectangle(
+                        (structure.position[0], structure.position[1]),
+                        structure.width, structure.height,
+                        facecolor="none", edgecolor="black", alpha=1)
                 self.ax.add_patch(rect)
             elif isinstance(structure, Circle):
                 circle = MatplotlibCircle(
@@ -507,10 +518,16 @@ class FDTD:
         # Add design structure outlines
         for structure in self.design.structures:
             if isinstance(structure, Rectangle):
-                rect = MatplotlibRectangle(
-                    (structure.position[0], structure.position[1]),
-                    structure.width, structure.height,
-                    facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                if structure.is_pml:
+                    rect = MatplotlibRectangle(
+                        (structure.position[0], structure.position[1]),
+                        structure.width, structure.height,
+                        facecolor='none', edgecolor='black', alpha=1.0, linestyle=':')
+                else:
+                    rect = MatplotlibRectangle(
+                        (structure.position[0], structure.position[1]),
+                        structure.width, structure.height,
+                        facecolor=structure.color, edgecolor=self.border_color, alpha=1)
                 ax.add_patch(rect)
             elif isinstance(structure, Circle):
                 circle = MatplotlibCircle(
