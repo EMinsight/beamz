@@ -310,6 +310,13 @@ class Design:
                     return [structure.material.permittivity, 
                             structure.material.permeability, 
                             structure.material.conductivity + pml_conductivity]
+            elif isinstance(structure, CircularBend):
+                distance = np.hypot(x - structure.position[0], y - structure.position[1])
+                if structure.inner_radius <= distance <= structure.outer_radius:
+                    # Return with added PML conductivity
+                    return [structure.material.permittivity, 
+                            structure.material.permeability, 
+                            structure.material.conductivity + pml_conductivity]
             elif isinstance(structure, Polygon):
                 if self._point_in_polygon(x, y, structure.vertices):
                     # Return with added PML conductivity

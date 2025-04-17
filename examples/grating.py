@@ -7,7 +7,7 @@ WL = 1.55*µm
 TIME = 40*WL/LIGHT_SPEED
 T = np.linspace(0, TIME, int(TIME/(0.015*WL/LIGHT_SPEED)))
 
-design = Design(width=6*µm, height=6*µm, material=Material(1))
+design = Design(width=6*µm, height=6*µm, material=Material(1), pml_size=0.5*µm)
 i = 0
 while (i-1)*µm*0.4 < 6*µm: 
     design.add(Rectangle(position=(1*i*µm,2.5*µm), width=0.5*µm, height=1*µm, material=Material(6.25)))
