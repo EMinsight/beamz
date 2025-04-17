@@ -41,11 +41,30 @@ class FDTD:
         self.im = None
 
     def update_h_fields(self):
-        """Update magnetic field components with simple FDTD."""
+        """Update magnetic field components with conductivity (including PML)."""
+        # For PML to work properly, we need magnetic conductivity
+        # We'll derive it from electric conductivity with impedance matching
+        
+        # Calculate magnetic conductivity (sigma_m) from electric conductivity (sigma)
+        # For impedance matching: sigma_m = sigma * (mu_0/epsilon_0)
+        sigma_m_x = self.sigma[:, :-1] * MU_0 / EPS_0
+        sigma_m_y = self.sigma[:-1, :] * MU_0 / EPS_0
+        
+        # Calculate curl of E for H-field updates
         curl_e_x = (self.Ez[:, 1:] - self.Ez[:, :-1]) / self.dy
-        self.Hx = self.Hx - (self.dt / MU_0) * curl_e_x
         curl_e_y = (self.Ez[1:, :] - self.Ez[:-1, :]) / self.dx
-        self.Hy = self.Hy + (self.dt / MU_0) * curl_e_y
+        
+        # Update Hx with semi-implicit scheme for magnetic conductivity
+        denom_x = 1.0 + sigma_m_x * self.dt / (2.0 * MU_0)
+        factor_x = (1.0 - sigma_m_x * self.dt / (2.0 * MU_0)) / denom_x
+        source_x = (self.dt / MU_0) / denom_x
+        self.Hx = factor_x * self.Hx - source_x * curl_e_x
+        
+        # Update Hy with semi-implicit scheme for magnetic conductivity
+        denom_y = 1.0 + sigma_m_y * self.dt / (2.0 * MU_0)
+        factor_y = (1.0 - sigma_m_y * self.dt / (2.0 * MU_0)) / denom_y
+        source_y = (self.dt / MU_0) / denom_y
+        self.Hy = factor_y * self.Hy + source_y * curl_e_y
     
     def update_e_field(self):
         """Update electric field component with conductivity (including PML)."""

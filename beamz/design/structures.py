@@ -7,26 +7,7 @@ from beamz.design.materials import Material
 from beamz.const import µm, EPS_0, MU_0
 from beamz.design.sources import ModeSource, LineSource
 from beamz.design.monitors import ModeMonitor
-
-def rgb_to_hex(r, g, b):
-    """Convert RGB values to the hex color format used in get_random_color()."""
-    return f'#{(r << 16) + (g << 8) + b:06x}'
-
-def is_dark(color):
-    """Check if a color is dark using relative luminance calculation. """
-    color = color.lstrip('#')
-    r = int(color[0:2], 16) / 255.0
-    g = int(color[2:4], 16) / 255.0
-    b = int(color[4:6], 16) / 255.0
-    luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
-    return luminance < 0.5
-
-def get_si_scale_and_label(value):
-    """Convert a value to appropriate SI unit and return scale factor and label."""
-    if value >= 1e-3: return 1e3, 'mm'
-    elif value >= 1e-6: return 1e6, 'µm'
-    elif value >= 1e-9: return 1e9, 'nm'
-    else: return 1e12, 'pm'
+from beamz.design.helpers import rgb_to_hex, is_dark, get_si_scale_and_label
 
 class Design:
     # TODO: Implement 3D version generalization.
@@ -71,9 +52,27 @@ class Design:
 
     def init_boundaries(self, pml_size=None):
         """Add boundary conditions to the design area (using PML)."""
-        # Calculate PML size - wider PML regions absorb better
+        # Calculate PML size more intelligently if not specified
         if pml_size is None:
-            pml_size = self.width/4  # Using 1/4 of the domain width for PML regions by default
+            # Find max permittivity in design for wavelength calculation
+            max_permittivity = 1.0
+            for structure in self.structures:
+                if hasattr(structure, 'material') and hasattr(structure.material, 'permittivity'):
+                    max_permittivity = max(max_permittivity, structure.material.permittivity)
+            
+            # Estimate minimum wavelength (assuming 1550nm free space wavelength typical for photonics)
+            # This is a practical approximation for common photonic applications
+            wavelength_estimate = 1.55e-6 / np.sqrt(max_permittivity)
+            
+            # Set PML size to be at least 1 wavelength and at most 20% of domain size
+            min_size = wavelength_estimate
+            max_size = min(self.width, self.height) * 0.2
+            
+            # Use a heuristic to set PML size based on domain dimensions and wavelength
+            # At least 1 wavelength and at most 20% of the domain size
+            pml_size = max(min_size, min(max_size, min(self.width, self.height) / 5))
+            
+            print(f"Auto-selected PML size: {pml_size:.2e} m (~{pml_size/wavelength_estimate:.1f} wavelengths)")
         
         # Edges of the design domain
         self.boundaries.append(RectPML(position=(0, 0), width=pml_size, height=self.height, orientation="left"))

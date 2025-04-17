@@ -32,6 +32,12 @@ class RegularGrid:
         dx, dy = np.meshgrid(offsets, offsets)
         dx = dx.flatten()
         dy = dy.flatten()
+        
+        # Estimate dt for PML calculations (based on Courant stability criterion)
+        # Using a conservative factor of 0.5 times the Courant limit
+        c = 3e8  # Speed of light
+        dt_estimate = 0.5 * self.resolution / (c * np.sqrt(2))
+        
         # Process each point in the grid
         for i in range(grid_height):
             for j in range(grid_width):
@@ -41,8 +47,8 @@ class RegularGrid:
                 # Create sample points around this center
                 x_samples = x_center + dx
                 y_samples = y_center + dy
-                # Get material values for all sample points
-                values = [self.design.get_material_value(x, y) 
+                # Get material values for all sample points, passing grid parameters
+                values = [self.design.get_material_value(x, y, dx=self.resolution, dt=dt_estimate) 
                          for x, y in zip(x_samples, y_samples)]
                 # Calculate the mean permittivity, permeability, and conductivity
                 permittivity = np.mean([value[0] for value in values])

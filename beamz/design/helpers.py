@@ -1,6 +1,26 @@
 import gdspy
 from itertools import groupby
 
+def rgb_to_hex(r, g, b):
+    """Convert RGB values to the hex color format used in get_random_color()."""
+    return f'#{(r << 16) + (g << 8) + b:06x}'
+
+def is_dark(color):
+    """Check if a color is dark using relative luminance calculation. """
+    color = color.lstrip('#')
+    r = int(color[0:2], 16) / 255.0
+    g = int(color[2:4], 16) / 255.0
+    b = int(color[4:6], 16) / 255.0
+    luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    return luminance < 0.5
+
+def get_si_scale_and_label(value):
+    """Convert a value to appropriate SI unit and return scale factor and label."""
+    if value >= 1e-3: return 1e3, 'mm'
+    elif value >= 1e-6: return 1e6, 'µm'
+    elif value >= 1e-9: return 1e9, 'nm'
+    else: return 1e12, 'pm'
+
 def image_to_gds(image, output_file):
     """
     Convert a binary NumPy array to a GDS file.
