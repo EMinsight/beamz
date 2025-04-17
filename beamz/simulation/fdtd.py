@@ -258,13 +258,13 @@ class FDTD:
                     rect = MatplotlibRectangle(
                         (structure.position[0], structure.position[1]),
                         structure.width, structure.height,
-                        facecolor="none", edgecolor="black", alpha=1)
+                        facecolor="none", edgecolor="black", alpha=1, linestyle="--")
                 self.ax.add_patch(rect)
             elif isinstance(structure, Circle):
                 circle = MatplotlibCircle(
                     (structure.position[0], structure.position[1]),
                     structure.radius,
-                    facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                    facecolor='none', edgecolor='black', alpha=1, linestyle='--')
                 self.ax.add_patch(circle)
             elif isinstance(structure, Ring):
                 # Create points for the ring
@@ -279,15 +279,15 @@ class FDTD:
                 codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (N - 1),
                                      [Path.MOVETO] + [Path.LINETO] * (N - 1)])
                 path = Path(vertices, codes)
-                ring_patch = PathPatch(path, facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                ring_patch = PathPatch(path, facecolor='none', edgecolor='black', alpha=1, linestyle='--')
                 self.ax.add_patch(ring_patch)
             elif isinstance(structure, ModeSource):
                 self.ax.plot((structure.start[0], structure.end[0]), 
                            (structure.start[1], structure.end[1]), 
-                           '-', lw=4, color="crimson", alpha=0.5)
+                           '-', lw=4, color="crimson", alpha=1)
                 self.ax.plot((structure.start[0], structure.end[0]), 
                            (structure.start[1], structure.end[1]), 
-                           '--', lw=2, color="black", alpha=0.5)
+                           '--', lw=2, color="black", alpha=1)
 
         # Set axis labels with proper scaling
         max_dim = max(self.design.width, self.design.height)
@@ -527,13 +527,13 @@ class FDTD:
                     rect = MatplotlibRectangle(
                         (structure.position[0], structure.position[1]),
                         structure.width, structure.height,
-                        facecolor=structure.color, edgecolor=self.border_color, alpha=1)
+                        facecolor="none", edgecolor="black", alpha=1)
                 ax.add_patch(rect)
             elif isinstance(structure, Circle):
                 circle = MatplotlibCircle(
                     (structure.position[0], structure.position[1]),
                     structure.radius,
-                    facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                    facecolor='none', edgecolor='black', alpha=1, linestyle='--')
                 ax.add_patch(circle)
             elif isinstance(structure, Ring):
                 # Create points for the ring
@@ -548,7 +548,7 @@ class FDTD:
                 codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (N - 1),
                                      [Path.MOVETO] + [Path.LINETO] * (N - 1)])
                 path = Path(vertices, codes)
-                ring_patch = PathPatch(path, facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                ring_patch = PathPatch(path, facecolor='none', edgecolor='black', alpha=1, linestyle='--')
                 ax.add_patch(ring_patch)
             elif isinstance(structure, ModeSource) or isinstance(structure, LineSource):
                 ax.plot((structure.start[0], structure.end[0]), 
@@ -556,7 +556,7 @@ class FDTD:
                       '-', lw=4, color="crimson", alpha=0.5)
                 ax.plot((structure.start[0], structure.end[0]), 
                       (structure.start[1], structure.end[1]), 
-                      '--', lw=2, color="black", alpha=0.5)
+                      '--', lw=2, color="black", alpha=1)
         
         # Configure standard plot elements if not using clean visualization
         if not clean_visualization:
