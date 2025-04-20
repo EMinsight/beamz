@@ -174,30 +174,41 @@ class FDTD:
                 plt.gca().add_patch(ring_patch)
             elif isinstance(structure, CircularBend):
                 # Create points for the bend
-                N = 100  # Number of points for each arc
-                # Convert angles to radians
+                N = 100
+                # Only draw the circular bend within the specified angle
                 angle_rad = np.radians(structure.angle)
                 rotation_rad = np.radians(structure.rotation)
-                theta = np.linspace(rotation_rad, rotation_rad + angle_rad, N, endpoint=True)
-                # Outer arc points
+                
+                # Calculate start and end angles based on rotation
+                start_angle = rotation_rad
+                end_angle = rotation_rad + angle_rad
+                
+                # Create theta values only for the specified angle range
+                theta = np.linspace(start_angle, end_angle, N, endpoint=True)
+                
+                # Generate outer and inner curve points
                 x_outer = structure.position[0] + structure.outer_radius * np.cos(theta)
                 y_outer = structure.position[1] + structure.outer_radius * np.sin(theta)
-                # Inner arc points
                 x_inner = structure.position[0] + structure.inner_radius * np.cos(theta)
                 y_inner = structure.position[1] + structure.inner_radius * np.sin(theta)
-                # Create a closed path by combining points and adding connecting lines
+                
+                # Create vertex list for the bend shape
                 vertices = np.vstack([
+                    # Start at the first outer point
                     [x_outer[0], y_outer[0]],
+                    # Add all the outer curve points
                     *np.column_stack([x_outer[1:], y_outer[1:]]),
+                    # Add the last inner point
                     [x_inner[-1], y_inner[-1]],
+                    # Add all inner points in reverse
                     *np.column_stack([x_inner[-2::-1], y_inner[-2::-1]]),
+                    # Close the polygon
                     [x_outer[0], y_outer[0]]
                 ])
-                # Define path codes for a single continuous path
+                
                 codes = [Path.MOVETO] + [Path.LINETO] * (len(vertices) - 2) + [Path.CLOSEPOLY]
-                # Create the path and patch
                 path = Path(vertices, codes)
-                bend_patch = PathPatch(path, facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                bend_patch = PathPatch(path, facecolor='none', edgecolor='black', alpha=1, linestyle='--')
                 plt.gca().add_patch(bend_patch)
             elif isinstance(structure, Polygon):
                 polygon = plt.Polygon(structure.vertices, facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
@@ -281,6 +292,45 @@ class FDTD:
                 path = Path(vertices, codes)
                 ring_patch = PathPatch(path, facecolor='none', edgecolor='black', alpha=1, linestyle='--')
                 self.ax.add_patch(ring_patch)
+            elif isinstance(structure, CircularBend):
+                # Create points for the bend
+                N = 100
+                # Only draw the circular bend within the specified angle
+                angle_rad = np.radians(structure.angle)
+                rotation_rad = np.radians(structure.rotation)
+                
+                # Calculate start and end angles based on rotation
+                start_angle = rotation_rad
+                end_angle = rotation_rad + angle_rad
+                
+                # Create theta values only for the specified angle range
+                theta = np.linspace(start_angle, end_angle, N, endpoint=True)
+                
+                # Generate outer and inner curve points
+                x_outer = structure.position[0] + structure.outer_radius * np.cos(theta)
+                y_outer = structure.position[1] + structure.outer_radius * np.sin(theta)
+                x_inner = structure.position[0] + structure.inner_radius * np.cos(theta)
+                y_inner = structure.position[1] + structure.inner_radius * np.sin(theta)
+                
+                # Create vertex list for the bend shape
+                vertices = np.vstack([
+                    # Start at the first outer point
+                    [x_outer[0], y_outer[0]],
+                    # Add all the outer curve points
+                    *np.column_stack([x_outer[1:], y_outer[1:]]),
+                    # Add the last inner point
+                    [x_inner[-1], y_inner[-1]],
+                    # Add all inner points in reverse
+                    *np.column_stack([x_inner[-2::-1], y_inner[-2::-1]]),
+                    # Close the polygon
+                    [x_outer[0], y_outer[0]]
+                ])
+                
+                codes = [Path.MOVETO] + [Path.LINETO] * (len(vertices) - 2) + [Path.CLOSEPOLY]
+                path = Path(vertices, codes)
+                bend_patch = PathPatch(path, facecolor='none', edgecolor='black', alpha=1, linestyle='--')
+                self.ax.add_patch(bend_patch)
+                
             elif isinstance(structure, ModeSource):
                 self.ax.plot((structure.start[0], structure.end[0]), 
                            (structure.start[1], structure.end[1]), 
