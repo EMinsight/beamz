@@ -8,7 +8,9 @@ def cosine(t,amplitude, frequency, phase):
 def sigmoid(t, duration=1, min=0, max=1, t0=0):
     return min + (max - min) * (1 / (1 + np.exp(-10 * (t - duration/2 - t0) / duration)))
 
-def ramped_cosine(t, amplitude, frequency, phase, ramp_duration, t_max):
+def ramped_cosine(t, amplitude, frequency, phase=None, ramp_duration=None, t_max=None):
+    if phase is None: phase = 0
+    if ramp_duration is None: ramp_duration = t_max / 10
     signal = sigmoid(t, min=0, max=1, duration=ramp_duration, t0=0)
     signal *= cosine(t, amplitude=amplitude, frequency=frequency, phase=phase)
     signal *= sigmoid(t, min=1, max=0, duration=ramp_duration, t0=t_max - ramp_duration)
