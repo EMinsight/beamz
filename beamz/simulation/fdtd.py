@@ -650,3 +650,171 @@ class FDTD:
         
         # Close the figure
         plt.close(fig)
+        
+    def plot_power(self, cmap: str = "hot", log_scale: bool = False, vmin: float = None, vmax: float = None):
+        """Plot the time-integrated power distribution from the E and H fields.
+        
+        Args:
+            cmap: Colormap to use for the plot (default: 'hot')
+            log_scale: Whether to plot power in logarithmic scale (dB) (default: False)
+            vmin: Minimum value for colorbar scaling (optional)
+            vmax: Maximum value for colorbar scaling (optional)
+            
+        Returns:
+            None
+        """
+        if len(self.results['Ez']) == 0 or len(self.results['Hx']) == 0 or len(self.results['Hy']) == 0:
+            print("No field data to calculate power. Make sure to run the simulation with save=True.")
+            return
+        
+        # Calculate power from Poynting vector components
+        # For 2D TE mode with Ez, Hx, Hy, the time-averaged Poynting vector has components:
+        # Sx = -Ez * Hy, Sy = Ez * Hx
+        power = np.zeros((self.nx, self.ny))
+        
+        # Calculate power integrated over time
+        for t_idx in range(len(self.results['t'])):
+            Ez = self.results['Ez'][t_idx]
+            
+            # Need to interpolate H fields to same grid as Ez
+            Hx_interp = np.zeros_like(Ez)
+            Hy_interp = np.zeros_like(Ez)
+            
+            # Interpolate Hx (centered at (i, j+1/2)) to (i, j)
+            Hx_interp[:, 1:-1] = 0.5 * (self.results['Hx'][t_idx][:, :-1] + self.results['Hx'][t_idx][:, 1:])
+            Hx_interp[:, 0] = self.results['Hx'][t_idx][:, 0]  # Edge case
+            Hx_interp[:, -1] = self.results['Hx'][t_idx][:, -1]  # Edge case
+            
+            # Interpolate Hy (centered at (i+1/2, j)) to (i, j)
+            Hy_interp[1:-1, :] = 0.5 * (self.results['Hy'][t_idx][:-1, :] + self.results['Hy'][t_idx][1:, :])
+            Hy_interp[0, :] = self.results['Hy'][t_idx][0, :]  # Edge case
+            Hy_interp[-1, :] = self.results['Hy'][t_idx][-1, :]  # Edge case
+            
+            # Calculate Poynting vector components
+            Sx = -Ez * Hy_interp
+            Sy = Ez * Hx_interp
+            
+            # Add magnitude of Poynting vector to total power
+            power += np.sqrt(Sx**2 + Sy**2)
+        
+        # Normalize by number of time steps
+        power /= len(self.results['t'])
+        
+        # Convert to dB if log_scale is True
+        if log_scale:
+            # Add small epsilon to avoid log(0)
+            epsilon = np.finfo(float).eps
+            power_db = 10 * np.log10(power + epsilon)
+            plot_data = power_db
+            power_label = 'Power (dB)'
+        else:
+            plot_data = power
+            power_label = 'Power (W/m²)'
+        
+        # Calculate figure size based on grid dimensions
+        aspect_ratio = self.ny / self.nx
+        base_size = 6  # Base size for the smaller dimension
+        if aspect_ratio > 1:
+            figsize = (base_size, base_size * aspect_ratio)
+        else:
+            figsize = (base_size / aspect_ratio, base_size)
+        
+        # Create the figure
+        plt.figure(figsize=figsize)
+        im = plt.imshow(plot_data, origin='lower',
+                       extent=(0, self.design.width, 0, self.design.height),
+                       cmap=cmap, aspect='equal', interpolation='bicubic',
+                       vmin=vmin, vmax=vmax)
+        
+        colorbar = plt.colorbar(im, label=power_label)
+        plt.title('Time-integrated Power Distribution')
+        
+        # Set proper unit labels based on design dimensions
+        max_dim = max(self.design.width, self.design.height)
+        if max_dim >= 1e-3: scale, unit = 1e3, 'mm'
+        elif max_dim >= 1e-6: scale, unit = 1e6, 'µm'
+        elif max_dim >= 1e-9: scale, unit = 1e9, 'nm'
+        else: scale, unit = 1e12, 'pm'
+        
+        plt.xlabel(f'X ({unit})')
+        plt.ylabel(f'Y ({unit})')
+        plt.gca().xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+        plt.gca().yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+        
+        # Create an overlay of the design outlines
+        for structure in self.design.structures:
+            if isinstance(structure, Rectangle):
+                if structure.is_pml:
+                    rect = MatplotlibRectangle(
+                        (structure.position[0], structure.position[1]),
+                        structure.width, structure.height,
+                        facecolor='none', edgecolor='black', alpha=1, linestyle=':')
+                else:
+                    rect = MatplotlibRectangle(
+                        (structure.position[0], structure.position[1]),
+                        structure.width, structure.height,
+                        facecolor='none', edgecolor='black', alpha=0.5)
+                plt.gca().add_patch(rect)
+            elif isinstance(structure, Circle):
+                circle = MatplotlibCircle(
+                    (structure.position[0], structure.position[1]),
+                    structure.radius,
+                    facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                plt.gca().add_patch(circle)
+            elif isinstance(structure, Ring):
+                # Create points for the ring
+                N = 100
+                theta = np.linspace(0, 2 * np.pi, N, endpoint=True)
+                x_outer = structure.position[0] + structure.outer_radius * np.cos(theta)
+                y_outer = structure.position[1] + structure.outer_radius * np.sin(theta)
+                x_inner = structure.position[0] + structure.inner_radius * np.cos(theta[::-1])
+                y_inner = structure.position[1] + structure.inner_radius * np.sin(theta[::-1])
+                vertices = np.vstack([np.column_stack([x_outer, y_outer]),
+                                     np.column_stack([x_inner, y_inner])])
+                codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (N - 1),
+                                       [Path.MOVETO] + [Path.LINETO] * (N - 1)])
+                path = Path(vertices, codes)
+                ring_patch = PathPatch(path, facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                plt.gca().add_patch(ring_patch)
+            elif isinstance(structure, CircularBend):
+                # Create points for the bend
+                N = 100
+                angle_rad = np.radians(structure.angle)
+                rotation_rad = np.radians(structure.rotation)
+                start_angle = rotation_rad
+                end_angle = rotation_rad + angle_rad
+                theta = np.linspace(start_angle, end_angle, N, endpoint=True)
+                
+                # Generate outer and inner curve points
+                x_outer = structure.position[0] + structure.outer_radius * np.cos(theta)
+                y_outer = structure.position[1] + structure.outer_radius * np.sin(theta)
+                x_inner = structure.position[0] + structure.inner_radius * np.cos(theta)
+                y_inner = structure.position[1] + structure.inner_radius * np.sin(theta)
+                
+                # Create vertex list for the bend shape
+                vertices = np.vstack([
+                    [x_outer[0], y_outer[0]],
+                    *np.column_stack([x_outer[1:], y_outer[1:]]),
+                    [x_inner[-1], y_inner[-1]],
+                    *np.column_stack([x_inner[-2::-1], y_inner[-2::-1]]),
+                    [x_outer[0], y_outer[0]]
+                ])
+                
+                codes = [Path.MOVETO] + [Path.LINETO] * (len(vertices) - 2) + [Path.CLOSEPOLY]
+                path = Path(vertices, codes)
+                bend_patch = PathPatch(path, facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                plt.gca().add_patch(bend_patch)
+            elif isinstance(structure, ModeSource) or isinstance(structure, LineSource):
+                plt.plot((structure.start[0], structure.end[0]), 
+                         (structure.start[1], structure.end[1]), 
+                         '-', lw=4, color="crimson", alpha=0.5)
+                plt.plot((structure.start[0], structure.end[0]), 
+                         (structure.start[1], structure.end[1]), 
+                         '--', lw=2, color="black", alpha=0.5)
+            elif isinstance(structure, ModeMonitor):
+                plt.plot((structure.start[0], structure.end[0]), 
+                         (structure.start[1], structure.end[1]), 
+                         '-', lw=4, color="navy", alpha=0.5)
+        
+        plt.tight_layout()
+        plt.show()

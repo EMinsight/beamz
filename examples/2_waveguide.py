@@ -11,6 +11,7 @@ design.add(ModeSource(design=design, start=(1.1*µm, WL*1.75-0.55*µm-0.5*µm), 
 design.show()
 
 sim = FDTD(design=design, time=T, mesh="regular", resolution=WL/30)
-sim.run()
+sim.run(live=False)
 
+sim.plot_power(log_scale=True)
 #sim.run(live=True, axis_scale=[-1,1], save_animation=True, clean_visualization=True, animation_filename="resring2.mp4")
