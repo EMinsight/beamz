@@ -651,7 +651,7 @@ class FDTD:
         # Close the figure
         plt.close(fig)
         
-    def plot_power(self, cmap: str = "hot", log_scale: bool = False, vmin: float = None, vmax: float = None):
+    def plot_power(self, cmap: str = "hot", log_scale: bool = False, vmin: float = None, vmax: float = None, db_colorbar: bool = False):
         """Plot the time-integrated power distribution from the E and H fields.
         
         Args:
@@ -659,6 +659,7 @@ class FDTD:
             log_scale: Whether to plot power in logarithmic scale (dB) (default: False)
             vmin: Minimum value for colorbar scaling (optional)
             vmax: Maximum value for colorbar scaling (optional)
+            db_colorbar: Whether to display colorbar in dB scale even with linear data (default: False)
             
         Returns:
             None
@@ -700,16 +701,24 @@ class FDTD:
         # Normalize by number of time steps
         power /= len(self.results['t'])
         
+        # Find maximum power for normalization (used in both log_scale and db_colorbar)
+        max_power = np.max(power)
+        
         # Convert to dB if log_scale is True
         if log_scale:
             # Add small epsilon to avoid log(0)
             epsilon = np.finfo(float).eps
-            power_db = 10 * np.log10(power + epsilon)
+            # Scale by maximum value to make max = 0dB
+            power_normalized = power / max_power
+            power_db = 10 * np.log10(power_normalized + epsilon)
             plot_data = power_db
             power_label = 'Power (dB)'
         else:
             plot_data = power
-            power_label = 'Power (W/m²)'
+            if db_colorbar:
+                power_label = 'Power (dB)'
+            else:
+                power_label = 'Power (W/m²)'
         
         # Calculate figure size based on grid dimensions
         aspect_ratio = self.ny / self.nx
@@ -726,7 +735,21 @@ class FDTD:
                        cmap=cmap, aspect='equal', interpolation='bicubic',
                        vmin=vmin, vmax=vmax)
         
-        colorbar = plt.colorbar(im, label=power_label)
+        # Create colorbar with proper formatting
+        if db_colorbar and not log_scale:
+            # Create a custom formatter to display linear values in dB
+            from matplotlib.ticker import FuncFormatter
+            epsilon = np.finfo(float).eps
+            
+            def db_formatter(x, pos):
+                # Convert linear value to dB relative to max_power
+                return f"{10 * np.log10((x/max_power) + epsilon):.1f}"
+            
+            formatter = FuncFormatter(db_formatter)
+            colorbar = plt.colorbar(im, format=formatter, label=power_label)
+        else:
+            colorbar = plt.colorbar(im, label=power_label)
+        
         plt.title('Time-integrated Power Distribution')
         
         # Set proper unit labels based on design dimensions
@@ -748,18 +771,18 @@ class FDTD:
                     rect = MatplotlibRectangle(
                         (structure.position[0], structure.position[1]),
                         structure.width, structure.height,
-                        facecolor='none', edgecolor='black', alpha=1, linestyle=':')
+                        facecolor='none', edgecolor='white', alpha=1, linestyle=':')
                 else:
                     rect = MatplotlibRectangle(
                         (structure.position[0], structure.position[1]),
                         structure.width, structure.height,
-                        facecolor='none', edgecolor='black', alpha=0.5)
+                        facecolor='none', edgecolor='white', alpha=0.5)
                 plt.gca().add_patch(rect)
             elif isinstance(structure, Circle):
                 circle = MatplotlibCircle(
                     (structure.position[0], structure.position[1]),
                     structure.radius,
-                    facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                    facecolor='none', edgecolor='white', alpha=0.5, linestyle='--')
                 plt.gca().add_patch(circle)
             elif isinstance(structure, Ring):
                 # Create points for the ring
@@ -774,7 +797,7 @@ class FDTD:
                 codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (N - 1),
                                        [Path.MOVETO] + [Path.LINETO] * (N - 1)])
                 path = Path(vertices, codes)
-                ring_patch = PathPatch(path, facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                ring_patch = PathPatch(path, facecolor='none', edgecolor='white', alpha=0.5, linestyle='--')
                 plt.gca().add_patch(ring_patch)
             elif isinstance(structure, CircularBend):
                 # Create points for the bend
@@ -802,7 +825,7 @@ class FDTD:
                 
                 codes = [Path.MOVETO] + [Path.LINETO] * (len(vertices) - 2) + [Path.CLOSEPOLY]
                 path = Path(vertices, codes)
-                bend_patch = PathPatch(path, facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
+                bend_patch = PathPatch(path, facecolor='none', edgecolor='white', alpha=0.5, linestyle='--')
                 plt.gca().add_patch(bend_patch)
             elif isinstance(structure, ModeSource) or isinstance(structure, LineSource):
                 plt.plot((structure.start[0], structure.end[0]), 
@@ -810,7 +833,7 @@ class FDTD:
                          '-', lw=4, color="crimson", alpha=0.5)
                 plt.plot((structure.start[0], structure.end[0]), 
                          (structure.start[1], structure.end[1]), 
-                         '--', lw=2, color="black", alpha=0.5)
+                         '--', lw=2, color="white", alpha=0.5)
             elif isinstance(structure, ModeMonitor):
                 plt.plot((structure.start[0], structure.end[0]), 
                          (structure.start[1], structure.end[1]), 
