@@ -23,7 +23,7 @@ class LineSource():
 class ModeSource():
     """Calculates and injects the mode profiles for a cross section given a start and end point."""
     def __init__(self, design, start, end, wavelength=1.55*µm, signal=0, direction="+x", npml=10, num_modes=2, 
-                 grid_resolution=200):
+                 grid_resolution=400):
         """
         Args:
             design: Design object containing the structures
@@ -169,7 +169,7 @@ def compute_derivative_matrices(N, dL, npml=0):
         sc_array = np.ones(N, dtype=complex)
         # Define PML parameters
         amax = 3.0  # PML strength 
-        m = 4      # PML power (cubic profile often works well)
+        m = 3      # PML power (cubic profile often works well)
         # Calculate scaling factor based on normalized distance into PML (0=interface, 1=outer edge)
         def pml_scale(dist_norm):
             return 1.0 / (1.0 + 1j * amax * dist_norm**m)
