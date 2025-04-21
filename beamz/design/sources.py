@@ -23,7 +23,7 @@ class LineSource():
 class ModeSource():
     """Calculates and injects the mode profiles for a cross section given a start and end point."""
     def __init__(self, design, start, end, wavelength=1.55*µm, signal=0, direction="+x", npml=10, num_modes=2, 
-                 grid_resolution=400):
+                 grid_resolution=500):
         """
         Args:
             design: Design object containing the structures
@@ -95,14 +95,12 @@ class ModeSource():
         vals, vecs = solve_modes(eps_1d, self.omega, self.dL, npml=self.npml, m=self.num_modes)
 
         fig, ax1 = plt.subplots(figsize=(10, 5))
-
         # Plot permittivity profile vs physical coordinates
         ax1.plot(coords, eps_1d, color='black', label='1D Permittivity Profile')
         ax1.set_xlabel(f'Position along the line ({plot_unit})')
         ax1.set_ylabel('Relative Permittivity', color='black')
         ax1.tick_params(axis='y', labelcolor='black')
         ax1.set_xlim(coords[0], coords[-1]) # Set limits based on coordinate range
-
         # Create a second y-axis for the mode profiles
         ax2 = ax1.twinx()
         colors = ['crimson', 'blue', 'green', 'orange', 'purple']
@@ -139,9 +137,6 @@ class ModeSource():
             if label not in unique_labels:
                 unique_labels[label] = line
         ax2.legend(unique_labels.values(), unique_labels.keys(), loc='upper right')
-        
-        # ax1.legend(loc='upper left') # Remove separate legends
-        # ax2.legend(loc='upper right')
         
         plt.grid(True)
         fig.tight_layout()

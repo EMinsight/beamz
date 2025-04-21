@@ -16,4 +16,4 @@ design.add(Rectangle(position=(0*µm, 2*µm), width=4*µm, height=1*µm, materia
 signal = ramped_cosine(T, amplitude=1.0, frequency=(LIGHT_SPEED/WL)*1.5, phase=0, ramp_duration=TIME/2, t_max=TIME)
 design.show()
 
-FDTD(design=design, mesh="regular", resolution=0.02*µm).run()
+#FDTD(design=design, mesh="regular", resolution=0.02*µm).run()
