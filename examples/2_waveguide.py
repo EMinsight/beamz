@@ -2,16 +2,18 @@ from beamz import *
 import numpy as np
 
 WL = 1.55*µm
-TIME = 75*WL/LIGHT_SPEED
+TIME = 25*WL/LIGHT_SPEED
 T = np.linspace(0, TIME, int(TIME/(0.015*WL/LIGHT_SPEED)))
-design = Design(width=50*µm, height=3*µm, material=Material(2.1), pml_size=WL/2)
-design.add(Rectangle(position=(0,1.5*µm-0.55*µm), width=50*µm, height=1.1*µm, material=Material(4)))
+design = Design(width=20*µm, height=3*µm, material=Material(2.1), pml_size=WL/3)
+design.add(Rectangle(position=(0,1.5*µm-0.55*µm), width=20*µm, height=1.1*µm, material=Material(4)))
 signal = ramped_cosine(T, amplitude=1.0, frequency=LIGHT_SPEED/WL, phase=0, ramp_duration=WL*5/LIGHT_SPEED, t_max=TIME/5)
-design.add(ModeSource(design=design, start=(1.1*µm, 1.5*µm-0.8*µm), end=(1.1*µm, 1.5*µm+0.8*µm), wavelength=WL, signal=signal))
+
+source = ModeSource(design=design, start=(1.1*µm, 1.5*µm-0.8*µm), end=(1.1*µm, 1.5*µm+0.8*µm), wavelength=WL, signal=signal)
+source.show()
+design.add(source)
 design.show()
 
-sim = FDTD(design=design, time=T, mesh="regular", resolution=WL/30)
+sim = FDTD(design=design, time=T, mesh="regular", resolution=WL/25)
 print(sim.mesh.shape[0]*sim.mesh.shape[1])
 sim.run(live=True)
 sim.plot_power(log_scale=False, db_colorbar=True)
-#1cm = 10 mm, 1 mm = 1000 µm, 1cm = 10000 µm

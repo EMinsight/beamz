@@ -49,17 +49,14 @@ class FDTD:
         # For impedance matching: sigma_m = sigma * (mu_0/epsilon_0)
         sigma_m_x = self.sigma[:, :-1] * MU_0 / EPS_0
         sigma_m_y = self.sigma[:-1, :] * MU_0 / EPS_0
-        
         # Calculate curl of E for H-field updates
         curl_e_x = (self.Ez[:, 1:] - self.Ez[:, :-1]) / self.dy
         curl_e_y = (self.Ez[1:, :] - self.Ez[:-1, :]) / self.dx
-        
         # Update Hx with semi-implicit scheme for magnetic conductivity
         denom_x = 1.0 + sigma_m_x * self.dt / (2.0 * MU_0)
         factor_x = (1.0 - sigma_m_x * self.dt / (2.0 * MU_0)) / denom_x
         source_x = (self.dt / MU_0) / denom_x
         self.Hx = factor_x * self.Hx - source_x * curl_e_x
-        
         # Update Hy with semi-implicit scheme for magnetic conductivity
         denom_y = 1.0 + sigma_m_y * self.dt / (2.0 * MU_0)
         factor_y = (1.0 - sigma_m_y * self.dt / (2.0 * MU_0)) / denom_y
@@ -74,14 +71,12 @@ class FDTD:
         # Interior points calculation
         curl_h_x[1:-1, 1:-1] = (self.Hx[1:-1, 1:] - self.Hx[1:-1, :-1]) / self.dy
         curl_h_y[1:-1, 1:-1] = (self.Hy[1:, 1:-1] - self.Hy[:-1, 1:-1]) / self.dx
-        
         # For better numerical stability, use semi-implicit scheme for conductivity
         # First calculate the denominator
         denom = 1.0 + self.sigma[1:-1, 1:-1] * self.dt / (2.0 * EPS_0 * self.epsilon_r[1:-1, 1:-1])
         # Then the numerator factors
         factor1 = (1.0 - self.sigma[1:-1, 1:-1] * self.dt / (2.0 * EPS_0 * self.epsilon_r[1:-1, 1:-1])) / denom
         factor2 = (self.dt / (EPS_0 * self.epsilon_r[1:-1, 1:-1])) / denom
-        
         # Update Ez field with FDTD, conductivity term handles PML regions
         self.Ez[1:-1, 1:-1] = factor1 * self.Ez[1:-1, 1:-1] + factor2 * (-curl_h_x[1:-1, 1:-1] + curl_h_y[1:-1, 1:-1])
 
