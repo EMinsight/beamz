@@ -16,5 +16,3 @@ design.show()
 sim = FDTD(design=design, time=T, mesh="regular", resolution=WL/40)
 sim.run(live=False)
 sim.plot_power(db_colorbar=True)
-
-#sim.run(live=True, axis_scale=[-1,1], save_animation=True, clean_visualization=True, animation_filename="resring2.mp4")

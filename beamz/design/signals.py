@@ -25,8 +25,6 @@ def gaussian_pulse(t, amplitude, center, width, frequency, phase):
 def chirped_gaussian():
     pass
 
-
-
 def plot_signal(signals, t):
     """Create a single signal or a list of signals on the same plot."""
     # Convert time to seconds

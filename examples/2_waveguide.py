@@ -13,6 +13,5 @@ design.show()
 sim = FDTD(design=design, time=T, mesh="regular", resolution=WL/30)
 print(sim.mesh.shape[0]*sim.mesh.shape[1])
 sim.run(live=True)
-
 sim.plot_power(log_scale=False, db_colorbar=True)
 #1cm = 10 mm, 1 mm = 1000 µm, 1cm = 10000 µm

@@ -15,7 +15,7 @@ from beamz.design.sources import PointSource, ModeSource
 from beamz.design.monitors import ModeMonitor
 
 # Import simulation-related classes and functions
-from beamz.simulation.signals import ramped_cosine
+from beamz.design.signals import ramped_cosine
 from beamz.simulation.meshing import RegularGrid
 from beamz.simulation.fdtd import FDTD
 

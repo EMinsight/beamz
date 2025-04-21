@@ -346,12 +346,13 @@ class Design:
 
 # ================================================ 2D structures
 class Rectangle:
-    def __init__(self, position=(0,0), width=1, height=1, material=None, color=None, is_pml=False):
+    def __init__(self, position=(0,0), width=1, height=1, material=None, color=None, is_pml=False, optimize=False):
         self.position = position
         self.width = width
         self.height = height
         self.material = material
         self.is_pml = is_pml
+        self.optimize = optimize
         self.color = color if color is not None else self.get_random_color()
 
     def get_random_color(self):
@@ -412,11 +413,12 @@ class Circle:
         return Circle(self.position, self.radius, self.material)
 
 class Ring:
-    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, material=None, color=None):
+    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, material=None, color=None, optimize=False):
         self.position = position
         self.inner_radius = inner_radius
         self.outer_radius = outer_radius
         self.material = material
+        self.optimize = optimize
         self.color = color if color is not None else self.get_random_color()
 
     def get_random_color(self):
@@ -438,13 +440,14 @@ class Ring:
         return Ring(self.position, self.inner_radius, self.outer_radius, self.material)
 
 class CircularBend:
-    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, angle=90, rotation=0, material=None, color=None):
+    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, angle=90, rotation=0, material=None, color=None, optimize=False):
         self.position = position
         self.inner_radius = inner_radius
         self.outer_radius = outer_radius
         self.angle = angle
         self.rotation = rotation
         self.material = material
+        self.optimize = optimize
         self.color = color if color is not None else self.get_random_color()
 
     def get_random_color(self):
@@ -465,9 +468,10 @@ class CircularBend:
         return CircularBend(self.position, self.inner_radius, self.outer_radius, self.angle, self.rotation, self.material)
 
 class Polygon:
-    def __init__(self, vertices=None, material=None, color=None):
+    def __init__(self, vertices=None, material=None, color=None, optimize=False):
         self.vertices = vertices
         self.material = material
+        self.optimize = optimize
         self.color = color if color is not None else self.get_random_color()
 
     def get_random_color(self):

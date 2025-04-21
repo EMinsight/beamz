@@ -1,7 +1,7 @@
 from beamz.design.materials import Material
 from beamz.const import µm, LIGHT_SPEED
 from beamz.design.structures import *
-from beamz.simulation.signals import plot_signal, ramped_cosine
+from beamz.design.signals import plot_signal, ramped_cosine
 from beamz.simulation.fdtd import FDTD
 
 WL = 1.55*µm # wavelength of the light
