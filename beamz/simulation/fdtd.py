@@ -343,7 +343,7 @@ class FDTD:
                 source_circle = MatplotlibCircle(
                     (structure.position[0], structure.position[1]),
                     structure.width,
-                    facecolor='none', edgecolor='orange', alpha=0.8, linestyle='dotted')
+                    facecolor='none', edgecolor='black', alpha=1, linestyle='dotted')
                 self.ax.add_patch(source_circle)
 
         # Set axis labels with proper scaling
@@ -592,7 +592,7 @@ class FDTD:
                 source_circle = MatplotlibCircle(
                     (structure.position[0], structure.position[1]),
                     structure.width,
-                    facecolor='none', edgecolor='orange', alpha=0.8, linestyle='dotted')
+                    facecolor='none', edgecolor='white', alpha=1, linestyle='dotted')
                 ax.add_patch(source_circle)
         
         # Configure standard plot elements if not using clean visualization
