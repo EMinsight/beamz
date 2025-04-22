@@ -12,7 +12,7 @@ from beamz.design.structures import (
     CircularBend, Polygon, Taper
 )
 from beamz.design.sources import PointSource, ModeSource
-from beamz.design.monitors import ModeMonitor
+from beamz.design.monitors import Monitor
 
 # Import simulation-related classes and functions
 from beamz.design.signals import ramped_cosine

@@ -6,8 +6,8 @@ import numpy as np
 from beamz.design.materials import Material
 from beamz.const import µm, EPS_0, MU_0
 from beamz.design.sources import ModeSource, LineSource
-from beamz.design.monitors import ModeMonitor
-from beamz.design.helpers import rgb_to_hex, is_dark, get_si_scale_and_label
+from beamz.design.monitors import Monitor
+from beamz.design.helpers import get_si_scale_and_label
 
 class Design:
     # TODO: Implement 3D version generalization.
@@ -34,7 +34,7 @@ class Design:
         elif isinstance(structure, LineSource):
             self.sources.append(structure)
             self.structures.append(structure)
-        elif isinstance(structure, ModeMonitor):
+        elif isinstance(structure, Monitor):
             self.monitors.append(structure)
             self.structures.append(structure)
         else:
@@ -586,7 +586,6 @@ class RectPML:
         
         # Ensure distance is within [0,1]
         distance = min(max(distance, 0.0), 1.0)
-        
         # Calculate conductivity with polynomial scaling (default cubic as in pml.py)
         return sigma_max * (1.0 - distance) ** self.polynomial_order
 
@@ -616,35 +615,24 @@ class CircularPML:
         """
         # Calculate distance from corner to point (x,y)
         distance_from_corner = np.hypot(x - self.position[0], y - self.position[1])
-        
         # Scale distance based on radius
-        if distance_from_corner > self.radius: 
-            return 0.0  # Outside the PML region
-        
+        if distance_from_corner > self.radius: return 0.0  # Outside the PML region
         # For corners, we need to check if the point is in the correct quadrant
         # This prevents the corner PML from extending into the non-corner regions
         dx = x - self.position[0]
         dy = y - self.position[1]
-        
-        if self.orientation == "top-left" and (dx > 0 or dy > 0):
-            return 0.0
-        elif self.orientation == "top-right" and (dx < 0 or dy > 0):
-            return 0.0
-        elif self.orientation == "bottom-left" and (dx > 0 or dy < 0):
-            return 0.0
-        elif self.orientation == "bottom-right" and (dx < 0 or dy < 0):
-            return 0.0
-        
+        if self.orientation == "top-left" and (dx > 0 or dy > 0): return 0.0
+        elif self.orientation == "top-right" and (dx < 0 or dy > 0): return 0.0
+        elif self.orientation == "bottom-left" and (dx > 0 or dy < 0): return 0.0
+        elif self.orientation == "bottom-right" and (dx < 0 or dy < 0): return 0.0
         # Calculate max conductivity based on grid parameters if provided
         sigma_max = self.max_conductivity
         if dx is not None and eps_avg is not None:
             # Calculate impedance and max conductivity as in pml.py
             eta = np.sqrt(MU_0 / (EPS_0 * eps_avg))
             sigma_max = 0.5 / (eta * dx)
-            
         # Normalize distance to [0,1] range (1 at corner, 0 at edge of PML)
         normalized_distance = 1.0 - (distance_from_corner / self.radius)
-        
         # Calculate conductivity with polynomial scaling (default cubic as in pml.py)
         return sigma_max * normalized_distance ** self.polynomial_order
 
