@@ -4,21 +4,18 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from beamz.design.mode import solve_modes
 
-
-class PointSource():
-    """Uniform current source with a zero size."""
-    def __init__(self, position=(0,0), signal=0):
+class GaussianSource():
+    """A Gaussian current distribution in space."""
+    def __init__(self, position=(0,0), width=1.0*µm, signal=0):
+        """
+        Args:
+            position: Center of the Gaussian source (x, y).
+            width: Standard deviation of the Gaussian distribution (spatial width).
+            signal: Time-dependent signal.
+        """
         self.position = position
+        self.width = width
         self.signal = signal
-
-class LineSource():
-    """A current distribution along a line."""
-    def __init__(self, start, end, direction=None, distribution=None, signal=0):
-        self.start = start
-        self.end = end
-        self.signal = signal
-        self.distribution = distribution
-        self.direction = direction
 
 class ModeSource():
     """Calculates and injects the mode profiles for a cross section given a start and end point."""

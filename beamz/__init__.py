@@ -11,7 +11,7 @@ from beamz.design.structures import (
     Design, Rectangle, Circle, Ring, 
     CircularBend, Polygon, Taper
 )
-from beamz.design.sources import PointSource, ModeSource
+from beamz.design.sources import ModeSource, GaussianSource
 from beamz.design.monitors import Monitor
 
 # Import simulation-related classes and functions

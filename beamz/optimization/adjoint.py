@@ -81,41 +81,19 @@ class AdjointOptimizer:
         self.design_positions = np.array(self.design_positions)
         
     def _forward_simulation(self):
-        """
-        Run the forward simulation and calculate objective value.
-        
-        This simulation solves Maxwell's equations forward in time to compute the
-        electromagnetic fields throughout the structure.
-        
-        Returns:
-            Tuple of (simulation results, objective value)
-        """
+        """Run the forward simulation and calculate objective value."""
         # Run the forward simulation
         sim_result = self.simulation.run(live=False, store_fields=True)
-        
         # Calculate the objective function
         obj_value = self.objective_fn(sim_result)
-        
         return sim_result, obj_value
     
     def _calculate_adjoint_source(self, sim_result):
-        """
-        Calculate the adjoint source based on the objective function derivative.
-        
-        The adjoint source is set to the negative derivative of the objective
-        function with respect to the electromagnetic fields.
-        
-        Args:
-            sim_result: Results from the forward simulation
-            
-        Returns:
-            Adjoint source configuration
-        """
+        """Calculate the adjoint source based on the objective function derivative."""
         # This implementation depends on the specific objective function and 
         # the structure of the simulation results
         # For a typical case with a power monitor, the adjoint source is 
         # placed at the monitor position with field profile from the monitor
-        
         # Find monitors in the simulation results
         adjoint_sources = []
         for key, result in sim_result.items():
@@ -187,15 +165,7 @@ class AdjointOptimizer:
         return gradients
     
     def _get_element_region(self, element):
-        """
-        Get the spatial region of a design element on the simulation grid.
-        
-        Args:
-            element: Design element
-            
-        Returns:
-            Indices of grid points belonging to this element
-        """
+        """Get the spatial region of a design element on the simulation grid."""
         # This is a simplified implementation that would need to be adapted
         # to match the actual simulation grid structure
         x_min, y_min = element.position[0] - element.width/2, element.position[1] - element.height/2
@@ -209,18 +179,7 @@ class AdjointOptimizer:
         return {"x": x_indices, "y": y_indices}
     
     def _compute_gradient(self, forward_fields, adjoint_fields, element_region, permittivity):
-        """
-        Compute gradient for a specific design element using the overlap integral.
-        
-        Args:
-            forward_fields: Fields from forward simulation
-            adjoint_fields: Fields from adjoint simulation
-            element_region: Region of the element on the grid
-            permittivity: Current permittivity value of the element
-            
-        Returns:
-            Gradient value for this element
-        """
+        """Compute gradient for a specific design element using the overlap integral."""
         # Extract fields in the element region
         E_forward = forward_fields.E[:, element_region["x"], element_region["y"]]
         E_adjoint = adjoint_fields.E[:, element_region["x"], element_region["y"]]
@@ -243,62 +202,34 @@ class AdjointOptimizer:
         return np.real(gradient)  # Ensure the result is real
     
     def _apply_filters(self, gradients):
-        """
-        Apply spatial filtering to the gradients if filter_radius is specified.
-        
-        Args:
-            gradients: Raw gradients
-            
-        Returns:
-            Filtered gradients
-        """
-        if self.filter_radius is None:
-            return gradients
-        
+        """Apply spatial filtering to the gradients if filter_radius is specified."""
+        if self.filter_radius is None: return gradients
         # Apply spatial filtering to the gradients
         filtered_gradients = np.zeros_like(gradients)
-        
         # Apply a Gaussian filter to each parameter based on spatial positions
         for i, pos_i in enumerate(self.design_positions):
             weights = np.zeros(len(self.design_positions))
-            
             for j, pos_j in enumerate(self.design_positions):
                 # Calculate distance between elements
                 distance = np.linalg.norm(np.array(pos_i) - np.array(pos_j))
-                
                 # Apply Gaussian weighting
                 if distance <= self.filter_radius:
                     weights[j] = np.exp(-(distance**2) / (2 * self.filter_radius**2))
-            
             # Normalize weights
             if np.sum(weights) > 0:
                 weights /= np.sum(weights)
-                
             # Apply weighted averaging to gradients
             filtered_gradients[i] = np.sum(weights * gradients)
         
         return filtered_gradients
     
     def _update_design(self, gradients):
-        """
-        Update design parameters using gradient information.
-        
-        This method:
-        1. Applies spatial filtering if specified
-        2. Updates parameters using momentum-based gradient descent
-        3. Applies projection if specified
-        4. Enforces bounds on parameter values
-        
-        Args:
-            gradients: Computed gradients for each design parameter
-        """
+        """Update design parameters using gradient information."""
         # Apply spatial filtering
         filtered_gradients = self._apply_filters(gradients)
-        
         # Apply momentum-based update
         self.velocity = self.momentum * self.velocity + self.learning_rate * filtered_gradients
         self.design_parameters += self.velocity
-        
         # Apply projection if specified
         if self.projection_strength is not None:
             # Projection function: pushes values toward 0 or 1
@@ -308,27 +239,17 @@ class AdjointOptimizer:
             numerator = np.tanh(beta * self.design_parameters) + np.tanh(beta * (self.design_parameters - 1))
             denominator = np.tanh(beta) + np.tanh(beta * 1)
             self.design_parameters = numerator / denominator
-        
         # Apply constraints
         if self.min_value is not None:
             self.design_parameters = np.maximum(self.design_parameters, self.min_value)
         if self.max_value is not None:
             self.design_parameters = np.minimum(self.design_parameters, self.max_value)
-        
         # Update the design elements
         for i, element in enumerate(self.design_elements):
             element.material.value = self.design_parameters[i]
     
     def optimize(self, iterations: int = 50) -> List[float]:
-        """
-        Run optimization for the specified number of iterations.
-        
-        Args:
-            iterations: Number of optimization iterations
-            
-        Returns:
-            List of objective function values for each iteration
-        """
+        """Run optimization for the specified number of iterations."""
         objective_history = []
         
         print(f"Starting optimization with {len(self.design_parameters)} design parameters")
@@ -336,26 +257,19 @@ class AdjointOptimizer:
         
         for i in range(iterations):
             iter_start = time.time()
-            
             # Forward simulation
             sim_result, obj_value = self._forward_simulation()
             objective_history.append(obj_value)
-            
             # Get forward fields
             forward_fields = sim_result.get_fields()
-            
             # Calculate gradients using adjoint method
             gradients = self._adjoint_simulation(sim_result, forward_fields)
-            
             # Update design parameters
             self._update_design(gradients)
-            
             iter_time = time.time() - iter_start
             print(f"Iteration {i+1}/{iterations}, Objective: {obj_value:.6f}, Time: {iter_time:.2f}s")
-            
             # Call callback if provided
-            if self.callback:
-                self.callback(i, obj_value, self.design_parameters)
+            if self.callback: self.callback(i, obj_value, self.design_parameters)
         
         total_time = time.time() - start_time
         print(f"Optimization completed in {total_time:.2f}s")

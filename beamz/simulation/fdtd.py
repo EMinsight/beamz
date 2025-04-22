@@ -2,7 +2,7 @@ from typing import Dict, Optional
 import numpy as np
 from beamz.const import *
 from beamz.simulation.meshing import RegularGrid
-from beamz.design.sources import ModeSource, LineSource
+from beamz.design.sources import ModeSource, GaussianSource
 from beamz.design.structures import *
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle as MatplotlibRectangle, Circle as MatplotlibCircle, PathPatch
@@ -214,8 +214,14 @@ class FDTD:
             elif isinstance(structure, LineSource):
                 plt.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="crimson", alpha=0.5, label='Line Source')
                 plt.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", alpha=0.5)
-            elif isinstance(structure, ModeMonitor):
-                plt.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="navy", alpha=0.5, label='Mode Monitor')
+            elif isinstance(structure, GaussianSource):
+                source_circle = MatplotlibCircle(
+                    (structure.position[0], structure.position[1]),
+                    structure.width,  # Use width as radius
+                    facecolor='none', edgecolor='orange', alpha=0.8, linestyle='dotted', label='Gaussian Source')
+                plt.gca().add_patch(source_circle)
+            #elif isinstance(structure, ModeMonitor):
+            #    plt.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="navy", alpha=0.5, label='Mode Monitor')
 
         plt.tight_layout()
         plt.show()
@@ -333,6 +339,12 @@ class FDTD:
                 self.ax.plot((structure.start[0], structure.end[0]), 
                            (structure.start[1], structure.end[1]), 
                            '--', lw=2, color="black", alpha=1)
+            elif isinstance(structure, GaussianSource):
+                source_circle = MatplotlibCircle(
+                    (structure.position[0], structure.position[1]),
+                    structure.width,
+                    facecolor='none', edgecolor='orange', alpha=0.8, linestyle='dotted')
+                self.ax.add_patch(source_circle)
 
         # Set axis labels with proper scaling
         max_dim = max(self.design.width, self.design.height)
@@ -405,80 +417,54 @@ class FDTD:
                         elif source.direction == "-x": self.Ez[y, x+1] = 0
                         elif source.direction == "+y": self.Ez[y-1, x] = 0
                         elif source.direction == "-y": self.Ez[y+1, x] = 0
-                elif isinstance(source, LineSource):
-                    # Get the time modulation for this step
+                elif isinstance(source, GaussianSource):
                     modulation = source.signal[step]
-                    # Calculate the line's angle and direction
-                    dx = source.end[0] - source.start[0]
-                    dy = source.end[1] - source.start[1]
-                    angle = np.arctan2(dy, dx)
+                    center_x_phys, center_y_phys = source.position
+                    width_phys = source.width # Assuming width is standard deviation (sigma)
                     
-                    # Apply the source to the grid
-                    if source.distribution is None:
-                        # Calculate grid indices for start and end points
-                        x_start = int(round(source.start[0] / self.dx))
-                        y_start = int(round(source.start[1] / self.dy))
-                        x_end = int(round(source.end[0] / self.dx))
-                        y_end = int(round(source.end[1] / self.dy))
+                    # Convert physical units to grid coordinates
+                    center_x_grid = center_x_phys / self.dx
+                    center_y_grid = center_y_phys / self.dy
+                    # sigma in grid units
+                    width_x_grid = width_phys / self.dx 
+                    width_y_grid = width_phys / self.dy 
 
-                        # Use Bresenham's line algorithm to get all grid points along the line
-                        dx = abs(x_end - x_start)
-                        dy = abs(y_end - y_start)
-                        x, y = x_start, y_start
-                        n = 1 + dx + dy
-                        x_inc = 1 if x_end > x_start else -1
-                        y_inc = 1 if y_end > y_start else -1
-                        error = dx - dy
-                        dx *= 2
-                        dy *= 2
-                        
-                        while n > 0:
-                            # Only apply if within grid bounds
-                            if 0 <= x < self.nx and 0 <= y < self.ny:
-                                self.Ez[y, x] += modulation
-                                # Apply direction to the source
-                                if source.direction == "+x":
-                                    if angle > -np.pi/4 and angle < np.pi/4:
-                                        self.Ez[y, x-2] = 0
-                                elif source.direction == "-x":
-                                    if angle > 3*np.pi/4 or angle < -3*np.pi/4:
-                                        self.Ez[y, x+2] = 0
-                                elif source.direction == "+y":
-                                    if angle > np.pi/4 and angle < 3*np.pi/4:
-                                        self.Ez[y-2, x] = 0
-                                elif source.direction == "-y":
-                                    if angle > -3*np.pi/4 and angle < -np.pi/4:
-                                        self.Ez[y+2, x] = 0
-                            if error > 0:
-                                x += x_inc
-                                error -= dy
-                            else:
-                                y += y_inc
-                                error += dx
-                            n -= 1
-                    else:
-                        # Apply the source to all points in the distribution
-                        for point in source.distribution:
-                            amplitude, x_raw, y_raw = point
-                            # Convert the position to the nearest grid point
-                            x = int(round(x_raw / self.dx))
-                            y = int(round(y_raw / self.dy))
-                            # Only apply if within grid bounds
-                            if 0 <= x < self.nx and 0 <= y < self.ny:
-                                self.Ez[y, x] += amplitude * modulation
-                                # Apply direction to the source
-                                if source.direction == "+x":
-                                    if angle > -np.pi/4 and angle < np.pi/4:
-                                        self.Ez[y, x-1] = 0
-                                elif source.direction == "-x":
-                                    if angle > 3*np.pi/4 or angle < -3*np.pi/4:
-                                        self.Ez[y, x+1] = 0
-                                elif source.direction == "+y":
-                                    if angle > np.pi/4 and angle < 3*np.pi/4:
-                                        self.Ez[y-1, x] = 0
-                                elif source.direction == "-y":
-                                    if angle > -3*np.pi/4 and angle < -np.pi/4:
-                                        self.Ez[y+1, x] = 0
+                    # Define the grid range to apply the source (e.g., +/- 3 sigma)
+                    # Use max(1, ...) to ensure at least one grid cell width if sigma_grid is very small
+                    wx_grid_cells = max(1, int(round(3 * width_x_grid)))
+                    wy_grid_cells = max(1, int(round(3 * width_y_grid)))
+                    
+                    # Calculate bounding box indices, clamped to grid boundaries
+                    x_center_idx = int(round(center_x_grid))
+                    y_center_idx = int(round(center_y_grid))
+                    
+                    x_start = max(0, x_center_idx - wx_grid_cells)
+                    x_end = min(self.nx, x_center_idx + wx_grid_cells + 1)
+                    y_start = max(0, y_center_idx - wy_grid_cells)
+                    y_end = min(self.ny, y_center_idx + wy_grid_cells + 1)
+
+                    # Create grid indices arrays for the affected area
+                    y_indices, x_indices = np.meshgrid(np.arange(y_start, y_end), 
+                                                       np.arange(x_start, x_end),
+                                                       indexing='ij')
+                    
+                    # Calculate squared distances from the center in grid units
+                    dist_x_sq = (x_indices - center_x_grid)**2
+                    dist_y_sq = (y_indices - center_y_grid)**2
+                    
+                    # Calculate Gaussian amplitude (handle zero width appropriately)
+                    # Use small epsilon to avoid division by zero if width_grid is exactly 0
+                    epsilon = 1e-9
+                    sigma_x_sq = width_x_grid**2 + epsilon
+                    sigma_y_sq = width_y_grid**2 + epsilon
+
+                    exponent = -(dist_x_sq / (2 * sigma_x_sq) + dist_y_sq / (2 * sigma_y_sq))
+                    gaussian_amp = np.exp(exponent)
+                            
+                    # Add the source contribution to the Ez field slice
+                    # Ensure shapes match for broadcasting if needed, though they should here.
+                    self.Ez[y_start:y_end, x_start:x_end] += gaussian_amp * modulation
+
             
             # Save results if requested
             if save:
@@ -595,13 +581,19 @@ class FDTD:
                 path = Path(vertices, codes)
                 ring_patch = PathPatch(path, facecolor='none', edgecolor='black', alpha=1, linestyle='--')
                 ax.add_patch(ring_patch)
-            elif isinstance(structure, ModeSource) or isinstance(structure, LineSource):
+            elif isinstance(structure, ModeSource):
                 ax.plot((structure.start[0], structure.end[0]), 
                       (structure.start[1], structure.end[1]), 
                       '-', lw=4, color="crimson", alpha=0.5)
                 ax.plot((structure.start[0], structure.end[0]), 
                       (structure.start[1], structure.end[1]), 
                       '--', lw=2, color="black", alpha=1)
+            elif isinstance(structure, GaussianSource):
+                source_circle = MatplotlibCircle(
+                    (structure.position[0], structure.position[1]),
+                    structure.width,
+                    facecolor='none', edgecolor='orange', alpha=0.8, linestyle='dotted')
+                ax.add_patch(source_circle)
         
         # Configure standard plot elements if not using clean visualization
         if not clean_visualization:
@@ -822,17 +814,23 @@ class FDTD:
                 path = Path(vertices, codes)
                 bend_patch = PathPatch(path, facecolor='none', edgecolor='white', alpha=0.5, linestyle='--')
                 plt.gca().add_patch(bend_patch)
-            elif isinstance(structure, ModeSource) or isinstance(structure, LineSource):
+            elif isinstance(structure, ModeSource):
                 plt.plot((structure.start[0], structure.end[0]), 
                          (structure.start[1], structure.end[1]), 
                          '-', lw=4, color="crimson", alpha=0.5)
                 plt.plot((structure.start[0], structure.end[0]), 
                          (structure.start[1], structure.end[1]), 
                          '--', lw=2, color="white", alpha=0.5)
-            elif isinstance(structure, ModeMonitor):
-                plt.plot((structure.start[0], structure.end[0]), 
-                         (structure.start[1], structure.end[1]), 
-                         '-', lw=4, color="navy", alpha=0.5)
+            elif isinstance(structure, GaussianSource):
+                source_circle = MatplotlibCircle(
+                    (structure.position[0], structure.position[1]),
+                    structure.width,
+                    facecolor='none', edgecolor='orange', alpha=0.8, linestyle='dotted')
+                plt.gca().add_patch(source_circle)
+            #elif isinstance(structure, ModeMonitor):
+            #    plt.plot((structure.start[0], structure.end[0]), 
+            #              (structure.start[1], structure.end[1]), 
+            #             '-', lw=4, color="navy", alpha=0.5)
         
         plt.tight_layout()
         plt.show()

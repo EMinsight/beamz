@@ -5,7 +5,7 @@ import random
 import numpy as np
 from beamz.design.materials import Material
 from beamz.const import µm, EPS_0, MU_0
-from beamz.design.sources import ModeSource, LineSource
+from beamz.design.sources import ModeSource, GaussianSource
 from beamz.design.monitors import Monitor
 from beamz.design.helpers import get_si_scale_and_label
 
@@ -31,7 +31,7 @@ class Design:
         if isinstance(structure, ModeSource):
             self.sources.append(structure)
             self.structures.append(structure)
-        elif isinstance(structure, LineSource):
+        elif isinstance(structure, GaussianSource):
             self.sources.append(structure)
             self.structures.append(structure)
         elif isinstance(structure, Monitor):
@@ -242,12 +242,9 @@ class Design:
                 elif isinstance(structure, ModeSource):
                     ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="crimson", label='Mode Source')
                     ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", label='Mode Source')
-                elif isinstance(structure, LineSource):
-                    ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="crimson", label='Line Source')
-                    ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", label='Line Source')
-                elif isinstance(structure, ModeMonitor):
-                    ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="navy", label='Mode Monitor')
-            
+                elif isinstance(structure, GaussianSource):
+                    pass
+
             # Set proper limits, title and labels
             ax.set_title('Design Layout')
             ax.set_xlabel(f'X ({unit})')
