@@ -1,6 +1,6 @@
 Clone the repository and install the package locally:
 ```bash
-git clone https://github.com/QuentinWach/beamz # Replace with your repo URL
+git clone https://github.com/QuentinWach/beamz
 cd beamz
 pip install .
 ```

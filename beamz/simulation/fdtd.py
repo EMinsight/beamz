@@ -84,7 +84,12 @@ class FDTD:
         """Perform one FDTD step with stability checks."""
         self.update_h_fields()
         self.update_e_field()
-            
+
+    # TODO: Implement this
+    def show(self, field: str = "Ez", t=None, cmap="RdBu", axis_scale=[-1,1]):
+        """Show a given field or power at a given time or integrated over time."""
+        pass
+
     def plot_field(self, field: str = "Ez", t: float = None) -> None:
         """Plot a field at a given time with proper scaling and units."""
         # Handle the case where we're plotting current state (not from results)
@@ -210,9 +215,6 @@ class FDTD:
                 plt.gca().add_patch(polygon)
             elif isinstance(structure, ModeSource):
                 plt.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="crimson", alpha=0.5, label='Mode Source')
-                plt.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", alpha=0.5)
-            elif isinstance(structure, LineSource):
-                plt.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="crimson", alpha=0.5, label='Line Source')
                 plt.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", alpha=0.5)
             elif isinstance(structure, GaussianSource):
                 source_circle = MatplotlibCircle(
