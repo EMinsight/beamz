@@ -5,26 +5,54 @@ from beamz.simulation.backends.base import Backend
 class TorchBackend(Backend):
     """PyTorch backend for FDTD computations."""
     
-    def __init__(self, device="cuda", **kwargs):
+    def __init__(self, device="auto", **kwargs):
         """Initialize PyTorch backend.
         
         Args:
-            device: Device to use for computation ("cuda", "cpu", or specific cuda device)
+            device: Device to use for computation:
+                   - "auto": automatically select the best available device
+                   - "cuda": use NVIDIA GPU if available
+                   - "mps": use Apple Metal (M-series chips) if available
+                   - "cpu": use CPU
+                   - or a specific device like "cuda:0", "mps:0"
             **kwargs: Additional arguments to pass to torch
         """
         self.device_name = device
         
-        # Check if CUDA is available when cuda is requested
-        if "cuda" in device and not torch.cuda.is_available():
-            print(f"CUDA is not available. Falling back to CPU.")
-            self.device = torch.device("cpu")
+        # Auto-detect best available device
+        if device.lower() == "auto":
+            if torch.cuda.is_available():
+                self.device = torch.device("cuda")
+                print(f"PyTorch backend using CUDA GPU: {torch.cuda.get_device_name(0)}")
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                self.device = torch.device("mps")
+                print(f"PyTorch backend using Apple Metal (MPS)")
+            else:
+                self.device = torch.device("cpu")
+                print(f"PyTorch backend using CPU")
+        # Try to use CUDA
+        elif "cuda" in device:
+            if not torch.cuda.is_available():
+                print(f"CUDA is not available. Falling back to CPU.")
+                self.device = torch.device("cpu")
+            else:
+                self.device = torch.device(device)
+                print(f"PyTorch backend using CUDA GPU: {torch.cuda.get_device_name(0)}")
+        # Try to use MPS (Apple Metal)
+        elif "mps" in device:
+            if not hasattr(torch.backends, "mps") or not torch.backends.mps.is_available():
+                print(f"Apple Metal (MPS) is not available. Falling back to CPU.")
+                self.device = torch.device("cpu")
+            else:
+                self.device = torch.device(device)
+                print(f"PyTorch backend using Apple Metal (MPS)")
+        # Use CPU
         else:
             self.device = torch.device(device)
+            print(f"PyTorch backend using CPU")
             
         # Set default dtype
         self.dtype = kwargs.get("dtype", torch.float32)
-        
-        print(f"PyTorch backend initialized on {self.device}")
     
     def zeros(self, shape):
         """Create an array of zeros with the given shape."""

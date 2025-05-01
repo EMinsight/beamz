@@ -12,5 +12,18 @@ design.add(ModeSource(design=design, start=(0.5*µm, 0.8*µm), end=(0.5*µm, 1.6
 design.show()
 
 sim = FDTD(design=design, time=T, mesh="regular", resolution=WL/40, backend="torch")
-sim.run(live=True)
+# start time
+import time
+start_time = time.time()
+sim.run(live=False)
+end_time = time.time()
+print(f"PyTorch Time taken: {end_time - start_time} seconds")
+
+sim2 = FDTD(design=design, time=T, mesh="regular", resolution=WL/40, backend="numpy")
+start_time = time.time()
+sim2.run(live=False)
+end_time = time.time()
+print(f"Numpy Time taken: {end_time - start_time} seconds")
+
 sim.plot_power(log_scale=False, db_colorbar=True)
+sim2.plot_power(log_scale=False, db_colorbar=True)
