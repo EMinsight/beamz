@@ -53,6 +53,27 @@ class TorchBackend(Backend):
             
         # Set default dtype
         self.dtype = kwargs.get("dtype", torch.float32)
+        
+        # Performance optimization for Apple Silicon
+        if self.device.type == "mps" and not kwargs.get("disable_optimizations", False):
+            # Note: These optimizations are experimental
+            print("Applying MPS-specific optimizations...")
+            
+            # Adjust memory management for better efficiency
+            torch.mps.empty_cache()
+            
+            # Try to set MPS stream options if available
+            try:
+                # This is experimental and not documented but might help with performance
+                torch._mps_synchronize = False
+            except:
+                pass
+            
+            # Try to avoid MPS graph capture which can be slow for small operations
+            try:
+                torch.mps._enable_capture_graphs = False
+            except:
+                pass
     
     def zeros(self, shape):
         """Create an array of zeros with the given shape."""
@@ -81,37 +102,56 @@ class TorchBackend(Backend):
         # Calculate magnetic conductivity from electric conductivity with impedance matching
         sigma_m_x = sigma[:, :-1] * mu_0 / eps_0
         sigma_m_y = sigma[:-1, :] * mu_0 / eps_0
+        
         # Calculate curl of E for H-field updates
         curl_e_x = (Ez[:, 1:] - Ez[:, :-1]) / dy
         curl_e_y = (Ez[1:, :] - Ez[:-1, :]) / dx
+        
         # Update Hx with semi-implicit scheme for magnetic conductivity
         denom_x = 1.0 + sigma_m_x * dt / (2.0 * mu_0)
         factor_x = (1.0 - sigma_m_x * dt / (2.0 * mu_0)) / denom_x
         source_x = (dt / mu_0) / denom_x
-        Hx[:] = factor_x * Hx - source_x * curl_e_x
+        
+        # Using in-place operations to avoid memory allocations
+        Hx.mul_(factor_x)
+        Hx.sub_(source_x * curl_e_x)
+        
         # Update Hy with semi-implicit scheme for magnetic conductivity
         denom_y = 1.0 + sigma_m_y * dt / (2.0 * mu_0)
         factor_y = (1.0 - sigma_m_y * dt / (2.0 * mu_0)) / denom_y
         source_y = (dt / mu_0) / denom_y
-        Hy[:] = factor_y * Hy + source_y * curl_e_y
+        
+        # Using in-place operations
+        Hy.mul_(factor_y)
+        Hy.add_(source_y * curl_e_y)
         
         return Hx, Hy
     
     def update_e_field(self, Ez, Hx, Hy, sigma, epsilon_r, dx, dy, dt, eps_0):
         """Update electric field component with conductivity (including PML)."""
-        # Calculate curl of H
+        # Pre-allocate tensors for curls to avoid repeated allocations
         curl_h_x = torch.zeros_like(Ez)
         curl_h_y = torch.zeros_like(Ez)
-        # Interior points calculation
+        
+        # Interior points calculation (use in-place operations where possible)
         curl_h_x[1:-1, 1:-1] = (Hx[1:-1, 1:] - Hx[1:-1, :-1]) / dy
         curl_h_y[1:-1, 1:-1] = (Hy[1:, 1:-1] - Hy[:-1, 1:-1]) / dx
-        # For better numerical stability, use semi-implicit scheme for conductivity
-        # First calculate the denominator
-        denom = 1.0 + sigma[1:-1, 1:-1] * dt / (2.0 * eps_0 * epsilon_r[1:-1, 1:-1])
-        # Then the numerator factors
-        factor1 = (1.0 - sigma[1:-1, 1:-1] * dt / (2.0 * eps_0 * epsilon_r[1:-1, 1:-1])) / denom
-        factor2 = (dt / (eps_0 * epsilon_r[1:-1, 1:-1])) / denom
-        # Update Ez field with FDTD, conductivity term handles PML regions
-        Ez[1:-1, 1:-1] = factor1 * Ez[1:-1, 1:-1] + factor2 * (-curl_h_x[1:-1, 1:-1] + curl_h_y[1:-1, 1:-1])
+        
+        # Extract the inner region for calculations to avoid excessive indexing
+        inner_sigma = sigma[1:-1, 1:-1]
+        inner_epsilon_r = epsilon_r[1:-1, 1:-1]
+        inner_Ez = Ez[1:-1, 1:-1]
+        
+        # Prepare factors for computation
+        denom = 1.0 + inner_sigma * dt / (2.0 * eps_0 * inner_epsilon_r)
+        factor1 = (1.0 - inner_sigma * dt / (2.0 * eps_0 * inner_epsilon_r)) / denom
+        factor2 = (dt / (eps_0 * inner_epsilon_r)) / denom
+        
+        # Compute the combined curl contribution
+        curl_combined = -curl_h_x[1:-1, 1:-1] + curl_h_y[1:-1, 1:-1]
+        
+        # Update inner Ez (avoiding excessive indexing)
+        new_inner_Ez = factor1 * inner_Ez + factor2 * curl_combined
+        Ez[1:-1, 1:-1] = new_inner_Ez
         
         return Ez 

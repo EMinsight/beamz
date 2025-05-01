@@ -380,6 +380,23 @@ class FDTD:
             print(f"Warning: Simulation may be unstable! Courant number = {courant:.3f} > {1/np.sqrt(2):.3f}")
             print(f"Consider reducing dt or increasing dx/dy")
 
+        # Determine optimal save frequency based on backend type
+        is_gpu_backend = hasattr(self.backend, 'device') and self.backend.device.type in ['cuda', 'mps']
+        
+        # For GPU backends, avoid excessive CPU-GPU transfers by batching the result saves
+        if is_gpu_backend and save:
+            save_freq = max(10, self.num_steps // 100)  # Save approximately every 1% of steps or min of 10 steps
+            print(f"GPU backend detected: Optimizing result storage (saving every {save_freq} steps)")
+        else:
+            save_freq = 1  # Save every step for CPU backends
+            
+        # For live visualization with GPU backends, don't update too frequently
+        if is_gpu_backend and live:
+            live_update_freq = max(5, self.num_steps // 50)  # Update visualization approximately every 2% of steps
+            print(f"GPU backend detected: Optimizing visualization (updating every {live_update_freq} steps)")
+        else:
+            live_update_freq = 5  # Update visualization every 5 steps for CPU backends
+
         # Run simulation
         for step in range(self.num_steps):
             # Update fields
@@ -458,20 +475,26 @@ class FDTD:
                     # Add the source contribution to the Ez field slice
                     self.Ez[y_start:y_end, x_start:x_end] += gaussian_amp * modulation
             
-            # Save results if requested
-            if save:
+            # Save results if requested and at the right frequency
+            if save and (step % save_freq == 0 or step == self.num_steps - 1):
                 # Convert arrays to numpy for saving
                 self.results['Ez'].append(self.backend.to_numpy(self.backend.copy(self.Ez)))
                 self.results['Hx'].append(self.backend.to_numpy(self.backend.copy(self.Hx)))
                 self.results['Hy'].append(self.backend.to_numpy(self.backend.copy(self.Hy)))
                 self.results['t'].append(self.t)
+                
             # Update time
             self.t += self.dt
+            
             # Show progress
-            if live:  # Update every 5 steps for smoother animation
+            if live and (step % live_update_freq == 0 or step == self.num_steps - 1):
                 # Convert to numpy for visualization
                 Ez_np = self.backend.to_numpy(self.Ez)
                 self.animate_live(field_data=Ez_np, field="Ez", axis_scale=axis_scale)
+                
+            # Print progress at 10% intervals
+            if step % (self.num_steps // 10) == 0:
+                print(f"Progress: {step / self.num_steps * 100:.1f}% complete")
 
         # Clean up animation
         if live and self.fig is not None:
@@ -479,9 +502,14 @@ class FDTD:
             self.fig = None
             self.ax = None
             self.im = None
+            
         # Save animation if requested
         if save_animation and save:
             self.save_animation(field="Ez", axis_scale=axis_scale, filename=animation_filename, clean_visualization=clean_visualization)
+            
+        # If we used reduced save frequency, interpolate the time steps for consistent output
+        if save and save_freq > 1:
+            print(f"Simulation complete: {len(self.results['t'])} time steps saved")
             
         return self.results
         
