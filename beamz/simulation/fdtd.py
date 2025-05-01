@@ -461,9 +461,9 @@ class FDTD:
             # Save results if requested
             if save:
                 # Convert arrays to numpy for saving
-                self.results['Ez'].append(self.backend.to_numpy(self.Ez.copy()))
-                self.results['Hx'].append(self.backend.to_numpy(self.Hx.copy()))
-                self.results['Hy'].append(self.backend.to_numpy(self.Hy.copy()))
+                self.results['Ez'].append(self.backend.to_numpy(self.backend.copy(self.Ez)))
+                self.results['Hx'].append(self.backend.to_numpy(self.backend.copy(self.Hx)))
+                self.results['Hy'].append(self.backend.to_numpy(self.backend.copy(self.Hy)))
                 self.results['t'].append(self.t)
             # Update time
             self.t += self.dt
