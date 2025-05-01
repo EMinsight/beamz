@@ -44,6 +44,9 @@ setup(
             "sphinx-autodoc-typehints>=1.25.0",
             "myst-parser>=2.0.0",
         ],
+        "gpu": [
+            "torch>=2.0.0",
+        ],
     },
     license="MIT",
     license_file="LICENSE",
