@@ -242,6 +242,9 @@ class Design:
                 elif isinstance(structure, ModeSource):
                     ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="crimson", label='Mode Source')
                     ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", label='Mode Source')
+                elif isinstance(structure, Monitor):
+                    ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="navy", label='Monitor')
+                    ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", label='Monitor')
                 elif isinstance(structure, GaussianSource):
                     pass
 
@@ -249,11 +252,9 @@ class Design:
             ax.set_title('Design Layout')
             ax.set_xlabel(f'X ({unit})')
             ax.set_ylabel(f'Y ({unit})')
-            
             # Set axis limits and ensure the full design is visible
             ax.set_xlim(0, self.width)
             ax.set_ylim(0, self.height)
-            
             # Update tick labels with scaled values
             ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
             ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')

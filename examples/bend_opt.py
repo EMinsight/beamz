@@ -15,15 +15,10 @@ design.add(Rectangle(position=(3*µm, 0), width=0.9*µm, height=1.2*µm, materia
 design.add(Rectangle(position=(1.2*µm, 1.2*µm), width=6*µm, height=6*µm, material=Material(4)))
 signal = ramped_cosine(T, amplitude=1.0, frequency=LIGHT_SPEED/WL, ramp_duration=TIME/3, t_max=TIME)
 source = ModeSource(design=design, start=(0.5*µm, 2.5*µm), end=(0.5*µm, 4.5*µm), wavelength=WL, signal=signal)
-
-signal2 = ramped_cosine(T, amplitude=1.0, frequency=LIGHT_SPEED/WL2, ramp_duration=TIME/3, t_max=TIME)
-source2 = ModeSource(design=design, start=(2.5*µm, 0.6*µm), end=(4.5*µm, 0.6*µm), wavelength=WL2, signal=signal2, direction="+y")
 design.add(source)
-design.add(source2)
-source.show()
 
-#monitor = Monitor(start=(2.5*µm, 0.6*µm), end=(4.5*µm, 0.6*µm))
-#design.add(monitor)
+monitor = Monitor(start=(2.5*µm, 0.6*µm), end=(4.5*µm, 0.6*µm))
+design.add(monitor)
 design.show()
 print(design.sources)
 
