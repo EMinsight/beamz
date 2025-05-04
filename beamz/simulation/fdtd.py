@@ -491,10 +491,6 @@ class FDTD:
                 # Convert to numpy for visualization
                 Ez_np = self.backend.to_numpy(self.Ez)
                 self.animate_live(field_data=Ez_np, field="Ez", axis_scale=axis_scale)
-                
-            # Print progress at 10% intervals
-            if step % (self.num_steps // 10) == 0:
-                print(f"Progress: {step / self.num_steps * 100:.1f}% complete")
 
         # Clean up animation
         if live and self.fig is not None:
@@ -506,10 +502,6 @@ class FDTD:
         # Save animation if requested
         if save_animation and save:
             self.save_animation(field="Ez", axis_scale=axis_scale, filename=animation_filename, clean_visualization=clean_visualization)
-            
-        # If we used reduced save frequency, interpolate the time steps for consistent output
-        if save and save_freq > 1:
-            print(f"Simulation complete: {len(self.results['t'])} time steps saved")
             
         return self.results
         
