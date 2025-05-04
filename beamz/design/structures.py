@@ -385,10 +385,11 @@ class Rectangle:
         return Rectangle(self.position, self.width, self.height, self.material, self.color, self.is_pml)
 
 class Circle:
-    def __init__(self, position=(0,0), radius=1, material=None, color=None):
+    def __init__(self, position=(0,0), radius=1, material=None, color=None, optimize=False):
         self.position = position
         self.radius = radius
         self.material = material
+        self.optimize = optimize
         self.color = color if color is not None else self.get_random_color()
     
     def get_random_color(self):
@@ -514,7 +515,7 @@ class Polygon:
 
 class Taper(Polygon):
     """Taper is a structure that tapers from a width to a height."""
-    def __init__(self, position=(0,0), input_width=1, output_width=0.5, length=1, material=None, color=None):
+    def __init__(self, position=(0,0), input_width=1, output_width=0.5, length=1, material=None, color=None, optimize=False):
         # Calculate vertices for the trapezoid shape
         x, y = position
         vertices = [
@@ -528,9 +529,10 @@ class Taper(Polygon):
         self.input_width = input_width
         self.output_width = output_width
         self.length = length
-
+        self.optimize = optimize
     def copy(self):
         return Taper(self.position, self.input_width, self.output_width, self.length, self.material)
+
 
 # ================================================ 2D Boundaries
 

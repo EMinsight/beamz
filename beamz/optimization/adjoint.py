@@ -57,26 +57,25 @@ class AdjointOptimizer:
         
     def _extract_design_parameters(self):
         """Extract optimizable design parameters from the simulation."""
-        # Find all design elements that are marked as optimizable
+        # Find all design structures that are marked as optimizable
         self.design_parameters = []
-        self.design_elements = []
+        self.design_structures = []
         
-        for element in self.simulation.design.elements:
-            if hasattr(element, "optimize") and element.optimize:
-                if hasattr(element, "material") and hasattr(element.material, "value"):
-                    self.design_parameters.append(element.material.value)
-                    self.design_elements.append(element)
+        # Find all optimizable structures
+        for structure in self.simulation.design.structures:
+            if hasattr(structure, "optimize") and structure.optimize:
+                #if hasattr(structure, "material") and hasattr(structure.material, "value"):
+                self.design_structures.append(structure)
+                print("Found optimizable structure:", structure)
         
-        if not self.design_elements:
-            raise ValueError("No optimizable elements found in the design.")
-        
+        # Convert design parameters to numpy array
         self.design_parameters = np.array(self.design_parameters)
         
         # Store the grid positions of design parameters for spatial filtering
         self.design_positions = []
-        for element in self.design_elements:
-            if hasattr(element, "position"):
-                self.design_positions.append(element.position)
+        for structure in self.design_structures:
+            if hasattr(structure, "position"):
+                self.design_positions.append(structure.position)
         
         self.design_positions = np.array(self.design_positions)
         
@@ -90,11 +89,6 @@ class AdjointOptimizer:
     
     def _calculate_adjoint_source(self, sim_result):
         """Calculate the adjoint source based on the objective function derivative."""
-        # This implementation depends on the specific objective function and 
-        # the structure of the simulation results
-        # For a typical case with a power monitor, the adjoint source is 
-        # placed at the monitor position with field profile from the monitor
-        # Find monitors in the simulation results
         adjoint_sources = []
         for key, result in sim_result.items():
             if hasattr(result, "is_monitor") and result.is_monitor:

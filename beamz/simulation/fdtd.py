@@ -716,6 +716,12 @@ class FDTD:
             power_db = 10 * np.log10(power_normalized + epsilon)
             plot_data = power_db
             power_label = 'Power (dB)'
+            
+            # Set default dB range from 0 to -40 dB if not specified
+            if vmin is None:
+                vmin = -40
+            if vmax is None:
+                vmax = 0
         else:
             plot_data = power
             if db_colorbar:
@@ -750,6 +756,12 @@ class FDTD:
             
             formatter = FuncFormatter(db_formatter)
             colorbar = plt.colorbar(im, format=formatter, label=power_label)
+            
+            # Set default range for dB colorbar from 0 to -40 dB
+            if vmin is None and vmax is None:
+                # We're modifying just the formatter, not the actual data range
+                colorbar.set_ticks(np.linspace(max_power, max_power * 10**(-40/10), 5))
+                colorbar.set_ticklabels(['0', '-10', '-20', '-30', '-40'])
         else:
             colorbar = plt.colorbar(im, label=power_label)
         
@@ -843,10 +855,10 @@ class FDTD:
                     structure.width,
                     facecolor='none', edgecolor='orange', alpha=0.8, linestyle='dotted')
                 plt.gca().add_patch(source_circle)
-            #elif isinstance(structure, ModeMonitor):
-            #    plt.plot((structure.start[0], structure.end[0]), 
-            #              (structure.start[1], structure.end[1]), 
-            #             '-', lw=4, color="navy", alpha=0.5)
+            elif isinstance(structure, Monitor):
+                plt.plot((structure.start[0], structure.end[0]), 
+                          (structure.start[1], structure.end[1]), 
+                         '-', lw=4, color="navy", alpha=0.5)
         
         plt.tight_layout()
         plt.show()
