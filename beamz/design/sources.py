@@ -17,10 +17,12 @@ class GaussianSource():
         self.width = width
         self.signal = signal
 
+# TODO: Add mode solver options to integrate the analytical mode solver in mode.py. Future: Add FDFD mode solver and Tidy3D mode solver.
+# Make a comparison study!
 class ModeSource():
     """Calculates and injects the mode profiles for a cross section given a start and end point."""
-    def __init__(self, design, start, end, wavelength=1.55*µm, signal=0, direction="+x", npml=10, num_modes=2, 
-                 grid_resolution=500):
+    def __init__(self, design, start, end, wavelength=1.55*µm, signal=0, direction="+x", 
+                 npml=10, num_modes=2, grid_resolution=500, mode_solver="num_eigen"):
         """
         Args:
             design: Design object containing the structures
