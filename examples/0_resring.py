@@ -11,6 +11,12 @@ signal = ramped_cosine(T, amplitude=1.0, frequency=LIGHT_SPEED/WL, phase=0, ramp
 design.add(ModeSource(design=design, start=(0.5*µm, 0.8*µm), end=(0.5*µm, 1.6*µm), wavelength=WL, signal=signal))
 design.show()
 
-sim = FDTD(design=design, time=T, mesh="regular", resolution=WL/40)
-sim.run(live=True)
+sim = FDTD(design=design, time=T, mesh="regular", resolution=WL/40, backend="numpy")
+# time the simulation
+import time
+start_time = time.time()
+sim.run(live=False)
+end_time = time.time()
+print(f"Time taken: {end_time - start_time} seconds")
+
 sim.plot_power(log_scale=False, db_colorbar=True)

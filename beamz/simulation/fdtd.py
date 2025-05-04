@@ -8,10 +8,11 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle as MatplotlibRectangle, Circle as MatplotlibCircle, PathPatch
 from matplotlib.path import Path
 from matplotlib.animation import FuncAnimation
+from beamz.simulation.backends import get_backend
 
 class FDTD:
     """FDTD simulation class."""
-    def __init__(self, design, time, mesh: str = "regular", resolution: float = 0.02*µm):
+    def __init__(self, design, time, mesh: str = "regular", resolution: float = 0.02*µm, backend="numpy", backend_options=None):
         # Initialize the design and mesh
         self.design = design
         self.resolution = resolution
@@ -21,11 +22,22 @@ class FDTD:
         self.epsilon_r = self.mesh.permittivity
         self.mu_r = self.mesh.permeability
         self.sigma = self.mesh.conductivity
-        # Initialize the fields
+        
+        # Initialize the backend
+        backend_options = backend_options or {}
+        self.backend = get_backend(name=backend, **backend_options)
+        
+        # Initialize the fields with the backend
         self.nx, self.ny = self.mesh.shape
-        self.Ez = np.zeros((self.nx, self.ny))
-        self.Hx = np.zeros((self.nx, self.ny-1))
-        self.Hy = np.zeros((self.nx-1, self.ny))
+        self.Ez = self.backend.zeros((self.nx, self.ny))
+        self.Hx = self.backend.zeros((self.nx, self.ny-1))
+        self.Hy = self.backend.zeros((self.nx-1, self.ny))
+        
+        # Convert material properties to backend arrays
+        self.epsilon_r = self.backend.from_numpy(self.epsilon_r)
+        self.mu_r = self.backend.from_numpy(self.mu_r)
+        self.sigma = self.backend.from_numpy(self.sigma)
+        
         # Initialize the time
         self.time = time
         self.dt = self.time[1] - self.time[0]
@@ -42,43 +54,17 @@ class FDTD:
 
     def update_h_fields(self):
         """Update magnetic field components with conductivity (including PML)."""
-        # For PML to work properly, we need magnetic conductivity
-        # We'll derive it from electric conductivity with impedance matching
-        
-        # Calculate magnetic conductivity (sigma_m) from electric conductivity (sigma)
-        # For impedance matching: sigma_m = sigma * (mu_0/epsilon_0)
-        sigma_m_x = self.sigma[:, :-1] * MU_0 / EPS_0
-        sigma_m_y = self.sigma[:-1, :] * MU_0 / EPS_0
-        # Calculate curl of E for H-field updates
-        curl_e_x = (self.Ez[:, 1:] - self.Ez[:, :-1]) / self.dy
-        curl_e_y = (self.Ez[1:, :] - self.Ez[:-1, :]) / self.dx
-        # Update Hx with semi-implicit scheme for magnetic conductivity
-        denom_x = 1.0 + sigma_m_x * self.dt / (2.0 * MU_0)
-        factor_x = (1.0 - sigma_m_x * self.dt / (2.0 * MU_0)) / denom_x
-        source_x = (self.dt / MU_0) / denom_x
-        self.Hx = factor_x * self.Hx - source_x * curl_e_x
-        # Update Hy with semi-implicit scheme for magnetic conductivity
-        denom_y = 1.0 + sigma_m_y * self.dt / (2.0 * MU_0)
-        factor_y = (1.0 - sigma_m_y * self.dt / (2.0 * MU_0)) / denom_y
-        source_y = (self.dt / MU_0) / denom_y
-        self.Hy = factor_y * self.Hy + source_y * curl_e_y
+        self.Hx, self.Hy = self.backend.update_h_fields(
+            self.Hx, self.Hy, self.Ez, self.sigma, 
+            self.dx, self.dy, self.dt, MU_0, EPS_0
+        )
     
     def update_e_field(self):
         """Update electric field component with conductivity (including PML)."""
-        # Calculate curl of H
-        curl_h_x = np.zeros_like(self.Ez)
-        curl_h_y = np.zeros_like(self.Ez)
-        # Interior points calculation
-        curl_h_x[1:-1, 1:-1] = (self.Hx[1:-1, 1:] - self.Hx[1:-1, :-1]) / self.dy
-        curl_h_y[1:-1, 1:-1] = (self.Hy[1:, 1:-1] - self.Hy[:-1, 1:-1]) / self.dx
-        # For better numerical stability, use semi-implicit scheme for conductivity
-        # First calculate the denominator
-        denom = 1.0 + self.sigma[1:-1, 1:-1] * self.dt / (2.0 * EPS_0 * self.epsilon_r[1:-1, 1:-1])
-        # Then the numerator factors
-        factor1 = (1.0 - self.sigma[1:-1, 1:-1] * self.dt / (2.0 * EPS_0 * self.epsilon_r[1:-1, 1:-1])) / denom
-        factor2 = (self.dt / (EPS_0 * self.epsilon_r[1:-1, 1:-1])) / denom
-        # Update Ez field with FDTD, conductivity term handles PML regions
-        self.Ez[1:-1, 1:-1] = factor1 * self.Ez[1:-1, 1:-1] + factor2 * (-curl_h_x[1:-1, 1:-1] + curl_h_y[1:-1, 1:-1])
+        self.Ez = self.backend.update_e_field(
+            self.Ez, self.Hx, self.Hy, self.sigma, self.epsilon_r,
+            self.dx, self.dy, self.dt, EPS_0
+        )
 
     def simulate_step(self):
         """Perform one FDTD step with stability checks."""
@@ -228,11 +214,14 @@ class FDTD:
         plt.tight_layout()
         plt.show()
 
-    def animate_live(self, field: str = "Ez", axis_scale=[-1,1]):
+    def animate_live(self, field_data=None, field="Ez", axis_scale=[-1,1]):
         """Animate the field in real time using matplotlib animation."""
+        if field_data is None:
+            field_data = self.backend.to_numpy(getattr(self, field))
+        
         # If animation already exists, just update the data
         if self.fig is not None and plt.fignum_exists(self.fig.number):
-            current_field = getattr(self, field)
+            current_field = field_data
             self.im.set_array(current_field)
             self.ax.set_title(f't = {self.t:.2e} s')
             self.fig.canvas.draw_idle()
@@ -240,7 +229,7 @@ class FDTD:
             return
 
         # Get current field data
-        current_field = getattr(self, field)
+        current_field = field_data
         
         # Calculate figure size based on grid dimensions
         grid_height, grid_width = current_field.shape
@@ -391,6 +380,23 @@ class FDTD:
             print(f"Warning: Simulation may be unstable! Courant number = {courant:.3f} > {1/np.sqrt(2):.3f}")
             print(f"Consider reducing dt or increasing dx/dy")
 
+        # Determine optimal save frequency based on backend type
+        is_gpu_backend = hasattr(self.backend, 'device') and self.backend.device.type in ['cuda', 'mps']
+        
+        # For GPU backends, avoid excessive CPU-GPU transfers by batching the result saves
+        if is_gpu_backend and save:
+            save_freq = max(10, self.num_steps // 100)  # Save approximately every 1% of steps or min of 10 steps
+            print(f"GPU backend detected: Optimizing result storage (saving every {save_freq} steps)")
+        else:
+            save_freq = 1  # Save every step for CPU backends
+            
+        # For live visualization with GPU backends, don't update too frequently
+        if is_gpu_backend and live:
+            live_update_freq = max(5, self.num_steps // 50)  # Update visualization approximately every 2% of steps
+            print(f"GPU backend detected: Optimizing visualization (updating every {live_update_freq} steps)")
+        else:
+            live_update_freq = 5  # Update visualization every 5 steps for CPU backends
+
         # Run simulation
         for step in range(self.num_steps):
             # Update fields
@@ -422,7 +428,7 @@ class FDTD:
                 elif isinstance(source, GaussianSource):
                     modulation = source.signal[step]
                     center_x_phys, center_y_phys = source.position
-                    width_phys = source.width # Assuming width is standard deviation (sigma)
+                    width_phys = source.width  # Assuming width is standard deviation (sigma)
                     
                     # Convert physical units to grid coordinates
                     center_x_grid = center_x_phys / self.dx
@@ -445,14 +451,14 @@ class FDTD:
                     y_start = max(0, y_center_idx - wy_grid_cells)
                     y_end = min(self.ny, y_center_idx + wy_grid_cells + 1)
 
-                    # Create grid indices arrays for the affected area
-                    y_indices, x_indices = np.meshgrid(np.arange(y_start, y_end), 
-                                                       np.arange(x_start, x_end),
-                                                       indexing='ij')
+                    # Create meshgrid for the affected area
+                    y_indices = np.arange(y_start, y_end)
+                    x_indices = np.arange(x_start, x_end)
+                    y_grid, x_grid = np.meshgrid(y_indices, x_indices, indexing='ij')
                     
                     # Calculate squared distances from the center in grid units
-                    dist_x_sq = (x_indices - center_x_grid)**2
-                    dist_y_sq = (y_indices - center_y_grid)**2
+                    dist_x_sq = (x_grid - center_x_grid)**2
+                    dist_y_sq = (y_grid - center_y_grid)**2
                     
                     # Calculate Gaussian amplitude (handle zero width appropriately)
                     # Use small epsilon to avoid division by zero if width_grid is exactly 0
@@ -462,23 +468,29 @@ class FDTD:
 
                     exponent = -(dist_x_sq / (2 * sigma_x_sq) + dist_y_sq / (2 * sigma_y_sq))
                     gaussian_amp = np.exp(exponent)
+                    
+                    # Convert to backend array type if not already
+                    gaussian_amp = self.backend.from_numpy(gaussian_amp)
                             
                     # Add the source contribution to the Ez field slice
-                    # Ensure shapes match for broadcasting if needed, though they should here.
                     self.Ez[y_start:y_end, x_start:x_end] += gaussian_amp * modulation
-
             
-            # Save results if requested
-            if save:
-                self.results['Ez'].append(self.Ez.copy())
-                self.results['Hx'].append(self.Hx.copy())
-                self.results['Hy'].append(self.Hy.copy())
+            # Save results if requested and at the right frequency
+            if save and (step % save_freq == 0 or step == self.num_steps - 1):
+                # Convert arrays to numpy for saving
+                self.results['Ez'].append(self.backend.to_numpy(self.backend.copy(self.Ez)))
+                self.results['Hx'].append(self.backend.to_numpy(self.backend.copy(self.Hx)))
+                self.results['Hy'].append(self.backend.to_numpy(self.backend.copy(self.Hy)))
                 self.results['t'].append(self.t)
+                
             # Update time
             self.t += self.dt
+            
             # Show progress
-            if live:  # Update every 5 steps for smoother animation
-                self.animate_live(field="Ez", axis_scale=axis_scale)
+            if live and (step % live_update_freq == 0 or step == self.num_steps - 1):
+                # Convert to numpy for visualization
+                Ez_np = self.backend.to_numpy(self.Ez)
+                self.animate_live(field_data=Ez_np, field="Ez", axis_scale=axis_scale)
 
         # Clean up animation
         if live and self.fig is not None:
@@ -486,9 +498,11 @@ class FDTD:
             self.fig = None
             self.ax = None
             self.im = None
+            
         # Save animation if requested
         if save_animation and save:
             self.save_animation(field="Ez", axis_scale=axis_scale, filename=animation_filename, clean_visualization=clean_visualization)
+            
         return self.results
         
     def save_animation(self, field: str = "Ez", axis_scale=[-1, 1], filename='fdtd_animation.mp4', fps=60, frame_skip=4, clean_visualization=False):

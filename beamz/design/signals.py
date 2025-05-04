@@ -22,6 +22,7 @@ def gaussian(t, amplitude, center, width):
 def gaussian_pulse(t, amplitude, center, width, frequency, phase):
     return gaussian(t, amplitude, center, width) * cosine(t, amplitude, frequency, phase)
 
+# TODO: Add chirped gaussian pulse
 def chirped_gaussian():
     pass
 
