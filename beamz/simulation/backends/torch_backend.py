@@ -184,6 +184,26 @@ class TorchBackend(Backend):
             # On MPS, first transfer to CPU to avoid synchronization issues
             return t.detach().cpu().numpy()
         return t.detach().cpu().numpy()
+        
+    def roll(self, array, shift, axis=None):
+        """Roll tensor elements along a given axis.
+        
+        Args:
+            array: Tensor to roll
+            shift: Number of places by which elements are shifted
+            axis: Axis along which elements are shifted
+            
+        Returns:
+            Rolled tensor
+        """
+        # Handle case where axis is None (not directly supported by torch.roll)
+        if axis is None:
+            # Flatten the array, roll it, and reshape back
+            shape = array.shape
+            flattened = array.reshape(-1)
+            rolled = torch.roll(flattened, shift)
+            return rolled.reshape(shape)
+        return torch.roll(array, shift, dims=axis)
 
     def update_h_fields(self, Hx, Hy, Ez, sigma, dx, dy, dt, mu0, eps0):
         """Update magnetic field components."""

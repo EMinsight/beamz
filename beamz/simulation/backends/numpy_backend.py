@@ -28,6 +28,19 @@ class NumPyBackend(Backend):
         """Convert a numpy array to the backend's array type."""
         return array  # Already numpy array
     
+    def roll(self, array, shift, axis=None):
+        """Roll array elements along a given axis.
+        
+        Args:
+            array: Array to roll
+            shift: Number of places by which elements are shifted
+            axis: Axis along which elements are shifted
+            
+        Returns:
+            Rolled array
+        """
+        return np.roll(array, shift, axis)
+    
     def update_h_fields(self, Hx, Hy, Ez, sigma, dx, dy, dt, mu_0, eps_0):
         """Update magnetic field components with conductivity (including PML)."""
         # Calculate magnetic conductivity from electric conductivity with impedance matching

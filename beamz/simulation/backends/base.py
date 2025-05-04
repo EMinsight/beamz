@@ -29,6 +29,11 @@ class Backend(ABC):
         pass
     
     @abstractmethod
+    def roll(self, array, shift, axis=None):
+        """Roll array elements along a given axis."""
+        pass
+    
+    @abstractmethod
     def update_h_fields(self, Hx, Hy, Ez, sigma, dx, dy, dt, mu_0, eps_0):
         """Update magnetic field components."""
         pass
