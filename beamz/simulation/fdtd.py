@@ -123,15 +123,9 @@ class FDTD:
             print(f"Processing structure: {type(structure).__name__}")
             if isinstance(structure, Rectangle):
                 if structure.is_pml:
-                    rect = MatplotlibRectangle(
-                        (structure.position[0], structure.position[1]),
-                        structure.width, structure.height,
-                        facecolor='none', edgecolor='black', alpha=1, linestyle=':')
+                    rect = plt.Polygon(structure.vertices, facecolor='none', edgecolor='black', alpha=1, linestyle=':')
                 else:
-                    rect = MatplotlibRectangle(
-                        (structure.position[0], structure.position[1]),
-                        structure.width, structure.height,
-                        facecolor=structure.color, edgecolor=self.border_color, alpha=1)
+                    rect = plt.Polygon(structure.vertices, facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
                 plt.gca().add_patch(rect)
             elif isinstance(structure, Circle):
                 print(f"Adding Circle at {structure.position} with radius={structure.radius}")
@@ -255,15 +249,9 @@ class FDTD:
         for structure in self.design.structures:
             if isinstance(structure, Rectangle):
                 if structure.is_pml:
-                    rect = MatplotlibRectangle(
-                        (structure.position[0], structure.position[1]),
-                        structure.width, structure.height,
-                        facecolor='none', edgecolor='black', alpha=1.0, linestyle=':')
+                    rect = plt.Polygon(structure.vertices, facecolor='none', edgecolor='black', alpha=1, linestyle=':')
                 else:
-                    rect = MatplotlibRectangle(
-                        (structure.position[0], structure.position[1]),
-                        structure.width, structure.height,
-                        facecolor="none", edgecolor="black", alpha=1, linestyle="--")
+                    rect = plt.Polygon(structure.vertices, facecolor='none', edgecolor='black', alpha=1, linestyle='--')
                 self.ax.add_patch(rect)
             elif isinstance(structure, Circle):
                 circle = MatplotlibCircle(
@@ -572,15 +560,9 @@ class FDTD:
         for structure in self.design.structures:
             if isinstance(structure, Rectangle):
                 if structure.is_pml:
-                    rect = MatplotlibRectangle(
-                        (structure.position[0], structure.position[1]),
-                        structure.width, structure.height,
-                        facecolor='none', edgecolor='black', alpha=1.0, linestyle=':')
+                    rect = plt.Polygon(structure.vertices, facecolor='none', edgecolor='black', alpha=1, linestyle=':')
                 else:
-                    rect = MatplotlibRectangle(
-                        (structure.position[0], structure.position[1]),
-                        structure.width, structure.height,
-                        facecolor="none", edgecolor="black", alpha=1)
+                    rect = plt.Polygon(structure.vertices, facecolor='none', edgecolor='black', alpha=1)
                 ax.add_patch(rect)
             elif isinstance(structure, Circle):
                 circle = MatplotlibCircle(
@@ -789,15 +771,9 @@ class FDTD:
         for structure in self.design.structures:
             if isinstance(structure, Rectangle):
                 if structure.is_pml:
-                    rect = MatplotlibRectangle(
-                        (structure.position[0], structure.position[1]),
-                        structure.width, structure.height,
-                        facecolor='none', edgecolor='white', alpha=1, linestyle=':')
+                    rect = plt.Polygon(structure.vertices, facecolor='none', edgecolor='white', alpha=1, linestyle=':')
                 else:
-                    rect = MatplotlibRectangle(
-                        (structure.position[0], structure.position[1]),
-                        structure.width, structure.height,
-                        facecolor='none', edgecolor='white', alpha=0.5)
+                    rect = plt.Polygon(structure.vertices, facecolor='none', edgecolor='white', alpha=1, linestyle='--')
                 plt.gca().add_patch(rect)
             elif isinstance(structure, Circle):
                 circle = MatplotlibCircle(

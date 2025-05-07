@@ -170,11 +170,7 @@ class Design:
                             structure.width, structure.height,
                             facecolor='none', edgecolor='black', linestyle=':', alpha=1.0, linewidth=1.0, zorder=10)
                     else:
-                        # Normal structures get solid fill
-                        rect = MatplotlibRectangle(
-                            (structure.position[0], structure.position[1]),
-                            structure.width, structure.height,
-                            facecolor=structure.color, edgecolor=self.border_color, alpha=1)
+                        rect = plt.Polygon(structure.vertices, facecolor=structure.color, alpha=1, edgecolor=self.border_color)
                     ax.add_patch(rect)
                 elif isinstance(structure, Circle):
                     circle = plt.Circle(
@@ -289,8 +285,7 @@ class Design:
         # Get material values from structures
         for structure in reversed(self.structures):
             if isinstance(structure, Rectangle):
-                if (structure.position[0] <= x <= structure.position[0] + structure.width and
-                    structure.position[1] <= y <= structure.position[1] + structure.height):
+                if self._point_in_polygon(x, y, structure.vertices):
                     # Return with added PML conductivity
                     return [structure.material.permittivity, 
                             structure.material.permeability, 
@@ -373,16 +368,30 @@ class Polygon:
             ]
         return self
     
-    def rotate(self, angle):
-        """Rotate the polygon around its center of mass and return self for method chaining."""
+    def rotate(self, angle, point=None):
+        """Rotate the polygon around its center of mass or specified point.
+        
+        Args:
+            angle: Rotation angle in degrees
+            point: Optional (x,y) point to rotate around. If None, rotates around center.
+        
+        Returns:
+            self for method chaining
+        """
         if self.vertices:
-            # Calculate center of mass
-            x_center = sum(v[0] for v in self.vertices) / len(self.vertices)
-            y_center = sum(v[1] for v in self.vertices) / len(self.vertices)
+            # Convert angle from degrees to radians
+            angle_rad = np.radians(angle)
+            
+            if point is None:
+                # Calculate center of mass
+                x_center = sum(v[0] for v in self.vertices) / len(self.vertices)
+                y_center = sum(v[1] for v in self.vertices) / len(self.vertices)
+            else:
+                x_center, y_center = point
             # Shift to origin, rotate, then shift back
             self.vertices = [
-                (x_center + (v[0] - x_center) * np.cos(angle) - (v[1] - y_center) * np.sin(angle),
-                 y_center + (v[0] - x_center) * np.sin(angle) + (v[1] - y_center) * np.cos(angle))
+                (x_center + (v[0] - x_center) * np.cos(angle_rad) - (v[1] - y_center) * np.sin(angle_rad),
+                 y_center + (v[0] - x_center) * np.sin(angle_rad) + (v[1] - y_center) * np.cos(angle_rad))
                 for v in self.vertices
             ]
         return self
@@ -392,44 +401,67 @@ class Polygon:
 
 class Rectangle(Polygon):
     def __init__(self, position=(0,0), width=1, height=1, material=None, color=None, is_pml=False, optimize=False):
+        # Calculate vertices for the rectangle
+        x, y = position
+        vertices = [
+            (x, y),  # Bottom left
+            (x + width, y),  # Bottom right
+            (x + width, y + height),  # Top right
+            (x, y + height),  # Top left
+        ]
+        super().__init__(vertices=vertices, material=material, color=color, optimize=optimize)
         self.position = position
         self.width = width
         self.height = height
-        self.material = material
         self.is_pml = is_pml
-        self.optimize = optimize
-        self.color = color if color is not None else self.get_random_color()
 
-    def get_random_color(self):
-        return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
-    
     def shift(self, x, y):
+        """Shift the rectangle by (x,y) and return self for method chaining."""
         self.position = (self.position[0] + x, self.position[1] + y)
+        # Update vertices using parent class method
+        super().shift(x, y)
         return self
-    
-    def rotate(self, angle):
-        """Rotate the rectangle around its center of mass and return self for method chaining."""
-        pass
+
+    def rotate(self, angle, point=None):
+        """Rotate the rectangle around its center of mass or specified point."""        
+        # Save original width and height before rotation
+        original_width = self.width
+        original_height = self.height
+        
+        # Use parent class rotation method (which now handles degree to radian conversion)
+        super().rotate(angle, point)
+        
+        # Calculate new bounding box after rotation
+        min_x = min(v[0] for v in self.vertices)
+        min_y = min(v[1] for v in self.vertices)
+        max_x = max(v[0] for v in self.vertices)
+        max_y = max(v[1] for v in self.vertices)
+        
+        # Update position to be the bottom-left corner
+        self.position = (min_x, min_y)
+        
+        # Update width and height to match the bounding box of rotated rectangle
+        self.width = max_x - min_x
+        self.height = max_y - min_y
+        
+        return self
 
     def scale(self, s):
         """Scale the rectangle around its center of mass and return self for method chaining."""
-        # Calculate center of mass
-        x_center = self.position[0] + self.width/2
-        y_center = self.position[1] + self.height/2
-        # Get current position relative to center
-        x_rel = self.width/2
-        y_rel = self.height/2
-        # Scale relative position and dimensions
-        x_new = x_rel * s
-        y_new = y_rel * s
+        # Use parent class scale method
+        super().scale(s)
+        # Update width and height
         self.width *= s
         self.height *= s
-        # Update position by adding center back
-        self.position = (x_center + x_new, y_center + y_new)
         return self
-    
+
     def copy(self):
-        return Rectangle(self.position, self.width, self.height, self.material, self.color, self.is_pml)
+        """Create a copy of this rectangle with the same attributes and vertices."""
+        new_rect = Rectangle(self.position, self.width, self.height, 
+                            self.material, self.color, self.is_pml, self.optimize)
+        # Ensure vertices are copied exactly as they are (important for rotated rectangles)
+        new_rect.vertices = [(x, y) for x, y in self.vertices]
+        return new_rect
 
 class Circle:
     def __init__(self, position=(0,0), radius=1, material=None, color=None, optimize=False):
@@ -530,8 +562,48 @@ class Taper(Polygon):
         self.output_width = output_width
         self.length = length
         self.optimize = optimize
+
+    def rotate(self, angle, point=None):
+        """Rotate the taper around its center of mass or specified point.
+        
+        Args:
+            angle: Rotation angle in degrees
+            point: Optional (x,y) point to rotate around. If None, rotates around center.
+            
+        Returns:
+            self for method chaining
+        """
+        # Save original dimensions before rotation
+        original_input_width = self.input_width
+        original_output_width = self.output_width
+        original_length = self.length
+        
+        # Use parent class rotation method (which now handles degree to radian conversion)
+        super().rotate(angle, point)
+        
+        # Calculate new bounding box after rotation
+        min_x = min(v[0] for v in self.vertices)
+        min_y = min(v[1] for v in self.vertices)
+        max_x = max(v[0] for v in self.vertices)
+        max_y = max(v[1] for v in self.vertices)
+        
+        # Update position to be the bottom-left corner
+        self.position = (min_x, min_y)
+        
+        # After rotation, the taper shape is no longer a simple trapezoid
+        # We'll update dimensions to reflect the bounding box, but maintain
+        # the object's type as a rotated Taper
+        self.length = max_x - min_x
+        
+        return self
+
     def copy(self):
-        return Taper(self.position, self.input_width, self.output_width, self.length, self.material)
+        """Create a copy of this taper with the same attributes and vertices."""
+        new_taper = Taper(self.position, self.input_width, self.output_width, 
+                          self.length, self.material, self.color, self.optimize)
+        # Ensure vertices are copied exactly as they are (important for rotated tapers)
+        new_taper.vertices = [(x, y) for x, y in self.vertices]
+        return new_taper
 
 
 # ================================================ 2D Boundaries
