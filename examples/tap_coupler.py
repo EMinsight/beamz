@@ -2,13 +2,13 @@ from beamz import *
 import numpy as np
 
 WL = 1.55*µm
-TIME = 70*WL/LIGHT_SPEED
-T = np.linspace(0, TIME, int(TIME/(0.02*WL/LIGHT_SPEED)))
+TIME = 115*WL/LIGHT_SPEED
+T = np.linspace(0, TIME, int(TIME/(0.04*WL/LIGHT_SPEED)))
 
 ANGLE = 5
 WG_WIDTH = 3.2*µm
-W = 25*WG_WIDTH
-H = 13*µm
+W = 100*µm
+H = 16*µm
 
 
 clad = 1.42**2
@@ -26,6 +26,7 @@ signal = ramped_cosine(T, amplitude=1.0, frequency=LIGHT_SPEED/WL, phase=0, ramp
 design.add(ModeSource(design=design, start=(1.5*WL, WL), end=(1.5*WL, WG_WIDTH+3*WL), wavelength=WL, signal=signal))
 design.show()
 
-sim = FDTD(design=design, time=T, mesh="regular", resolution=WL/20)
-sim.run(live=False, axis_scale=[-0.5,0.5])
+sim = FDTD(design=design, time=T, mesh="regular", resolution=WL/10)
+print(sim.estimate_memory_usage())
+sim.run(live=False, axis_scale=[-0.5,0.5], accumulate_power=True, decimate_save=10)
 sim.plot_power(log_scale=False, db_colorbar=True)

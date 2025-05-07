@@ -53,6 +53,11 @@ class FDTD:
         self.ax = None
         self.anim = None
         self.im = None
+        # Initialize monitor data storage
+        self.monitor_data = {}
+        # Initialize power accumulation
+        self.power_accumulated = None
+        self.power_accumulation_count = 0
 
     def update_h_fields(self):
         """Update magnetic field components with conductivity (including PML)."""
@@ -345,7 +350,9 @@ class FDTD:
         plt.pause(0.001)  # Small pause to ensure window is shown
 
     def run(self, steps: Optional[int] = None, save=True, live=True, axis_scale=[-1,1], save_animation=False, 
-            animation_filename='fdtd_animation.mp4', clean_visualization=True) -> Dict:
+            animation_filename='fdtd_animation.mp4', clean_visualization=True, 
+            save_fields=['Ez', 'Hx', 'Hy'], decimate_save=1, accumulate_power=False,
+            save_memory_mode=False) -> Dict:
         """Run the simulation.
         
         Args:
@@ -355,6 +362,10 @@ class FDTD:
             axis_scale: Color scale limits for the field visualization.
             save_animation: Whether to save an animation of the simulation as an mp4 file.
             animation_filename: Filename for the saved animation (must end in .mp4).
+            save_fields: List of fields to save (['Ez'], ['Ez', 'Hx', 'Hy'], etc.)
+            decimate_save: Save only every nth time step (1 = save all, 10 = save every 10th step)
+            accumulate_power: Instead of saving all fields, accumulate power and save that
+            save_memory_mode: If True, avoid storing all field data and only keep monitors/power
         
         Returns:
             Dictionary containing the simulation results.
@@ -370,6 +381,11 @@ class FDTD:
             print(f"Warning: Simulation may be unstable! Courant number = {courant:.3f} > {1/np.sqrt(2):.3f}")
             print(f"Consider reducing dt or increasing dx/dy")
 
+        # Set up power accumulation if requested
+        if accumulate_power:
+            self.power_accumulated = np.zeros((self.nx, self.ny))
+            self.power_accumulation_count = 0
+
         # Determine optimal save frequency based on backend type
         is_gpu_backend = hasattr(self.backend, 'device') and self.backend.device.type in ['cuda', 'mps']
         
@@ -379,6 +395,16 @@ class FDTD:
             print(f"GPU backend detected: Optimizing result storage (saving every {save_freq} steps)")
         else:
             save_freq = 1  # Save every step for CPU backends
+            
+        # Apply additional decimation based on user setting
+        effective_save_freq = save_freq * decimate_save
+        
+        # If in save_memory_mode, clear any existing results to start fresh
+        if save_memory_mode:
+            for field in self.results:
+                if field != 't':  # Keep time array
+                    self.results[field] = []
+            print("Memory-saving mode active: Only storing monitor data and/or power accumulation")
             
         # For live visualization with GPU backends, don't update too frequently
         if is_gpu_backend and live:
@@ -469,13 +495,45 @@ class FDTD:
                     # Add the source contribution to the Ez field slice
                     self.Ez[y_start:y_end, x_start:x_end] += gaussian_amp * modulation
             
+            # Record monitor data
+            self._record_monitor_data(step)
+            
+            # Accumulate power if requested
+            if accumulate_power:
+                # Calculate instantaneous power
+                Ez_np = self.backend.to_numpy(self.Ez)
+                Hx_np = self.backend.to_numpy(self.Hx)
+                Hy_np = self.backend.to_numpy(self.Hy)
+                
+                # Extend magnetic fields to match Ez dimensions
+                Hx_full = np.zeros_like(Ez_np)
+                Hx_full[:, :-1] = Hx_np
+                Hy_full = np.zeros_like(Ez_np)
+                Hy_full[:-1, :] = Hy_np
+                
+                # Calculate Poynting vector components (S = E × H)
+                Sx = -Ez_np * Hy_full 
+                Sy = Ez_np * Hx_full
+                
+                # Calculate power magnitude (|S|²)
+                power_mag = Sx**2 + Sy**2
+                
+                # Accumulate power
+                self.power_accumulated += power_mag
+                self.power_accumulation_count += 1
+            
             # Save results if requested and at the right frequency
-            if save and (step % save_freq == 0 or step == self.num_steps - 1):
+            if save and not save_memory_mode and (step % effective_save_freq == 0 or step == self.num_steps - 1):
                 # Convert arrays to numpy for saving
-                self.results['Ez'].append(self.backend.to_numpy(self.backend.copy(self.Ez)))
-                self.results['Hx'].append(self.backend.to_numpy(self.backend.copy(self.Hx)))
-                self.results['Hy'].append(self.backend.to_numpy(self.backend.copy(self.Hy)))
                 self.results['t'].append(self.t)
+                
+                # Save only the requested fields
+                if 'Ez' in save_fields:
+                    self.results['Ez'].append(self.backend.to_numpy(self.backend.copy(self.Ez)))
+                if 'Hx' in save_fields:
+                    self.results['Hx'].append(self.backend.to_numpy(self.backend.copy(self.Hx)))
+                if 'Hy' in save_fields:
+                    self.results['Hy'].append(self.backend.to_numpy(self.backend.copy(self.Hy)))
                 
             # Update time
             self.t += self.dt
@@ -494,10 +552,69 @@ class FDTD:
             self.im = None
             
         # Save animation if requested
-        if save_animation and save:
-            self.save_animation(field="Ez", axis_scale=axis_scale, filename=animation_filename, clean_visualization=clean_visualization)
+        if save_animation and (save or accumulate_power):
+            if not save_memory_mode and 'Ez' in save_fields and len(self.results['Ez']) > 0:
+                self.save_animation(field="Ez", axis_scale=axis_scale, filename=animation_filename, clean_visualization=clean_visualization)
+            elif accumulate_power:
+                print("Cannot create animation in memory-saving mode without field data.")
+                
+        # Calculate final power average if accumulating
+        if accumulate_power and self.power_accumulation_count > 0:
+            self.power_accumulated /= self.power_accumulation_count
             
         return self.results
+        
+    def _record_monitor_data(self, step):
+        """Record field data at monitor locations"""
+        # Only implemented if there are configured monitors in the design
+        for idx, monitor in enumerate(self.design.monitors):
+            monitor_name = f"monitor_{idx}"
+            if monitor_name not in self.monitor_data:
+                self.monitor_data[monitor_name] = {
+                    'Ez': [], 't': [], 'position': monitor.position,
+                    'name': monitor.name if hasattr(monitor, 'name') else monitor_name
+                }
+            
+            # Extract Ez field along monitor line/point
+            # This is a simplified version - in reality would need to properly interpolate
+            # at the exact monitor position
+            # This implementation assumes monitors are simple lines defined by start/end points
+            if hasattr(monitor, 'start') and hasattr(monitor, 'end'):
+                # Line monitor
+                start_x, start_y = monitor.start
+                end_x, end_y = monitor.end
+                
+                # Convert to grid coordinates
+                start_x_grid = int(round(start_x / self.dx))
+                start_y_grid = int(round(start_y / self.dy))
+                end_x_grid = int(round(end_x / self.dx))
+                end_y_grid = int(round(end_y / self.dy))
+                
+                # Clamp to grid boundaries
+                start_x_grid = max(0, min(self.nx-1, start_x_grid))
+                start_y_grid = max(0, min(self.ny-1, start_y_grid))
+                end_x_grid = max(0, min(self.nx-1, end_x_grid))
+                end_y_grid = max(0, min(self.ny-1, end_y_grid))
+                
+                # Sample field values along the line (simplistic approach)
+                if abs(end_x_grid - start_x_grid) > abs(end_y_grid - start_y_grid):
+                    # Horizontal line dominant
+                    x_coords = np.linspace(start_x_grid, end_x_grid, 100)
+                    y_coords = np.linspace(start_y_grid, end_y_grid, 100)
+                else:
+                    # Vertical line dominant
+                    x_coords = np.linspace(start_x_grid, end_x_grid, 100)
+                    y_coords = np.linspace(start_y_grid, end_y_grid, 100)
+                
+                # Sample values
+                values = []
+                for i in range(len(x_coords)):
+                    x, y = int(x_coords[i]), int(y_coords[i])
+                    values.append(float(self.backend.to_numpy(self.Ez)[y, x]))
+                
+                # Store the data
+                self.monitor_data[monitor_name]['Ez'].append(values)
+                self.monitor_data[monitor_name]['t'].append(self.t)
         
     def save_animation(self, field: str = "Ez", axis_scale=[-1, 1], filename='fdtd_animation.mp4', fps=60, frame_skip=4, clean_visualization=False):
         """Save an animation of the simulation results as an mp4 file."""
@@ -655,120 +772,121 @@ class FDTD:
         Returns:
             None
         """
-        if len(self.results['Ez']) == 0 or len(self.results['Hx']) == 0 or len(self.results['Hy']) == 0:
-            print("No field data to calculate power. Make sure to run the simulation with save=True.")
+        # Check if we have accumulated power
+        if self.power_accumulated is not None:
+            # Use pre-accumulated power
+            power = self.power_accumulated
+            print("Using accumulated power data")
+        elif len(self.results['Ez']) > 0 and len(self.results['Hx']) > 0 and len(self.results['Hy']) > 0:
+            # Calculate power from saved field data
+            print("Calculating power from saved field data")
+            # Initialize power array
+            power = np.zeros((self.nx, self.ny))
+            
+            # Calculate average power over all time steps
+            for t_idx in range(len(self.results['t'])):
+                Ez = self.results['Ez'][t_idx]
+                Hx_raw = self.results['Hx'][t_idx]
+                Hy_raw = self.results['Hy'][t_idx]
+                
+                # Extend magnetic fields to match Ez dimensions
+                Hx = np.zeros_like(Ez)
+                Hx[:, :-1] = Hx_raw
+                Hy = np.zeros_like(Ez)
+                Hy[:-1, :] = Hy_raw
+                
+                # Calculate Poynting vector components (S = E × H)
+                Sx = -Ez * Hy 
+                Sy = Ez * Hx
+                
+                # Calculate power magnitude (|S|²)
+                power_mag = Sx**2 + Sy**2
+                
+                # Accumulate power
+                power += power_mag
+            
+            # Average power over time steps
+            power /= len(self.results['t'])
+        else:
+            print("No field data to calculate power. Make sure to run the simulation with save=True or accumulate_power=True.")
             return
         
-        # Calculate power from Poynting vector components
-        # For 2D TE mode with Ez, Hx, Hy, the time-averaged Poynting vector has components:
-        # Sx = -Ez * Hy, Sy = Ez * Hx
-        power = np.zeros((self.nx, self.ny))
-        
-        # Calculate power integrated over time
-        for t_idx in range(len(self.results['t'])):
-            Ez = self.results['Ez'][t_idx]
-            
-            # Need to interpolate H fields to same grid as Ez
-            Hx_interp = np.zeros_like(Ez)
-            Hy_interp = np.zeros_like(Ez)
-            
-            # Interpolate Hx (centered at (i, j+1/2)) to (i, j)
-            Hx_interp[:, 1:-1] = 0.5 * (self.results['Hx'][t_idx][:, :-1] + self.results['Hx'][t_idx][:, 1:])
-            Hx_interp[:, 0] = self.results['Hx'][t_idx][:, 0]  # Edge case
-            Hx_interp[:, -1] = self.results['Hx'][t_idx][:, -1]  # Edge case
-            
-            # Interpolate Hy (centered at (i+1/2, j)) to (i, j)
-            Hy_interp[1:-1, :] = 0.5 * (self.results['Hy'][t_idx][:-1, :] + self.results['Hy'][t_idx][1:, :])
-            Hy_interp[0, :] = self.results['Hy'][t_idx][0, :]  # Edge case
-            Hy_interp[-1, :] = self.results['Hy'][t_idx][-1, :]  # Edge case
-            
-            # Calculate Poynting vector components
-            Sx = -Ez * Hy_interp
-            Sy = Ez * Hx_interp
-            
-            # Add magnitude of Poynting vector to total power
-            power += np.sqrt(Sx**2 + Sy**2)
-        
-        # Normalize by number of time steps
-        power /= len(self.results['t'])
-        
-        # Find maximum power for normalization (used in both log_scale and db_colorbar)
-        max_power = np.max(power)
-        
-        # Convert to dB if log_scale is True
-        if log_scale:
-            # Add small epsilon to avoid log(0)
-            epsilon = np.finfo(float).eps
-            # Scale by maximum value to make max = 0dB
-            power_normalized = power / max_power
-            power_db = 10 * np.log10(power_normalized + epsilon)
-            plot_data = power_db
-            power_label = 'Power (dB)'
-            
-            # Set default dB range from 0 to -40 dB if not specified
-            if vmin is None:
-                vmin = -40
-            if vmax is None:
-                vmax = 0
-        else:
-            plot_data = power
-            if db_colorbar:
-                power_label = 'Power (dB)'
-            else:
-                power_label = 'Power (W/m²)'
-        
-        # Calculate figure size based on grid dimensions
-        aspect_ratio = self.ny / self.nx
-        base_size = 6  # Base size for the smaller dimension
-        if aspect_ratio > 1:
-            figsize = (base_size, base_size * aspect_ratio)
-        else:
-            figsize = (base_size / aspect_ratio, base_size)
-        
-        # Create the figure
-        plt.figure(figsize=figsize)
-        im = plt.imshow(plot_data, origin='lower',
-                       extent=(0, self.design.width, 0, self.design.height),
-                       cmap=cmap, aspect='equal', interpolation='bicubic',
-                       vmin=vmin, vmax=vmax)
-        
-        # Create colorbar with proper formatting
-        if db_colorbar and not log_scale:
-            # Create a custom formatter to display linear values in dB
-            from matplotlib.ticker import FuncFormatter
-            epsilon = np.finfo(float).eps
-            
-            def db_formatter(x, pos):
-                # Convert linear value to dB relative to max_power
-                return f"{10 * np.log10((x/max_power) + epsilon):.1f}"
-            
-            formatter = FuncFormatter(db_formatter)
-            colorbar = plt.colorbar(im, format=formatter, label=power_label)
-            
-            # Set default range for dB colorbar from 0 to -40 dB
-            if vmin is None and vmax is None:
-                # We're modifying just the formatter, not the actual data range
-                colorbar.set_ticks(np.linspace(max_power, max_power * 10**(-40/10), 5))
-                colorbar.set_ticklabels(['0', '-10', '-20', '-30', '-40'])
-        else:
-            colorbar = plt.colorbar(im, label=power_label)
-        
-        plt.title('Time-integrated Power Distribution')
-        
-        # Set proper unit labels based on design dimensions
+        # Determine appropriate SI unit and scale for spatial dimensions
         max_dim = max(self.design.width, self.design.height)
         if max_dim >= 1e-3: scale, unit = 1e3, 'mm'
         elif max_dim >= 1e-6: scale, unit = 1e6, 'µm'
         elif max_dim >= 1e-9: scale, unit = 1e9, 'nm'
         else: scale, unit = 1e12, 'pm'
         
+        # Configure plot size
+        aspect_ratio = power.shape[1] / power.shape[0]
+        base_size = 8  # Base size for the smaller dimension
+        if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
+        else: figsize = (base_size, base_size / aspect_ratio)
+        
+        plt.figure(figsize=figsize)
+        
+        # Apply logarithmic scaling if requested
+        max_power = np.max(power)
+        if max_power <= 0:
+            print("Warning: Maximum power is zero or negative. Cannot plot logarithmic scale.")
+            log_scale = False
+        
+        if log_scale:
+            # Convert to dB scale (10*log10)
+            # Add small epsilon to avoid log(0)
+            epsilon = max_power * 1e-6
+            power_db = 10 * np.log10(power + epsilon)
+            
+            # Default to -60 dB floor if not specified
+            if vmin is None:
+                vmin = np.max(power_db) - 60
+            
+            # Plot power in dB
+            im = plt.imshow(power_db, origin='lower',
+                           extent=(0, self.design.width * scale, 0, self.design.height * scale),
+                           cmap=cmap, vmin=vmin, vmax=vmax,
+                           aspect='equal', interpolation='bicubic')
+            
+            cbar = plt.colorbar(im)
+            cbar.set_label('Power (dB)')
+        else:
+            # Plot linear power with optional dB colorbar
+            im = plt.imshow(power, origin='lower',
+                           extent=(0, self.design.width * scale, 0, self.design.height * scale),
+                           cmap=cmap, vmin=vmin, vmax=vmax,
+                           aspect='equal', interpolation='bicubic')
+            
+            # Create colorbar
+            cbar = plt.colorbar(im)
+            
+            # Convert to dB scale for colorbar if requested
+            if db_colorbar:
+                # Define a formatter function to convert linear values to dB
+                def db_formatter(x, pos):
+                    # Convert linear value to dB relative to max_power
+                    epsilon = max_power * 1e-6
+                    db_val = 10 * np.log10((x + epsilon) / max_power)
+                    return f"{db_val:.1f} dB"
+                
+                # Apply the formatter
+                cbar.formatter = plt.FuncFormatter(db_formatter)
+                cbar.update_ticks()
+                cbar.set_label('Relative Power (dB)')
+            else:
+                # Regular linear colorbar
+                cbar.set_label('Power (a.u.)')
+        
+        # Add plot elements
+        plt.title('Time-Averaged Power Distribution')
         plt.xlabel(f'X ({unit})')
         plt.ylabel(f'Y ({unit})')
-        plt.gca().xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-        plt.gca().yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
         
-        # Create an overlay of the design outlines
+        # Draw original structure outlines
         for structure in self.design.structures:
+            # Skip PML regions for clarity
+            if hasattr(structure, 'is_pml') and structure.is_pml:
+                continue
             if isinstance(structure, Rectangle):
                 if structure.is_pml:
                     rect = plt.Polygon(structure.vertices, facecolor='none', edgecolor='white', alpha=1, linestyle=':')
@@ -790,9 +908,9 @@ class FDTD:
                 x_inner = structure.position[0] + structure.inner_radius * np.cos(theta[::-1])
                 y_inner = structure.position[1] + structure.inner_radius * np.sin(theta[::-1])
                 vertices = np.vstack([np.column_stack([x_outer, y_outer]),
-                                     np.column_stack([x_inner, y_inner])])
+                                   np.column_stack([x_inner, y_inner])])
                 codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (N - 1),
-                                       [Path.MOVETO] + [Path.LINETO] * (N - 1)])
+                                     [Path.MOVETO] + [Path.LINETO] * (N - 1)])
                 path = Path(vertices, codes)
                 ring_patch = PathPatch(path, facecolor='none', edgecolor='white', alpha=0.5, linestyle='--')
                 plt.gca().add_patch(ring_patch)
@@ -844,3 +962,69 @@ class FDTD:
         
         plt.tight_layout()
         plt.show()
+
+    def estimate_memory_usage(self, time_steps=None, save_fields=None):
+        """Estimate memory usage of the simulation with current settings.
+        
+        Args:
+            time_steps: Number of time steps to estimate for (defaults to self.num_steps)
+            save_fields: List of fields to save (defaults to ['Ez', 'Hx', 'Hy'])
+            
+        Returns:
+            Dictionary with memory usage estimates in MB
+        """
+        if time_steps is None:
+            time_steps = self.num_steps
+            
+        if save_fields is None:
+            save_fields = ['Ez', 'Hx', 'Hy']
+            
+        # Calculate size of a single array
+        bytes_per_value = np.float64(0).nbytes  # Usually 8 bytes for float64
+        
+        # Size of Ez array
+        ez_size = self.nx * self.ny * bytes_per_value
+        
+        # Size of Hx array (one row less than Ez)
+        hx_size = self.nx * (self.ny-1) * bytes_per_value
+        
+        # Size of Hy array (one column less than Ez)
+        hy_size = (self.nx-1) * self.ny * bytes_per_value
+        
+        # Size of time array
+        t_size = time_steps * bytes_per_value
+        
+        # Calculate total memory for all time steps
+        total_size = t_size
+        
+        if 'Ez' in save_fields:
+            total_size += ez_size * time_steps
+            
+        if 'Hx' in save_fields:
+            total_size += hx_size * time_steps
+            
+        if 'Hy' in save_fields:
+            total_size += hy_size * time_steps
+        
+        # Convert to more readable units
+        kb = 1024
+        mb = kb * 1024
+        gb = mb * 1024
+        
+        result = {
+            'Single timestep': {
+                'Ez': ez_size / mb,
+                'Hx': hx_size / mb,
+                'Hy': hy_size / mb,
+                'Total': (ez_size + hx_size + hy_size) / mb
+            },
+            'Full simulation': {
+                'Total memory (MB)': total_size / mb,
+                'Total memory (GB)': total_size / gb,
+                'Time steps': time_steps,
+                'Grid size': f"{self.nx} x {self.ny}",
+                'Fields saved': ', '.join(save_fields)
+            }
+        }
+        
+        return result
