@@ -9,6 +9,8 @@ from matplotlib.patches import Rectangle as MatplotlibRectangle, Circle as Matpl
 from matplotlib.path import Path
 from matplotlib.animation import FuncAnimation
 from beamz.simulation.backends import get_backend
+from beamz.helpers import progress_bar
+import sys
 
 class FDTD:
     """FDTD simulation class."""
@@ -398,7 +400,11 @@ class FDTD:
             live_update_freq = 5  # Update visualization every 5 steps for CPU backends
 
         # Run simulation
+        sys.stdout.flush()
+        sys.stdout.write("\n")
+        print("Running simulation...")
         for step in range(self.num_steps):
+            progress_bar(step, self.num_steps)
             # Update fields
             self.simulate_step()
             

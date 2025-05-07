@@ -343,7 +343,54 @@ class Design:
 
 
 # ================================================ 2D structures
-class Rectangle:
+class Polygon:
+    def __init__(self, vertices=None, material=None, color=None, optimize=False):
+        self.vertices = vertices
+        self.material = material
+        self.optimize = optimize
+        self.color = color if color is not None else self.get_random_color()
+
+    def get_random_color(self):
+        return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
+    
+    def shift(self, x, y):
+        """Shift the polygon by (x,y) and return self for method chaining."""
+        if self.vertices:
+            self.vertices = [(v[0] + x, v[1] + y) for v in self.vertices]
+        return self
+    
+    def scale(self, s):
+        """Scale the polygon around its center of mass and return self for method chaining."""
+        if self.vertices:
+            # Calculate center of mass
+            x_center = sum(v[0] for v in self.vertices) / len(self.vertices)
+            y_center = sum(v[1] for v in self.vertices) / len(self.vertices)
+            # Shift to origin, scale, then shift back
+            self.vertices = [
+                (x_center + (v[0] - x_center) * s,
+                 y_center + (v[1] - y_center) * s)
+                for v in self.vertices
+            ]
+        return self
+    
+    def rotate(self, angle):
+        """Rotate the polygon around its center of mass and return self for method chaining."""
+        if self.vertices:
+            # Calculate center of mass
+            x_center = sum(v[0] for v in self.vertices) / len(self.vertices)
+            y_center = sum(v[1] for v in self.vertices) / len(self.vertices)
+            # Shift to origin, rotate, then shift back
+            self.vertices = [
+                (x_center + (v[0] - x_center) * np.cos(angle) - (v[1] - y_center) * np.sin(angle),
+                 y_center + (v[0] - x_center) * np.sin(angle) + (v[1] - y_center) * np.cos(angle))
+                for v in self.vertices
+            ]
+        return self
+
+    def copy(self):
+        return Polygon(self.vertices, self.material)
+
+class Rectangle(Polygon):
     def __init__(self, position=(0,0), width=1, height=1, material=None, color=None, is_pml=False, optimize=False):
         self.position = position
         self.width = width
@@ -465,53 +512,6 @@ class CircularBend:
     
     def copy(self):
         return CircularBend(self.position, self.inner_radius, self.outer_radius, self.angle, self.rotation, self.material)
-
-class Polygon:
-    def __init__(self, vertices=None, material=None, color=None, optimize=False):
-        self.vertices = vertices
-        self.material = material
-        self.optimize = optimize
-        self.color = color if color is not None else self.get_random_color()
-
-    def get_random_color(self):
-        return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
-    
-    def shift(self, x, y):
-        """Shift the polygon by (x,y) and return self for method chaining."""
-        if self.vertices:
-            self.vertices = [(v[0] + x, v[1] + y) for v in self.vertices]
-        return self
-    
-    def scale(self, s):
-        """Scale the polygon around its center of mass and return self for method chaining."""
-        if self.vertices:
-            # Calculate center of mass
-            x_center = sum(v[0] for v in self.vertices) / len(self.vertices)
-            y_center = sum(v[1] for v in self.vertices) / len(self.vertices)
-            # Shift to origin, scale, then shift back
-            self.vertices = [
-                (x_center + (v[0] - x_center) * s,
-                 y_center + (v[1] - y_center) * s)
-                for v in self.vertices
-            ]
-        return self
-    
-    def rotate(self, angle):
-        """Rotate the polygon around its center of mass and return self for method chaining."""
-        if self.vertices:
-            # Calculate center of mass
-            x_center = sum(v[0] for v in self.vertices) / len(self.vertices)
-            y_center = sum(v[1] for v in self.vertices) / len(self.vertices)
-            # Shift to origin, rotate, then shift back
-            self.vertices = [
-                (x_center + (v[0] - x_center) * np.cos(angle) - (v[1] - y_center) * np.sin(angle),
-                 y_center + (v[0] - x_center) * np.sin(angle) + (v[1] - y_center) * np.cos(angle))
-                for v in self.vertices
-            ]
-        return self
-
-    def copy(self):
-        return Polygon(self.vertices, self.material)
 
 class Taper(Polygon):
     """Taper is a structure that tapers from a width to a height."""
