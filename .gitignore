@@ -49,7 +49,7 @@ build/
 .env
 .env.local 
 
-*.png
+archive
 NOTES.md
 *.pdf
 simulation_results/
