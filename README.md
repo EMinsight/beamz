@@ -1,16 +1,10 @@
-Clone the repository and install the package locally:
+![HEADER](docs/header.png)
+
 ```bash
-git clone https://github.com/QuentinWach/beamz
-cd beamz
-pip install .
+pip install beamz
 ```
 
-For GPU acceleration, install with PyTorch support:
-```bash
-pip install ".[gpu]"
-```
-
-You can then run the first example:
+Run an example:
 ```bash
 python examples/0_resring.py
 ```
