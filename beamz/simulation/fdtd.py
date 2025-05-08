@@ -676,17 +676,27 @@ class FDTD:
         # Add design structure outlines
         for structure in self.design.structures:
             if isinstance(structure, Rectangle):
-                if structure.is_pml:
-                    rect = plt.Polygon(structure.vertices, facecolor='none', edgecolor='black', alpha=1, linestyle=':')
-                else:
-                    rect = plt.Polygon(structure.vertices, facecolor='none', edgecolor='black', alpha=1)
-                ax.add_patch(rect)
+                rect = plt.Polygon(structure.vertices, 
+                                  facecolor='none', 
+                                  edgecolor='white', 
+                                  linewidth=1.5,
+                                  alpha=0.8, 
+                                  linestyle='-',
+                                  zorder=10)  # Higher zorder to ensure it's drawn on top
+                plt.gca().add_patch(rect)
+                
             elif isinstance(structure, Circle):
                 circle = MatplotlibCircle(
                     (structure.position[0], structure.position[1]),
                     structure.radius,
-                    facecolor='none', edgecolor='black', alpha=1, linestyle='--')
-                ax.add_patch(circle)
+                    facecolor='none', 
+                    edgecolor='white', 
+                    linewidth=1.5,
+                    alpha=0.8, 
+                    linestyle='-',
+                    zorder=10)
+                plt.gca().add_patch(circle)
+                
             elif isinstance(structure, Ring):
                 # Create points for the ring
                 N = 100
@@ -696,25 +706,91 @@ class FDTD:
                 x_inner = structure.position[0] + structure.inner_radius * np.cos(theta[::-1])
                 y_inner = structure.position[1] + structure.inner_radius * np.sin(theta[::-1])
                 vertices = np.vstack([np.column_stack([x_outer, y_outer]),
-                                   np.column_stack([x_inner, y_inner])])
+                                    np.column_stack([x_inner, y_inner])])
                 codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (N - 1),
-                                     [Path.MOVETO] + [Path.LINETO] * (N - 1)])
+                                      [Path.MOVETO] + [Path.LINETO] * (N - 1)])
                 path = Path(vertices, codes)
-                ring_patch = PathPatch(path, facecolor='none', edgecolor='black', alpha=1, linestyle='--')
-                ax.add_patch(ring_patch)
+                ring_patch = PathPatch(path, 
+                                      facecolor='none', 
+                                      edgecolor='white', 
+                                      linewidth=1.5,
+                                      alpha=0.8, 
+                                      linestyle='-',
+                                      zorder=10)
+                plt.gca().add_patch(ring_patch)
+                
+            elif isinstance(structure, CircularBend):
+                # Create points for the bend
+                N = 100
+                angle_rad = np.radians(structure.angle)
+                rotation_rad = np.radians(structure.rotation)
+                start_angle = rotation_rad
+                end_angle = rotation_rad + angle_rad
+                theta = np.linspace(start_angle, end_angle, N, endpoint=True)
+                
+                # Generate outer and inner curve points
+                x_outer = structure.position[0] + structure.outer_radius * np.cos(theta)
+                y_outer = structure.position[1] + structure.outer_radius * np.sin(theta)
+                x_inner = structure.position[0] + structure.inner_radius * np.cos(theta)
+                y_inner = structure.position[1] + structure.inner_radius * np.sin(theta)
+                
+                # Create vertex list for the bend shape
+                vertices = np.vstack([
+                    [x_outer[0], y_outer[0]],
+                    *np.column_stack([x_outer[1:], y_outer[1:]]),
+                    [x_inner[-1], y_inner[-1]],
+                    *np.column_stack([x_inner[-2::-1], y_inner[-2::-1]]),
+                    [x_outer[0], y_outer[0]]
+                ])
+                
+                codes = [Path.MOVETO] + [Path.LINETO] * (len(vertices) - 2) + [Path.CLOSEPOLY]
+                path = Path(vertices, codes)
+                bend_patch = PathPatch(path, 
+                                      facecolor='none', 
+                                      edgecolor='white', 
+                                      linewidth=1.5,
+                                      alpha=0.8, 
+                                      linestyle='-',
+                                      zorder=10)
+                plt.gca().add_patch(bend_patch)
+                
             elif isinstance(structure, ModeSource):
-                ax.plot((structure.start[0], structure.end[0]), 
-                      (structure.start[1], structure.end[1]), 
-                      '-', lw=4, color="crimson", alpha=0.5)
-                ax.plot((structure.start[0], structure.end[0]), 
-                      (structure.start[1], structure.end[1]), 
-                      '--', lw=2, color="black", alpha=1)
+                plt.plot((structure.start[0], structure.end[0]), 
+                         (structure.start[1], structure.end[1]), 
+                         '-', lw=4, color="crimson", alpha=0.8, zorder=10)
+                plt.plot((structure.start[0], structure.end[0]), 
+                         (structure.start[1], structure.end[1]), 
+                         '--', lw=2, color="white", alpha=0.8, zorder=11)
+                         
             elif isinstance(structure, GaussianSource):
                 source_circle = MatplotlibCircle(
                     (structure.position[0], structure.position[1]),
                     structure.width,
-                    facecolor='none', edgecolor='white', alpha=1, linestyle='dotted')
-                ax.add_patch(source_circle)
+                    facecolor='none', 
+                    edgecolor='orange', 
+                    linewidth=1.5,
+                    alpha=0.9, 
+                    linestyle='-.',
+                    zorder=10)
+                plt.gca().add_patch(source_circle)
+                
+            elif isinstance(structure, Monitor):
+                plt.plot((structure.start[0], structure.end[0]), 
+                         (structure.start[1], structure.end[1]), 
+                         '-', lw=4, color="navy", alpha=0.8, zorder=10)
+                plt.plot((structure.start[0], structure.end[0]), 
+                         (structure.start[1], structure.end[1]), 
+                         '--', lw=2, color="white", alpha=0.8, zorder=11)
+            
+            elif isinstance(structure, Polygon):
+                polygon = plt.Polygon(structure.vertices, 
+                                     facecolor='none', 
+                                     edgecolor='white', 
+                                     linewidth=1.5,
+                                     alpha=0.8, 
+                                     linestyle='-',
+                                     zorder=10)
+                plt.gca().add_patch(polygon)
         
         # Configure standard plot elements if not using clean visualization
         if not clean_visualization:
@@ -834,13 +910,28 @@ class FDTD:
         
         if log_scale:
             # Convert to dB scale (10*log10)
-            # Add small epsilon to avoid log(0)
-            epsilon = max_power * 1e-6
-            power_db = 10 * np.log10(power + epsilon)
+            # Create a safe mask for zero or negative values
+            valid_mask = power > 0
+            power_db = np.zeros_like(power)
+            
+            # Only calculate dB values where the power is positive
+            # Use a reasonable floor value (epsilon) for very small values
+            min_valid_power = max_power * 1e-10  # -100 dB from max
+            safe_power = np.maximum(power[valid_mask], min_valid_power)
+            
+            # Calculate dB values only for valid points
+            power_db[valid_mask] = 10 * np.log10(safe_power / max_power)
+            
+            # Set the invalid points to a very low value (for visualization purposes)
+            min_db = -100  # -100 dB floor
+            power_db[~valid_mask] = min_db
             
             # Default to -60 dB floor if not specified
             if vmin is None:
-                vmin = np.max(power_db) - 60
+                vmin = -60  # or min(np.min(power_db[valid_mask]), -60)
+            
+            if vmax is None:
+                vmax = 0  # 0 dB is the maximum (relative to max_power)
             
             # Plot power in dB
             im = plt.imshow(power_db, origin='lower',
@@ -865,8 +956,15 @@ class FDTD:
                 # Define a formatter function to convert linear values to dB
                 def db_formatter(x, pos):
                     # Convert linear value to dB relative to max_power
-                    epsilon = max_power * 1e-6
-                    db_val = 10 * np.log10((x + epsilon) / max_power)
+                    # Handle zero/negative values safely
+                    if x <= 0:
+                        return "-∞ dB"  # Return negative infinity for zero/negative values
+                    
+                    # Make sure the division doesn't yield negative or zero values
+                    ratio = max(x / max_power, 1e-10)  # Ensure minimum value is 1e-10 (-100 dB)
+                    db_val = 10 * np.log10(ratio)
+                    
+                    # Format the output nicely
                     return f"{db_val:.1f} dB"
                 
                 # Apply the formatter
@@ -887,18 +985,29 @@ class FDTD:
             # Skip PML regions for clarity
             if hasattr(structure, 'is_pml') and structure.is_pml:
                 continue
+                
             if isinstance(structure, Rectangle):
-                if structure.is_pml:
-                    rect = plt.Polygon(structure.vertices, facecolor='none', edgecolor='white', alpha=1, linestyle=':')
-                else:
-                    rect = plt.Polygon(structure.vertices, facecolor='none', edgecolor='white', alpha=1, linestyle='--')
+                rect = plt.Polygon(structure.vertices, 
+                                  facecolor='none', 
+                                  edgecolor='white', 
+                                  linewidth=1.5,
+                                  alpha=0.8, 
+                                  linestyle='-',
+                                  zorder=10)  # Higher zorder to ensure it's drawn on top
                 plt.gca().add_patch(rect)
+                
             elif isinstance(structure, Circle):
                 circle = MatplotlibCircle(
                     (structure.position[0], structure.position[1]),
                     structure.radius,
-                    facecolor='none', edgecolor='white', alpha=0.5, linestyle='--')
+                    facecolor='none', 
+                    edgecolor='white', 
+                    linewidth=1.5,
+                    alpha=0.8, 
+                    linestyle='-',
+                    zorder=10)
                 plt.gca().add_patch(circle)
+                
             elif isinstance(structure, Ring):
                 # Create points for the ring
                 N = 100
@@ -908,12 +1017,19 @@ class FDTD:
                 x_inner = structure.position[0] + structure.inner_radius * np.cos(theta[::-1])
                 y_inner = structure.position[1] + structure.inner_radius * np.sin(theta[::-1])
                 vertices = np.vstack([np.column_stack([x_outer, y_outer]),
-                                   np.column_stack([x_inner, y_inner])])
+                                    np.column_stack([x_inner, y_inner])])
                 codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (N - 1),
-                                     [Path.MOVETO] + [Path.LINETO] * (N - 1)])
+                                      [Path.MOVETO] + [Path.LINETO] * (N - 1)])
                 path = Path(vertices, codes)
-                ring_patch = PathPatch(path, facecolor='none', edgecolor='white', alpha=0.5, linestyle='--')
+                ring_patch = PathPatch(path, 
+                                      facecolor='none', 
+                                      edgecolor='white', 
+                                      linewidth=1.5,
+                                      alpha=0.8, 
+                                      linestyle='-',
+                                      zorder=10)
                 plt.gca().add_patch(ring_patch)
+                
             elif isinstance(structure, CircularBend):
                 # Create points for the bend
                 N = 100
@@ -940,25 +1056,52 @@ class FDTD:
                 
                 codes = [Path.MOVETO] + [Path.LINETO] * (len(vertices) - 2) + [Path.CLOSEPOLY]
                 path = Path(vertices, codes)
-                bend_patch = PathPatch(path, facecolor='none', edgecolor='white', alpha=0.5, linestyle='--')
+                bend_patch = PathPatch(path, 
+                                      facecolor='none', 
+                                      edgecolor='white', 
+                                      linewidth=1.5,
+                                      alpha=0.8, 
+                                      linestyle='-',
+                                      zorder=10)
                 plt.gca().add_patch(bend_patch)
+                
             elif isinstance(structure, ModeSource):
                 plt.plot((structure.start[0], structure.end[0]), 
                          (structure.start[1], structure.end[1]), 
-                         '-', lw=4, color="crimson", alpha=0.5)
+                         '-', lw=4, color="crimson", alpha=0.8, zorder=10)
                 plt.plot((structure.start[0], structure.end[0]), 
                          (structure.start[1], structure.end[1]), 
-                         '--', lw=2, color="white", alpha=0.5)
+                         '--', lw=2, color="white", alpha=0.8, zorder=11)
+                         
             elif isinstance(structure, GaussianSource):
                 source_circle = MatplotlibCircle(
                     (structure.position[0], structure.position[1]),
                     structure.width,
-                    facecolor='none', edgecolor='orange', alpha=0.8, linestyle='dotted')
+                    facecolor='none', 
+                    edgecolor='orange', 
+                    linewidth=1.5,
+                    alpha=0.9, 
+                    linestyle='-.',
+                    zorder=10)
                 plt.gca().add_patch(source_circle)
+                
             elif isinstance(structure, Monitor):
                 plt.plot((structure.start[0], structure.end[0]), 
-                          (structure.start[1], structure.end[1]), 
-                         '-', lw=4, color="navy", alpha=0.5)
+                         (structure.start[1], structure.end[1]), 
+                         '-', lw=4, color="navy", alpha=0.8, zorder=10)
+                plt.plot((structure.start[0], structure.end[0]), 
+                         (structure.start[1], structure.end[1]), 
+                         '--', lw=2, color="white", alpha=0.8, zorder=11)
+            
+            elif isinstance(structure, Polygon):
+                polygon = plt.Polygon(structure.vertices, 
+                                     facecolor='none', 
+                                     edgecolor='white', 
+                                     linewidth=1.5,
+                                     alpha=0.8, 
+                                     linestyle='-',
+                                     zorder=10)
+                plt.gca().add_patch(polygon)
         
         plt.tight_layout()
         plt.show()
