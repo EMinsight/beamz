@@ -5,14 +5,14 @@ import matplotlib.patches as patches
 from beamz.design.mode import solve_modes
 
 class GaussianSource():
-    """A Gaussian current distribution in space."""
+    """A Gaussian current distribution in space.
+    
+    Args:
+        position: Center of the Gaussian source (x, y).
+        width: Standard deviation of the Gaussian distribution (spatial width).
+        signal: Time-dependent signal.
+    """
     def __init__(self, position=(0,0), width=1.0*µm, signal=0):
-        """
-        Args:
-            position: Center of the Gaussian source (x, y).
-            width: Standard deviation of the Gaussian distribution (spatial width).
-            signal: Time-dependent signal.
-        """
         self.position = position
         self.width = width
         self.signal = signal
@@ -23,21 +23,21 @@ class GaussianSource():
 # TODO: Add mode solver options to integrate the analytical mode solver in mode.py. Future: Add FDFD mode solver and Tidy3D mode solver.
 # Make a comparison study!
 class ModeSource():
-    """Calculates and injects the mode profiles for a cross section given a start and end point."""
+    """Calculates and injects the mode profiles for a cross section given a start and end point.
+    
+    Args:
+        design: Design object containing the structures
+        start: Starting point of the source line (x,y)
+        end: End point of the source line (x,y)
+        wavelength: Source wavelength
+        signal: Time-dependent signal
+        direction: Direction of propagation ("+x", "-x", "+y", "-y")
+        npml: Number of PML layers to use at boundaries
+        num_modes: Number of modes to calculate
+        grid_resolution: Points per wavelength for grid resolution (higher = finer)
+    """
     def __init__(self, design, start, end, wavelength=1.55*µm, signal=0, direction="+x", 
                  npml=10, num_modes=2, grid_resolution=500, mode_solver="num_eigen"):
-        """
-        Args:
-            design: Design object containing the structures
-            start: Starting point of the source line (x,y)
-            end: End point of the source line (x,y)
-            wavelength: Source wavelength
-            signal: Time-dependent signal
-            direction: Direction of propagation ("+x", "-x", "+y", "-y")
-            npml: Number of PML layers to use at boundaries
-            num_modes: Number of modes to calculate
-            grid_resolution: Points per wavelength for grid resolution (higher = finer)
-        """
         self.start = start
         self.end = end
         self.wavelength = wavelength
@@ -129,14 +129,16 @@ class ModeSource():
         # Avoid duplicate PML label if patch was added
         unique_labels = {} 
         for line, label in zip(lines1 + lines2, labels1 + labels2):
-            if label not in unique_labels:
-                unique_labels[label] = line
+            if label not in unique_labels: unique_labels[label] = line
         ax2.legend(unique_labels.values(), unique_labels.keys(), loc='upper right')
-        
         plt.grid(True)
         fig.tight_layout()
         plt.show()
 
-    def add_to_plot(self, ax):
-        ax.plot((self.start[0], self.end[0]), (self.start[1], self.end[1]), '-', lw=4, color="crimson", label='Mode Source')
-        ax.plot((self.start[0], self.end[0]), (self.start[1], self.end[1]), '-', lw=2, color="black", label='Mode Source')
+    def add_to_plot(self, ax, facecolor=None, edgecolor="black", alpha=None, linestyle=None):
+        """Add the mode source to the plot."""
+        if facecolor is None: facecolor = "crimson"
+        if alpha is None: alpha = 1
+        if linestyle is None: linestyle = '-'
+        ax.plot((self.start[0], self.end[0]), (self.start[1], self.end[1]), '-', lw=4, color=facecolor, label='Mode Source')
+        ax.plot((self.start[0], self.end[0]), (self.start[1], self.end[1]), '--', lw=2, color=edgecolor, label='Mode Source')

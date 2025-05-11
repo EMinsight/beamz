@@ -59,29 +59,14 @@ class FDTD:
         self.power_accumulated = None
         self.power_accumulation_count = 0
 
-    def update_h_fields(self):
-        """Update magnetic field components with conductivity (including PML)."""
-        self.Hx, self.Hy = self.backend.update_h_fields(
-            self.Hx, self.Hy, self.Ez, self.sigma, 
-            self.dx, self.dy, self.dt, MU_0, EPS_0
-        )
-    
-    def update_e_field(self):
-        """Update electric field component with conductivity (including PML)."""
-        self.Ez = self.backend.update_e_field(
-            self.Ez, self.Hx, self.Hy, self.sigma, self.epsilon_r,
-            self.dx, self.dy, self.dt, EPS_0
-        )
-
     def simulate_step(self):
         """Perform one FDTD step with stability checks."""
-        self.update_h_fields()
-        self.update_e_field()
-
-    # TODO: Implement this
-    def show(self, field: str = "Ez", t=None, cmap="RdBu", axis_scale=[-1,1]):
-        """Show a given field or power at a given time or integrated over time."""
-        pass
+        self.Hx, self.Hy = self.backend.update_h_fields(
+            self.Hx, self.Hy, self.Ez, self.sigma, 
+            self.dx, self.dy, self.dt, MU_0, EPS_0)
+        self.Ez = self.backend.update_e_field(
+            self.Ez, self.Hx, self.Hy, self.sigma, self.epsilon_r,
+            self.dx, self.dy, self.dt, EPS_0)
 
     def plot_field(self, field: str = "Ez", t: float = None) -> None:
         """Plot a field at a given time with proper scaling and units."""
@@ -217,8 +202,7 @@ class FDTD:
         if is_gpu_backend and save:
             save_freq = max(10, self.num_steps // 100)  # Save approximately every 1% of steps or min of 10 steps
             print(f"GPU backend detected: Optimizing result storage (saving every {save_freq} steps)")
-        else:
-            save_freq = 1  # Save every step for CPU backends
+        else: save_freq = 1  # Save every step for CPU backends
         # Apply additional decimation based on user setting
         effective_save_freq = save_freq * decimate_save
         # If in save_memory_mode, clear any existing results to start fresh
@@ -607,13 +591,10 @@ class FDTD:
         if save_fields is None: save_fields = ['Ez', 'Hx', 'Hy']
         # Calculate size of a single array
         bytes_per_value = np.float64(0).nbytes  # Usually 8 bytes for float64
-        # Size of Ez array
+        # Sizes of the arrays
         ez_size = self.nx * self.ny * bytes_per_value
-        # Size of Hx array (one row less than Ez)
         hx_size = self.nx * (self.ny-1) * bytes_per_value
-        # Size of Hy array (one column less than Ez)
         hy_size = (self.nx-1) * self.ny * bytes_per_value
-        # Size of time array
         t_size = time_steps * bytes_per_value
         # Calculate total memory for all time steps
         total_size = t_size

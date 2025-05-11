@@ -53,6 +53,8 @@ Project total: 7881 lines
 
 ---
 
+Core package total: 3260 lines
+
 ## TODO
 + [ ] Simplify the code as much as possible! Goal: Core 2800 lines of core package code & <500 lines / module
     + [X] Make all structures polygon objects
@@ -72,4 +74,15 @@ Project total: 7881 lines
 
 
 
-GOAL: First inverse design by Friday 16, 2024
+
+### Future Features
++ [ ] Modify Mode Sources and Monitors to snap onto and move along structures
++ [ ] Allow structures to be added to each other using pins / ports in the design phase
++ [ ] Add import and export of gds files
++ [ ] Test workflow with gds-factory
+
+---
+
+GOALS:
++ [ ] First inverse design by Friday 16, 2024
++ [ ] Verify simulation (gds from BeamZ) in Meep
