@@ -126,6 +126,10 @@ class FDTD:
         # Create an overlay of the design outlines
         for structure in self.design.structures:
             print(f"Processing structure: {type(structure).__name__}")
+            
+            # Create a method for every structure to self-add itself to a figure
+            # structure.add_to_plot(self.ax)
+            
             if isinstance(structure, Rectangle):
                 if structure.is_pml:
                     rect = plt.Polygon(structure.vertices, facecolor='none', edgecolor='black', alpha=1, linestyle=':')
@@ -374,6 +378,10 @@ class FDTD:
         self.t = 0
         self._total_steps = self.num_steps
         self._save_results = save
+        # Save mode flags as class attributes for monitor access
+        self.save_memory_mode = save_memory_mode
+        self.accumulate_power = accumulate_power
+        
         # Calculate Courant number to check stability
         c = 1/np.sqrt(EPS_0 * MU_0)  # Speed of light
         courant = c * self.dt / min(self.dx, self.dy)
@@ -566,56 +574,25 @@ class FDTD:
         
     def _record_monitor_data(self, step):
         """Record field data at monitor locations"""
-        # Only implemented if there are configured monitors in the design
-        for idx, monitor in enumerate(self.design.monitors):
-            monitor_name = f"monitor_{idx}"
-            if monitor_name not in self.monitor_data:
-                self.monitor_data[monitor_name] = {
-                    'Ez': [], 't': [], 'position': monitor.position,
-                    'name': monitor.name if hasattr(monitor, 'name') else monitor_name
-                }
-            
-            # Extract Ez field along monitor line/point
-            # This is a simplified version - in reality would need to properly interpolate
-            # at the exact monitor position
-            # This implementation assumes monitors are simple lines defined by start/end points
-            if hasattr(monitor, 'start') and hasattr(monitor, 'end'):
-                # Line monitor
-                start_x, start_y = monitor.start
-                end_x, end_y = monitor.end
-                
-                # Convert to grid coordinates
-                start_x_grid = int(round(start_x / self.dx))
-                start_y_grid = int(round(start_y / self.dy))
-                end_x_grid = int(round(end_x / self.dx))
-                end_y_grid = int(round(end_y / self.dy))
-                
-                # Clamp to grid boundaries
-                start_x_grid = max(0, min(self.nx-1, start_x_grid))
-                start_y_grid = max(0, min(self.ny-1, start_y_grid))
-                end_x_grid = max(0, min(self.nx-1, end_x_grid))
-                end_y_grid = max(0, min(self.ny-1, end_y_grid))
-                
-                # Sample field values along the line (simplistic approach)
-                if abs(end_x_grid - start_x_grid) > abs(end_y_grid - start_y_grid):
-                    # Horizontal line dominant
-                    x_coords = np.linspace(start_x_grid, end_x_grid, 100)
-                    y_coords = np.linspace(start_y_grid, end_y_grid, 100)
-                else:
-                    # Vertical line dominant
-                    x_coords = np.linspace(start_x_grid, end_x_grid, 100)
-                    y_coords = np.linspace(start_y_grid, end_y_grid, 100)
-                
-                # Sample values
-                values = []
-                for i in range(len(x_coords)):
-                    x, y = int(x_coords[i]), int(y_coords[i])
-                    values.append(float(self.backend.to_numpy(self.Ez)[y, x]))
-                
-                # Store the data
-                self.monitor_data[monitor_name]['Ez'].append(values)
-                self.monitor_data[monitor_name]['t'].append(self.t)
+        # Convert field data to numpy for monitors
+        Ez_np = self.backend.to_numpy(self.Ez)
+        Hx_np = self.backend.to_numpy(self.Hx)
+        Hy_np = self.backend.to_numpy(self.Hy)
         
+        # Record data for each monitor
+        for monitor in self.design.monitors:
+            # Use the monitor's record_fields method
+            monitor.record_fields(
+                Ez=Ez_np, 
+                Hx=Hx_np, 
+                Hy=Hy_np,
+                t=self.t,
+                dx=self.dx,
+                dy=self.dy,
+                save_memory=self.save_memory_mode,
+                accumulate_power=self.accumulate_power
+            )
+
     def save_animation(self, field: str = "Ez", axis_scale=[-1, 1], filename='fdtd_animation.mp4', fps=60, frame_skip=4, clean_visualization=False):
         """Save an animation of the simulation results as an mp4 file."""
         if len(self.results[field]) == 0:
@@ -1171,3 +1148,36 @@ class FDTD:
         }
         
         return result
+
+    def plot_monitors(self, field='Ez', figsize=(10, 6), power=False, log_scale=False, db_scale=False):
+        """Plot the data from all monitors.
+        
+        Args:
+            field: Field to plot ('Ez', 'Hx', or 'Hy')
+            figsize: Figure size tuple
+            power: If True, plot power instead of field
+            log_scale: If True, use logarithmic scale for power plots
+            db_scale: If True, use dB scale for power plots
+            
+        Returns:
+            List of (monitor, fig, ax) tuples
+        """
+        import matplotlib.pyplot as plt
+        
+        # Check if we have monitors
+        if not self.design.monitors:
+            print("No monitors in the design.")
+            return []
+            
+        # Create plots for each monitor
+        results = []
+        for monitor in self.design.monitors:
+            if power:
+                fig, ax = monitor.plot_power(figsize=figsize, log_scale=log_scale, db_scale=db_scale)
+            else:
+                fig, ax = monitor.plot_fields(field=field, figsize=figsize)
+                
+            if fig is not None:
+                results.append((monitor, fig, ax))
+                
+        return results
