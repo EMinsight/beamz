@@ -231,7 +231,7 @@ class Polygon:
         self.optimize = optimize
         self.color = color if color is not None else self.get_random_color_consistent()
     
-    def get_random_color_consistent(self, saturation=0.5, value=0.5):
+    def get_random_color_consistent(self, saturation=0.6, value=0.7):
         """Generate a random color with consistent perceived brightness and saturation."""
         hue = random.random() # Generate random hue (0-1)
         r, g, b = colorsys.hsv_to_rgb(hue, saturation, value)

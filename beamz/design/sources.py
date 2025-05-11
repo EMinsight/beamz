@@ -140,5 +140,37 @@ class ModeSource():
         if facecolor is None: facecolor = "crimson"
         if alpha is None: alpha = 1
         if linestyle is None: linestyle = '-'
+        # Draw the source line
         ax.plot((self.start[0], self.end[0]), (self.start[1], self.end[1]), '-', lw=4, color=facecolor, label='Mode Source')
-        ax.plot((self.start[0], self.end[0]), (self.start[1], self.end[1]), '--', lw=2, color=edgecolor, label='Mode Source')
+        ax.plot((self.start[0], self.end[0]), (self.start[1], self.end[1]), '-', lw=1, color=edgecolor)
+        # Calculate arrow position and direction
+        mid_x = (self.start[0] + self.end[0]) / 2
+        mid_y = (self.start[1] + self.end[1]) / 2
+        # Get the line length for scaling
+        line_length = np.hypot(self.end[0] - self.start[0], self.end[1] - self.start[1])
+        # Determine arrow direction based on self.direction parameter
+        dx, dy = 0, 0
+        if self.direction == "+x": dx, dy = 1, 0
+        elif self.direction == "-x": dx, dy = -1, 0
+        elif self.direction == "+y": dx, dy = 0, 1
+        elif self.direction == "-y": dx, dy = 0, -1
+        # Scale the arrow - adaptive sizing based on line length
+        # Use minimum size for very short lines
+        min_arrow_length = 0.5 * self.wavelength  # Minimum size related to wavelength
+        arrow_length = max(line_length * 0.15, min_arrow_length)
+        # Use normalized direction vector
+        magnitude = np.sqrt(dx**2 + dy**2)
+        if magnitude > 0:  # Avoid division by zero
+            dx = dx / magnitude * arrow_length
+            dy = dy / magnitude * arrow_length
+        # Calculate appropriate head width and length
+        head_width = arrow_length
+        head_length = arrow_length * 0.6
+        # Draw the arrow
+        ax.arrow(mid_x, mid_y, dx, dy, 
+                head_width=head_width,
+                head_length=head_length, 
+                fc=facecolor, ec=edgecolor, 
+                alpha=alpha, linewidth=1,
+                width=head_width*0.4,  # Narrower arrow body
+                length_includes_head=True)
