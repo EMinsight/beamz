@@ -13,4 +13,4 @@ design.show()
 
 sim = FDTD(design=design, time=T, mesh="regular", resolution=WL/40, backend="numpy")
 sim.run(live=True)
-sim.plot_power(log_scale=False, db_colorbar=True)
+sim.plot_power(db_colorbar=True)

@@ -31,22 +31,17 @@ def image_to_gds(image, output_file):
     """
     # Get the dimensions of the image
     height, width = image.shape
-    
     # Create a new GDS library with unit=1 (user unit) and precision=0.001
     lib = gdspy.GdsLibrary(unit=1, precision=1e-3)
-    
     # Create a new cell named "TOP" to hold the geometry
     cell = lib.new_cell("TOP")
-    
     # Process each row of the image
     for i in range(height):
         # Map y-coordinates: row 0 (top) to y=height-1, row height-1 (bottom) to y=0
         y_bottom = height - 1 - i
         y_top = height - i
-        
         # Get the current row
         row = image[i, :]
-        
         # Find runs of consecutive 1's using groupby
         for key, group in groupby(enumerate(row), key=lambda x: x[1]):
             if key == 1:  # If the group is a run of 1's
@@ -57,10 +52,8 @@ def image_to_gds(image, output_file):
                 rect = gdspy.Rectangle(
                     (j_start, y_bottom),
                     (j_end + 1, y_top),
-                    layer=0  # Place all rectangles on layer 0
-                )
+                    layer=0) # Place all rectangles on layer 0
                 cell.add(rect)
-    
     # Write the library to a GDS file
     lib.write_gds(output_file)
     print(f"GDS file saved as '{output_file}'")

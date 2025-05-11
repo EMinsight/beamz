@@ -24,22 +24,18 @@ class FDTD:
         self.epsilon_r = self.mesh.permittivity
         self.mu_r = self.mesh.permeability
         self.sigma = self.mesh.conductivity
-        
         # Initialize the backend
         backend_options = backend_options or {}
         self.backend = get_backend(name=backend, **backend_options)
-        
         # Initialize the fields with the backend
         self.nx, self.ny = self.mesh.shape
         self.Ez = self.backend.zeros((self.nx, self.ny))
         self.Hx = self.backend.zeros((self.nx, self.ny-1))
         self.Hy = self.backend.zeros((self.nx-1, self.ny))
-        
         # Convert material properties to backend arrays
         self.epsilon_r = self.backend.from_numpy(self.epsilon_r)
         self.mu_r = self.backend.from_numpy(self.mu_r)
         self.sigma = self.backend.from_numpy(self.sigma)
-        
         # Initialize the time
         self.time = time
         self.dt = self.time[1] - self.time[0]
@@ -141,8 +137,7 @@ class FDTD:
         colorbar = plt.colorbar(self.im, orientation='vertical', aspect=30, extend='both')
         colorbar.set_label(f'{field} Field Amplitude')
         # Add design structure outlines
-        for structure in self.design.structures:
-            structure.add_to_plot(self.ax, facecolor="none", edgecolor="black", linestyle="-")
+        for structure in self.design.structures: structure.add_to_plot(self.ax, facecolor="none")
         # Set axis labels with proper scaling
         max_dim = max(self.design.width, self.design.height)
         if max_dim >= 1e-3: scale, unit = 1e3, 'mm'
@@ -340,7 +335,7 @@ class FDTD:
             if not save_memory_mode and 'Ez' in save_fields and len(self.results['Ez']) > 0:
                 self.save_animation(field="Ez", axis_scale=axis_scale, filename=animation_filename, clean_visualization=clean_visualization)
             elif accumulate_power: print("Cannot create animation in memory-saving mode without field data.")
-                
+
         # Calculate final power average if accumulating
         if accumulate_power and self.power_accumulation_count > 0:
             self.power_accumulated /= self.power_accumulation_count
@@ -419,7 +414,7 @@ class FDTD:
             colorbar.set_label(f'{field} Field Amplitude')
         # Add design structure outlines
         for structure in self.design.structures:
-            structure.add_to_plot(ax, facecolor="none", edgecolor="black", linestyle="-")
+            structure.add_to_plot(ax, facecolor="none", edgecolor="black")
         # Configure standard plot elements if not using clean visualization
         if not clean_visualization:
             # Add axis labels with proper scaling
@@ -510,70 +505,41 @@ class FDTD:
         base_size = 8  # Base size for the smaller dimension
         if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
         else: figsize = (base_size, base_size / aspect_ratio)
-        # Create the figure and axis
-        plt.figure(figsize=figsize)
         # Apply logarithmic scaling if requested
         max_power = np.max(power)
         if max_power <= 0:
             print("Warning: Maximum power is zero or negative. Cannot plot logarithmic scale.")
             log_scale = False
-        if log_scale:
-            # Convert to dB scale (10*log10)
-            # Create a safe mask for zero or negative values
-            valid_mask = power > 0
-            power_db = np.zeros_like(power)
-            # Only calculate dB values where the power is positive
-            # Use a reasonable floor value (epsilon) for very small values
-            min_valid_power = max_power * 1e-10  # -100 dB from max
-            safe_power = np.maximum(power[valid_mask], min_valid_power)
-            # Calculate dB values only for valid points
-            power_db[valid_mask] = 10 * np.log10(safe_power / max_power)
-            # Set the invalid points to a very low value (for visualization purposes)
-            min_db = -100  # -100 dB floor
-            power_db[~valid_mask] = min_db
-            # Default to -60 dB floor if not specified
-            if vmin is None: vmin = -60  # or min(np.min(power_db[valid_mask]), -60)
-            if vmax is None: vmax = 0  # 0 dB is the maximum (relative to max_power)
-            # Plot power in dB
-            im = plt.imshow(power_db, origin='lower',
-                           extent=(0, self.design.width * scale, 0, self.design.height * scale),
-                           cmap=cmap, vmin=vmin, vmax=vmax,
-                           aspect='equal', interpolation='bicubic')
-            cbar = plt.colorbar(im)
-            cbar.set_label('Power (dB)')
-        else:
-            # Plot linear power with optional dB colorbar
-            im = plt.imshow(power, origin='lower',
-                           extent=(0, self.design.width * scale, 0, self.design.height * scale),
-                           cmap=cmap, vmin=vmin, vmax=vmax,
-                           aspect='equal', interpolation='bicubic')
-            # Create colorbar
-            cbar = plt.colorbar(im)
-            # Convert to dB scale for colorbar if requested
-            if db_colorbar:
-                # Define a formatter function to convert linear values to dB
-                def db_formatter(x, pos):
-                    # Convert linear value to dB relative to max_power
-                    # Handle zero/negative values safely
-                    if x <= 0: return "-∞ dB"  # Return negative infinity for zero/negative values
-                    # Make sure the division doesn't yield negative or zero values
-                    ratio = max(x / max_power, 1e-10)  # Ensure minimum value is 1e-10 (-100 dB)
-                    db_val = 10 * np.log10(ratio)
-                    # Format the output nicely
-                    return f"{db_val:.1f} dB"
-                # Apply the formatter
-                cbar.formatter = plt.FuncFormatter(db_formatter)
-                cbar.update_ticks()
-                cbar.set_label('Relative Power (dB)')
-            else:
-                cbar.set_label('Power (a.u.)')
-        # Add plot elements
-        plt.title('Time-Averaged Power Distribution')
+
+        # Create the figure and axis
+        self.fig, self.ax = plt.subplots(figsize=figsize)
+        # Create initial plot with proper scaling
+        self.im = self.ax.imshow(power, origin='lower',
+                                extent=(0, self.design.width, 0, self.design.height),
+                                cmap=cmap, aspect='equal', interpolation='bicubic', vmin=vmin, vmax=vmax)
+        # Add colorbar
+        colorbar = plt.colorbar(self.im, orientation='vertical', aspect=30, extend='both')
+        # Convert to dB scale for colorbar if requested
+        if db_colorbar:
+            # Define a formatter function to convert linear values to dB
+            def db_formatter(x, pos):
+                if x <= 0: return "-∞ dB"  # Return negative infinity for zero/negative values
+                ratio = max(x / max_power, 1e-10)  # Ensure minimum value is 1e-10 (-100 dB)
+                db_val = 10 * np.log10(ratio)
+                return f"{db_val:.1f} dB"
+            colorbar.formatter = plt.FuncFormatter(db_formatter)
+            colorbar.update_ticks()
+            colorbar.set_label('Relative Power (dB)')
+        else: colorbar.set_label('Power (a.u.)')
+        # Add design structure outlines
+        for structure in self.design.structures: structure.add_to_plot(self.ax, facecolor="none", edgecolor="white")
+        # Add axis labels with proper scaling
         plt.xlabel(f'X ({unit})')
         plt.ylabel(f'Y ({unit})')
-        # Draw original structure outlines
-        for structure in self.design.structures:
-            structure.add_to_plot(plt.gca(), facecolor="none", edgecolor="black", linestyle="-")
+        self.ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+        self.ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+        # Add plot elements
+        plt.title('Time-Averaged Power Distribution')
         plt.tight_layout()
         plt.show()
 
