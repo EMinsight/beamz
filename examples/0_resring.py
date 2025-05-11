@@ -12,5 +12,5 @@ design.add(ModeSource(design=design, start=(0.5*µm, 0.8*µm), end=(0.5*µm, 1.6
 design.show()
 
 sim = FDTD(design=design, time=T, mesh="regular", resolution=WL/40, backend="numpy")
-sim.run(live=False)
+sim.run(live=True)
 sim.plot_power(log_scale=False, db_colorbar=True)

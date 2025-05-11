@@ -11,7 +11,6 @@ from beamz.design.helpers import get_si_scale_and_label
 import colorsys
 
 class Design:
-    # TODO: Implement 3D version generalization.
     def __init__(self, width=1, height=1, depth=None, material=None, color=None, border_color="black", auto_pml=True, pml_size=None):
         if material is None: material = Material(permittivity=1.0, permeability=1.0, conductivity=0.0)
         self.structures = [Rectangle(position=(0,0), width=width, height=height, material=material, color=color)]
@@ -124,16 +123,11 @@ class Design:
 
     def show(self):
         """Display the design visually."""
-        if not self.structures:
-            print("No structures to display")
-            return
-        
+        if not self.structures: print("No structures to display"); return
         # Determine appropriate SI unit and scale
         max_dim = max(self.width, self.height)
         scale, unit = get_si_scale_and_label(max_dim)
-            
         print("Showing 2D design...")
-
         # Calculate figure size based on domain dimensions
         aspect_ratio = self.width / self.height
         base_size = 5  # Slightly larger base size for single plot
@@ -141,104 +135,26 @@ class Design:
         else: figsize = (base_size, base_size / aspect_ratio)
         # Create a single figure for all structures
         fig, ax = plt.subplots(figsize=figsize)
-        # Set equal aspect ratio explicitly
         ax.set_aspect('equal')
-        
         # Now plot each structure
         for structure in self.structures:
-            if isinstance(structure, Rectangle):
-                if structure.is_pml:
-                    # PML regions get outlined with dashed lines
-                    rect = MatplotlibRectangle(
-                        (structure.position[0], structure.position[1]),
-                        structure.width, structure.height,
-                        facecolor='none', edgecolor='black', linestyle=':', alpha=1.0, linewidth=1.0, zorder=10)
-                    ax.add_patch(rect)
-                else:
-                    structure.add_to_plot(ax)
-            elif isinstance(structure, Circle):
-                circle = plt.Circle(
-                    (structure.position[0], structure.position[1]),
-                    structure.radius,
-                    facecolor=structure.color, edgecolor=self.border_color, alpha=1)
-                ax.add_patch(circle)
-            elif isinstance(structure, Ring):
-                # Create points for the ring
-                N = 100  # Number of points for each circle
-                theta = np.linspace(0, 2 * np.pi, N, endpoint=True)
-                # Outer circle points (counterclockwise)
-                x_outer = structure.position[0] + structure.outer_radius * np.cos(theta)
-                y_outer = structure.position[1] + structure.outer_radius * np.sin(theta)
-                # Inner circle points (clockwise)
-                x_inner = structure.position[0] + structure.inner_radius * np.cos(theta[::-1])
-                y_inner = structure.position[1] + structure.inner_radius * np.sin(theta[::-1])
-                # Combine vertices
-                vertices = np.vstack([np.column_stack([x_outer, y_outer]),
-                                    np.column_stack([x_inner, y_inner])])
-                # Define path codes
-                codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (N - 1),
-                                        [Path.MOVETO] + [Path.LINETO] * (N - 1)])
-                # Create the path and patch
-                path = Path(vertices, codes)
-                ring_patch = PathPatch(path, facecolor=structure.color, alpha=1, edgecolor=self.border_color)
-                ax.add_patch(ring_patch)
-            elif isinstance(structure, CircularBend):
-                # Create points for the bend
-                N = 100  # Number of points for each arc
-                # Convert angles to radians
-                angle_rad = np.radians(structure.angle)
-                rotation_rad = np.radians(structure.rotation)
-                theta = np.linspace(rotation_rad, rotation_rad + angle_rad, N, endpoint=True)
-                # Outer arc points
-                x_outer = structure.position[0] + structure.outer_radius * np.cos(theta)
-                y_outer = structure.position[1] + structure.outer_radius * np.sin(theta)
-                # Inner arc points
-                x_inner = structure.position[0] + structure.inner_radius * np.cos(theta)
-                y_inner = structure.position[1] + structure.inner_radius * np.sin(theta)
-                # Create a closed path by combining points and adding connecting lines
-                vertices = np.vstack([
-                    # Start at outer arc beginning
-                    [x_outer[0], y_outer[0]],
-                    # Draw outer arc
-                    *np.column_stack([x_outer[1:], y_outer[1:]]),
-                    # Connect to inner arc end
-                    [x_inner[-1], y_inner[-1]],
-                    # Draw inner arc backwards
-                    *np.column_stack([x_inner[-2::-1], y_inner[-2::-1]]),
-                    # Close the path by returning to start
-                    [x_outer[0], y_outer[0]]
-                ])
-                # Define path codes for a single continuous path
-                codes = [Path.MOVETO] + \
-                        [Path.LINETO] * (len(vertices) - 2) + \
-                        [Path.CLOSEPOLY]
-                # Create the path and patch
-                path = Path(vertices, codes)
-                bend_patch = PathPatch(path, facecolor=structure.color, alpha=1, edgecolor=self.border_color)
-                ax.add_patch(bend_patch)
-            elif isinstance(structure, Polygon):
-                polygon = plt.Polygon(structure.vertices, facecolor=structure.color, alpha=1, edgecolor=self.border_color)
-                ax.add_patch(polygon)
-            elif isinstance(structure, ModeSource):
+            if isinstance(structure, ModeSource):
                 ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="crimson", label='Mode Source')
                 ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", label='Mode Source')
             elif isinstance(structure, Monitor):
                 ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="navy", label='Monitor')
                 ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", label='Monitor')
-            elif isinstance(structure, GaussianSource):
-                pass
+            else: structure.add_to_plot(ax)
 
-        # Set proper limits, title and labels
+        # Set proper limits, title and label, and ensure the full design is visible
         ax.set_title('Design Layout')
         ax.set_xlabel(f'X ({unit})')
         ax.set_ylabel(f'Y ({unit})')
-        # Set axis limits and ensure the full design is visible
         ax.set_xlim(0, self.width)
         ax.set_ylim(0, self.height)
         # Update tick labels with scaled values
         ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
         ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-        
         # Adjust layout for clean appearance
         plt.tight_layout()
         plt.show()
@@ -250,7 +166,6 @@ class Design:
         """Return the material value at a given (x, y) coordinate, prioritizing the topmost structure."""
         # First check if we're in a PML boundary region
         pml_conductivity = 0.0
-        
         # Calculate average permittivity in the domain for PML calculation
         if dx is not None:
             eps_values = []
@@ -258,14 +173,11 @@ class Design:
                 if hasattr(structure, 'material') and hasattr(structure.material, 'permittivity'):
                     eps_values.append(structure.material.permittivity)
             eps_avg = np.mean(eps_values) if eps_values else 1.0
-        else:
-            eps_avg = None
-            
+        else: eps_avg = None
         # Apply all PML boundaries
         for boundary in self.boundaries:
             if isinstance(boundary, RectPML) or isinstance(boundary, CircularPML):
                 pml_conductivity += boundary.get_conductivity(x, y, dx=dx, dt=dt, eps_avg=eps_avg)
-        
         # Get material values from structures
         for structure in reversed(self.structures):
             if isinstance(structure, Rectangle):
@@ -375,7 +287,7 @@ class Polygon:
         """Add the rectangle as a patch to the axis of a given figure."""
         if color is None: color = self.color
         if alpha is None: alpha = 1
-        if linestyle is None: linestyle = '--'
+        if linestyle is None: linestyle = '-'
         patch = plt.Polygon(self.vertices, facecolor=color,
                 alpha=alpha, edgecolor=edgecolor, linestyle=linestyle)
         ax.add_patch(patch)
@@ -416,7 +328,6 @@ class Rectangle(Polygon):
         max_y = max(v[1] for v in self.vertices)
         # Update position to be the bottom-left corner
         self.position = (min_x, min_y)
-        # Update width and height to match the bounding box of rotated rectangle
         self.width = max_x - min_x
         self.height = max_y - min_y
         return self
@@ -435,87 +346,181 @@ class Rectangle(Polygon):
         new_rect.vertices = [(x, y) for x, y in self.vertices]
         return new_rect
 
-class Circle:
-    def __init__(self, position=(0,0), radius=1, material=None, color=None, optimize=False):
+class Circle(Polygon):
+    def __init__(self, position=(0,0), radius=1, points=32, material=None, color=None, optimize=False):
+        theta = np.linspace(0, 2*np.pi, points, endpoint=False)
+        vertices = [(position[0] + radius * np.cos(t), position[1] + radius * np.sin(t)) for t in theta]
+        super().__init__(vertices=vertices, material=material, color=color, optimize=optimize)
         self.position = position
         self.radius = radius
-        self.material = material
-        self.optimize = optimize
-        self.color = color if color is not None else self.get_random_color()
-    
-    def get_random_color(self):
-        return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
     
     def shift(self, x, y):
         """Shift the circle by (x,y) and return self for method chaining."""
         self.position = (self.position[0] + x, self.position[1] + y)
+        super().shift(x, y)
         return self
     
-    def rotate(self, angle):
-        pass
-
     def scale(self, s):
         """Scale the circle radius by s and return self for method chaining."""
         self.radius *= s
+        # Regenerate vertices with new radius
+        N = len(self.vertices)
+        theta = np.linspace(0, 2*np.pi, N, endpoint=False)
+        self.vertices = [(self.position[0] + self.radius * np.cos(t), 
+                         self.position[1] + self.radius * np.sin(t)) for t in theta]
         return self
     
     def copy(self):
-        return Circle(self.position, self.radius, self.material)
+        return Circle(self.position, self.radius, self.material, self.color, self.optimize)
 
-class Ring:
-    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, material=None, color=None, optimize=False):
+class Ring(Polygon):
+    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, material=None, color=None, optimize=False, points=64):
+        theta = np.linspace(0, 2*np.pi, points, endpoint=False)
+        outer_vertices = [(position[0] + outer_radius * np.cos(t), position[1] + outer_radius * np.sin(t)) for t in theta]
+        inner_vertices = [(position[0] + inner_radius * np.cos(t), position[1] + inner_radius * np.sin(t)) for t in reversed(theta)]
+        vertices = outer_vertices + inner_vertices
+        super().__init__(vertices=vertices, material=material, color=color, optimize=optimize)
+        self.points = points
         self.position = position
         self.inner_radius = inner_radius
         self.outer_radius = outer_radius
-        self.material = material
-        self.optimize = optimize
-        self.color = color if color is not None else self.get_random_color()
-
-    def get_random_color(self):
-        return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
     
-    # TODO
     def shift(self, x, y):
-        pass
-
-    # TODO
-    def rotate(self, angle):
-        pass
-
-    # TODO
+        """Shift the ring by (x,y) and return self for method chaining."""
+        self.position = (self.position[0] + x, self.position[1] + y)
+        super().shift(x, y)
+        return self
+    
     def scale(self, s):
-        pass
+        """Scale the ring radii by s and return self for method chaining."""
+        self.inner_radius *= s; self.outer_radius *= s
+        # Regenerate vertices with new radii
+        N = len(self.vertices) // 2  # Half the vertices for each circle
+        theta = np.linspace(0, 2*np.pi, N, endpoint=False)
+        # Outer circle points (clockwise)
+        outer_vertices = [(self.position[0] + self.outer_radius * np.cos(t), 
+                          self.position[1] + self.outer_radius * np.sin(t)) for t in theta]
+        # Inner circle points (counterclockwise)
+        inner_vertices = [(self.position[0] + self.inner_radius * np.cos(t), 
+                          self.position[1] + self.inner_radius * np.sin(t)) for t in reversed(theta)]
+        self.vertices = outer_vertices + inner_vertices
+        return self
+    
+    def add_to_plot(self, ax, color=None, edgecolor="black", alpha=None, linestyle=None):
+        if color is None: color = self.color
+        if alpha is None: alpha = 1
+        if linestyle is None: linestyle = '-'
+        # Create points for the ring
+        theta = np.linspace(0, 2 * np.pi, self.points, endpoint=True)
+        # Outer circle points (counterclockwise)
+        x_outer = self.position[0] + self.outer_radius * np.cos(theta)
+        y_outer = self.position[1] + self.outer_radius * np.sin(theta)
+        # Inner circle points (clockwise)
+        x_inner = self.position[0] + self.inner_radius * np.cos(theta[::-1])
+        y_inner = self.position[1] + self.inner_radius * np.sin(theta[::-1])
+        # Combine vertices
+        vertices = np.vstack([np.column_stack([x_outer, y_outer]),
+                            np.column_stack([x_inner, y_inner])])
+        # Define path codes
+        codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (self.points - 1),
+                                [Path.MOVETO] + [Path.LINETO] * (self.points - 1)])
+        # Create the path and patch
+        path = Path(vertices, codes)
+        ring_patch = PathPatch(path, facecolor=color, alpha=alpha, edgecolor=edgecolor, linestyle=linestyle)
+        ax.add_patch(ring_patch)
     
     def copy(self):
-        return Ring(self.position, self.inner_radius, self.outer_radius, self.material)
+        return Ring(self.position, self.inner_radius, self.outer_radius, self.material, self.color, self.optimize)
 
-class CircularBend:
-    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, angle=90, rotation=0, material=None, color=None, optimize=False):
+class CircularBend(Polygon):
+    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, angle=90, rotation=0, material=None, 
+                 color=None, optimize=False, points=64):
+        # Generate vertices for the bend
+        theta = np.linspace(0, np.radians(angle), points)
+        rotation_rad = np.radians(rotation)
+        # Outer arc points
+        outer_vertices = [(position[0] + outer_radius * np.cos(t + rotation_rad),
+                          position[1] + outer_radius * np.sin(t + rotation_rad)) for t in theta]
+        # Inner arc points (in reverse to maintain correct winding)
+        inner_vertices = [(position[0] + inner_radius * np.cos(t + rotation_rad),
+                          position[1] + inner_radius * np.sin(t + rotation_rad)) for t in reversed(theta)]
+        # Combine vertices and close the shape
+        vertices = outer_vertices + inner_vertices
+        super().__init__(vertices=vertices, material=material, color=color, optimize=optimize)
         self.position = position
         self.inner_radius = inner_radius
         self.outer_radius = outer_radius
         self.angle = angle
         self.rotation = rotation
-        self.material = material
-        self.optimize = optimize
-        self.color = color if color is not None else self.get_random_color()
-
-    def get_random_color(self):
-        return '#{:06x}'.format(random.randint(0, 0xFFFFFF))
-
+    
     def shift(self, x, y):
-        pass
-
-    # TODO
-    def rotate(self, angle):
-        pass
-
-    # TODO
+        """Shift the bend by (x,y) and return self for method chaining."""
+        self.position = (self.position[0] + x, self.position[1] + y)
+        super().shift(x, y)
+        return self
+    
+    def rotate(self, angle, point=None):
+        """Rotate the bend around its center or specified point."""
+        self.rotation = (self.rotation + angle) % 360
+        super().rotate(angle, point or self.position)
+        return self
+    
     def scale(self, s):
-        pass
+        """Scale the bend radii by s and return self for method chaining."""
+        self.inner_radius *= s; self.outer_radius *= s
+        # Regenerate vertices with new radii
+        N = len(self.vertices) // 2  # Half the vertices for each arc
+        theta = np.linspace(0, np.radians(self.angle), N)
+        rotation_rad = np.radians(self.rotation)
+        # Outer arc points
+        outer_vertices = [(self.position[0] + self.outer_radius * np.cos(t + rotation_rad),
+                          self.position[1] + self.outer_radius * np.sin(t + rotation_rad)) for t in theta]
+        # Inner arc points (in reverse to maintain correct winding)
+        inner_vertices = [(self.position[0] + self.inner_radius * np.cos(t + rotation_rad),
+                          self.position[1] + self.inner_radius * np.sin(t + rotation_rad)) for t in reversed(theta)]
+        self.vertices = outer_vertices + inner_vertices
+        return self
+    
+    def add_to_plot(self, ax, color=None, edgecolor="black", alpha=None, linestyle=None):
+        if color is None: color = self.color
+        if alpha is None: alpha = 1
+        if linestyle is None: linestyle = '--'
+        # Convert angles to radians
+        angle_rad = np.radians(self.angle)
+        rotation_rad = np.radians(self.rotation)
+        theta = np.linspace(rotation_rad, rotation_rad + angle_rad, self.points, endpoint=True)
+        # Outer arc points
+        x_outer = self.position[0] + self.outer_radius * np.cos(theta)
+        y_outer = self.position[1] + self.outer_radius * np.sin(theta)
+        # Inner arc points
+        x_inner = self.position[0] + self.inner_radius * np.cos(theta)
+        y_inner = self.position[1] + self.inner_radius * np.sin(theta)
+        # Create a closed path by combining points and adding connecting lines
+        vertices = np.vstack([
+            # Start at outer arc beginning
+            [x_outer[0], y_outer[0]],
+            # Draw outer arc
+            *np.column_stack([x_outer[1:], y_outer[1:]]),
+            # Connect to inner arc end
+            [x_inner[-1], y_inner[-1]],
+            # Draw inner arc backwards
+            *np.column_stack([x_inner[-2::-1], y_inner[-2::-1]]),
+            # Close the path by returning to start
+            [x_outer[0], y_outer[0]]
+        ])
+        # Define path codes for a single continuous path
+        codes = [Path.MOVETO] + \
+                [Path.LINETO] * (len(vertices) - 2) + \
+                [Path.CLOSEPOLY]
+        # Create the path and patch
+        path = Path(vertices, codes)
+        bend_patch = PathPatch(path, facecolor=color, alpha=alpha, edgecolor=edgecolor, linestyle=linestyle)
+        ax.add_patch(bend_patch)
+        
     
     def copy(self):
-        return CircularBend(self.position, self.inner_radius, self.outer_radius, self.angle, self.rotation, self.material)
+        return CircularBend(self.position, self.inner_radius, self.outer_radius, 
+                          self.angle, self.rotation, self.material, self.color, self.optimize)
 
 class Taper(Polygon):
     """Taper is a structure that tapers from a width to a height."""
@@ -536,37 +541,17 @@ class Taper(Polygon):
         self.optimize = optimize
 
     def rotate(self, angle, point=None):
-        """Rotate the taper around its center of mass or specified point.
-        
-        Args:
-            angle: Rotation angle in degrees
-            point: Optional (x,y) point to rotate around. If None, rotates around center.
-            
-        Returns:
-            self for method chaining
-        """
-        # Save original dimensions before rotation
-        original_input_width = self.input_width
-        original_output_width = self.output_width
-        original_length = self.length
-        
-        # Use parent class rotation method (which now handles degree to radian conversion)
+        """Rotate the taper around its center of mass or specified point."""
+        # Use parent class rotation method
         super().rotate(angle, point)
-        
         # Calculate new bounding box after rotation
         min_x = min(v[0] for v in self.vertices)
         min_y = min(v[1] for v in self.vertices)
         max_x = max(v[0] for v in self.vertices)
         max_y = max(v[1] for v in self.vertices)
-        
-        # Update position to be the bottom-left corner
+        # Update position to left bottom corner and update length
         self.position = (min_x, min_y)
-        
-        # After rotation, the taper shape is no longer a simple trapezoid
-        # We'll update dimensions to reflect the bounding box, but maintain
-        # the object's type as a rotated Taper
         self.length = max_x - min_x
-        
         return self
 
     def copy(self):
@@ -578,8 +563,6 @@ class Taper(Polygon):
         return new_taper
 
 
-# ================================================ 2D Boundaries
-
 class RectPML:
     """Rectangular Perfectly Matched Layer (PML) for absorbing boundary conditions."""
     def __init__(self, position=(0,0), width=1, height=1, orientation="left", max_conductivity=None, polynomial_order=3):
@@ -588,7 +571,6 @@ class RectPML:
         self.height = height
         self.orientation = orientation
         self.polynomial_order = polynomial_order
-        
         # Default max conductivity or let it be calculated later
         self.max_conductivity = max_conductivity if max_conductivity is not None else 1.0
         
@@ -608,26 +590,18 @@ class RectPML:
         if not (self.position[0] <= x <= self.position[0] + self.width and
                 self.position[1] <= y <= self.position[1] + self.height):
             return 0.0
-            
         # Calculate max conductivity based on grid parameters if provided
         sigma_max = self.max_conductivity
         if dx is not None and eps_avg is not None:
             # Calculate impedance and max conductivity as in pml.py
             eta = np.sqrt(MU_0 / (EPS_0 * eps_avg))
             sigma_max = 0.5 / (eta * dx)
-            
         # Calculate normalized distance from boundary based on orientation
-        if self.orientation == "left":
-            distance = (x - self.position[0]) / self.width
-        elif self.orientation == "right":
-            distance = 1.0 - (x - self.position[0]) / self.width
-        elif self.orientation == "top":
-            distance = 1.0 - (y - self.position[1]) / self.height
-        elif self.orientation == "bot":
-            distance = (y - self.position[1]) / self.height
-        else:
-            return 0.0  # Default if orientation is not recognized
-        
+        if self.orientation == "left": distance = (x - self.position[0]) / self.width
+        elif self.orientation == "right": distance = 1.0 - (x - self.position[0]) / self.width
+        elif self.orientation == "top": distance = 1.0 - (y - self.position[1]) / self.height
+        elif self.orientation == "bottom": distance = (y - self.position[1]) / self.height
+        else: return 0.0  # Default if orientation is not recognized
         # Ensure distance is within [0,1]
         distance = min(max(distance, 0.0), 1.0)
         # Calculate conductivity with polynomial scaling (default cubic as in pml.py)
@@ -641,7 +615,6 @@ class CircularPML:
         self.radius = radius
         self.orientation = orientation
         self.polynomial_order = polynomial_order
-        
         # Default max conductivity or let it be calculated later
         self.max_conductivity = max_conductivity if max_conductivity is not None else 1.0
         
@@ -679,6 +652,3 @@ class CircularPML:
         normalized_distance = 1.0 - (distance_from_corner / self.radius)
         # Calculate conductivity with polynomial scaling (default cubic as in pml.py)
         return sigma_max * normalized_distance ** self.polynomial_order
-
-
-# ================================================ 3D structures
