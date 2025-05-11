@@ -1,7 +1,8 @@
 from beamz import *
 import numpy as np
-from beamz.optimization.adjoint import AdjointOptimizer
 from beamz.design.materials import VarMaterial
+
+# Define basic parameters of the simulation
 WL = 1.55 * µm
 TIME = 20 * WL / LIGHT_SPEED
 T = np.linspace(0, TIME, int(TIME / (0.015 * WL / LIGHT_SPEED)))
@@ -24,10 +25,9 @@ sim = FDTD(design=design, time=T, mesh="regular", resolution=WL/30)
 sim.run(live=True)
 sim.plot_power(db_colorbar=True)
 
-def objective(sim_result): return -sim_result[monitor].total_power()
-opt = AdjointOptimizer(simulation=sim, objective_fn=objective, filter_radius=0.3*µm)
-objective_history = opt.optimize(iterations=10)
+def objective(sim_result):
+    return -sim_result[monitor].total_power()
 
 # Check the optimized design
-sim.run(live=True)
-sim.plot_power(db_colorbar=True)
+#sim.run(live=True)
+#sim.plot_power(db_colorbar=True)

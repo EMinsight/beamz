@@ -17,8 +17,8 @@ class GaussianSource():
         self.width = width
         self.signal = signal
     
-    def add_to_plot(self, ax):
-        ax.plot(self.position[0], self.position[1], 'o', color='crimson', label='Gaussian Source')
+    def add_to_plot(self, ax, facecolor="crimson", edgecolor="crimson", alpha=1, linestyle="-"):
+        ax.plot(self.position[0], self.position[1], 'o', color=facecolor, label='Gaussian Source')
 
 # TODO: Add mode solver options to integrate the analytical mode solver in mode.py. Future: Add FDFD mode solver and Tidy3D mode solver.
 # Make a comparison study!

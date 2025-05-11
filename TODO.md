@@ -53,27 +53,24 @@ Project total: 7881 lines
 
 ---
 
-Core package total: 3260 lines
-
 ## TODO
-+ [ ] Simplify the code as much as possible! Goal: Core 2800 lines of core package code & <500 lines / module
-    + [X] Make all structures polygon objects
-    + [ ] Convert all structure plotting calls into a method of the polygon object
-        + [X] Design.show()
-        + [ ] FDTD.show(live=True) Core package total: 3309 lines
-    + [ ] Store material values within a structure
-    + [ ] Implement the method to get the material from a structure (e.g. in Design)
 
-+ [ ] Speed up the rasterization!!!
-
-
+### Adjoint Method
 + [ ] Manually implement the adjoint inverse design solver without any complex classes directly in an example!
+    + [ ] Setup the design area with optimization mask.
 + [ ] Manually implement the shape optimization solver without any complex classes directly in an example!
 + [ ] Create the adjoint optimizer module.
+
+
+
+
+### Benchmarking
 + [ ] Test the backend in PyTorch on a GPU.
 
-
-
+### Rasterization Refactoring
++ [ ] Speed up the rasterization!!!
+    + [ ] Store material values within a structure
+    + [ ] Implement the method to get the material from a structure (e.g. in Design)
 
 ### Future Features
 + [ ] Modify Mode Sources and Monitors to snap onto and move along structures
