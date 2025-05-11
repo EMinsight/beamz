@@ -422,18 +422,15 @@ class Ring(Polygon):
 class CircularBend(Polygon):
     def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, angle=90, rotation=0, material=None, 
                  facecolor=None, optimize=False, points=64):
-        # Generate vertices for the bend
+        self.points = points
         theta = np.linspace(0, np.radians(angle), points)
         rotation_rad = np.radians(rotation)
-        # Outer arc points
         outer_vertices = [(position[0] + outer_radius * np.cos(t + rotation_rad),
                           position[1] + outer_radius * np.sin(t + rotation_rad)) for t in theta]
-        # Inner arc points (in reverse to maintain correct winding)
         inner_vertices = [(position[0] + inner_radius * np.cos(t + rotation_rad),
                           position[1] + inner_radius * np.sin(t + rotation_rad)) for t in reversed(theta)]
-        # Combine vertices and close the shape
         vertices = outer_vertices + inner_vertices
-        super().__init__(vertices=vertices, material=material, color=color, optimize=optimize)
+        super().__init__(vertices=vertices, material=material, color=facecolor, optimize=optimize)
         self.position = position
         self.inner_radius = inner_radius
         self.outer_radius = outer_radius
@@ -455,14 +452,11 @@ class CircularBend(Polygon):
     def scale(self, s):
         """Scale the bend radii by s and return self for method chaining."""
         self.inner_radius *= s; self.outer_radius *= s
-        # Regenerate vertices with new radii
         N = len(self.vertices) // 2  # Half the vertices for each arc
         theta = np.linspace(0, np.radians(self.angle), N)
         rotation_rad = np.radians(self.rotation)
-        # Outer arc points
         outer_vertices = [(self.position[0] + self.outer_radius * np.cos(t + rotation_rad),
                           self.position[1] + self.outer_radius * np.sin(t + rotation_rad)) for t in theta]
-        # Inner arc points (in reverse to maintain correct winding)
         inner_vertices = [(self.position[0] + self.inner_radius * np.cos(t + rotation_rad),
                           self.position[1] + self.inner_radius * np.sin(t + rotation_rad)) for t in reversed(theta)]
         self.vertices = outer_vertices + inner_vertices
@@ -471,7 +465,7 @@ class CircularBend(Polygon):
     def add_to_plot(self, ax, facecolor=None, edgecolor="black", alpha=None, linestyle=None):
         if facecolor is None: facecolor = self.color
         if alpha is None: alpha = 1
-        if linestyle is None: linestyle = '--'
+        if linestyle is None: linestyle = '-'
         # Convert angles to radians
         angle_rad = np.radians(self.angle)
         rotation_rad = np.radians(self.rotation)

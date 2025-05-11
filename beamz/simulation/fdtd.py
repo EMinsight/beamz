@@ -449,7 +449,7 @@ class FDTD:
         # Close the figure
         plt.close(fig)
         
-    def plot_power(self, cmap: str = "hot", log_scale: bool = False, vmin: float = None, vmax: float = None, db_colorbar: bool = False):
+    def plot_power(self, cmap: str = "hot", vmin: float = None, vmax: float = None, db_colorbar: bool = False):
         """Plot the time-integrated power distribution from the E and H fields.
         
         Args:
@@ -528,7 +528,8 @@ class FDTD:
                 db_val = 10 * np.log10(ratio)
                 return f"{db_val:.1f} dB"
             colorbar.formatter = plt.FuncFormatter(db_formatter)
-            colorbar.update_ticks()
+            # Set specific dB ticks
+            colorbar.update_ticks() 
             colorbar.set_label('Relative Power (dB)')
         else: colorbar.set_label('Power (a.u.)')
         # Add design structure outlines
