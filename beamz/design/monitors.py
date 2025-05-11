@@ -314,3 +314,7 @@ class Monitor():
         else:
             print(f"No field data recorded for monitor {self.name}")
             return None, None
+    
+    def add_to_plot(self, ax):
+        ax.plot((self.start[0], self.end[0]), (self.start[1], self.end[1]), '-', lw=4, color="navy", label='Monitor')
+        ax.plot((self.start[0], self.end[0]), (self.start[1], self.end[1]), '-', lw=2, color="black", label='Monitor')

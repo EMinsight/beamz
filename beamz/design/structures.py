@@ -41,7 +41,7 @@ class Design:
 
     def scatter(self, structure, n=1000, xyrange=(-5*µm, 5*µm), scale_range=(0.05, 1)):
         """Randomly distribute a given object over the design domain."""
-        for i in range(n):
+        for _ in range(n):
             new_structure = structure.copy()
             new_structure.shift(random.uniform(xyrange[0], xyrange[1]), random.uniform(xyrange[0], xyrange[1]))
             new_structure.rotate(random.uniform(0, 360))
@@ -87,7 +87,7 @@ class Design:
             height=self.height,
             material=pml_material,
             color='none',
-            is_pml=True  # Mark as PML region
+            is_pml=True
         )
         self.structures.append(left_pml)
         # Right PML region
@@ -130,22 +130,14 @@ class Design:
         print("Showing 2D design...")
         # Calculate figure size based on domain dimensions
         aspect_ratio = self.width / self.height
-        base_size = 5  # Slightly larger base size for single plot
+        base_size = 5
         if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
         else: figsize = (base_size, base_size / aspect_ratio)
         # Create a single figure for all structures
         fig, ax = plt.subplots(figsize=figsize)
         ax.set_aspect('equal')
         # Now plot each structure
-        for structure in self.structures:
-            if isinstance(structure, ModeSource):
-                ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="crimson", label='Mode Source')
-                ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", label='Mode Source')
-            elif isinstance(structure, Monitor):
-                ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="navy", label='Monitor')
-                ax.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", label='Monitor')
-            else: structure.add_to_plot(ax)
-
+        for structure in self.structures: structure.add_to_plot(ax)
         # Set proper limits, title and label, and ensure the full design is visible
         ax.set_title('Design Layout')
         ax.set_xlabel(f'X ({unit})')
@@ -283,12 +275,12 @@ class Polygon:
             ]
         return self
 
-    def add_to_plot(self, ax, color=None, edgecolor="black", alpha=None, linestyle=None):
+    def add_to_plot(self, ax, facecolor=None, edgecolor="black", alpha=None, linestyle=None):
         """Add the rectangle as a patch to the axis of a given figure."""
-        if color is None: color = self.color
+        if facecolor is None: facecolor = self.color
         if alpha is None: alpha = 1
         if linestyle is None: linestyle = '-'
-        patch = plt.Polygon(self.vertices, facecolor=color,
+        patch = plt.Polygon(self.vertices, facecolor=facecolor,
                 alpha=alpha, edgecolor=edgecolor, linestyle=linestyle)
         ax.add_patch(patch)
 
@@ -299,12 +291,10 @@ class Rectangle(Polygon):
     def __init__(self, position=(0,0), width=1, height=1, material=None, color=None, is_pml=False, optimize=False):
         # Calculate vertices for the rectangle
         x, y = position
-        vertices = [
-            (x, y),  # Bottom left
-            (x + width, y),  # Bottom right
-            (x + width, y + height),  # Top right
-            (x, y + height),  # Top left
-        ]
+        vertices = [(x, y),  # Bottom left
+                    (x + width, y),  # Bottom right
+                    (x + width, y + height),  # Top right
+                    (x, y + height)]
         super().__init__(vertices=vertices, material=material, color=color, optimize=optimize)
         self.position = position
         self.width = width
@@ -397,36 +387,33 @@ class Ring(Polygon):
         # Regenerate vertices with new radii
         N = len(self.vertices) // 2  # Half the vertices for each circle
         theta = np.linspace(0, 2*np.pi, N, endpoint=False)
-        # Outer circle points (clockwise)
+        # Outer circle points (clockwise) and inner circle points (counterclockwise)
         outer_vertices = [(self.position[0] + self.outer_radius * np.cos(t), 
                           self.position[1] + self.outer_radius * np.sin(t)) for t in theta]
-        # Inner circle points (counterclockwise)
         inner_vertices = [(self.position[0] + self.inner_radius * np.cos(t), 
                           self.position[1] + self.inner_radius * np.sin(t)) for t in reversed(theta)]
         self.vertices = outer_vertices + inner_vertices
         return self
     
-    def add_to_plot(self, ax, color=None, edgecolor="black", alpha=None, linestyle=None):
-        if color is None: color = self.color
+    def add_to_plot(self, ax, facecolor=None, edgecolor="black", alpha=None, linestyle=None):
+        if facecolor is None: facecolor = self.color
         if alpha is None: alpha = 1
         if linestyle is None: linestyle = '-'
         # Create points for the ring
         theta = np.linspace(0, 2 * np.pi, self.points, endpoint=True)
-        # Outer circle points (counterclockwise)
+        # Outer circle points (counterclockwise) and inner circle points (clockwise)
         x_outer = self.position[0] + self.outer_radius * np.cos(theta)
         y_outer = self.position[1] + self.outer_radius * np.sin(theta)
-        # Inner circle points (clockwise)
         x_inner = self.position[0] + self.inner_radius * np.cos(theta[::-1])
         y_inner = self.position[1] + self.inner_radius * np.sin(theta[::-1])
         # Combine vertices
-        vertices = np.vstack([np.column_stack([x_outer, y_outer]),
-                            np.column_stack([x_inner, y_inner])])
+        vertices = np.vstack([np.column_stack([x_outer, y_outer]), np.column_stack([x_inner, y_inner])])
         # Define path codes
         codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (self.points - 1),
                                 [Path.MOVETO] + [Path.LINETO] * (self.points - 1)])
         # Create the path and patch
         path = Path(vertices, codes)
-        ring_patch = PathPatch(path, facecolor=color, alpha=alpha, edgecolor=edgecolor, linestyle=linestyle)
+        ring_patch = PathPatch(path, facecolor=facecolor, alpha=alpha, edgecolor=edgecolor, linestyle=linestyle)
         ax.add_patch(ring_patch)
     
     def copy(self):
@@ -434,7 +421,7 @@ class Ring(Polygon):
 
 class CircularBend(Polygon):
     def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, angle=90, rotation=0, material=None, 
-                 color=None, optimize=False, points=64):
+                 facecolor=None, optimize=False, points=64):
         # Generate vertices for the bend
         theta = np.linspace(0, np.radians(angle), points)
         rotation_rad = np.radians(rotation)
@@ -481,31 +468,25 @@ class CircularBend(Polygon):
         self.vertices = outer_vertices + inner_vertices
         return self
     
-    def add_to_plot(self, ax, color=None, edgecolor="black", alpha=None, linestyle=None):
-        if color is None: color = self.color
+    def add_to_plot(self, ax, facecolor=None, edgecolor="black", alpha=None, linestyle=None):
+        if facecolor is None: facecolor = self.color
         if alpha is None: alpha = 1
         if linestyle is None: linestyle = '--'
         # Convert angles to radians
         angle_rad = np.radians(self.angle)
         rotation_rad = np.radians(self.rotation)
         theta = np.linspace(rotation_rad, rotation_rad + angle_rad, self.points, endpoint=True)
-        # Outer arc points
+        # Outer and inner arc points
         x_outer = self.position[0] + self.outer_radius * np.cos(theta)
         y_outer = self.position[1] + self.outer_radius * np.sin(theta)
-        # Inner arc points
         x_inner = self.position[0] + self.inner_radius * np.cos(theta)
         y_inner = self.position[1] + self.inner_radius * np.sin(theta)
         # Create a closed path by combining points and adding connecting lines
         vertices = np.vstack([
-            # Start at outer arc beginning
             [x_outer[0], y_outer[0]],
-            # Draw outer arc
             *np.column_stack([x_outer[1:], y_outer[1:]]),
-            # Connect to inner arc end
             [x_inner[-1], y_inner[-1]],
-            # Draw inner arc backwards
             *np.column_stack([x_inner[-2::-1], y_inner[-2::-1]]),
-            # Close the path by returning to start
             [x_outer[0], y_outer[0]]
         ])
         # Define path codes for a single continuous path
@@ -514,25 +495,22 @@ class CircularBend(Polygon):
                 [Path.CLOSEPOLY]
         # Create the path and patch
         path = Path(vertices, codes)
-        bend_patch = PathPatch(path, facecolor=color, alpha=alpha, edgecolor=edgecolor, linestyle=linestyle)
+        bend_patch = PathPatch(path, facecolor=facecolor, alpha=alpha, edgecolor=edgecolor, linestyle=linestyle)
         ax.add_patch(bend_patch)
         
-    
     def copy(self):
         return CircularBend(self.position, self.inner_radius, self.outer_radius, 
-                          self.angle, self.rotation, self.material, self.color, self.optimize)
+                            self.angle, self.rotation, self.material, self.color, self.optimize)
 
 class Taper(Polygon):
     """Taper is a structure that tapers from a width to a height."""
     def __init__(self, position=(0,0), input_width=1, output_width=0.5, length=1, material=None, color=None, optimize=False):
         # Calculate vertices for the trapezoid shape
         x, y = position
-        vertices = [
-            (x, y - input_width/2),  # Bottom left
-            (x + length, y - output_width/2),  # Bottom right
-            (x + length, y + output_width/2),  # Top right
-            (x, y + input_width/2),  # Top left
-        ]
+        vertices = [(x, y - input_width/2),  # Bottom left
+                    (x + length, y - output_width/2),  # Bottom right
+                    (x + length, y + output_width/2),  # Top right
+                    (x, y + input_width/2)] # Top left
         super().__init__(vertices=vertices, material=material, color=color)
         self.position = position
         self.input_width = input_width
@@ -561,7 +539,6 @@ class Taper(Polygon):
         # Ensure vertices are copied exactly as they are (important for rotated tapers)
         new_taper.vertices = [(x, y) for x, y in self.vertices]
         return new_taper
-
 
 class RectPML:
     """Rectangular Perfectly Matched Layer (PML) for absorbing boundary conditions."""
