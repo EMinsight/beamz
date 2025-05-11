@@ -16,6 +16,9 @@ class GaussianSource():
         self.position = position
         self.width = width
         self.signal = signal
+    
+    def add_to_plot(self, ax):
+        ax.plot(self.position[0], self.position[1], 'o', color='crimson', label='Gaussian Source')
 
 # TODO: Add mode solver options to integrate the analytical mode solver in mode.py. Future: Add FDFD mode solver and Tidy3D mode solver.
 # Make a comparison study!
@@ -71,13 +74,11 @@ class ModeSource():
         num_points = vecs.shape[0]  # Number of points along the line
         x = np.linspace(x0, x1, num_points)
         y = np.linspace(y0, y1, num_points)
-        
         # Create mode profile for the specified mode
         mode_profile = []
         for j in range(num_points):  # For each point
             amplitude = np.abs(vecs[j, mode_number])  # Absolute value of the field
             mode_profile.append([amplitude, x[j], y[j]])
-            
         return mode_profile
 
     def show(self):
@@ -90,9 +91,7 @@ class ModeSource():
         # Create coordinate array from 0 to line_length
         coords = np.linspace(0, line_length, N) / µm # Plot in microns
         plot_unit = 'µm'
-
         vals, vecs = solve_modes(eps_1d, self.omega, self.dL, npml=self.npml, m=self.num_modes)
-
         fig, ax1 = plt.subplots(figsize=(10, 5))
         # Plot permittivity profile vs physical coordinates
         ax1.plot(coords, eps_1d, color='black', label='1D Permittivity Profile')
@@ -115,14 +114,11 @@ class ModeSource():
         if self.npml > 0 and N > self.npml:
             pml_width_left = coords[self.npml-1] - coords[0]
             pml_width_right = coords[-1] - coords[N-self.npml]
-            # Left PML region
+            # Left PML region & right PML region
             ax1.add_patch(patches.Rectangle((coords[0], ax1.get_ylim()[0]), pml_width_left, 
-                                            ax1.get_ylim()[1]-ax1.get_ylim()[0], 
-                                            facecolor='gray', alpha=0.2, label='PML Region'))
-            # Right PML region
+                ax1.get_ylim()[1]-ax1.get_ylim()[0], facecolor='gray', alpha=0.2, label='PML Region'))
             ax1.add_patch(patches.Rectangle((coords[N-self.npml], ax1.get_ylim()[0]), pml_width_right, 
-                                            ax1.get_ylim()[1]-ax1.get_ylim()[0], 
-                                            facecolor='gray', alpha=0.2))
+                ax1.get_ylim()[1]-ax1.get_ylim()[0], facecolor='gray', alpha=0.2))
             # Adjust xlim slightly to make patches fully visible if needed
             ax1.set_xlim(coords[0] - 0.01*line_length/µm, coords[-1] + 0.01*line_length/µm)
 
@@ -140,3 +136,7 @@ class ModeSource():
         plt.grid(True)
         fig.tight_layout()
         plt.show()
+
+    def add_to_plot(self, ax):
+        ax.plot((self.start[0], self.end[0]), (self.start[1], self.end[1]), '-', lw=4, color="crimson", label='Mode Source')
+        ax.plot((self.start[0], self.end[0]), (self.start[1], self.end[1]), '-', lw=2, color="black", label='Mode Source')

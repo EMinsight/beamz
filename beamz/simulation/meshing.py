@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from beamz.helpers import progress_bar
 
 class RegularGrid:
     """Takes in a design and resolution and returns a rasterized grid of that design."""
@@ -39,8 +40,10 @@ class RegularGrid:
         dt_estimate = 0.5 * self.resolution / (c * np.sqrt(2))
         
         # Process each point in the grid
+        print("Rasterizing design as a regular grid...")
         for i in range(grid_height):
             for j in range(grid_width):
+                progress_bar(i*grid_width + j, grid_height*grid_width)
                 # Get the center point
                 x_center = X_centers[i, j]
                 y_center = Y_centers[i, j]

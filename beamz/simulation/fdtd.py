@@ -9,6 +9,8 @@ from matplotlib.patches import Rectangle as MatplotlibRectangle, Circle as Matpl
 from matplotlib.path import Path
 from matplotlib.animation import FuncAnimation
 from beamz.simulation.backends import get_backend
+from beamz.helpers import progress_bar
+import sys
 
 class FDTD:
     """FDTD simulation class."""
@@ -51,6 +53,11 @@ class FDTD:
         self.ax = None
         self.anim = None
         self.im = None
+        # Initialize monitor data storage
+        self.monitor_data = {}
+        # Initialize power accumulation
+        self.power_accumulated = None
+        self.power_accumulation_count = 0
 
     def update_h_fields(self):
         """Update magnetic field components with conductivity (including PML)."""
@@ -90,7 +97,6 @@ class FDTD:
             current_field = self.results[field][t_idx]
             current_t = self.results['t'][t_idx]
             print(f"Plotting saved field at t = {current_t:.2e} s (index {t_idx})")
-        
         # Determine appropriate SI unit and scale for spatial dimensions
         max_dim = max(self.design.width, self.design.height)
         if max_dim >= 1e-3: scale, unit = 1e3, 'mm'
@@ -115,110 +121,15 @@ class FDTD:
         # Update tick labels with scaled values
         plt.gca().xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
         plt.gca().yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-         
         # Create an overlay of the design outlines
         for structure in self.design.structures:
-            print(f"Processing structure: {type(structure).__name__}")
-            if isinstance(structure, Rectangle):
-                if structure.is_pml:
-                    rect = MatplotlibRectangle(
-                        (structure.position[0], structure.position[1]),
-                        structure.width, structure.height,
-                        facecolor='none', edgecolor='black', alpha=1, linestyle=':')
-                else:
-                    rect = MatplotlibRectangle(
-                        (structure.position[0], structure.position[1]),
-                        structure.width, structure.height,
-                        facecolor=structure.color, edgecolor=self.border_color, alpha=1)
-                plt.gca().add_patch(rect)
-            elif isinstance(structure, Circle):
-                print(f"Adding Circle at {structure.position} with radius={structure.radius}")
-                circle = MatplotlibCircle(
-                    (structure.position[0], structure.position[1]),
-                    structure.radius,
-                    facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
-                plt.gca().add_patch(circle)
-            elif isinstance(structure, Ring):
-                # Create points for the ring
-                N = 100  # Number of points for each circle
-                theta = np.linspace(0, 2 * np.pi, N, endpoint=True)
-                # Outer circle points (counterclockwise)
-                x_outer = structure.position[0] + structure.outer_radius * np.cos(theta)
-                y_outer = structure.position[1] + structure.outer_radius * np.sin(theta)
-                # Inner circle points (clockwise)
-                x_inner = structure.position[0] + structure.inner_radius * np.cos(theta[::-1])
-                y_inner = structure.position[1] + structure.inner_radius * np.sin(theta[::-1])
-                # Combine vertices
-                vertices = np.vstack([np.column_stack([x_outer, y_outer]),
-                                    np.column_stack([x_inner, y_inner])])
-                # Define path codes
-                codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (N - 1),
-                                      [Path.MOVETO] + [Path.LINETO] * (N - 1)])
-                # Create the path and patch
-                path = Path(vertices, codes)
-                ring_patch = PathPatch(path, facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
-                plt.gca().add_patch(ring_patch)
-            elif isinstance(structure, CircularBend):
-                # Create points for the bend
-                N = 100
-                # Only draw the circular bend within the specified angle
-                angle_rad = np.radians(structure.angle)
-                rotation_rad = np.radians(structure.rotation)
-                
-                # Calculate start and end angles based on rotation
-                start_angle = rotation_rad
-                end_angle = rotation_rad + angle_rad
-                
-                # Create theta values only for the specified angle range
-                theta = np.linspace(start_angle, end_angle, N, endpoint=True)
-                
-                # Generate outer and inner curve points
-                x_outer = structure.position[0] + structure.outer_radius * np.cos(theta)
-                y_outer = structure.position[1] + structure.outer_radius * np.sin(theta)
-                x_inner = structure.position[0] + structure.inner_radius * np.cos(theta)
-                y_inner = structure.position[1] + structure.inner_radius * np.sin(theta)
-                
-                # Create vertex list for the bend shape
-                vertices = np.vstack([
-                    # Start at the first outer point
-                    [x_outer[0], y_outer[0]],
-                    # Add all the outer curve points
-                    *np.column_stack([x_outer[1:], y_outer[1:]]),
-                    # Add the last inner point
-                    [x_inner[-1], y_inner[-1]],
-                    # Add all inner points in reverse
-                    *np.column_stack([x_inner[-2::-1], y_inner[-2::-1]]),
-                    # Close the polygon
-                    [x_outer[0], y_outer[0]]
-                ])
-                
-                codes = [Path.MOVETO] + [Path.LINETO] * (len(vertices) - 2) + [Path.CLOSEPOLY]
-                path = Path(vertices, codes)
-                bend_patch = PathPatch(path, facecolor='none', edgecolor='black', alpha=1, linestyle='--')
-                plt.gca().add_patch(bend_patch)
-            elif isinstance(structure, Polygon):
-                polygon = plt.Polygon(structure.vertices, facecolor='none', edgecolor='black', alpha=0.5, linestyle='--')
-                plt.gca().add_patch(polygon)
-            elif isinstance(structure, ModeSource):
-                plt.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="crimson", alpha=0.5, label='Mode Source')
-                plt.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '--', lw=2, color="black", alpha=0.5)
-            elif isinstance(structure, GaussianSource):
-                source_circle = MatplotlibCircle(
-                    (structure.position[0], structure.position[1]),
-                    structure.width,  # Use width as radius
-                    facecolor='none', edgecolor='orange', alpha=0.8, linestyle='dotted', label='Gaussian Source')
-                plt.gca().add_patch(source_circle)
-            #elif isinstance(structure, ModeMonitor):
-            #    plt.plot((structure.start[0], structure.end[0]), (structure.start[1], structure.end[1]), '-', lw=4, color="navy", alpha=0.5, label='Mode Monitor')
-
+            structure.add_to_plot(plt.gca(), facecolor="none", edgecolor="black", linestyle="-")
         plt.tight_layout()
         plt.show()
 
     def animate_live(self, field_data=None, field="Ez", axis_scale=[-1,1]):
         """Animate the field in real time using matplotlib animation."""
-        if field_data is None:
-            field_data = self.backend.to_numpy(getattr(self, field))
-        
+        if field_data is None: field_data = self.backend.to_numpy(getattr(self, field))
         # If animation already exists, just update the data
         if self.fig is not None and plt.fignum_exists(self.fig.number):
             current_field = field_data
@@ -227,135 +138,45 @@ class FDTD:
             self.fig.canvas.draw_idle()
             self.fig.canvas.flush_events()
             return
-
         # Get current field data
         current_field = field_data
-        
         # Calculate figure size based on grid dimensions
         grid_height, grid_width = current_field.shape
         aspect_ratio = grid_width / grid_height
         base_size = 5  # Base size for the smaller dimension
         if aspect_ratio > 1: figsize = (base_size * aspect_ratio * 1.2, base_size)
         else: figsize = (base_size * 1.2, base_size / aspect_ratio)
-            
+        # Create the figure and axis
         self.fig, self.ax = plt.subplots(figsize=figsize)
-        
         # Create initial plot with proper scaling
         self.im = self.ax.imshow(current_field, origin='lower',
                                 extent=(0, self.design.width, 0, self.design.height),
                                 cmap='RdBu', aspect='equal', interpolation='bicubic', vmin=axis_scale[0], vmax=axis_scale[1])
-        
         # Add colorbar
         colorbar = plt.colorbar(self.im, orientation='vertical', aspect=30, extend='both')
         colorbar.set_label(f'{field} Field Amplitude')
-        
         # Add design structure outlines
         for structure in self.design.structures:
-            if isinstance(structure, Rectangle):
-                if structure.is_pml:
-                    rect = MatplotlibRectangle(
-                        (structure.position[0], structure.position[1]),
-                        structure.width, structure.height,
-                        facecolor='none', edgecolor='black', alpha=1.0, linestyle=':')
-                else:
-                    rect = MatplotlibRectangle(
-                        (structure.position[0], structure.position[1]),
-                        structure.width, structure.height,
-                        facecolor="none", edgecolor="black", alpha=1, linestyle="--")
-                self.ax.add_patch(rect)
-            elif isinstance(structure, Circle):
-                circle = MatplotlibCircle(
-                    (structure.position[0], structure.position[1]),
-                    structure.radius,
-                    facecolor='none', edgecolor='black', alpha=1, linestyle='--')
-                self.ax.add_patch(circle)
-            elif isinstance(structure, Ring):
-                # Create points for the ring
-                N = 100
-                theta = np.linspace(0, 2 * np.pi, N, endpoint=True)
-                x_outer = structure.position[0] + structure.outer_radius * np.cos(theta)
-                y_outer = structure.position[1] + structure.outer_radius * np.sin(theta)
-                x_inner = structure.position[0] + structure.inner_radius * np.cos(theta[::-1])
-                y_inner = structure.position[1] + structure.inner_radius * np.sin(theta[::-1])
-                vertices = np.vstack([np.column_stack([x_outer, y_outer]),
-                                   np.column_stack([x_inner, y_inner])])
-                codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (N - 1),
-                                     [Path.MOVETO] + [Path.LINETO] * (N - 1)])
-                path = Path(vertices, codes)
-                ring_patch = PathPatch(path, facecolor='none', edgecolor='black', alpha=1, linestyle='--')
-                self.ax.add_patch(ring_patch)
-            elif isinstance(structure, CircularBend):
-                # Create points for the bend
-                N = 100
-                # Only draw the circular bend within the specified angle
-                angle_rad = np.radians(structure.angle)
-                rotation_rad = np.radians(structure.rotation)
-                
-                # Calculate start and end angles based on rotation
-                start_angle = rotation_rad
-                end_angle = rotation_rad + angle_rad
-                
-                # Create theta values only for the specified angle range
-                theta = np.linspace(start_angle, end_angle, N, endpoint=True)
-                
-                # Generate outer and inner curve points
-                x_outer = structure.position[0] + structure.outer_radius * np.cos(theta)
-                y_outer = structure.position[1] + structure.outer_radius * np.sin(theta)
-                x_inner = structure.position[0] + structure.inner_radius * np.cos(theta)
-                y_inner = structure.position[1] + structure.inner_radius * np.sin(theta)
-                
-                # Create vertex list for the bend shape
-                vertices = np.vstack([
-                    # Start at the first outer point
-                    [x_outer[0], y_outer[0]],
-                    # Add all the outer curve points
-                    *np.column_stack([x_outer[1:], y_outer[1:]]),
-                    # Add the last inner point
-                    [x_inner[-1], y_inner[-1]],
-                    # Add all inner points in reverse
-                    *np.column_stack([x_inner[-2::-1], y_inner[-2::-1]]),
-                    # Close the polygon
-                    [x_outer[0], y_outer[0]]
-                ])
-                
-                codes = [Path.MOVETO] + [Path.LINETO] * (len(vertices) - 2) + [Path.CLOSEPOLY]
-                path = Path(vertices, codes)
-                bend_patch = PathPatch(path, facecolor='none', edgecolor='black', alpha=1, linestyle='--')
-                self.ax.add_patch(bend_patch)
-                
-            elif isinstance(structure, ModeSource):
-                self.ax.plot((structure.start[0], structure.end[0]), 
-                           (structure.start[1], structure.end[1]), 
-                           '-', lw=4, color="crimson", alpha=1)
-                self.ax.plot((structure.start[0], structure.end[0]), 
-                           (structure.start[1], structure.end[1]), 
-                           '--', lw=2, color="black", alpha=1)
-            elif isinstance(structure, GaussianSource):
-                source_circle = MatplotlibCircle(
-                    (structure.position[0], structure.position[1]),
-                    structure.width,
-                    facecolor='none', edgecolor='black', alpha=1, linestyle='dotted')
-                self.ax.add_patch(source_circle)
-
+            structure.add_to_plot(self.ax, facecolor="none", edgecolor="black", linestyle="-")
         # Set axis labels with proper scaling
         max_dim = max(self.design.width, self.design.height)
         if max_dim >= 1e-3: scale, unit = 1e3, 'mm'
         elif max_dim >= 1e-6: scale, unit = 1e6, 'µm'
         elif max_dim >= 1e-9: scale, unit = 1e9, 'nm'
         else: scale, unit = 1e12, 'pm'
-        
         # Add axis labels with proper scaling
         plt.xlabel(f'X ({unit})')
         plt.ylabel(f'Y ({unit})')
         self.ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
         self.ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-        
         plt.tight_layout()
         plt.show(block=False)
         plt.pause(0.001)  # Small pause to ensure window is shown
 
     def run(self, steps: Optional[int] = None, save=True, live=True, axis_scale=[-1,1], save_animation=False, 
-            animation_filename='fdtd_animation.mp4', clean_visualization=True) -> Dict:
+            animation_filename='fdtd_animation.mp4', clean_visualization=True, 
+            save_fields=['Ez', 'Hx', 'Hy'], decimate_save=1, accumulate_power=False,
+            save_memory_mode=False) -> Dict:
         """Run the simulation.
         
         Args:
@@ -365,6 +186,10 @@ class FDTD:
             axis_scale: Color scale limits for the field visualization.
             save_animation: Whether to save an animation of the simulation as an mp4 file.
             animation_filename: Filename for the saved animation (must end in .mp4).
+            save_fields: List of fields to save (['Ez'], ['Ez', 'Hx', 'Hy'], etc.)
+            decimate_save: Save only every nth time step (1 = save all, 10 = save every 10th step)
+            accumulate_power: Instead of saving all fields, accumulate power and save that
+            save_memory_mode: If True, avoid storing all field data and only keep monitors/power
         
         Returns:
             Dictionary containing the simulation results.
@@ -373,35 +198,49 @@ class FDTD:
         self.t = 0
         self._total_steps = self.num_steps
         self._save_results = save
+        # Save mode flags as class attributes for monitor access
+        self.save_memory_mode = save_memory_mode
+        self.accumulate_power = accumulate_power
         # Calculate Courant number to check stability
         c = 1/np.sqrt(EPS_0 * MU_0)  # Speed of light
         courant = c * self.dt / min(self.dx, self.dy)
         if courant > 1/np.sqrt(2):
             print(f"Warning: Simulation may be unstable! Courant number = {courant:.3f} > {1/np.sqrt(2):.3f}")
             print(f"Consider reducing dt or increasing dx/dy")
-
+        # Set up power accumulation if requested
+        if accumulate_power:
+            self.power_accumulated = np.zeros((self.nx, self.ny))
+            self.power_accumulation_count = 0
         # Determine optimal save frequency based on backend type
         is_gpu_backend = hasattr(self.backend, 'device') and self.backend.device.type in ['cuda', 'mps']
-        
         # For GPU backends, avoid excessive CPU-GPU transfers by batching the result saves
         if is_gpu_backend and save:
             save_freq = max(10, self.num_steps // 100)  # Save approximately every 1% of steps or min of 10 steps
             print(f"GPU backend detected: Optimizing result storage (saving every {save_freq} steps)")
         else:
             save_freq = 1  # Save every step for CPU backends
-            
+        # Apply additional decimation based on user setting
+        effective_save_freq = save_freq * decimate_save
+        # If in save_memory_mode, clear any existing results to start fresh
+        if save_memory_mode:
+            for field in self.results:
+                if field != 't':  # Keep time array
+                    self.results[field] = []
+            print("Memory-saving mode active: Only storing monitor data and/or power accumulation")
         # For live visualization with GPU backends, don't update too frequently
         if is_gpu_backend and live:
             live_update_freq = max(5, self.num_steps // 50)  # Update visualization approximately every 2% of steps
             print(f"GPU backend detected: Optimizing visualization (updating every {live_update_freq} steps)")
         else:
             live_update_freq = 5  # Update visualization every 5 steps for CPU backends
-
         # Run simulation
+        sys.stdout.flush()
+        sys.stdout.write("\n")
+        print("Running simulation...")
         for step in range(self.num_steps):
+            progress_bar(step, self.num_steps)
             # Update fields
             self.simulate_step()
-            
             # Apply sources
             for source in self.sources:
                 if isinstance(source, ModeSource):
@@ -416,8 +255,7 @@ class FDTD:
                         x = int(round(x_raw / self.dx))
                         y = int(round(y_raw / self.dy))
                         # Skip points outside the grid
-                        if x < 0 or x >= self.nx or y < 0 or y >= self.ny:
-                            continue
+                        if x < 0 or x >= self.nx or y < 0 or y >= self.ny: continue
                         # Add the source contribution to the field (don't overwrite!)
                         self.Ez[y, x] += amplitude * modulation 
                         # Apply direction to the source
@@ -429,59 +267,73 @@ class FDTD:
                     modulation = source.signal[step]
                     center_x_phys, center_y_phys = source.position
                     width_phys = source.width  # Assuming width is standard deviation (sigma)
-                    
                     # Convert physical units to grid coordinates
                     center_x_grid = center_x_phys / self.dx
                     center_y_grid = center_y_phys / self.dy
                     # sigma in grid units
                     width_x_grid = width_phys / self.dx 
                     width_y_grid = width_phys / self.dy 
-
                     # Define the grid range to apply the source (e.g., +/- 3 sigma)
                     # Use max(1, ...) to ensure at least one grid cell width if sigma_grid is very small
                     wx_grid_cells = max(1, int(round(3 * width_x_grid)))
                     wy_grid_cells = max(1, int(round(3 * width_y_grid)))
-                    
                     # Calculate bounding box indices, clamped to grid boundaries
                     x_center_idx = int(round(center_x_grid))
                     y_center_idx = int(round(center_y_grid))
-                    
                     x_start = max(0, x_center_idx - wx_grid_cells)
                     x_end = min(self.nx, x_center_idx + wx_grid_cells + 1)
                     y_start = max(0, y_center_idx - wy_grid_cells)
                     y_end = min(self.ny, y_center_idx + wy_grid_cells + 1)
-
                     # Create meshgrid for the affected area
                     y_indices = np.arange(y_start, y_end)
                     x_indices = np.arange(x_start, x_end)
                     y_grid, x_grid = np.meshgrid(y_indices, x_indices, indexing='ij')
-                    
                     # Calculate squared distances from the center in grid units
                     dist_x_sq = (x_grid - center_x_grid)**2
                     dist_y_sq = (y_grid - center_y_grid)**2
-                    
                     # Calculate Gaussian amplitude (handle zero width appropriately)
                     # Use small epsilon to avoid division by zero if width_grid is exactly 0
                     epsilon = 1e-9
                     sigma_x_sq = width_x_grid**2 + epsilon
                     sigma_y_sq = width_y_grid**2 + epsilon
-
                     exponent = -(dist_x_sq / (2 * sigma_x_sq) + dist_y_sq / (2 * sigma_y_sq))
-                    gaussian_amp = np.exp(exponent)
-                    
+                    gaussian_amp = np.exp(exponent)                    
                     # Convert to backend array type if not already
                     gaussian_amp = self.backend.from_numpy(gaussian_amp)
-                            
                     # Add the source contribution to the Ez field slice
                     self.Ez[y_start:y_end, x_start:x_end] += gaussian_amp * modulation
             
+            # Record monitor data
+            self._record_monitor_data(step)
+            
+            # Accumulate power if requested
+            if accumulate_power:
+                # Calculate instantaneous power
+                Ez_np = self.backend.to_numpy(self.Ez)
+                Hx_np = self.backend.to_numpy(self.Hx)
+                Hy_np = self.backend.to_numpy(self.Hy)
+                # Extend magnetic fields to match Ez dimensions
+                Hx_full = np.zeros_like(Ez_np)
+                Hx_full[:, :-1] = Hx_np
+                Hy_full = np.zeros_like(Ez_np)
+                Hy_full[:-1, :] = Hy_np
+                # Calculate Poynting vector components (S = E × H)
+                Sx = -Ez_np * Hy_full 
+                Sy = Ez_np * Hx_full
+                # Calculate power magnitude (|S|²)
+                power_mag = Sx**2 + Sy**2
+                # Accumulate power
+                self.power_accumulated += power_mag
+                self.power_accumulation_count += 1
+            
             # Save results if requested and at the right frequency
-            if save and (step % save_freq == 0 or step == self.num_steps - 1):
+            if save and not save_memory_mode and (step % effective_save_freq == 0 or step == self.num_steps - 1):
                 # Convert arrays to numpy for saving
-                self.results['Ez'].append(self.backend.to_numpy(self.backend.copy(self.Ez)))
-                self.results['Hx'].append(self.backend.to_numpy(self.backend.copy(self.Hx)))
-                self.results['Hy'].append(self.backend.to_numpy(self.backend.copy(self.Hy)))
                 self.results['t'].append(self.t)
+                # Save only the requested fields
+                if 'Ez' in save_fields: self.results['Ez'].append(self.backend.to_numpy(self.backend.copy(self.Ez)))
+                if 'Hx' in save_fields: self.results['Hx'].append(self.backend.to_numpy(self.backend.copy(self.Hx)))
+                if 'Hy' in save_fields: self.results['Hy'].append(self.backend.to_numpy(self.backend.copy(self.Hy)))
                 
             # Update time
             self.t += self.dt
@@ -498,30 +350,52 @@ class FDTD:
             self.fig = None
             self.ax = None
             self.im = None
-            
+        
         # Save animation if requested
-        if save_animation and save:
-            self.save_animation(field="Ez", axis_scale=axis_scale, filename=animation_filename, clean_visualization=clean_visualization)
+        if save_animation and (save or accumulate_power):
+            if not save_memory_mode and 'Ez' in save_fields and len(self.results['Ez']) > 0:
+                self.save_animation(field="Ez", axis_scale=axis_scale, filename=animation_filename, clean_visualization=clean_visualization)
+            elif accumulate_power: print("Cannot create animation in memory-saving mode without field data.")
+                
+        # Calculate final power average if accumulating
+        if accumulate_power and self.power_accumulation_count > 0:
+            self.power_accumulated /= self.power_accumulation_count
             
         return self.results
         
+    def _record_monitor_data(self, step):
+        """Record field data at monitor locations"""
+        # Convert field data to numpy for monitors
+        Ez_np = self.backend.to_numpy(self.Ez)
+        Hx_np = self.backend.to_numpy(self.Hx)
+        Hy_np = self.backend.to_numpy(self.Hy)
+        # Record data for each monitor
+        for monitor in self.design.monitors:
+            # Use the monitor's record_fields method
+            monitor.record_fields(
+                Ez=Ez_np, 
+                Hx=Hx_np, 
+                Hy=Hy_np,
+                t=self.t,
+                dx=self.dx,
+                dy=self.dy,
+                save_memory=self.save_memory_mode,
+                accumulate_power=self.accumulate_power)
+
     def save_animation(self, field: str = "Ez", axis_scale=[-1, 1], filename='fdtd_animation.mp4', fps=60, frame_skip=4, clean_visualization=False):
         """Save an animation of the simulation results as an mp4 file."""
         if len(self.results[field]) == 0:
             print("No field data to animate. Make sure to run the simulation with save=True.")
             return
-            
         # Create list of frame indices to use (applying frame_skip)
         total_frames = len(self.results[field])
         frame_indices = range(0, total_frames, frame_skip)
-        
         # Calculate figure size based on grid dimensions
         grid_height, grid_width = self.results[field][0].shape
         aspect_ratio = grid_width / grid_height
         base_size = 5  # Base size for the smaller dimension
         if aspect_ratio > 1: figsize = (base_size * aspect_ratio * 1.2, base_size)
         else: figsize = (base_size * 1.2, base_size / aspect_ratio)
-        
         # Set up figure and axes based on visualization style
         if clean_visualization:
             # Create figure with absolutely no padding or borders
@@ -550,67 +424,18 @@ class FDTD:
             elif max_dim >= 1e-6: scale, unit = 1e6, 'µm'
             elif max_dim >= 1e-9: scale, unit = 1e9, 'nm'
             else: scale, unit = 1e12, 'pm'
-        
         # Create initial plot
         im = ax.imshow(self.results[field][0], origin='lower',
                       extent=(0, self.design.width, 0, self.design.height),
                       cmap='RdBu', aspect='equal', interpolation='bicubic', 
                       vmin=axis_scale[0], vmax=axis_scale[1])
-        
         # Add colorbar if not using clean visualization
         if not clean_visualization:
             colorbar = plt.colorbar(im, orientation='vertical', aspect=30, extend='both')
             colorbar.set_label(f'{field} Field Amplitude')
-        
         # Add design structure outlines
         for structure in self.design.structures:
-            if isinstance(structure, Rectangle):
-                if structure.is_pml:
-                    rect = MatplotlibRectangle(
-                        (structure.position[0], structure.position[1]),
-                        structure.width, structure.height,
-                        facecolor='none', edgecolor='black', alpha=1.0, linestyle=':')
-                else:
-                    rect = MatplotlibRectangle(
-                        (structure.position[0], structure.position[1]),
-                        structure.width, structure.height,
-                        facecolor="none", edgecolor="black", alpha=1)
-                ax.add_patch(rect)
-            elif isinstance(structure, Circle):
-                circle = MatplotlibCircle(
-                    (structure.position[0], structure.position[1]),
-                    structure.radius,
-                    facecolor='none', edgecolor='black', alpha=1, linestyle='--')
-                ax.add_patch(circle)
-            elif isinstance(structure, Ring):
-                # Create points for the ring
-                N = 100
-                theta = np.linspace(0, 2 * np.pi, N, endpoint=True)
-                x_outer = structure.position[0] + structure.outer_radius * np.cos(theta)
-                y_outer = structure.position[1] + structure.outer_radius * np.sin(theta)
-                x_inner = structure.position[0] + structure.inner_radius * np.cos(theta[::-1])
-                y_inner = structure.position[1] + structure.inner_radius * np.sin(theta[::-1])
-                vertices = np.vstack([np.column_stack([x_outer, y_outer]),
-                                   np.column_stack([x_inner, y_inner])])
-                codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (N - 1),
-                                     [Path.MOVETO] + [Path.LINETO] * (N - 1)])
-                path = Path(vertices, codes)
-                ring_patch = PathPatch(path, facecolor='none', edgecolor='black', alpha=1, linestyle='--')
-                ax.add_patch(ring_patch)
-            elif isinstance(structure, ModeSource):
-                ax.plot((structure.start[0], structure.end[0]), 
-                      (structure.start[1], structure.end[1]), 
-                      '-', lw=4, color="crimson", alpha=0.5)
-                ax.plot((structure.start[0], structure.end[0]), 
-                      (structure.start[1], structure.end[1]), 
-                      '--', lw=2, color="black", alpha=1)
-            elif isinstance(structure, GaussianSource):
-                source_circle = MatplotlibCircle(
-                    (structure.position[0], structure.position[1]),
-                    structure.width,
-                    facecolor='none', edgecolor='white', alpha=1, linestyle='dotted')
-                ax.add_patch(source_circle)
-        
+            structure.add_to_plot(ax, facecolor="none", edgecolor="black", linestyle="-")
         # Configure standard plot elements if not using clean visualization
         if not clean_visualization:
             # Add axis labels with proper scaling
@@ -618,12 +443,9 @@ class FDTD:
             plt.ylabel(f'Y ({unit})')
             ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
             ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-            
             # Title with time information
             title = ax.set_title(f't = {self.results["t"][0]:.2e} s')
-        else:
-            title = None
-        
+        else: title = None
         # Animation update function
         def update(frame_idx):
             frame = frame_indices[frame_idx]
@@ -632,25 +454,19 @@ class FDTD:
                 title.set_text(f't = {self.results["t"][frame]:.2e} s')
                 return [im, title]
             return [im]
-        
         # Create animation with only the selected frames
         frames = len(frame_indices)
         ani = FuncAnimation(fig, update, frames=frames, blit=True)
-        
         # Save animation
         try:
             from matplotlib.animation import FFMpegWriter
             writer = FFMpegWriter(fps=fps)
-            if clean_visualization:
-                # Use only supported parameters
-                ani.save(filename, writer=writer, dpi=300)
-            else:
-                ani.save(filename, writer=writer, dpi=100)
+            if clean_visualization: ani.save(filename, writer=writer, dpi=300)
+            else: ani.save(filename, writer=writer, dpi=100)
             print(f"Animation saved to {filename} (using {frames} of {total_frames} frames)")
         except Exception as e:
             print(f"Error saving animation: {e}")
             print("Make sure FFmpeg is installed on your system.")
-        
         # Close the figure
         plt.close(fig)
         
@@ -667,186 +483,186 @@ class FDTD:
         Returns:
             None
         """
-        if len(self.results['Ez']) == 0 or len(self.results['Hx']) == 0 or len(self.results['Hy']) == 0:
-            print("No field data to calculate power. Make sure to run the simulation with save=True.")
+        # Check if we have accumulated power
+        if self.power_accumulated is not None:
+            # Use pre-accumulated power
+            power = self.power_accumulated
+            print("Using accumulated power data")
+        elif len(self.results['Ez']) > 0 and len(self.results['Hx']) > 0 and len(self.results['Hy']) > 0:
+            # Calculate power from saved field data
+            print("Calculating power from saved field data")
+            # Initialize power array
+            power = np.zeros((self.nx, self.ny))
+            # Calculate average power over all time steps
+            for t_idx in range(len(self.results['t'])):
+                Ez = self.results['Ez'][t_idx]
+                Hx_raw = self.results['Hx'][t_idx]
+                Hy_raw = self.results['Hy'][t_idx]
+                # Extend magnetic fields to match Ez dimensions
+                Hx = np.zeros_like(Ez)
+                Hx[:, :-1] = Hx_raw
+                Hy = np.zeros_like(Ez)
+                Hy[:-1, :] = Hy_raw
+                # Calculate Poynting vector components (S = E × H)
+                Sx = -Ez * Hy 
+                Sy = Ez * Hx
+                # Calculate power magnitude (|S|²)
+                power_mag = Sx**2 + Sy**2
+                # Accumulate power
+                power += power_mag
+            # Average power over time steps
+            power /= len(self.results['t'])
+        else:
+            print("No field data to calculate power. Make sure to run the simulation with save=True or accumulate_power=True.")
             return
-        
-        # Calculate power from Poynting vector components
-        # For 2D TE mode with Ez, Hx, Hy, the time-averaged Poynting vector has components:
-        # Sx = -Ez * Hy, Sy = Ez * Hx
-        power = np.zeros((self.nx, self.ny))
-        
-        # Calculate power integrated over time
-        for t_idx in range(len(self.results['t'])):
-            Ez = self.results['Ez'][t_idx]
-            
-            # Need to interpolate H fields to same grid as Ez
-            Hx_interp = np.zeros_like(Ez)
-            Hy_interp = np.zeros_like(Ez)
-            
-            # Interpolate Hx (centered at (i, j+1/2)) to (i, j)
-            Hx_interp[:, 1:-1] = 0.5 * (self.results['Hx'][t_idx][:, :-1] + self.results['Hx'][t_idx][:, 1:])
-            Hx_interp[:, 0] = self.results['Hx'][t_idx][:, 0]  # Edge case
-            Hx_interp[:, -1] = self.results['Hx'][t_idx][:, -1]  # Edge case
-            
-            # Interpolate Hy (centered at (i+1/2, j)) to (i, j)
-            Hy_interp[1:-1, :] = 0.5 * (self.results['Hy'][t_idx][:-1, :] + self.results['Hy'][t_idx][1:, :])
-            Hy_interp[0, :] = self.results['Hy'][t_idx][0, :]  # Edge case
-            Hy_interp[-1, :] = self.results['Hy'][t_idx][-1, :]  # Edge case
-            
-            # Calculate Poynting vector components
-            Sx = -Ez * Hy_interp
-            Sy = Ez * Hx_interp
-            
-            # Add magnitude of Poynting vector to total power
-            power += np.sqrt(Sx**2 + Sy**2)
-        
-        # Normalize by number of time steps
-        power /= len(self.results['t'])
-        
-        # Find maximum power for normalization (used in both log_scale and db_colorbar)
-        max_power = np.max(power)
-        
-        # Convert to dB if log_scale is True
-        if log_scale:
-            # Add small epsilon to avoid log(0)
-            epsilon = np.finfo(float).eps
-            # Scale by maximum value to make max = 0dB
-            power_normalized = power / max_power
-            power_db = 10 * np.log10(power_normalized + epsilon)
-            plot_data = power_db
-            power_label = 'Power (dB)'
-        else:
-            plot_data = power
-            if db_colorbar:
-                power_label = 'Power (dB)'
-            else:
-                power_label = 'Power (W/m²)'
-        
-        # Calculate figure size based on grid dimensions
-        aspect_ratio = self.ny / self.nx
-        base_size = 6  # Base size for the smaller dimension
-        if aspect_ratio > 1:
-            figsize = (base_size, base_size * aspect_ratio)
-        else:
-            figsize = (base_size / aspect_ratio, base_size)
-        
-        # Create the figure
-        plt.figure(figsize=figsize)
-        im = plt.imshow(plot_data, origin='lower',
-                       extent=(0, self.design.width, 0, self.design.height),
-                       cmap=cmap, aspect='equal', interpolation='bicubic',
-                       vmin=vmin, vmax=vmax)
-        
-        # Create colorbar with proper formatting
-        if db_colorbar and not log_scale:
-            # Create a custom formatter to display linear values in dB
-            from matplotlib.ticker import FuncFormatter
-            epsilon = np.finfo(float).eps
-            
-            def db_formatter(x, pos):
-                # Convert linear value to dB relative to max_power
-                return f"{10 * np.log10((x/max_power) + epsilon):.1f}"
-            
-            formatter = FuncFormatter(db_formatter)
-            colorbar = plt.colorbar(im, format=formatter, label=power_label)
-        else:
-            colorbar = plt.colorbar(im, label=power_label)
-        
-        plt.title('Time-integrated Power Distribution')
-        
-        # Set proper unit labels based on design dimensions
+        # Determine appropriate SI unit and scale for spatial dimensions
         max_dim = max(self.design.width, self.design.height)
         if max_dim >= 1e-3: scale, unit = 1e3, 'mm'
         elif max_dim >= 1e-6: scale, unit = 1e6, 'µm'
         elif max_dim >= 1e-9: scale, unit = 1e9, 'nm'
         else: scale, unit = 1e12, 'pm'
-        
+        # Configure plot size
+        aspect_ratio = power.shape[1] / power.shape[0]
+        base_size = 8  # Base size for the smaller dimension
+        if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
+        else: figsize = (base_size, base_size / aspect_ratio)
+        # Create the figure and axis
+        plt.figure(figsize=figsize)
+        # Apply logarithmic scaling if requested
+        max_power = np.max(power)
+        if max_power <= 0:
+            print("Warning: Maximum power is zero or negative. Cannot plot logarithmic scale.")
+            log_scale = False
+        if log_scale:
+            # Convert to dB scale (10*log10)
+            # Create a safe mask for zero or negative values
+            valid_mask = power > 0
+            power_db = np.zeros_like(power)
+            # Only calculate dB values where the power is positive
+            # Use a reasonable floor value (epsilon) for very small values
+            min_valid_power = max_power * 1e-10  # -100 dB from max
+            safe_power = np.maximum(power[valid_mask], min_valid_power)
+            # Calculate dB values only for valid points
+            power_db[valid_mask] = 10 * np.log10(safe_power / max_power)
+            # Set the invalid points to a very low value (for visualization purposes)
+            min_db = -100  # -100 dB floor
+            power_db[~valid_mask] = min_db
+            # Default to -60 dB floor if not specified
+            if vmin is None: vmin = -60  # or min(np.min(power_db[valid_mask]), -60)
+            if vmax is None: vmax = 0  # 0 dB is the maximum (relative to max_power)
+            # Plot power in dB
+            im = plt.imshow(power_db, origin='lower',
+                           extent=(0, self.design.width * scale, 0, self.design.height * scale),
+                           cmap=cmap, vmin=vmin, vmax=vmax,
+                           aspect='equal', interpolation='bicubic')
+            cbar = plt.colorbar(im)
+            cbar.set_label('Power (dB)')
+        else:
+            # Plot linear power with optional dB colorbar
+            im = plt.imshow(power, origin='lower',
+                           extent=(0, self.design.width * scale, 0, self.design.height * scale),
+                           cmap=cmap, vmin=vmin, vmax=vmax,
+                           aspect='equal', interpolation='bicubic')
+            # Create colorbar
+            cbar = plt.colorbar(im)
+            # Convert to dB scale for colorbar if requested
+            if db_colorbar:
+                # Define a formatter function to convert linear values to dB
+                def db_formatter(x, pos):
+                    # Convert linear value to dB relative to max_power
+                    # Handle zero/negative values safely
+                    if x <= 0: return "-∞ dB"  # Return negative infinity for zero/negative values
+                    # Make sure the division doesn't yield negative or zero values
+                    ratio = max(x / max_power, 1e-10)  # Ensure minimum value is 1e-10 (-100 dB)
+                    db_val = 10 * np.log10(ratio)
+                    # Format the output nicely
+                    return f"{db_val:.1f} dB"
+                # Apply the formatter
+                cbar.formatter = plt.FuncFormatter(db_formatter)
+                cbar.update_ticks()
+                cbar.set_label('Relative Power (dB)')
+            else:
+                cbar.set_label('Power (a.u.)')
+        # Add plot elements
+        plt.title('Time-Averaged Power Distribution')
         plt.xlabel(f'X ({unit})')
         plt.ylabel(f'Y ({unit})')
-        plt.gca().xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-        plt.gca().yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-        
-        # Create an overlay of the design outlines
+        # Draw original structure outlines
         for structure in self.design.structures:
-            if isinstance(structure, Rectangle):
-                if structure.is_pml:
-                    rect = MatplotlibRectangle(
-                        (structure.position[0], structure.position[1]),
-                        structure.width, structure.height,
-                        facecolor='none', edgecolor='white', alpha=1, linestyle=':')
-                else:
-                    rect = MatplotlibRectangle(
-                        (structure.position[0], structure.position[1]),
-                        structure.width, structure.height,
-                        facecolor='none', edgecolor='white', alpha=0.5)
-                plt.gca().add_patch(rect)
-            elif isinstance(structure, Circle):
-                circle = MatplotlibCircle(
-                    (structure.position[0], structure.position[1]),
-                    structure.radius,
-                    facecolor='none', edgecolor='white', alpha=0.5, linestyle='--')
-                plt.gca().add_patch(circle)
-            elif isinstance(structure, Ring):
-                # Create points for the ring
-                N = 100
-                theta = np.linspace(0, 2 * np.pi, N, endpoint=True)
-                x_outer = structure.position[0] + structure.outer_radius * np.cos(theta)
-                y_outer = structure.position[1] + structure.outer_radius * np.sin(theta)
-                x_inner = structure.position[0] + structure.inner_radius * np.cos(theta[::-1])
-                y_inner = structure.position[1] + structure.inner_radius * np.sin(theta[::-1])
-                vertices = np.vstack([np.column_stack([x_outer, y_outer]),
-                                     np.column_stack([x_inner, y_inner])])
-                codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (N - 1),
-                                       [Path.MOVETO] + [Path.LINETO] * (N - 1)])
-                path = Path(vertices, codes)
-                ring_patch = PathPatch(path, facecolor='none', edgecolor='white', alpha=0.5, linestyle='--')
-                plt.gca().add_patch(ring_patch)
-            elif isinstance(structure, CircularBend):
-                # Create points for the bend
-                N = 100
-                angle_rad = np.radians(structure.angle)
-                rotation_rad = np.radians(structure.rotation)
-                start_angle = rotation_rad
-                end_angle = rotation_rad + angle_rad
-                theta = np.linspace(start_angle, end_angle, N, endpoint=True)
-                
-                # Generate outer and inner curve points
-                x_outer = structure.position[0] + structure.outer_radius * np.cos(theta)
-                y_outer = structure.position[1] + structure.outer_radius * np.sin(theta)
-                x_inner = structure.position[0] + structure.inner_radius * np.cos(theta)
-                y_inner = structure.position[1] + structure.inner_radius * np.sin(theta)
-                
-                # Create vertex list for the bend shape
-                vertices = np.vstack([
-                    [x_outer[0], y_outer[0]],
-                    *np.column_stack([x_outer[1:], y_outer[1:]]),
-                    [x_inner[-1], y_inner[-1]],
-                    *np.column_stack([x_inner[-2::-1], y_inner[-2::-1]]),
-                    [x_outer[0], y_outer[0]]
-                ])
-                
-                codes = [Path.MOVETO] + [Path.LINETO] * (len(vertices) - 2) + [Path.CLOSEPOLY]
-                path = Path(vertices, codes)
-                bend_patch = PathPatch(path, facecolor='none', edgecolor='white', alpha=0.5, linestyle='--')
-                plt.gca().add_patch(bend_patch)
-            elif isinstance(structure, ModeSource):
-                plt.plot((structure.start[0], structure.end[0]), 
-                         (structure.start[1], structure.end[1]), 
-                         '-', lw=4, color="crimson", alpha=0.5)
-                plt.plot((structure.start[0], structure.end[0]), 
-                         (structure.start[1], structure.end[1]), 
-                         '--', lw=2, color="white", alpha=0.5)
-            elif isinstance(structure, GaussianSource):
-                source_circle = MatplotlibCircle(
-                    (structure.position[0], structure.position[1]),
-                    structure.width,
-                    facecolor='none', edgecolor='orange', alpha=0.8, linestyle='dotted')
-                plt.gca().add_patch(source_circle)
-            #elif isinstance(structure, ModeMonitor):
-            #    plt.plot((structure.start[0], structure.end[0]), 
-            #              (structure.start[1], structure.end[1]), 
-            #             '-', lw=4, color="navy", alpha=0.5)
-        
+            structure.add_to_plot(plt.gca(), facecolor="none", edgecolor="black", linestyle="-")
         plt.tight_layout()
         plt.show()
+
+    def estimate_memory_usage(self, time_steps=None, save_fields=None):
+        """Estimate memory usage of the simulation with current settings.
+        
+        Args:
+            time_steps: Number of time steps to estimate for (defaults to self.num_steps)
+            save_fields: List of fields to save (defaults to ['Ez', 'Hx', 'Hy'])
+            
+        Returns:
+            Dictionary with memory usage estimates in MB
+        """
+        if time_steps is None: time_steps = self.num_steps
+        if save_fields is None: save_fields = ['Ez', 'Hx', 'Hy']
+        # Calculate size of a single array
+        bytes_per_value = np.float64(0).nbytes  # Usually 8 bytes for float64
+        # Size of Ez array
+        ez_size = self.nx * self.ny * bytes_per_value
+        # Size of Hx array (one row less than Ez)
+        hx_size = self.nx * (self.ny-1) * bytes_per_value
+        # Size of Hy array (one column less than Ez)
+        hy_size = (self.nx-1) * self.ny * bytes_per_value
+        # Size of time array
+        t_size = time_steps * bytes_per_value
+        # Calculate total memory for all time steps
+        total_size = t_size
+        if 'Ez' in save_fields: total_size += ez_size * time_steps
+        if 'Hx' in save_fields: total_size += hx_size * time_steps
+        if 'Hy' in save_fields: total_size += hy_size * time_steps
+        # Convert to more readable units
+        kb = 1024
+        mb = kb * 1024
+        gb = mb * 1024
+        result = {
+            'Single timestep': {
+                'Ez': ez_size / mb,
+                'Hx': hx_size / mb,
+                'Hy': hy_size / mb,
+                'Total': (ez_size + hx_size + hy_size) / mb
+            },
+            'Full simulation': {
+                'Total memory (MB)': total_size / mb,
+                'Total memory (GB)': total_size / gb,
+                'Time steps': time_steps,
+                'Grid size': f"{self.nx} x {self.ny}",
+                'Fields saved': ', '.join(save_fields)
+            }
+        }
+        return result
+
+    def plot_monitors(self, field='Ez', figsize=(10, 6), power=False, log_scale=False, db_scale=False):
+        """Plot the data from all monitors.
+        
+        Args:
+            field: Field to plot ('Ez', 'Hx', or 'Hy')
+            figsize: Figure size tuple
+            power: If True, plot power instead of field
+            log_scale: If True, use logarithmic scale for power plots
+            db_scale: If True, use dB scale for power plots
+            
+        Returns:
+            List of (monitor, fig, ax) tuples
+        """
+        import matplotlib.pyplot as plt
+        # Check if we have monitors
+        if not self.design.monitors:
+            print("No monitors in the design.")
+            return []
+        # Create plots for each monitor
+        results = []
+        for monitor in self.design.monitors:
+            if power: fig, ax = monitor.plot_power(figsize=figsize, log_scale=log_scale, db_scale=db_scale)
+            else: fig, ax = monitor.plot_fields(field=field, figsize=figsize)
+            if fig is not None: results.append((monitor, fig, ax))
+        return results

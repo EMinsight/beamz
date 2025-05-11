@@ -5,7 +5,7 @@ class Material:
         self.permeability = permeability
         self.conductivity = conductivity
 
-class VariableMaterial:
+class VarMaterial:
     def __init__(self, permittivity:list=[1,1], permeability:list=[1,1], conductivity:list=[0,0]):
         self.permittivity = permittivity
         self.permeability = permeability

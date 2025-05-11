@@ -6,7 +6,7 @@ BeamZ - A Python package for electromagnetic simulations.
 from beamz.const import *
 
 # Import design-related classes and functions
-from beamz.design.materials import Material, VariableMaterial
+from beamz.design.materials import Material, VarMaterial
 from beamz.design.structures import (
     Design, Rectangle, Circle, Ring, 
     CircularBend, Polygon, Taper

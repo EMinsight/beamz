@@ -4,23 +4,12 @@ from typing import Callable, Any, Optional, Dict, List, Union
 import time
 
 class AdjointOptimizer:
-    """
-    Implements the adjoint optimization method for photonic structures.
-    
-    This optimizer uses the adjoint method to efficiently compute gradients with respect
-    to design parameters and performs gradient-based optimization to maximize a figure of merit.
-    The implementation follows the mathematical formulation of the adjoint method for
-    electromagnetic problems, requiring only two simulations per optimization iteration.
-    """
-    
     def __init__(
         self, 
         simulation: FDTD, 
         objective_fn: Callable[[Dict[Any, Any]], float], 
         learning_rate: float = 0.01,
         momentum: float = 0.9,
-        min_value: float = None,
-        max_value: float = None,
         filter_radius: float = None,
         projection_strength: float = None,
         callback: Optional[Callable[[int, float, np.ndarray], None]] = None
@@ -29,12 +18,10 @@ class AdjointOptimizer:
         Initialize the adjoint optimizer.
         
         Args:
-            simulation: FDTD simulation object
+            simulation: FDTD simulation and design objects
             objective_fn: Function that calculates the figure of merit from simulation results
             learning_rate: Step size for gradient updates
             momentum: Momentum coefficient for gradient updates
-            min_value: Minimum allowed value for design parameters
-            max_value: Maximum allowed value for design parameters
             filter_radius: Radius for density filtering (smoothing)
             projection_strength: Strength of projection function (for binary designs)
             callback: Optional callback function called after each iteration
@@ -43,41 +30,32 @@ class AdjointOptimizer:
         self.objective_fn = objective_fn
         self.learning_rate = learning_rate
         self.momentum = momentum
-        self.min_value = min_value
-        self.max_value = max_value
         self.filter_radius = filter_radius
         self.projection_strength = projection_strength
         self.callback = callback
-        
         # Get design parameters from the simulation
         self._extract_design_parameters()
-        
         # Initialize velocity for momentum updates
         self.velocity = np.zeros_like(self.design_parameters)
         
     def _extract_design_parameters(self):
         """Extract optimizable design parameters from the simulation."""
-        # Find all design elements that are marked as optimizable
+        # Find all design structures that are marked as optimizable
         self.design_parameters = []
-        self.design_elements = []
-        
-        for element in self.simulation.design.elements:
-            if hasattr(element, "optimize") and element.optimize:
-                if hasattr(element, "material") and hasattr(element.material, "value"):
-                    self.design_parameters.append(element.material.value)
-                    self.design_elements.append(element)
-        
-        if not self.design_elements:
-            raise ValueError("No optimizable elements found in the design.")
-        
+        self.design_structures = []
+        # Find all optimizable structures
+        for structure in self.simulation.design.structures:
+            if hasattr(structure, "optimize") and structure.optimize:
+                #if hasattr(structure, "material") and hasattr(structure.material, "value"):
+                self.design_structures.append(structure)
+                print("Found optimizable structure:", structure)
+        # Convert design parameters to numpy array
         self.design_parameters = np.array(self.design_parameters)
-        
         # Store the grid positions of design parameters for spatial filtering
         self.design_positions = []
-        for element in self.design_elements:
-            if hasattr(element, "position"):
-                self.design_positions.append(element.position)
-        
+        for structure in self.design_structures:
+            if hasattr(structure, "position"):
+                self.design_positions.append(structure.position)
         self.design_positions = np.array(self.design_positions)
         
     def _forward_simulation(self):
@@ -90,11 +68,6 @@ class AdjointOptimizer:
     
     def _calculate_adjoint_source(self, sim_result):
         """Calculate the adjoint source based on the objective function derivative."""
-        # This implementation depends on the specific objective function and 
-        # the structure of the simulation results
-        # For a typical case with a power monitor, the adjoint source is 
-        # placed at the monitor position with field profile from the monitor
-        # Find monitors in the simulation results
         adjoint_sources = []
         for key, result in sim_result.items():
             if hasattr(result, "is_monitor") and result.is_monitor:
@@ -110,28 +83,11 @@ class AdjointOptimizer:
         return adjoint_sources
     
     def _adjoint_simulation(self, sim_result, forward_fields):
-        """
-        Run the adjoint simulation to calculate gradients.
-        
-        The adjoint simulation involves:
-        1. Setting up adjoint sources based on the objective function
-        2. Running Maxwell's equations backwards in time
-        3. Computing the overlap between forward and adjoint fields
-        
-        Args:
-            sim_result: Results from the forward simulation
-            forward_fields: Electromagnetic fields from the forward simulation
-            
-        Returns:
-            Gradient of the objective with respect to design parameters
-        """
         # Calculate adjoint sources
         adjoint_sources = self._calculate_adjoint_source(sim_result)
-        
         # Configure simulation for adjoint run
         adjoint_sim = self.simulation.copy()
         adjoint_sim.reset_sources()
-        
         # Add adjoint sources to the simulation
         for source in adjoint_sources:
             adjoint_sim.add_adjoint_source(
@@ -140,20 +96,16 @@ class AdjointOptimizer:
                 field_profile=source["field_profile"],
                 time_profile=source["time_profile"]
             )
-        
         # Run adjoint simulation
         adjoint_result = adjoint_sim.run(live=False, store_fields=True)
         adjoint_fields = adjoint_result.get_fields()
-        
         # Calculate gradient using the overlap integral between forward and adjoint fields
         # The formula is: ∇F = Re{ ∫dt ∫dr λ*(r,T-t) · ∂L/∂ε · E(r,t) }
         gradients = np.zeros_like(self.design_parameters)
-        
         # For each design element, compute the gradient
         for i, element in enumerate(self.design_elements):
             # Get spatial domain of this element
             element_region = self._get_element_region(element)
-            
             # Compute the gradient for this element
             gradients[i] = self._compute_gradient(
                 forward_fields, 
@@ -170,7 +122,6 @@ class AdjointOptimizer:
         # to match the actual simulation grid structure
         x_min, y_min = element.position[0] - element.width/2, element.position[1] - element.height/2
         x_max, y_max = element.position[0] + element.width/2, element.position[1] + element.height/2
-        
         # Get grid indices corresponding to this region
         grid = self.simulation.get_grid()
         x_indices = np.where((grid.x >= x_min) & (grid.x <= x_max))[0]
@@ -183,19 +134,14 @@ class AdjointOptimizer:
         # Extract fields in the element region
         E_forward = forward_fields.E[:, element_region["x"], element_region["y"]]
         E_adjoint = adjoint_fields.E[:, element_region["x"], element_region["y"]]
-        
         # Time points must be reversed for adjoint fields
         E_adjoint = np.flip(E_adjoint, axis=0)
-        
-        # Compute the overlap integral
-        # The gradient is proportional to: -∫dt E_forward(t) · ∂E_adjoint/∂t(T-t) / ε²
+        # Compute the overlap integral. The gradient is proportional to: -∫dt E_forward(t) · ∂E_adjoint/∂t(T-t) / ε²
         dt = self.simulation.dt
         gradient = 0
-        
         for t in range(len(forward_fields.time_points) - 1):
             # Calculate time derivative of adjoint field
             dE_adjoint_dt = (E_adjoint[t+1] - E_adjoint[t]) / dt
-            
             # Contribution to gradient from this time step
             gradient += -np.sum(E_forward[t] * dE_adjoint_dt) * dt / (permittivity**2)
         
