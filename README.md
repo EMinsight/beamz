@@ -10,3 +10,10 @@ pip install beamz
 + **Accelerated device development**: Develop highly optimized solutions faster thanks to the high-level UX.
 + **Advanced physics**: Don't limit yourself to non-dispersive, lossless, linear, isotopric materials. Beamz includes complex materials and a large library of presets.
 + **State-of-the-art performance**: By picking the backend that is the fastest for your model architecture (often JAX!), leverage speedups ranging from 20% to 350% compared to other frameworks. Benchmark here.
+
+
+## Backends
++ Numpy (CPU)
++ PyTorch (CPU & GPU)
++ CUDA (GPU)
++ Directly on the metal of the GPU
