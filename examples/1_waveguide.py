@@ -7,7 +7,7 @@ TIME = 120*WL/LIGHT_SPEED
 n_core = 2.04 # Si3N4
 n_clad = 1.444 # SiO2
 wg_width = 0.565*µm
-resolution, dt = calc_optimal_fdtd_params(WL, max(n_core, n_clad), dims=2, safety_factor=0.45, points_per_wavelength=30)
+resolution, dt = calc_optimal_fdtd_params(WL, max(n_core, n_clad), dims=2)
 T = np.arange(0, TIME, dt)
 
 
@@ -20,12 +20,9 @@ grid.show(field="permittivity")
 grid.show(field="conductivity")
 grid.show(field="permeability")
 
-# CURRENT ISSUE: WE STILL GET STANDING WAVES! FIX THE PML REGIONS!
-
 signal = ramped_cosine(T, amplitude=1.0, frequency=LIGHT_SPEED/WL, phase=0, ramp_duration=WL*30/LIGHT_SPEED, t_max=TIME/2)
 import beamz
 beamz.design.signals.plot_signal(signal, T)
-
 
 source = ModeSource(design=design, start=(2*µm, 3.5*µm-1.2*µm), end=(2*µm, 3.5*µm+1.2*µm), wavelength=WL, signal=signal)
 source.show()

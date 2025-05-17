@@ -35,9 +35,10 @@ class ModeSource():
         npml: Number of PML layers to use at boundaries
         num_modes: Number of modes to calculate
         grid_resolution: Points per wavelength for grid resolution (higher = finer)
+        mode_solver: Mode solver to use ("num_eigen" or "analytical")
     """
     def __init__(self, design, start, end, wavelength=1.55*µm, signal=0, direction="+x", 
-                 npml=10, num_modes=2, grid_resolution=500, mode_solver="num_eigen"):
+                 npml=20, num_modes=2, grid_resolution=2000, mode_solver="num_eigen"):
         self.start = start
         self.end = end
         self.wavelength = wavelength
@@ -47,11 +48,67 @@ class ModeSource():
         self.npml = npml
         self.num_modes = num_modes
         self.grid_resolution = grid_resolution
+        self.mode_solver = mode_solver
         # Calculate and store mode profiles
         self.dL = self.wavelength / grid_resolution  # Sampling resolution
         eps_1d = self.get_eps_1d()
         self.omega = 2 * np.pi * LIGHT_SPEED / self.wavelength
-        self.effective_indices, self.mode_vectors = solve_modes(eps_1d, self.omega, self.dL, npml=self.npml, m=self.num_modes)
+        
+        # Choose mode solver based on the setting
+        if mode_solver == "analytical":
+            # Try to use analytical solver if possible
+            # This assumes a simple rectangular waveguide structure
+            # Extract core/cladding indices for analytical solver
+            try:
+                from beamz.design.mode import slab_mode_source
+                
+                # Sample x coordinates along the cross-section
+                num_points = eps_1d.size
+                x0, y0 = self.start
+                x1, y1 = self.end
+                x = np.linspace(0, np.hypot(x1 - x0, y1 - y0), num_points)
+                
+                # Find the maximum index (core) and minimum index (cladding)
+                n_core = np.sqrt(np.max(eps_1d))
+                n_clad = np.sqrt(np.min(eps_1d))
+                
+                # Estimate the width of the waveguide core
+                above_threshold = eps_1d > (np.max(eps_1d) * 0.9)
+                core_indices = np.where(above_threshold)[0]
+                if len(core_indices) > 0:
+                    core_width = (core_indices[-1] - core_indices[0]) * self.dL
+                else:
+                    core_width = 1.0 * self.wavelength  # Fallback
+                
+                # Calculate modes analytically
+                self.effective_indices = []
+                self.mode_vectors = np.zeros((num_points, self.num_modes), dtype=complex)
+                
+                for m in range(self.num_modes):
+                    try:
+                        E, n_eff = slab_mode_source(
+                            x=x, w=core_width, n_WG=n_core, n0=n_clad, 
+                            wavelength=self.wavelength, ind_m=m
+                        )
+                        self.mode_vectors[:, m] = E
+                        self.effective_indices.append(n_eff)
+                    except Exception as e:
+                        print(f"Warning: Could not solve for analytical mode {m}: {e}")
+                        # Fill with zeros if mode calculation fails
+                        self.mode_vectors[:, m] = 0
+                        self.effective_indices.append(0)
+                
+                # Convert to numpy array to match format from numerical solver
+                self.effective_indices = np.array(self.effective_indices)
+            
+            except Exception as e:
+                print(f"Warning: Analytical mode solver failed, falling back to numerical: {e}")
+                self.effective_indices, self.mode_vectors = solve_modes(eps_1d, self.omega, self.dL, npml=self.npml, m=self.num_modes)
+        else:
+            # Use default numerical eigenmode solver
+            self.effective_indices, self.mode_vectors = solve_modes(eps_1d, self.omega, self.dL, npml=self.npml, m=self.num_modes)
+            
+        # Extract mode profiles for all modes
         self.mode_profiles = []
         for mode_number in range(self.mode_vectors.shape[1]):
             self.mode_profiles.append(self.get_xy_mode_line(self.mode_vectors, mode_number))
@@ -77,7 +134,8 @@ class ModeSource():
         # Create mode profile for the specified mode
         mode_profile = []
         for j in range(num_points):  # For each point
-            amplitude = np.abs(vecs[j, mode_number])  # Absolute value of the field
+            # Use the complex field value to preserve phase information
+            amplitude = vecs[j, mode_number]  # Keep complex value with phase
             mode_profile.append([amplitude, x[j], y[j]])
         return mode_profile
 
