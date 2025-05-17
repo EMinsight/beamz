@@ -130,8 +130,6 @@ class Design:
             is_pml=True
         )
         self.structures.append(top_pml)
-        
-        display_status("PML boundaries initialized with material-preserving properties", "info")
 
     def show(self):
         """Display the design visually."""
