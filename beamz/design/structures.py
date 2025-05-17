@@ -449,7 +449,7 @@ class Circle(Polygon):
         return Circle(self.position, self.radius, self.material, self.color, self.optimize)
 
 class Ring(Polygon):
-    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, material=None, color=None, optimize=False, points=64):
+    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, material=None, color=None, optimize=False, points=256):
         theta = np.linspace(0, 2*np.pi, points, endpoint=False)
         outer_vertices = [(position[0] + outer_radius * np.cos(t), position[1] + outer_radius * np.sin(t)) for t in theta]
         inner_vertices = [(position[0] + inner_radius * np.cos(t), position[1] + inner_radius * np.sin(t)) for t in reversed(theta)]
