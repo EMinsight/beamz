@@ -79,17 +79,18 @@ class Design:
         # Create transparent material for PML outlines
         pml_material = Material(permittivity=1.0, permeability=1.0, conductivity=0.0)
         
-        # Edges of the design domain - create functional PML boundaries
-        self.boundaries.append(RectPML(position=(0, 0), width=pml_size, height=self.height, orientation="left"))
-        self.boundaries.append(RectPML(position=(self.width - pml_size, 0), width=pml_size, height=self.height, orientation="right"))
-        self.boundaries.append(RectPML(position=(0, self.height - pml_size), width=self.width, height=pml_size, orientation="top"))
-        self.boundaries.append(RectPML(position=(0, 0), width=self.width, height=pml_size, orientation="bot"))
+        # Create unified PML regions
+        # Rectangular edge PMLs
+        self.boundaries.append(PML("rect", (0, 0), (pml_size, self.height), "left"))
+        self.boundaries.append(PML("rect", (self.width - pml_size, 0), (pml_size, self.height), "right"))
+        self.boundaries.append(PML("rect", (0, self.height - pml_size), (self.width, pml_size), "top"))
+        self.boundaries.append(PML("rect", (0, 0), (self.width, pml_size), "bottom"))
         
-        # Corners of the design domain - create functional PML boundaries
-        self.boundaries.append(CircularPML(position=(0, 0), radius=pml_size, orientation="top-left"))
-        self.boundaries.append(CircularPML(position=(self.width, 0), radius=pml_size, orientation="top-right"))
-        self.boundaries.append(CircularPML(position=(0, self.height), radius=pml_size, orientation="bottom-left"))
-        self.boundaries.append(CircularPML(position=(self.width, self.height), radius=pml_size, orientation="bottom-right"))
+        # Corner PMLs
+        self.boundaries.append(PML("corner", (0, 0), pml_size, "bottom-left"))
+        self.boundaries.append(PML("corner", (self.width, 0), pml_size, "bottom-right"))
+        self.boundaries.append(PML("corner", (0, self.height), pml_size, "top-left"))
+        self.boundaries.append(PML("corner", (self.width, self.height), pml_size, "top-right"))
         
         # Add visual representations of PML regions to the structures list
         # Left PML region
@@ -184,8 +185,7 @@ class Design:
         else: eps_avg = None
         # Apply all PML boundaries
         for boundary in self.boundaries:
-            if isinstance(boundary, RectPML) or isinstance(boundary, CircularPML):
-                pml_conductivity += boundary.get_conductivity(x, y, dx=dx, dt=dt, eps_avg=eps_avg)
+            pml_conductivity += boundary.get_conductivity(x, y, dx=dx, dt=dt, eps_avg=eps_avg)
         # Get material values from structures
         for structure in reversed(self.structures):
             if isinstance(structure, Rectangle):
@@ -614,92 +614,113 @@ class Taper(Polygon):
         new_taper.vertices = [(x, y) for x, y in self.vertices]
         return new_taper
 
-class RectPML:
-    """Rectangular Perfectly Matched Layer (PML) for absorbing boundary conditions."""
-    def __init__(self, position=(0,0), width=1, height=1, orientation="left", max_conductivity=None, polynomial_order=3):
+class PML:
+    """Unified PML (Perfectly Matched Layer) class for absorbing boundary conditions."""
+    def __init__(self, region_type, position, size, orientation, polynomial_order=3.5, sigma_factor=1.5, alpha_max=0.25):
+        self.region_type = region_type  # "rect" or "corner"
         self.position = position
-        self.width = width
-        self.height = height
         self.orientation = orientation
         self.polynomial_order = polynomial_order
-        # Default max conductivity or let it be calculated later
-        self.max_conductivity = max_conductivity if max_conductivity is not None else 1.0
+        self.sigma_factor = sigma_factor  # Factor to multiply theoretical optimal conductivity
+        self.alpha_max = alpha_max  # Complex frequency-shifting parameter
         
-    def get_conductivity(self, x, y, dx=None, dt=None, eps_avg=None):
-        """Calculate PML conductivity at a point.
+        if region_type == "rect":
+            self.width, self.height = size
+        else:  # corner
+            self.radius = size
+    
+    def get_profile(self, normalized_distance):
+        """Calculate PML absorption profile using optimized polynomial grading.
         
         Args:
-            x, y: Position to evaluate
-            dx: Grid cell size (if None, use default max_conductivity)
-            dt: Time step size (if None, use default max_conductivity)
-            eps_avg: Average permittivity (if None, use default max_conductivity)
+            normalized_distance: Distance from PML inner boundary (0.0) to outer boundary (1.0)
             
         Returns:
-            Conductivity value at the point
+            Tuple of (sigma, alpha) values for conductivity and frequency-shifting
         """
-        # Check if point is within the PML region
-        if not (self.position[0] <= x <= self.position[0] + self.width and
-                self.position[1] <= y <= self.position[1] + self.height):
-            return 0.0
-        # Calculate max conductivity based on grid parameters if provided
-        sigma_max = self.max_conductivity
-        if dx is not None and eps_avg is not None:
-            # Calculate impedance and max conductivity as in pml.py
-            eta = np.sqrt(MU_0 / (EPS_0 * eps_avg))
-            sigma_max = 0.5 / (eta * dx)
-        # Calculate normalized distance from boundary based on orientation
-        if self.orientation == "left": distance = (x - self.position[0]) / self.width
-        elif self.orientation == "right": distance = 1.0 - (x - self.position[0]) / self.width
-        elif self.orientation == "top": distance = 1.0 - (y - self.position[1]) / self.height
-        elif self.orientation == "bottom": distance = (y - self.position[1]) / self.height
-        else: return 0.0  # Default if orientation is not recognized
         # Ensure distance is within [0,1]
-        distance = min(max(distance, 0.0), 1.0)
-        # Calculate conductivity with polynomial scaling (default cubic as in pml.py)
-        return sigma_max * (1.0 - distance) ** self.polynomial_order
-
-
-class CircularPML:
-    """Circular corner PML for better wave absorption at corners."""
-    def __init__(self, position=(0,0), radius=1, orientation="top-left", max_conductivity=None, polynomial_order=3):
-        self.position = position
-        self.radius = radius
-        self.orientation = orientation
-        self.polynomial_order = polynomial_order
-        # Default max conductivity or let it be calculated later
-        self.max_conductivity = max_conductivity if max_conductivity is not None else 1.0
+        d = min(max(normalized_distance, 0.0), 1.0)
         
+        # Conductivity profile (polynomial grading)
+        sigma = d**self.polynomial_order
+        
+        # Complex frequency-shifting profile (helps with evanescent waves)
+        alpha = self.alpha_max * (1 - d)
+        
+        return sigma, alpha
+    
     def get_conductivity(self, x, y, dx=None, dt=None, eps_avg=None):
         """Calculate PML conductivity at a point.
         
         Args:
             x, y: Position to evaluate
-            dx: Grid cell size (if None, use default max_conductivity)
-            dt: Time step size (if None, use default max_conductivity)
-            eps_avg: Average permittivity (if None, use default max_conductivity)
+            dx: Grid cell size
+            dt: Time step size
+            eps_avg: Average permittivity
             
         Returns:
             Conductivity value at the point
         """
-        # Calculate distance from corner to point (x,y)
-        distance_from_corner = np.hypot(x - self.position[0], y - self.position[1])
-        # Scale distance based on radius
-        if distance_from_corner > self.radius: return 0.0  # Outside the PML region
-        # For corners, we need to check if the point is in the correct quadrant
-        # This prevents the corner PML from extending into the non-corner regions
-        dx = x - self.position[0]
-        dy = y - self.position[1]
-        if self.orientation == "top-left" and (dx > 0 or dy > 0): return 0.0
-        elif self.orientation == "top-right" and (dx < 0 or dy > 0): return 0.0
-        elif self.orientation == "bottom-left" and (dx > 0 or dy < 0): return 0.0
-        elif self.orientation == "bottom-right" and (dx < 0 or dy < 0): return 0.0
-        # Calculate max conductivity based on grid parameters if provided
-        sigma_max = self.max_conductivity
-        if dx is not None and eps_avg is not None:
-            # Calculate impedance and max conductivity as in pml.py
-            eta = np.sqrt(MU_0 / (EPS_0 * eps_avg))
-            sigma_max = 0.5 / (eta * dx)
-        # Normalize distance to [0,1] range (1 at corner, 0 at edge of PML)
-        normalized_distance = 1.0 - (distance_from_corner / self.radius)
-        # Calculate conductivity with polynomial scaling (default cubic as in pml.py)
-        return sigma_max * normalized_distance ** self.polynomial_order
+        # Calculate theoretical optimal conductivity
+        sigma_max = 0.8 / (dx * np.sqrt(eps_avg / EPS_0)) if dx is not None and eps_avg is not None else 1.0
+        sigma_max *= self.sigma_factor  # Apply factor for better absorption
+        
+        # Get normalized distance based on region type and orientation
+        if self.region_type == "rect":
+            # Check if point is within rectangular PML region
+            if not (self.position[0] <= x <= self.position[0] + self.width and
+                    self.position[1] <= y <= self.position[1] + self.height):
+                return 0.0
+                
+            # Calculate normalized distance from boundary based on orientation
+            # Distance should be 0 at inner boundary and 1 at outer boundary
+            if self.orientation == "left":
+                # For left PML, x=position[0]+width is inner (0), x=position[0] is outer (1)
+                distance = 1.0 - (x - self.position[0]) / self.width
+            elif self.orientation == "right":
+                # For right PML, x=position[0] is inner (0), x=position[0]+width is outer (1)
+                distance = (x - self.position[0]) / self.width
+            elif self.orientation == "top":
+                # For top PML, y=position[1] is inner (0), y=position[1]+height is outer (1)
+                distance = (y - self.position[1]) / self.height
+            elif self.orientation == "bottom":
+                # For bottom PML, y=position[1]+height is inner (0), y=position[1] is outer (1)
+                distance = 1.0 - (y - self.position[1]) / self.height
+            else:
+                return 0.0
+        
+        else:  # corner PML
+            # Calculate distance from corner to point
+            distance_from_corner = np.hypot(x - self.position[0], y - self.position[1])
+            # Outside the PML region
+            if distance_from_corner > self.radius:
+                return 0.0
+                
+            # Check if in correct quadrant
+            dx_from_corner = x - self.position[0]
+            dy_from_corner = y - self.position[1]
+            
+            if self.orientation == "top-left" and (dx_from_corner > 0 or dy_from_corner < 0):
+                return 0.0
+            elif self.orientation == "top-right" and (dx_from_corner < 0 or dy_from_corner < 0):
+                return 0.0
+            elif self.orientation == "bottom-left" and (dx_from_corner > 0 or dy_from_corner > 0):
+                return 0.0
+            elif self.orientation == "bottom-right" and (dx_from_corner < 0 or dy_from_corner > 0):
+                return 0.0
+                
+            # Normalize distance (0 at inner edge, 1 at corner)
+            distance = distance_from_corner / self.radius
+        
+        # Get profile values
+        sigma_profile, alpha_profile = self.get_profile(distance)
+        
+        # Apply complex frequency-shifted PML with stretched coordinates
+        conductivity = sigma_max * sigma_profile
+        if dt is not None:
+            # Apply frequency-shifting correction
+            # This reduces reflections from evanescent waves
+            frequency_factor = 1.0 / (1.0 + alpha_profile)
+            conductivity *= frequency_factor
+            
+        return conductivity
