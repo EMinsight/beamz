@@ -20,9 +20,7 @@ from beamz.simulation.meshing import RegularGrid
 from beamz.simulation.fdtd import FDTD
 
 # Import optimization-related classes
-from beamz.optimization.adjoint import (
-    AdjointOptimizer, ShapeOptimizer, MaterialOptimizer
-)
+
 
 # Import UI helpers
 from beamz.helpers import (

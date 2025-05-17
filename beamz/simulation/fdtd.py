@@ -209,14 +209,25 @@ class FDTD:
         }
         display_parameters(sim_params, "Simulation Parameters")
         
-        # Calculate Courant number to check stability
-        c = 1/np.sqrt(EPS_0 * MU_0)  # Speed of light
-        courant = c * self.dt / min(self.dx, self.dy)
-        if courant > 1/np.sqrt(2):
-            display_status(f"Simulation may be unstable! Courant number = {courant:.3f} > {1/np.sqrt(2):.3f}", "warning")
+        # Check stability using the helper function
+        from beamz.helpers import check_fdtd_stability
+        
+        # Get maximum refractive index from the grid
+        n_max = np.sqrt(np.max(self.epsilon_r))
+        
+        # Check stability with default safety factor
+        is_stable, courant, safe_limit = check_fdtd_stability(
+            dt=self.dt, 
+            dx=self.dx, 
+            dy=self.dy, 
+            n_max=n_max
+        )
+        
+        if not is_stable:
+            display_status(f"Simulation may be unstable! Courant number = {courant:.3f} > {safe_limit:.3f}", "warning")
             display_status("Consider reducing dt or increasing dx/dy", "warning")
         else:
-            display_status(f"Stability check passed (Courant number = {courant:.3f})", "success")
+            display_status(f"Stability check passed (Courant number = {courant:.3f} / {safe_limit:.3f})", "success")
         
         # Set up power accumulation if requested
         if accumulate_power:
