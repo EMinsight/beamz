@@ -73,7 +73,7 @@ class Design:
             pml_size = max(min_size, min(max_size, min(self.width, self.height) / 3))
             display_status(f"Auto-selected PML size: {pml_size:.2e} m (~{pml_size/wavelength_estimate:.1f} wavelengths)", "info")
         
-        # Create transparent material for PML outlines
+        # Create transparent material for PML outlines (for visualization only)
         pml_material = Material(permittivity=1.0, permeability=1.0, conductivity=0.0)
         
         # Create unified PML regions with optimized parameters for gradual absorption
@@ -89,15 +89,15 @@ class Design:
         self.boundaries.append(PML("corner", (0, self.height), pml_size, "top-left"))
         self.boundaries.append(PML("corner", (self.width, self.height), pml_size, "top-right"))
         
-        # Add visual representations of PML regions to the structures list
-        # Left PML region
+        # Add visual representations of PML regions to the structures list (for display only)
+        # These are just visualization helpers and don't affect the actual simulation
         left_pml = Rectangle(
             position=(0, 0),
             width=pml_size,
             height=self.height,
             material=pml_material,
             color='none',
-            is_pml=True
+            is_pml=True  # Flag to identify it as a visual PML marker
         )
         self.structures.append(left_pml)
         # Right PML region
@@ -131,6 +131,8 @@ class Design:
         )
         self.structures.append(top_pml)
         
+        display_status("PML boundaries initialized with material-preserving properties", "info")
+
     def show(self):
         """Display the design visually."""
         # Determine appropriate SI unit and scale
@@ -170,55 +172,61 @@ class Design:
 
     def get_material_value(self, x, y, dx=None, dt=None):
         """Return the material value at a given (x, y) coordinate, prioritizing the topmost structure."""
-        # First check if we're in a PML boundary region
-        pml_conductivity = 0.0
-        # Calculate average permittivity in the domain for PML calculation
-        if dx is not None:
-            eps_values = []
-            for structure in self.structures:
-                if hasattr(structure, 'material') and hasattr(structure.material, 'permittivity'):
-                    eps_values.append(structure.material.permittivity)
-            eps_avg = np.mean(eps_values) if eps_values else 1.0
-        else: eps_avg = None
-        # Apply all PML boundaries
-        for boundary in self.boundaries:
-            pml_conductivity += boundary.get_conductivity(x, y, dx=dx, dt=dt, eps_avg=eps_avg)
-        # Get material values from structures
+        # First get material values from underlying structures
+        # Start with default background material 
+        epsilon = 1.0
+        mu = 1.0
+        sigma_base = 0.0
+        
+        # Find the material values from the structures (outside PML calculation)
         for structure in reversed(self.structures):
             if isinstance(structure, Rectangle):
+                if structure.is_pml:
+                    # Skip visual PML structures - they're just for display
+                    continue
                 if self._point_in_polygon(x, y, structure.vertices):
-                    # Return with added PML conductivity
-                    return [structure.material.permittivity, 
-                            structure.material.permeability, 
-                            structure.material.conductivity + pml_conductivity]
+                    epsilon = structure.material.permittivity
+                    mu = structure.material.permeability
+                    sigma_base = structure.material.conductivity
+                    break
             elif isinstance(structure, Circle):
                 if np.hypot(x - structure.position[0], y - structure.position[1]) <= structure.radius:
-                    # Return with added PML conductivity
-                    return [structure.material.permittivity, 
-                            structure.material.permeability, 
-                            structure.material.conductivity + pml_conductivity]
+                    epsilon = structure.material.permittivity
+                    mu = structure.material.permeability
+                    sigma_base = structure.material.conductivity
+                    break
             elif isinstance(structure, Ring):
                 distance = np.hypot(x - structure.position[0], y - structure.position[1])
                 if structure.inner_radius <= distance <= structure.outer_radius:
-                    # Return with added PML conductivity
-                    return [structure.material.permittivity, 
-                            structure.material.permeability, 
-                            structure.material.conductivity + pml_conductivity]
+                    epsilon = structure.material.permittivity
+                    mu = structure.material.permeability
+                    sigma_base = structure.material.conductivity
+                    break
             elif isinstance(structure, CircularBend):
                 distance = np.hypot(x - structure.position[0], y - structure.position[1])
                 if structure.inner_radius <= distance <= structure.outer_radius:
-                    # Return with added PML conductivity
-                    return [structure.material.permittivity, 
-                            structure.material.permeability, 
-                            structure.material.conductivity + pml_conductivity]
+                    epsilon = structure.material.permittivity
+                    mu = structure.material.permeability
+                    sigma_base = structure.material.conductivity
+                    break
             elif isinstance(structure, Polygon):
                 if self._point_in_polygon(x, y, structure.vertices):
-                    # Return with added PML conductivity
-                    return [structure.material.permittivity, 
-                            structure.material.permeability, 
-                            structure.material.conductivity + pml_conductivity]
-        # Default with added PML conductivity
-        return [1.0, 1.0, pml_conductivity]  # Default permittivity if no structure contains the point
+                    epsilon = structure.material.permittivity
+                    mu = structure.material.permeability
+                    sigma_base = structure.material.conductivity
+                    break
+        
+        # Calculate PML conductivity based on the UNDERLYING material
+        # This is crucial for proper absorption without reflection
+        pml_conductivity = 0.0
+        if dx is not None:
+            eps_avg = epsilon  # Use the actual permittivity at this point
+            # Apply all PML boundaries
+            for boundary in self.boundaries:
+                pml_conductivity += boundary.get_conductivity(x, y, dx=dx, dt=dt, eps_avg=eps_avg)
+        
+        # Return with the permittivity of the underlying structure plus PML conductivity
+        return [epsilon, mu, sigma_base + pml_conductivity]
 
     def _point_in_polygon(self, x, y, vertices):
         """Check if a point is inside a polygon using the ray-casting algorithm."""

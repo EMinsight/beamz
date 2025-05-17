@@ -45,7 +45,7 @@ def check_fdtd_stability(dt, dx, dy=None, dz=None, n_max=1.0, safety_factor=0.95
     safe_limit = safety_factor * max_allowed
     return courant <= safe_limit, courant, safe_limit
 
-def calc_optimal_fdtd_params(wavelength, n_max, dims=2, safety_factor=0.5, points_per_wavelength=20):
+def calc_optimal_fdtd_params(wavelength, n_max, dims=2, safety_factor=0.4, points_per_wavelength=20):
     """
     Calculate optimal FDTD grid resolution and time step based on wavelength and material properties.
     

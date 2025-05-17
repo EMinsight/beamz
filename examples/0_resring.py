@@ -1,25 +1,36 @@
+"""
+paper inspiration: https://photonics.intec.ugent.be/download/pub_3105.pdf
+code: Quentin Wach
+"""
 from beamz import *
 import numpy as np
 from beamz.helpers import calc_optimal_fdtd_params
+from beamz.design.signals import plot_signal
 
 WL = 1.55*µm
 TIME = 40*WL/LIGHT_SPEED
-n_core = 2.3
-n_clad = 1
+X = 20*µm
+Y = 20*µm
+N_CORE = 2.04 # Si3N4
+N_CLAD = 1.444 # SiO2
+WG_WIDTH = 0.565*µm
+DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE, N_CLAD), safety_factor=0.4, points_per_wavelength=20)
 
-# Calculate optimal resolution and time step
-resolution, dt = calc_optimal_fdtd_params(WL, max(n_core, n_clad), safety_factor=0.10, points_per_wavelength=20)
 
-T = np.arange(0, TIME, dt)
-print(T)
+design = Design(width=X, height=Y, material=Material(N_CLAD**2), pml_size=WL)
+design.add(Rectangle(position=(0,WL*2), width=X, height=WG_WIDTH, material=Material(N_CORE**2)))
+design.add(Ring(position=(4.5*µm, WL*2+2.3*µm+WG_WIDTH), inner_radius=2.3*µm, outer_radius=2.3*µm+WG_WIDTH, material=Material(N_CORE**2)))
 
-design = Design(width=6*µm, height=6*µm, material=Material(n_clad**2), pml_size=WL/3)
-design.add(Rectangle(position=(0,1*µm), width=6*µm, height=0.4*µm, material=Material(n_core**2)))
-design.add(Ring(position=(3*µm, 3.35*µm), inner_radius=1.5*µm, outer_radius=1.9*µm, material=Material(n_core**2)))
-signal = ramped_cosine(T, amplitude=1.0, frequency=LIGHT_SPEED/WL, phase=0, ramp_duration=TIME/5, t_max=TIME/3)
-design.add(ModeSource(design=design, start=(1*µm, 0.5*µm), end=(1*µm, 1.9*µm), wavelength=WL, signal=signal))
+
+
+time_steps = np.arange(0, TIME, DT)
+signal = ramped_cosine(time_steps, amplitude=1.0, frequency=LIGHT_SPEED/WL, phase=0, ramp_duration=WL*5/LIGHT_SPEED, t_max=TIME/3)
+plot_signal(signal, time_steps)
+
+design.add(ModeSource(design=design, start=(WL*2, WL*2+WG_WIDTH/2-0.8*µm), end=(WL*2, WL*2+WG_WIDTH/2+0.8*µm), wavelength=WL, signal=signal))
 design.show()
 
-sim = FDTD(design=design, time=T, mesh="regular", resolution=resolution, backend="numpy")
-sim.run(live=True)
+# Run the simulation live and show the final power
+sim = FDTD(design=design, time=time_steps, mesh="regular", resolution=DX, backend="numpy")
+sim.run(live=True, save_memory_mode=True, accumulate_power=True)
 sim.plot_power(db_colorbar=True)
