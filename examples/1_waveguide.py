@@ -4,19 +4,21 @@ from beamz.helpers import calc_optimal_fdtd_params
 
 WL = 1.55*µm
 TIME = 120*WL/LIGHT_SPEED
-n_core = 2
-n_clad = 1
-resolution, dt = calc_optimal_fdtd_params(WL, max(n_core, n_clad), dims=2, safety_factor=0.45)
+n_core = 2.04 # Si3N4
+n_clad = 1.444 # SiO2
+wg_width = 0.565*µm
+resolution, dt = calc_optimal_fdtd_params(WL, max(n_core, n_clad), dims=2, safety_factor=0.45, points_per_wavelength=30)
 T = np.arange(0, TIME, dt)
 
 
-design = Design(width=15*µm, height=4.5*µm, material=Material(n_clad**2), pml_size=WL/2)
-design.add(Rectangle(position=(0,2.25*µm-0.55*µm), width=15*µm, height=1.1*µm, material=Material(n_core**2)))
+design = Design(width=18*µm, height=7*µm, material=Material(n_clad**2), pml_size=WL)
+design.add(Rectangle(position=(0,3.5*µm-wg_width/2), width=18*µm, height=wg_width, material=Material(n_core**2)))
 design.show()
 
 grid = RegularGrid(design=design, resolution=resolution)
 grid.show(field="permittivity")
 grid.show(field="conductivity")
+grid.show(field="permeability")
 
 # CURRENT ISSUE: WE STILL GET STANDING WAVES! FIX THE PML REGIONS!
 
@@ -25,7 +27,7 @@ import beamz
 beamz.design.signals.plot_signal(signal, T)
 
 
-source = ModeSource(design=design, start=(1.1*µm, 2.25*µm-1.43*µm), end=(1.1*µm, 2.25*µm+1.43*µm), wavelength=WL, signal=signal)
+source = ModeSource(design=design, start=(2*µm, 3.5*µm-1.2*µm), end=(2*µm, 3.5*µm+1.2*µm), wavelength=WL, signal=signal)
 source.show()
 design.add(source)
 design.show()

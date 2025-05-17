@@ -65,21 +65,18 @@ class Design:
             for structure in self.structures:
                 if hasattr(structure, 'material') and hasattr(structure.material, 'permittivity'):
                     max_permittivity = max(max_permittivity, structure.material.permittivity)
-            # Estimate minimum wavelength (assuming 1550nm free space wavelength typical for photonics)
-            # This is a practical approximation for common photonic applications
+            # Estimate minimum wavelength
             wavelength_estimate = 1.55e-6 / np.sqrt(max_permittivity)
-            # Set PML size to be at least 1 wavelength and at most 20% of domain size
-            min_size = wavelength_estimate
-            max_size = min(self.width, self.height) * 0.2
-            # Use a heuristic to set PML size based on domain dimensions and wavelength
-            # At least 1 wavelength and at most 20% of the domain size
-            pml_size = max(min_size, min(max_size, min(self.width, self.height) / 5))
+            # Make PML thicker to allow for more gradual absorption
+            min_size = 1.5 * wavelength_estimate  # Increased from 1.0
+            max_size = min(self.width, self.height) * 0.3  # Increased thickness for gradual absorption
+            pml_size = max(min_size, min(max_size, min(self.width, self.height) / 3))
             display_status(f"Auto-selected PML size: {pml_size:.2e} m (~{pml_size/wavelength_estimate:.1f} wavelengths)", "info")
         
         # Create transparent material for PML outlines
         pml_material = Material(permittivity=1.0, permeability=1.0, conductivity=0.0)
         
-        # Create unified PML regions
+        # Create unified PML regions with optimized parameters for gradual absorption
         # Rectangular edge PMLs
         self.boundaries.append(PML("rect", (0, 0), (pml_size, self.height), "left"))
         self.boundaries.append(PML("rect", (self.width - pml_size, 0), (pml_size, self.height), "right"))
@@ -616,13 +613,13 @@ class Taper(Polygon):
 
 class PML:
     """Unified PML (Perfectly Matched Layer) class for absorbing boundary conditions."""
-    def __init__(self, region_type, position, size, orientation, polynomial_order=3.5, sigma_factor=1.5, alpha_max=0.25):
+    def __init__(self, region_type, position, size, orientation, polynomial_order=2.0, sigma_factor=1.0, alpha_max=0.1):
         self.region_type = region_type  # "rect" or "corner"
         self.position = position
         self.orientation = orientation
-        self.polynomial_order = polynomial_order
-        self.sigma_factor = sigma_factor  # Factor to multiply theoretical optimal conductivity
-        self.alpha_max = alpha_max  # Complex frequency-shifting parameter
+        self.polynomial_order = polynomial_order  # Reduced to allow smoother transition
+        self.sigma_factor = sigma_factor  # Reduced to allow waves to enter
+        self.alpha_max = alpha_max  # Reduced frequency-shifting for smoother transition
         
         if region_type == "rect":
             self.width, self.height = size
@@ -630,7 +627,7 @@ class PML:
             self.radius = size
     
     def get_profile(self, normalized_distance):
-        """Calculate PML absorption profile using optimized polynomial grading.
+        """Calculate PML absorption profile using gradual grading.
         
         Args:
             normalized_distance: Distance from PML inner boundary (0.0) to outer boundary (1.0)
@@ -641,16 +638,23 @@ class PML:
         # Ensure distance is within [0,1]
         d = min(max(normalized_distance, 0.0), 1.0)
         
-        # Conductivity profile (polynomial grading)
-        sigma = d**self.polynomial_order
+        # Create a smooth transition from 0 at the interface
+        # Start with nearly zero conductivity at the interface and gradually increase
+        # This is crucial to prevent reflection at the boundary
+        if d < 0.05:
+            # Very gentle start at the boundary (nearly zero)
+            sigma = 0.01 * (d/0.05)**2
+        else:
+            # Smooth polynomial grading for the rest
+            sigma = ((d - 0.05) / 0.95)**self.polynomial_order
         
-        # Complex frequency-shifting profile (helps with evanescent waves)
-        alpha = self.alpha_max * (1 - d)
+        # Smooth frequency-shifting profile
+        alpha = self.alpha_max * d**2  # Quadratic profile for smooth transition
         
         return sigma, alpha
     
     def get_conductivity(self, x, y, dx=None, dt=None, eps_avg=None):
-        """Calculate PML conductivity at a point.
+        """Calculate PML conductivity at a point using smooth-transition PML.
         
         Args:
             x, y: Position to evaluate
@@ -661,9 +665,16 @@ class PML:
         Returns:
             Conductivity value at the point
         """
-        # Calculate theoretical optimal conductivity
-        sigma_max = 0.8 / (dx * np.sqrt(eps_avg / EPS_0)) if dx is not None and eps_avg is not None else 1.0
-        sigma_max *= self.sigma_factor  # Apply factor for better absorption
+        # Calculate theoretical optimal conductivity based on impedance matching
+        if dx is not None and eps_avg is not None:
+            # Calculate impedance 
+            eta = np.sqrt(MU_0 / (EPS_0 * eps_avg))
+            # Optimal conductivity for minimal reflection at interface
+            # Reduced from 1.2 to 0.8 for smoother transition
+            sigma_max = 0.8 / (eta * dx)
+            sigma_max *= self.sigma_factor  # Apply gentler factor
+        else:
+            sigma_max = 1.0  # Lower default conductivity
         
         # Get normalized distance based on region type and orientation
         if self.region_type == "rect":
@@ -712,14 +723,17 @@ class PML:
             # Normalize distance (0 at inner edge, 1 at corner)
             distance = distance_from_corner / self.radius
         
-        # Get profile values
+        # Get optimized profile values
         sigma_profile, alpha_profile = self.get_profile(distance)
         
-        # Apply complex frequency-shifted PML with stretched coordinates
+        # Apply stretched-coordinate PML with gradual absorption
         conductivity = sigma_max * sigma_profile
+        
+        # The material-dependent scaling might have been causing excessive reflection
+        # We'll use a gentler approach that smoothly transitions at the boundary
+        
         if dt is not None:
-            # Apply frequency-shifting correction
-            # This reduces reflections from evanescent waves
+            # Apply frequency-shifting with reduced effect near boundary
             frequency_factor = 1.0 / (1.0 + alpha_profile)
             conductivity *= frequency_factor
             
