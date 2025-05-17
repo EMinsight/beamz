@@ -9,8 +9,13 @@ from matplotlib.patches import Rectangle as MatplotlibRectangle, Circle as Matpl
 from matplotlib.path import Path
 from matplotlib.animation import FuncAnimation
 from beamz.simulation.backends import get_backend
-from beamz.helpers import progress_bar
+from beamz.helpers import (
+    progress_bar, display_header, display_status, create_rich_progress, 
+    display_parameters, display_results, display_simulation_status, 
+    display_time_elapsed, console
+)
 import sys
+import datetime
 
 class FDTD:
     """FDTD simulation class."""
@@ -54,6 +59,8 @@ class FDTD:
         # Initialize power accumulation
         self.power_accumulated = None
         self.power_accumulation_count = 0
+        # Initialize simulation start time
+        self.start_time = None
 
     def simulate_step(self):
         """Perform one FDTD step with stability checks."""
@@ -174,6 +181,9 @@ class FDTD:
         Returns:
             Dictionary containing the simulation results.
         """
+        # Record start time
+        self.start_time = datetime.datetime.now()
+        
         # Initialize simulation state
         self.t = 0
         self._total_steps = self.num_steps
@@ -181,165 +191,220 @@ class FDTD:
         # Save mode flags as class attributes for monitor access
         self.save_memory_mode = save_memory_mode
         self.accumulate_power = accumulate_power
+        
+        # Display simulation header and parameters
+        display_header("FDTD Simulation Started", f"Grid size: {self.nx}x{self.ny}, dt: {self.dt:.2e}s")
+        display_status(f"Running simulation for {self.num_steps} steps...")
+        
+        # Display simulation parameters
+        sim_params = {
+            "Domain size": f"{self.design.width:.2e} x {self.design.height:.2e} m",
+            "Resolution": f"{self.resolution:.2e} m",
+            "Time steps": self.num_steps,
+            "Time delta": f"{self.dt:.2e} s",
+            "Total time": f"{self.time[-1]:.2e} s",
+            "Backend": self.backend.__class__.__name__,
+            "Save fields": ", ".join(save_fields),
+            "Memory-saving mode": "Enabled" if save_memory_mode else "Disabled"
+        }
+        display_parameters(sim_params, "Simulation Parameters")
+        
         # Calculate Courant number to check stability
         c = 1/np.sqrt(EPS_0 * MU_0)  # Speed of light
         courant = c * self.dt / min(self.dx, self.dy)
         if courant > 1/np.sqrt(2):
-            print(f"Warning: Simulation may be unstable! Courant number = {courant:.3f} > {1/np.sqrt(2):.3f}")
-            print(f"Consider reducing dt or increasing dx/dy")
+            display_status(f"Simulation may be unstable! Courant number = {courant:.3f} > {1/np.sqrt(2):.3f}", "warning")
+            display_status("Consider reducing dt or increasing dx/dy", "warning")
+        else:
+            display_status(f"Stability check passed (Courant number = {courant:.3f})", "success")
+        
         # Set up power accumulation if requested
         if accumulate_power:
             self.power_accumulated = np.zeros((self.nx, self.ny))
             self.power_accumulation_count = 0
+            
         # Determine optimal save frequency based on backend type
         is_gpu_backend = hasattr(self.backend, 'device') and self.backend.device.type in ['cuda', 'mps']
         # For GPU backends, avoid excessive CPU-GPU transfers by batching the result saves
         if is_gpu_backend and save:
             save_freq = max(10, self.num_steps // 100)  # Save approximately every 1% of steps or min of 10 steps
-            print(f"GPU backend detected: Optimizing result storage (saving every {save_freq} steps)")
-        else: save_freq = 1  # Save every step for CPU backends
+            display_status(f"GPU backend detected: Optimizing result storage (saving every {save_freq} steps)", "info")
+        else: 
+            save_freq = 1  # Save every step for CPU backends
+            
         # Apply additional decimation based on user setting
         effective_save_freq = save_freq * decimate_save
+        
         # If in save_memory_mode, clear any existing results to start fresh
         if save_memory_mode:
             for field in self.results:
                 if field != 't':  # Keep time array
                     self.results[field] = []
-            print("Memory-saving mode active: Only storing monitor data and/or power accumulation")
+            display_status("Memory-saving mode active: Only storing monitor data and/or power accumulation", "info")
+            
         # For live visualization with GPU backends, don't update too frequently
         if is_gpu_backend and live:
             live_update_freq = max(5, self.num_steps // 50)  # Update visualization approximately every 2% of steps
-            print(f"GPU backend detected: Optimizing visualization (updating every {live_update_freq} steps)")
+            display_status(f"GPU backend detected: Optimizing visualization (updating every {live_update_freq} steps)", "info")
         else:
             live_update_freq = 5  # Update visualization every 5 steps for CPU backends
+            
         # Run simulation
-        sys.stdout.flush()
-        sys.stdout.write("\n")
-        print("Running simulation...")
-        for step in range(self.num_steps):
-            progress_bar(step, self.num_steps)
-            # Update fields
-            self.simulate_step()
-            # Apply sources
-            for source in self.sources:
-                if isinstance(source, ModeSource):
-                    # Get the mode profile for the first mode
-                    mode_profile = source.mode_profiles[0]
-                    # Get the time modulation for this step
-                    modulation = source.signal[step]
-                    # Apply the mode profile to all points
-                    for point in mode_profile:
-                        amplitude, x_raw, y_raw = point
-                        # Convert the position to the nearest grid point using correct resolutions
-                        x = int(round(x_raw / self.dx))
-                        y = int(round(y_raw / self.dy))
-                        # Skip points outside the grid
-                        if x < 0 or x >= self.nx or y < 0 or y >= self.ny: continue
-                        # Add the source contribution to the field (don't overwrite!)
-                        self.Ez[y, x] += amplitude * modulation 
-                        # Apply direction to the source
-                        if source.direction == "+x": self.Ez[y, x-1] = 0
-                        elif source.direction == "-x": self.Ez[y, x+1] = 0
-                        elif source.direction == "+y": self.Ez[y-1, x] = 0
-                        elif source.direction == "-y": self.Ez[y+1, x] = 0
-                elif isinstance(source, GaussianSource):
-                    modulation = source.signal[step]
-                    center_x_phys, center_y_phys = source.position
-                    width_phys = source.width  # Assuming width is standard deviation (sigma)
-                    # Convert physical units to grid coordinates
-                    center_x_grid = center_x_phys / self.dx
-                    center_y_grid = center_y_phys / self.dy
-                    # sigma in grid units
-                    width_x_grid = width_phys / self.dx 
-                    width_y_grid = width_phys / self.dy 
-                    # Define the grid range to apply the source (e.g., +/- 3 sigma)
-                    # Use max(1, ...) to ensure at least one grid cell width if sigma_grid is very small
-                    wx_grid_cells = max(1, int(round(3 * width_x_grid)))
-                    wy_grid_cells = max(1, int(round(3 * width_y_grid)))
-                    # Calculate bounding box indices, clamped to grid boundaries
-                    x_center_idx = int(round(center_x_grid))
-                    y_center_idx = int(round(center_y_grid))
-                    x_start = max(0, x_center_idx - wx_grid_cells)
-                    x_end = min(self.nx, x_center_idx + wx_grid_cells + 1)
-                    y_start = max(0, y_center_idx - wy_grid_cells)
-                    y_end = min(self.ny, y_center_idx + wy_grid_cells + 1)
-                    # Create meshgrid for the affected area
-                    y_indices = np.arange(y_start, y_end)
-                    x_indices = np.arange(x_start, x_end)
-                    y_grid, x_grid = np.meshgrid(y_indices, x_indices, indexing='ij')
-                    # Calculate squared distances from the center in grid units
-                    dist_x_sq = (x_grid - center_x_grid)**2
-                    dist_y_sq = (y_grid - center_y_grid)**2
-                    # Calculate Gaussian amplitude (handle zero width appropriately)
-                    # Use small epsilon to avoid division by zero if width_grid is exactly 0
-                    epsilon = 1e-9
-                    sigma_x_sq = width_x_grid**2 + epsilon
-                    sigma_y_sq = width_y_grid**2 + epsilon
-                    exponent = -(dist_x_sq / (2 * sigma_x_sq) + dist_y_sq / (2 * sigma_y_sq))
-                    gaussian_amp = np.exp(exponent)                    
-                    # Convert to backend array type if not already
-                    gaussian_amp = self.backend.from_numpy(gaussian_amp)
-                    # Add the source contribution to the Ez field slice
-                    self.Ez[y_start:y_end, x_start:x_end] += gaussian_amp * modulation
+        # Using progress bar from rich instead of the simple one
+        #display_status("Running simulation...", "info")
+        
+        # Use a single progress bar for the entire simulation
+        with create_rich_progress() as progress:
+            # Create a task that will be updated throughout the simulation
+            task = progress.add_task("Running simulation...", total=self.num_steps)
             
-            # Record monitor data
-            self._record_monitor_data(step)
+            # Track if we've displayed metrics
+            displayed_metrics = False
             
-            # Accumulate power if requested
-            if accumulate_power:
-                # Calculate instantaneous power
-                Ez_np = self.backend.to_numpy(self.Ez)
-                Hx_np = self.backend.to_numpy(self.Hx)
-                Hy_np = self.backend.to_numpy(self.Hy)
-                # Extend magnetic fields to match Ez dimensions
-                Hx_full = np.zeros_like(Ez_np)
-                Hx_full[:, :-1] = Hx_np
-                Hy_full = np.zeros_like(Ez_np)
-                Hy_full[:-1, :] = Hy_np
-                # Calculate Poynting vector components (S = E × H)
-                Sx = -Ez_np * Hy_full 
-                Sy = Ez_np * Hx_full
-                # Calculate power magnitude (|S|²)
-                power_mag = Sx**2 + Sy**2
-                # Accumulate power
-                self.power_accumulated += power_mag
-                self.power_accumulation_count += 1
-            
-            # Save results if requested and at the right frequency
-            if save and not save_memory_mode and (step % effective_save_freq == 0 or step == self.num_steps - 1):
-                # Convert arrays to numpy for saving
-                self.results['t'].append(self.t)
-                # Save only the requested fields
-                if 'Ez' in save_fields: self.results['Ez'].append(self.backend.to_numpy(self.backend.copy(self.Ez)))
-                if 'Hx' in save_fields: self.results['Hx'].append(self.backend.to_numpy(self.backend.copy(self.Hx)))
-                if 'Hy' in save_fields: self.results['Hy'].append(self.backend.to_numpy(self.backend.copy(self.Hy)))
+            for step in range(self.num_steps):
+                # Update fields
+                self.simulate_step()
                 
-            # Update time
-            self.t += self.dt
-            
-            # Show progress
-            if live and (step % live_update_freq == 0 or step == self.num_steps - 1):
-                # Convert to numpy for visualization
-                Ez_np = self.backend.to_numpy(self.Ez)
-                self.animate_live(field_data=Ez_np, field="Ez", axis_scale=axis_scale)
-
+                # Apply sources
+                for source in self.sources:
+                    if isinstance(source, ModeSource):
+                        # Get the mode profile for the first mode
+                        mode_profile = source.mode_profiles[0]
+                        # Get the time modulation for this step
+                        modulation = source.signal[step]
+                        # Apply the mode profile to all points
+                        for point in mode_profile:
+                            amplitude, x_raw, y_raw = point
+                            # Convert the position to the nearest grid point using correct resolutions
+                            x = int(round(x_raw / self.dx))
+                            y = int(round(y_raw / self.dy))
+                            # Skip points outside the grid
+                            if x < 0 or x >= self.nx or y < 0 or y >= self.ny: continue
+                            # Add the source contribution to the field (don't overwrite!)
+                            self.Ez[y, x] += amplitude * modulation 
+                            # Apply direction to the source
+                            if source.direction == "+x": self.Ez[y, x-1] = 0
+                            elif source.direction == "-x": self.Ez[y, x+1] = 0
+                            elif source.direction == "+y": self.Ez[y-1, x] = 0
+                            elif source.direction == "-y": self.Ez[y+1, x] = 0
+                    elif isinstance(source, GaussianSource):
+                        modulation = source.signal[step]
+                        center_x_phys, center_y_phys = source.position
+                        width_phys = source.width  # Assuming width is standard deviation (sigma)
+                        # Convert physical units to grid coordinates
+                        center_x_grid = center_x_phys / self.dx
+                        center_y_grid = center_y_phys / self.dy
+                        # sigma in grid units
+                        width_x_grid = width_phys / self.dx 
+                        width_y_grid = width_phys / self.dy 
+                        # Define the grid range to apply the source (e.g., +/- 3 sigma)
+                        # Use max(1, ...) to ensure at least one grid cell width if sigma_grid is very small
+                        wx_grid_cells = max(1, int(round(3 * width_x_grid)))
+                        wy_grid_cells = max(1, int(round(3 * width_y_grid)))
+                        # Calculate bounding box indices, clamped to grid boundaries
+                        x_center_idx = int(round(center_x_grid))
+                        y_center_idx = int(round(center_y_grid))
+                        x_start = max(0, x_center_idx - wx_grid_cells)
+                        x_end = min(self.nx, x_center_idx + wx_grid_cells + 1)
+                        y_start = max(0, y_center_idx - wy_grid_cells)
+                        y_end = min(self.ny, y_center_idx + wy_grid_cells + 1)
+                        # Create meshgrid for the affected area
+                        y_indices = np.arange(y_start, y_end)
+                        x_indices = np.arange(x_start, x_end)
+                        y_grid, x_grid = np.meshgrid(y_indices, x_indices, indexing='ij')
+                        # Calculate squared distances from the center in grid units
+                        dist_x_sq = (x_grid - center_x_grid)**2
+                        dist_y_sq = (y_grid - center_y_grid)**2
+                        # Calculate Gaussian amplitude (handle zero width appropriately)
+                        # Use small epsilon to avoid division by zero if width_grid is exactly 0
+                        epsilon = 1e-9
+                        sigma_x_sq = width_x_grid**2 + epsilon
+                        sigma_y_sq = width_y_grid**2 + epsilon
+                        exponent = -(dist_x_sq / (2 * sigma_x_sq) + dist_y_sq / (2 * sigma_y_sq))
+                        gaussian_amp = np.exp(exponent)                    
+                        # Convert to backend array type if not already
+                        gaussian_amp = self.backend.from_numpy(gaussian_amp)
+                        # Add the source contribution to the Ez field slice
+                        self.Ez[y_start:y_end, x_start:x_end] += gaussian_amp * modulation
+                
+                # Record monitor data
+                self._record_monitor_data(step)
+                
+                # Accumulate power if requested
+                if accumulate_power:
+                    # Calculate instantaneous power
+                    Ez_np = self.backend.to_numpy(self.Ez)
+                    Hx_np = self.backend.to_numpy(self.Hx)
+                    Hy_np = self.backend.to_numpy(self.Hy)
+                    # Extend magnetic fields to match Ez dimensions
+                    Hx_full = np.zeros_like(Ez_np)
+                    Hx_full[:, :-1] = Hx_np
+                    Hy_full = np.zeros_like(Ez_np)
+                    Hy_full[:-1, :] = Hy_np
+                    # Calculate Poynting vector components (S = E × H)
+                    Sx = -Ez_np * Hy_full 
+                    Sy = Ez_np * Hx_full
+                    # Calculate power magnitude (|S|²)
+                    power_mag = Sx**2 + Sy**2
+                    # Accumulate power
+                    self.power_accumulated += power_mag
+                    self.power_accumulation_count += 1
+                
+                # Save results if requested and at the right frequency
+                if save and not save_memory_mode and (step % effective_save_freq == 0 or step == self.num_steps - 1):
+                    # Convert arrays to numpy for saving
+                    self.results['t'].append(self.t)
+                    # Save only the requested fields
+                    if 'Ez' in save_fields: self.results['Ez'].append(self.backend.to_numpy(self.backend.copy(self.Ez)))
+                    if 'Hx' in save_fields: self.results['Hx'].append(self.backend.to_numpy(self.backend.copy(self.Hx)))
+                    if 'Hy' in save_fields: self.results['Hy'].append(self.backend.to_numpy(self.backend.copy(self.Hy)))
+                
+                # Show live animation if requested and at the right frequency
+                if live and (step % live_update_freq == 0 or step == self.num_steps - 1):
+                    # Convert to numpy for visualization
+                    Ez_np = self.backend.to_numpy(self.Ez)
+                    self.animate_live(field_data=Ez_np, field="Ez", axis_scale=axis_scale)
+                    
+                    # Update the progress bar description with metrics
+                    if step % max(1, self.num_steps // 10) == 0:
+                        progress_pct = 100 * (step+1) / self.num_steps
+                        max_ez = np.max(np.abs(Ez_np))
+                        # Update the task description with current metrics
+                        progress.update(task, description=f"Step {step+1}/{self.num_steps} | Time {self.t:.2e} s | Max Ez {max_ez:.3e}")
+                
+                # Update time
+                self.t += self.dt
+                
+                # Update progress
+                progress.update(task, advance=1)
+                
         # Clean up animation
         if live and self.fig is not None:
             plt.close(self.fig)
             self.fig = None
             self.ax = None
             self.im = None
+                
+        # Display completion information
+        display_status("Simulation complete!", "success")
+        display_time_elapsed(self.start_time)
         
         # Save animation if requested
         if save_animation and (save or accumulate_power):
+            display_status(f"Saving animation to {animation_filename}...", "info")
             if not save_memory_mode and 'Ez' in save_fields and len(self.results['Ez']) > 0:
                 self.save_animation(field="Ez", axis_scale=axis_scale, filename=animation_filename, clean_visualization=clean_visualization)
-            elif accumulate_power: print("Cannot create animation in memory-saving mode without field data.")
-
+            elif accumulate_power: 
+                display_status("Cannot create animation in memory-saving mode without field data.", "warning")
+        
         # Calculate final power average if accumulating
         if accumulate_power and self.power_accumulation_count > 0:
             self.power_accumulated /= self.power_accumulation_count
             
+        # Display memory usage estimate
+        memory_usage = self.estimate_memory_usage(time_steps=self.num_steps, save_fields=save_fields)
+        display_status(f"Estimated memory usage: {memory_usage['Full simulation']['Total memory (MB)']:.2f} MB", "info")
+        
         return self.results
         
     def _record_monitor_data(self, step):
@@ -587,6 +652,8 @@ class FDTD:
                 'Fields saved': ', '.join(save_fields)
             }
         }
+        # After calculation, display results with new helpers
+        display_status(f"Estimated memory usage: {total_size / mb:.2f} MB", "info")
         return result
 
     def plot_monitors(self, field='Ez', figsize=(10, 6), power=False, log_scale=False, db_scale=False):

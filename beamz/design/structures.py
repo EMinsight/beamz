@@ -8,6 +8,7 @@ from beamz.const import µm, EPS_0, MU_0
 from beamz.design.sources import ModeSource, GaussianSource
 from beamz.design.monitors import Monitor
 from beamz.design.helpers import get_si_scale_and_label
+from beamz.helpers import display_header, display_status, display_design_summary, tree_view, console
 import colorsys
 
 class Design:
@@ -22,8 +23,10 @@ class Design:
         self.depth = depth
         self.border_color = border_color
         self.time = 0
+        self.is_3d = False if depth is None else True
         if auto_pml: self.init_boundaries(pml_size)
-
+        display_status(f"Created design with size: {self.width:.2e} x {self.height:.2e} m")
+        
     def add(self, structure):
         """Add structures on top of the design."""
         if isinstance(structure, ModeSource):
@@ -37,16 +40,21 @@ class Design:
             self.structures.append(structure)
         else:
             self.structures.append(structure)
-        if hasattr(structure, 'z') or hasattr(structure, 'depth'): self.is_3d = True
+        
+        # Check for 3D structures
+        if hasattr(structure, 'z') or hasattr(structure, 'depth'):
+            self.is_3d = True
 
     def scatter(self, structure, n=1000, xyrange=(-5*µm, 5*µm), scale_range=(0.05, 1)):
         """Randomly distribute a given object over the design domain."""
+        display_status(f"Scattering {n} instances of {structure.__class__.__name__}", "info")
         for _ in range(n):
             new_structure = structure.copy()
             new_structure.shift(random.uniform(xyrange[0], xyrange[1]), random.uniform(xyrange[0], xyrange[1]))
             new_structure.rotate(random.uniform(0, 360))
             new_structure.scale(random.uniform(scale_range[0], scale_range[1]))
             self.add(new_structure)
+        display_status(f"Completed scattering {n} structures", "success")
 
     def init_boundaries(self, pml_size=None):
         """Add boundary conditions to the design area (using PML)."""
@@ -66,19 +74,23 @@ class Design:
             # Use a heuristic to set PML size based on domain dimensions and wavelength
             # At least 1 wavelength and at most 20% of the domain size
             pml_size = max(min_size, min(max_size, min(self.width, self.height) / 5))
-            print(f"Auto-selected PML size: {pml_size:.2e} m (~{pml_size/wavelength_estimate:.1f} wavelengths)")
+            display_status(f"Auto-selected PML size: {pml_size:.2e} m (~{pml_size/wavelength_estimate:.1f} wavelengths)", "info")
+        
         # Create transparent material for PML outlines
         pml_material = Material(permittivity=1.0, permeability=1.0, conductivity=0.0)
+        
         # Edges of the design domain - create functional PML boundaries
         self.boundaries.append(RectPML(position=(0, 0), width=pml_size, height=self.height, orientation="left"))
         self.boundaries.append(RectPML(position=(self.width - pml_size, 0), width=pml_size, height=self.height, orientation="right"))
         self.boundaries.append(RectPML(position=(0, self.height - pml_size), width=self.width, height=pml_size, orientation="top"))
         self.boundaries.append(RectPML(position=(0, 0), width=self.width, height=pml_size, orientation="bot"))
+        
         # Corners of the design domain - create functional PML boundaries
         self.boundaries.append(CircularPML(position=(0, 0), radius=pml_size, orientation="top-left"))
         self.boundaries.append(CircularPML(position=(self.width, 0), radius=pml_size, orientation="top-right"))
         self.boundaries.append(CircularPML(position=(0, self.height), radius=pml_size, orientation="bottom-left"))
         self.boundaries.append(CircularPML(position=(self.width, self.height), radius=pml_size, orientation="bottom-right"))
+        
         # Add visual representations of PML regions to the structures list
         # Left PML region
         left_pml = Rectangle(
@@ -120,33 +132,37 @@ class Design:
             is_pml=True
         )
         self.structures.append(top_pml)
-
+        
     def show(self):
         """Display the design visually."""
-        if not self.structures: print("No structures to display"); return
         # Determine appropriate SI unit and scale
         max_dim = max(self.width, self.height)
         scale, unit = get_si_scale_and_label(max_dim)
-        print("Showing 2D design...")
+
         # Calculate figure size based on domain dimensions
         aspect_ratio = self.width / self.height
         base_size = 5
         if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
         else: figsize = (base_size, base_size / aspect_ratio)
+        
         # Create a single figure for all structures
         fig, ax = plt.subplots(figsize=figsize)
         ax.set_aspect('equal')
+        
         # Now plot each structure
         for structure in self.structures: structure.add_to_plot(ax)
+        
         # Set proper limits, title and label, and ensure the full design is visible
         ax.set_title('Design Layout')
         ax.set_xlabel(f'X ({unit})')
         ax.set_ylabel(f'Y ({unit})')
         ax.set_xlim(0, self.width)
         ax.set_ylim(0, self.height)
+        
         # Update tick labels with scaled values
         ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
         ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+        
         # Adjust layout for clean appearance
         plt.tight_layout()
         plt.show()
@@ -223,6 +239,70 @@ class Design:
                             inside = not inside
             p1x, p1y = p2x, p2y
         return inside
+
+    def get_tree_view(self):
+        """Return a structured view of the design as a tree"""
+        design_data = {
+            "Properties": {
+                "Width": self.width,
+                "Height": self.height,
+                "Depth": self.depth,
+                "Dimension": "3D" if self.is_3d else "2D"
+            },
+            "Structures": {},
+            "Sources": {},
+            "Monitors": {}
+        }
+        
+        # Add structure data
+        for idx, structure in enumerate(self.structures):
+            if isinstance(structure, ModeSource) or isinstance(structure, GaussianSource) or isinstance(structure, Monitor):
+                continue
+                
+            struct_type = structure.__class__.__name__
+            if struct_type not in design_data["Structures"]:
+                design_data["Structures"][struct_type] = []
+                
+            struct_info = {"position": getattr(structure, "position", None)}
+            if hasattr(structure, "material"):
+                mat = structure.material
+                struct_info["material"] = {
+                    "permittivity": getattr(mat, "permittivity", None),
+                    "permeability": getattr(mat, "permeability", None),
+                    "conductivity": getattr(mat, "conductivity", None)
+                }
+            design_data["Structures"][struct_type].append(struct_info)
+        
+        # Add source data
+        for idx, source in enumerate(self.sources):
+            source_type = source.__class__.__name__
+            if source_type not in design_data["Sources"]:
+                design_data["Sources"][source_type] = []
+            
+            source_info = {
+                "position": source.position,
+                "wavelength": getattr(source, "wavelength", None)
+            }
+            design_data["Sources"][source_type].append(source_info)
+        
+        # Add monitor data
+        for idx, monitor in enumerate(self.monitors):
+            monitor_type = monitor.__class__.__name__
+            if monitor_type not in design_data["Monitors"]:
+                design_data["Monitors"][monitor_type] = []
+            
+            monitor_info = {
+                "position": monitor.position,
+                "size": getattr(monitor, "size", None)
+            }
+            design_data["Monitors"][monitor_type].append(monitor_info)
+            
+        return design_data
+        
+    def display_tree(self):
+        """Display the design as a hierarchical tree"""
+        design_data = self.get_tree_view()
+        tree_view(design_data, "Design Structure")
 
 class Polygon:
     def __init__(self, vertices=None, material=None, color=None, optimize=False):

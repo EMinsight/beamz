@@ -19,5 +19,18 @@ from beamz.design.signals import ramped_cosine
 from beamz.simulation.meshing import RegularGrid
 from beamz.simulation.fdtd import FDTD
 
+# Import optimization-related classes
+from beamz.optimization.adjoint import (
+    AdjointOptimizer, ShapeOptimizer, MaterialOptimizer
+)
+
+# Import UI helpers
+from beamz.helpers import (
+    display_header, display_status, create_rich_progress,
+    display_parameters, display_results, display_design_summary,
+    display_simulation_status, display_optimization_progress,
+    display_time_elapsed, tree_view, code_preview
+)
+
 # Version information
 __version__ = "0.1.0"
