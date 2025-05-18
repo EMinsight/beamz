@@ -314,19 +314,9 @@ class Polygon:
         self.vertices = vertices
         self.material = material
         self.optimize = optimize
-        self.color = color if color is not None else self.__get_random_color_consistent__()
+        self.color = color if color is not None else self.get_random_color_consistent()
     
-    def get_bounding_box(self):
-        """Get the bounding box of the polygon. This is needed for fast meshing!"""
-        if self.vertices:
-            min_x = min(v[0] for v in self.vertices)
-            min_y = min(v[1] for v in self.vertices)
-            max_x = max(v[0] for v in self.vertices)
-            max_y = max(v[1] for v in self.vertices)
-            return min_x, min_y, max_x, max_y
-        return None
-
-    def __get_random_color_consistent__(self, saturation=0.6, value=0.7):
+    def get_random_color_consistent(self, saturation=0.6, value=0.7):
         """Generate a random color with consistent perceived brightness and saturation."""
         hue = random.random() # Generate random hue (0-1)
         r, g, b = colorsys.hsv_to_rgb(hue, saturation, value)
@@ -381,6 +371,46 @@ class Polygon:
 
     def copy(self):
         return Polygon(self.vertices, self.material)
+        
+    def get_bounding_box(self):
+        """Get the bounding box of the polygon as (min_x, min_y, max_x, max_y)"""
+        if not self.vertices or len(self.vertices) == 0:
+            return (0, 0, 0, 0)
+        
+        # Extract x and y coordinates
+        x_coords = [v[0] for v in self.vertices]
+        y_coords = [v[1] for v in self.vertices]
+        
+        # Calculate min and max
+        min_x = min(x_coords)
+        min_y = min(y_coords)
+        max_x = max(x_coords)
+        max_y = max(y_coords)
+        
+        return (min_x, min_y, max_x, max_y)
+        
+    def _point_in_polygon(self, x, y, vertices=None):
+        """Check if a point (x,y) is inside this polygon.
+        
+        Uses the ray-casting algorithm.
+        """
+        if vertices is None:
+            vertices = self.vertices
+            
+        n = len(vertices)
+        inside = False
+        p1x, p1y = vertices[0]
+        for i in range(n + 1):
+            p2x, p2y = vertices[i % n]
+            if y > min(p1y, p2y):
+                if y <= max(p1y, p2y):
+                    if x <= max(p1x, p2x):
+                        if p1y != p2y:
+                            xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                        if p1x == p2x or x <= xinters:
+                            inside = not inside
+            p1x, p1y = p2x, p2y
+        return inside
 
 class Rectangle(Polygon):
     def __init__(self, position=(0,0), width=1, height=1, material=None, color=None, is_pml=False, optimize=False):
@@ -395,6 +425,16 @@ class Rectangle(Polygon):
         self.width = width
         self.height = height
         self.is_pml = is_pml
+        
+    def get_bounding_box(self):
+        """Get the axis-aligned bounding box for this rectangle."""
+        # For non-rotated rectangles, this is straightforward
+        if not hasattr(self, 'vertices') or len(self.vertices) == 0:
+            x, y = self.position
+            return (x, y, x + self.width, y + self.height)
+        
+        # For potentially rotated rectangles, use the vertices
+        return super().get_bounding_box()
 
     def shift(self, x, y):
         """Shift the rectangle by (x,y) and return self for method chaining."""
