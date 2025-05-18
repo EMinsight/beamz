@@ -804,51 +804,34 @@ class PML:
         self.polynomial_order = polynomial_order  # Reduced to allow smoother transition
         self.sigma_factor = sigma_factor  # Reduced to allow waves to enter
         self.alpha_max = alpha_max  # Reduced frequency-shifting for smoother transition
-        
-        if region_type == "rect":
-            self.width, self.height = size
-        else:  # corner
-            self.radius = size
+        if region_type == "rect": self.width, self.height = size
+        else: self.radius = size
+
+    def add_to_plot(self, ax, facecolor=None, edgecolor="black", alpha=None, linestyle=None):
+        if facecolor is None: facecolor = self.color
+        if alpha is None: alpha = 1
+        if linestyle is None: linestyle = '--'
+        # Create a rectangle or circle patch
+        if self.region_type == "rect":
+            rect_patch = Rectangle(self.position, self.width, self.height, facecolor=facecolor, alpha=alpha, edgecolor=edgecolor, linestyle=linestyle)
     
     def get_profile(self, normalized_distance):
-        """Calculate PML absorption profile using gradual grading.
-        
-        Args:
-            normalized_distance: Distance from PML inner boundary (0.0) to outer boundary (1.0)
-            
-        Returns:
-            Tuple of (sigma, alpha) values for conductivity and frequency-shifting
-        """
+        """Calculate PML absorption profile using gradual grading."""
         # Ensure distance is within [0,1]
         d = min(max(normalized_distance, 0.0), 1.0)
-        
         # Create a smooth transition from 0 at the interface
         # Start with nearly zero conductivity at the interface and gradually increase
         # This is crucial to prevent reflection at the boundary
-        if d < 0.05:
-            # Very gentle start at the boundary (nearly zero)
-            sigma = 0.01 * (d/0.05)**2
-        else:
-            # Smooth polynomial grading for the rest
-            sigma = ((d - 0.05) / 0.95)**self.polynomial_order
-        
+        # Very gentle start at the boundary (nearly zero)
+        # Smooth polynomial grading for the rest
+        if d < 0.05: sigma = 0.01 * (d/0.05)**2
+        else: sigma = ((d - 0.05) / 0.95)**self.polynomial_order
         # Smooth frequency-shifting profile
         alpha = self.alpha_max * d**2  # Quadratic profile for smooth transition
-        
         return sigma, alpha
     
     def get_conductivity(self, x, y, dx=None, dt=None, eps_avg=None):
-        """Calculate PML conductivity at a point using smooth-transition PML.
-        
-        Args:
-            x, y: Position to evaluate
-            dx: Grid cell size
-            dt: Time step size
-            eps_avg: Average permittivity
-            
-        Returns:
-            Conductivity value at the point
-        """
+        """Calculate PML conductivity at a point using smooth-transition PML."""
         # Calculate theoretical optimal conductivity based on impedance matching
         if dx is not None and eps_avg is not None:
             # Calculate impedance 
@@ -857,8 +840,7 @@ class PML:
             # Reduced from 1.2 to 0.8 for smoother transition
             sigma_max = 0.8 / (eta * dx)
             sigma_max *= self.sigma_factor  # Apply gentler factor
-        else:
-            sigma_max = 1.0  # Lower default conductivity
+        else: sigma_max = 1.0  # Lower default conductivity
         
         # Get normalized distance based on region type and orientation
         if self.region_type == "rect":
@@ -866,56 +848,35 @@ class PML:
             if not (self.position[0] <= x <= self.position[0] + self.width and
                     self.position[1] <= y <= self.position[1] + self.height):
                 return 0.0
-                
             # Calculate normalized distance from boundary based on orientation
             # Distance should be 0 at inner boundary and 1 at outer boundary
-            if self.orientation == "left":
-                # For left PML, x=position[0]+width is inner (0), x=position[0] is outer (1)
-                distance = 1.0 - (x - self.position[0]) / self.width
-            elif self.orientation == "right":
-                # For right PML, x=position[0] is inner (0), x=position[0]+width is outer (1)
-                distance = (x - self.position[0]) / self.width
-            elif self.orientation == "top":
-                # For top PML, y=position[1] is inner (0), y=position[1]+height is outer (1)
-                distance = (y - self.position[1]) / self.height
-            elif self.orientation == "bottom":
-                # For bottom PML, y=position[1]+height is inner (0), y=position[1] is outer (1)
-                distance = 1.0 - (y - self.position[1]) / self.height
-            else:
-                return 0.0
+            if self.orientation == "left": distance = 1.0 - (x - self.position[0]) / self.width
+            elif self.orientation == "right": distance = (x - self.position[0]) / self.width
+            elif self.orientation == "top": distance = (y - self.position[1]) / self.height
+            elif self.orientation == "bottom": distance = 1.0 - (y - self.position[1]) / self.height
+            else: return 0.0
         
-        else:  # corner PML
+        else: # corner PML
             # Calculate distance from corner to point
             distance_from_corner = np.hypot(x - self.position[0], y - self.position[1])
             # Outside the PML region
-            if distance_from_corner > self.radius:
-                return 0.0
-                
+            if distance_from_corner > self.radius: return 0.0
             # Check if in correct quadrant
             dx_from_corner = x - self.position[0]
             dy_from_corner = y - self.position[1]
-            
-            if self.orientation == "top-left" and (dx_from_corner > 0 or dy_from_corner < 0):
-                return 0.0
-            elif self.orientation == "top-right" and (dx_from_corner < 0 or dy_from_corner < 0):
-                return 0.0
-            elif self.orientation == "bottom-left" and (dx_from_corner > 0 or dy_from_corner > 0):
-                return 0.0
-            elif self.orientation == "bottom-right" and (dx_from_corner < 0 or dy_from_corner > 0):
-                return 0.0
-                
+            if self.orientation == "top-left" and (dx_from_corner > 0 or dy_from_corner < 0): return 0.0
+            elif self.orientation == "top-right" and (dx_from_corner < 0 or dy_from_corner < 0): return 0.0
+            elif self.orientation == "bottom-left" and (dx_from_corner > 0 or dy_from_corner > 0): return 0.0
+            elif self.orientation == "bottom-right" and (dx_from_corner < 0 or dy_from_corner > 0): return 0.0
             # Normalize distance (0 at inner edge, 1 at corner)
             distance = distance_from_corner / self.radius
         
         # Get optimized profile values
         sigma_profile, alpha_profile = self.get_profile(distance)
-        
         # Apply stretched-coordinate PML with gradual absorption
         conductivity = sigma_max * sigma_profile
-        
         # The material-dependent scaling might have been causing excessive reflection
         # We'll use a gentler approach that smoothly transitions at the boundary
-        
         if dt is not None:
             # Apply frequency-shifting with reduced effect near boundary
             frequency_factor = 1.0 / (1.0 + alpha_profile)

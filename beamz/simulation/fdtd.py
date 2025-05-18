@@ -143,6 +143,7 @@ class FDTD:
             self.fig.canvas.draw_idle()
             self.fig.canvas.flush_events()
             return
+
         # Get current field data
         current_field = field_data
         # Calculate figure size based on grid dimensions

@@ -4,8 +4,6 @@ code: Quentin Wach
 """
 from beamz import *
 import numpy as np
-from beamz.helpers import calc_optimal_fdtd_params
-from beamz.design.signals import plot_signal
 
 # Parameters
 WL = 1.55*µm
