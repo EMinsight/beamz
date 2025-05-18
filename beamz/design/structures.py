@@ -46,6 +46,128 @@ class Design:
         """Implement += operator for adding structures."""
         self.add(structure)
         return self
+    
+    def unify_polygons(self):
+        """If polygons are the same material and overlap spatially, unify them into a single, simplified polygon."""
+        try:
+            from shapely.geometry import Polygon as ShapelyPolygon
+            from shapely.ops import unary_union
+        except ImportError:
+            display_status("Shapely library is required for polygon unification. Please install with: pip install shapely", "error")
+            return False
+            
+        # Group structures by material properties
+        material_groups = {}
+        non_polygon_structures = []
+        
+        # Track which structures to remove later
+        structures_to_remove = []
+        
+        # First pass: group polygons by material
+        for structure in self.structures:
+            # Skip PML visualizations, sources, monitors
+            if hasattr(structure, 'is_pml') and structure.is_pml:
+                non_polygon_structures.append(structure)
+                continue
+            if isinstance(structure, ModeSource) or isinstance(structure, GaussianSource) or isinstance(structure, Monitor):
+                non_polygon_structures.append(structure)
+                continue
+                
+            # Only process polygon-like structures with vertices
+            if not hasattr(structure, 'vertices') or not hasattr(structure, 'material'):
+                non_polygon_structures.append(structure)
+                continue
+                
+            # Create a material key based on material properties
+            material = structure.material
+            if not material:
+                non_polygon_structures.append(structure)
+                continue
+                
+            material_key = (
+                getattr(material, 'permittivity', None),
+                getattr(material, 'permeability', None),
+                getattr(material, 'conductivity', None)
+            )
+            
+            # Add to the appropriate group
+            if material_key not in material_groups:
+                material_groups[material_key] = []
+            
+            # Convert to Shapely polygon
+            try:
+                shapely_polygon = ShapelyPolygon(structure.vertices)
+                if shapely_polygon.is_valid:
+                    material_groups[material_key].append((structure, shapely_polygon))
+                    structures_to_remove.append(structure)
+                else:
+                    display_status(f"Skipping invalid polygon: {structure}", "warning")
+                    non_polygon_structures.append(structure)
+            except Exception as e:
+                display_status(f"Error converting structure to Shapely polygon: {e}", "warning")
+                non_polygon_structures.append(structure)
+        
+        # Second pass: unify polygons within each material group
+        new_structures = []
+        for material_key, structure_group in material_groups.items():
+            if len(structure_group) <= 1:
+                # Only one structure with this material, no merging needed
+                new_structures.extend([s[0] for s in structure_group])
+                for s in structure_group:
+                    if s[0] in structures_to_remove:
+                        structures_to_remove.remove(s[0])
+                continue
+                
+            # Extract shapely polygons for merging
+            shapely_polygons = [p[1] for p in structure_group]
+            
+            # Get the material from the first structure in the group
+            material = structure_group[0][0].material
+            
+            try:
+                # Unify the polygons
+                merged = unary_union(shapely_polygons)
+                
+                # The result could be a single polygon or a multipolygon
+                if merged.geom_type == 'Polygon':
+                    # Create a new polygon with the merged vertices
+                    vertices = list(merged.exterior.coords[:-1])  # Exclude the last point which repeats the first
+                    new_poly = Polygon(vertices=vertices, material=material)
+                    new_structures.append(new_poly)
+                    display_status(f"Unified {len(structure_group)} polygons with permittivity={material_key[0]}", "success")
+                elif merged.geom_type == 'MultiPolygon':
+                    # Create multiple polygons if the merger resulted in separate shapes
+                    for geom in merged.geoms:
+                        vertices = list(geom.exterior.coords[:-1])
+                        new_poly = Polygon(vertices=vertices, material=material)
+                        new_structures.append(new_poly)
+                    display_status(f"Unified into {len(merged.geoms)} separate polygons with permittivity={material_key[0]}", "success")
+                else:
+                    # If the result is something unexpected, keep the original structures
+                    display_status(f"Unexpected geometry type: {merged.geom_type}, keeping original structures", "warning")
+                    new_structures.extend([s[0] for s in structure_group])
+                    for s in structure_group:
+                        if s[0] in structures_to_remove:
+                            structures_to_remove.remove(s[0])
+            except Exception as e:
+                display_status(f"Error unifying polygons: {e}", "error")
+                # Keep original structures if unification fails
+                new_structures.extend([s[0] for s in structure_group])
+                for s in structure_group:
+                    if s[0] in structures_to_remove:
+                        structures_to_remove.remove(s[0])
+        
+        # Remove the structures that were unified
+        for structure in structures_to_remove:
+            if structure in self.structures:
+                self.structures.remove(structure)
+        
+        # Add the unified structures and non-polygon structures back
+        self.structures.extend(new_structures)
+        
+        # Final report
+        display_status(f"Polygon unification complete: {len(structures_to_remove)} structures merged into {len(new_structures)} unified shapes", "success")
+        return True
 
     def scatter(self, structure, n=1000, xyrange=(-5*µm, 5*µm), scale_range=(0.05, 1)):
         """Randomly distribute a given object over the design domain."""
@@ -133,7 +255,7 @@ class Design:
         )
         self.structures.append(top_pml)
 
-    def show(self):
+    def show(self, unify_structures=True):
         """Display the design visually."""
         # Determine appropriate SI unit and scale
         max_dim = max(self.width, self.height)
@@ -144,7 +266,10 @@ class Design:
         base_size = 5
         if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
         else: figsize = (base_size, base_size / aspect_ratio)
-        
+
+        # Do we want to show the indiviudal structures or a unified shape?
+        if unify_structures: self.unify_polygons()
+
         # Create a single figure for all structures
         fig, ax = plt.subplots(figsize=figsize)
         ax.set_aspect('equal')
