@@ -10,11 +10,10 @@ from matplotlib.path import Path
 from matplotlib.animation import FuncAnimation
 from beamz.simulation.backends import get_backend
 from beamz.helpers import (
-    progress_bar, display_header, display_status, create_rich_progress, 
+    display_header, display_status, create_rich_progress, 
     display_parameters, display_results, display_simulation_status, 
-    display_time_elapsed, console
+    display_time_elapsed
 )
-import sys
 import datetime
 
 class FDTD:

@@ -10,7 +10,7 @@ design.add(CircularBend(position=(1.2*µm, 1.2*µm), inner_radius=1.8*µm, outer
 design.add(Rectangle(position=(3*µm, 0*µm), width=0.9*µm, height=1.2*µm, material=Material(4)))
 
 signal = ramped_cosine(T, amplitude=1.0, frequency=LIGHT_SPEED/WL, phase=0, ramp_duration=TIME/3, t_max=TIME)
-design.add(ModeSource(design=design, start=(0.5*µm, 2.7*µm), end=(0.5*µm, 4.1*µm), wavelength=WL, signal=signal))
+design.add(ModeSource(design=design, start=(0.5*µm, 2.5*µm), end=(0.5*µm, 3.9*µm+0.5*µm), wavelength=WL, signal=signal))
 design.show()
 
 sim = FDTD(design=design, time=T, mesh="regular", resolution=WL/20)
