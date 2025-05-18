@@ -11,6 +11,13 @@ from rich.syntax import Syntax
 import numpy as np
 from beamz.const import LIGHT_SPEED
 
+def get_si_scale_and_label(value):
+    """Convert a value to appropriate SI unit and return scale factor and label."""
+    if value >= 1e-3: return 1e3, 'mm'
+    elif value >= 1e-6: return 1e6, 'µm'
+    elif value >= 1e-9: return 1e9, 'nm'
+    else: return 1e12, 'pm'
+
 def check_fdtd_stability(dt, dx, dy=None, dz=None, n_max=1.0, safety_factor=0.95):
     """
     Check FDTD stability with the Courant-Friedrichs-Lewy (CFL) condition.

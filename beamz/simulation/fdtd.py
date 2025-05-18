@@ -15,6 +15,7 @@ from beamz.helpers import (
     display_time_elapsed
 )
 import datetime
+from beamz.helpers import get_si_scale_and_label
 
 class FDTD:
     """FDTD simulation class."""
@@ -72,43 +73,31 @@ class FDTD:
 
     def plot_field(self, field: str = "Ez", t: float = None) -> None:
         """Plot a field at a given time with proper scaling and units."""
-        # Handle the case where we're plotting current state (not from results)
         if len(self.results['t']) == 0:
-            current_field = getattr(self, field)  # Get current field state
+            current_field = getattr(self, field)
             current_t = self.t
-            print(f"Plotting current field state at t = {current_t:.2e} s")
         else:
-            if t is None: t = self.results['t'][-1]
-            # Find closest time step
             t_idx = np.argmin(np.abs(np.array(self.results['t']) - t))
             current_field = self.results[field][t_idx]
             current_t = self.results['t'][t_idx]
-            print(f"Plotting saved field at t = {current_t:.2e} s (index {t_idx})")
         # Determine appropriate SI unit and scale for spatial dimensions
-        max_dim = max(self.design.width, self.design.height)
-        if max_dim >= 1e-3: scale, unit = 1e3, 'mm'
-        elif max_dim >= 1e-6: scale, unit = 1e6, 'µm'
-        elif max_dim >= 1e-9: scale, unit = 1e9, 'nm'
-        else: scale, unit = 1e12, 'pm'
+        scale, unit = get_si_scale_and_label(max(self.design.width, self.design.height))
         # Calculate figure size based on grid dimensions
         grid_height, grid_width = current_field.shape
         aspect_ratio = grid_width / grid_height
         base_size = 6  # Base size for the smaller dimension
         if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
         else: figsize = (base_size, base_size / aspect_ratio)
-        # Create the figure
+        # Create the figure with the added structure outlines
         plt.figure(figsize=figsize)
         plt.imshow(current_field, origin='lower', 
                   extent=(0, self.design.width, 0, self.design.height),
                   cmap='RdBu', aspect='equal', interpolation='bicubic')
         plt.colorbar(label=f'{field} Field Amplitude')
         plt.title(f'{field} Field at t = {current_t:.2e} s')
-        plt.xlabel(f'X ({unit})')
-        plt.ylabel(f'Y ({unit})')
-        # Update tick labels with scaled values
+        plt.xlabel(f'X ({unit})'); plt.ylabel(f'Y ({unit})')
         plt.gca().xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
         plt.gca().yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-        # Create an overlay of the design outlines
         for structure in self.design.structures:
             structure.add_to_plot(plt.gca(), facecolor="none", edgecolor="black", linestyle="-")
         plt.tight_layout()
@@ -182,7 +171,6 @@ class FDTD:
         """
         # Record start time
         self.start_time = datetime.datetime.now()
-        
         # Initialize simulation state
         self.t = 0
         self._total_steps = self.num_steps
@@ -194,8 +182,6 @@ class FDTD:
         # Display simulation header and parameters
         display_header("FDTD Simulation Started", f"Grid size: {self.nx}x{self.ny}, dt: {self.dt:.2e}s")
         display_status(f"Running simulation for {self.num_steps} steps...")
-        
-        # Display simulation parameters
         sim_params = {
             "Domain size": f"{self.design.width:.2e} x {self.design.height:.2e} m",
             "Resolution": f"{self.resolution:.2e} m",
@@ -210,23 +196,12 @@ class FDTD:
         
         # Check stability using the helper function
         from beamz.helpers import check_fdtd_stability
-        
-        # Get maximum refractive index from the grid
         n_max = np.sqrt(np.max(self.epsilon_r))
-        
-        # Check stability with default safety factor
-        is_stable, courant, safe_limit = check_fdtd_stability(
-            dt=self.dt, 
-            dx=self.dx, 
-            dy=self.dy, 
-            n_max=n_max
-        )
-        
+        is_stable, courant, safe_limit = check_fdtd_stability(dt=self.dt, dx=self.dx, dy=self.dy, n_max=n_max)
         if not is_stable:
             display_status(f"Simulation may be unstable! Courant number = {courant:.3f} > {safe_limit:.3f}", "warning")
             display_status("Consider reducing dt or increasing dx/dy", "warning")
-        else:
-            display_status(f"Stability check passed (Courant number = {courant:.3f} / {safe_limit:.3f})", "success")
+        else: display_status(f"Stability check passed (Courant number = {courant:.3f} / {safe_limit:.3f})", "success")
         
         # Set up power accumulation if requested
         if accumulate_power:
@@ -239,42 +214,24 @@ class FDTD:
         if is_gpu_backend and save:
             save_freq = max(10, self.num_steps // 100)  # Save approximately every 1% of steps or min of 10 steps
             display_status(f"GPU backend detected: Optimizing result storage (saving every {save_freq} steps)", "info")
-        else: 
-            save_freq = 1  # Save every step for CPU backends
+        else: save_freq = 1  # Save every step for CPU backends
             
         # Apply additional decimation based on user setting
         effective_save_freq = save_freq * decimate_save
         
         # If in save_memory_mode, clear any existing results to start fresh
-        if save_memory_mode:
-            for field in self.results:
-                if field != 't':  # Keep time array
-                    self.results[field] = []
+        if save_memory_mode: 
+            for field in self.results: 
+                if field != 't': self.results[field] = []
             display_status("Memory-saving mode active: Only storing monitor data and/or power accumulation", "info")
-            
-        # For live visualization with GPU backends, don't update too frequently
-        if is_gpu_backend and live:
-            live_update_freq = max(5, self.num_steps // 50)  # Update visualization approximately every 2% of steps
-            display_status(f"GPU backend detected: Optimizing visualization (updating every {live_update_freq} steps)", "info")
-        else:
-            live_update_freq = 5  # Update visualization every 5 steps for CPU backends
-            
-        # Run simulation
-        # Using progress bar from rich instead of the simple one
-        #display_status("Running simulation...", "info")
         
         # Use a single progress bar for the entire simulation
         with create_rich_progress() as progress:
             # Create a task that will be updated throughout the simulation
-            task = progress.add_task("Running simulation...", total=self.num_steps)
-            
-            # Track if we've displayed metrics
-            displayed_metrics = False
-            
+            task = progress.add_task("Running simulation...", total=self.num_steps)            
             for step in range(self.num_steps):
                 # Update fields
                 self.simulate_step()
-                
                 # Apply sources
                 for source in self.sources:
                     if isinstance(source, ModeSource):
@@ -370,22 +327,12 @@ class FDTD:
                     if 'Hy' in save_fields: self.results['Hy'].append(self.backend.to_numpy(self.backend.copy(self.Hy)))
                 
                 # Show live animation if requested and at the right frequency
-                if live and (step % live_update_freq == 0 or step == self.num_steps - 1):
-                    # Convert to numpy for visualization
+                if live and (step % 1 == 0 or step == self.num_steps - 1):
                     Ez_np = self.backend.to_numpy(self.Ez)
                     self.animate_live(field_data=Ez_np, field="Ez", axis_scale=axis_scale)
-                    
-                    # Update the progress bar description with metrics
-                    if step % max(1, self.num_steps // 10) == 0:
-                        progress_pct = 100 * (step+1) / self.num_steps
-                        max_ez = np.max(np.abs(Ez_np))
-                        # Update the task description with current metrics
-                        progress.update(task, description=f"Step {step+1}/{self.num_steps} | Time {self.t:.2e} s | Max Ez {max_ez:.3e}")
-                
-                # Update time
+
+                # Update time & progress
                 self.t += self.dt
-                
-                # Update progress
                 progress.update(task, advance=1)
                 
         # Clean up animation

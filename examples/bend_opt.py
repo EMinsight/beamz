@@ -16,8 +16,8 @@ DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE, N_CLAD), dims=2)
 # Setup the design with sources, monitors, and a design region
 design = Design(width=X, height=Y, material=Material(N_CLAD**2), pml_size=WL)
 # Define waveguide input and output
-design.add(Rectangle(position=(0, 4*µm-WG_WIDTH/2), width=4*µm, height=WG_WIDTH, material=Material(N_CORE**2)))
-design.add(Rectangle(position=(4*µm-WG_WIDTH/2, 0), width=WG_WIDTH, height=4*µm, material=Material(N_CORE**2)))
+design += Rectangle(position=(0, 4*µm-WG_WIDTH/2), width=4*µm, height=WG_WIDTH, material=Material(N_CORE**2))
+design += Rectangle(position=(4*µm-WG_WIDTH/2, 0), width=WG_WIDTH, height=4*µm, material=Material(N_CORE**2))
 
 # Define design region with variable material for optimization
 #design_region = Rectangle(position=(1.2*µm, 1.2*µm), width=6*µm, height=6*µm)
@@ -42,18 +42,14 @@ design.show()
 
 # Setup the FDTD simulation
 sim = FDTD(design=design, time=time_steps, mesh="regular", resolution=DX)
-sim.run(live=True, save_memory_mode=True, accumulate_power=True)
+sim.run(live=False, save_memory_mode=True, accumulate_power=True)
 
 # Show powertotal over domain
-sim.plot_power(db_colorbar=True)
+#sim.plot_power(db_colorbar=True)
 
 import matplotlib.pyplot as plt
 print("Power:", monitor.power_accumulated)
-print("Ez:", monitor.fields['Ez'])
-plt.plot(monitor.fields['t'], sum(monitor.fields['Ez']))
-#plt.plot(np.arange(len(monitor.fields['Ez'])), monitor.fields['Ez'])
-plt.show()
-
+print("Ez:", monitor.fields)
 
 # Define objective function for optimization
 def objective(sim_result):

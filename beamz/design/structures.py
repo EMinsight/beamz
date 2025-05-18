@@ -28,7 +28,7 @@ class Design:
         display_status(f"Created design with size: {self.width:.2e} x {self.height:.2e} m")
         
     def add(self, structure):
-        """Add structures on top of the design."""
+        """Core add function for adding structures on top of the design."""
         if isinstance(structure, ModeSource):
             self.sources.append(structure)
             self.structures.append(structure)
@@ -38,12 +38,14 @@ class Design:
         elif isinstance(structure, Monitor):
             self.monitors.append(structure)
             self.structures.append(structure)
-        else:
-            self.structures.append(structure)
-        
+        else: self.structures.append(structure)
         # Check for 3D structures
-        if hasattr(structure, 'z') or hasattr(structure, 'depth'):
-            self.is_3d = True
+        if hasattr(structure, 'z') or hasattr(structure, 'depth'): self.is_3d = True
+
+    def __iadd__(self, structure):
+        """Implement += operator for adding structures."""
+        self.add(structure)
+        return self
 
     def scatter(self, structure, n=1000, xyrange=(-5*µm, 5*µm), scale_range=(0.05, 1)):
         """Randomly distribute a given object over the design domain."""

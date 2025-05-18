@@ -27,7 +27,7 @@ from beamz.helpers import (
     display_header, display_status, create_rich_progress,
     display_parameters, display_results, display_design_summary,
     display_simulation_status, display_optimization_progress,
-    display_time_elapsed, tree_view, code_preview
+    display_time_elapsed, tree_view, code_preview, get_si_scale_and_label
 )
 
 # Version information
