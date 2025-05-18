@@ -3,7 +3,6 @@ from beamz.simulation.backends.base import Backend
 
 class NumPyBackend(Backend):
     """NumPy backend for FDTD computations."""
-    
     def __init__(self, **kwargs):
         """Initialize NumPy backend."""
         pass
@@ -29,16 +28,7 @@ class NumPyBackend(Backend):
         return array  # Already numpy array
     
     def roll(self, array, shift, axis=None):
-        """Roll array elements along a given axis.
-        
-        Args:
-            array: Array to roll
-            shift: Number of places by which elements are shifted
-            axis: Axis along which elements are shifted
-            
-        Returns:
-            Rolled array
-        """
+        """Roll array elements along a given axis."""
         return np.roll(array, shift, axis)
     
     def update_h_fields(self, Hx, Hy, Ez, sigma, dx, dy, dt, mu_0, eps_0):
