@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from beamz.helpers import display_status, create_rich_progress
 from beamz.helpers import get_si_scale_and_label
-from beamz.design.structures import Rectangle
+from beamz.design.structures import Rectangle, ModeSource
 
 class RegularGrid:
     """Takes in a design and resolution and returns a rasterized grid of that design."""
@@ -52,6 +52,10 @@ class RegularGrid:
             for structure in reversed(self.design.structures):
                 # Skip PML visualization structures
                 if hasattr(structure, 'is_pml') and structure.is_pml:
+                    progress.update(task, advance=1)
+                    continue
+                # Skip Mode Source structures
+                if isinstance(structure, ModeSource):
                     progress.update(task, advance=1)
                     continue
                     
@@ -152,7 +156,7 @@ class RegularGrid:
         
         # Process PML separately (only add conductivity)
         with create_rich_progress() as progress:
-            task = progress.add_task("Processing PML...", total=len(self.design.boundaries))
+            #task = progress.add_task("Processing PML...", total=len(self.design.boundaries))
             
             # Create a mask for PML regions to avoid checking all grid points
             pml_mask = np.zeros((grid_height, grid_width), dtype=bool)
@@ -192,11 +196,11 @@ class RegularGrid:
                     cropped_mask = circle_mask[mask_min_i:mask_max_i, mask_min_j:mask_max_j]
                     pml_mask[min_i:max_i, min_j:max_j] |= cropped_mask
                 
-                progress.update(task, advance=1)
+                #progress.update(task, advance=1)
             
             # Apply PML conductivity where needed
-            pml_task = progress.add_task("Applying PML conductivity...", 
-                                         total=np.sum(pml_mask))
+            #pml_task = progress.add_task("Applying PML conductivity...", 
+            #                             total=np.sum(pml_mask))
             
             # Only process cells within PML regions
             pml_indices = np.where(pml_mask)
@@ -216,24 +220,18 @@ class RegularGrid:
                         eps_avg=permittivity[i, j])
                 # Add PML conductivity to existing conductivity
                 conductivity[i, j] += pml_conductivity
-                progress.update(pml_task, advance=1)
+                #progress.update(pml_task, advance=1)
         
         # Make sure to assign the final arrays to the class instance variables
         self.permittivity = permittivity
         self.permeability = permeability
         self.conductivity = conductivity
         
-        # Log min/max values for debugging
-        print(f"Permittivity range: [{np.min(permittivity):.2f}, {np.max(permittivity):.2f}]")
-        print(f"Permeability range: [{np.min(permeability):.2f}, {np.max(permeability):.2f}]")
-        print(f"Conductivity range: [{np.min(conductivity):.2e}, {np.max(conductivity):.2e}]")
-
     def show(self, field: str = "permittivity"):
         """Display the rasterized grid with properly scaled SI units."""
         if field == "permittivity": grid = self.permittivity
         elif field == "permeability": grid = self.permeability
         elif field == "conductivity": grid = self.conductivity
-        print(f"Min: {np.min(grid):.3f}, Max: {np.max(grid):.3f}")
         if grid is not None:
             scale, unit = get_si_scale_and_label(max(self.design.width, self.design.height))
             # Calculate figure size based on grid dimensions

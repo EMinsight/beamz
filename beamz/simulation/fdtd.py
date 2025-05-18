@@ -34,9 +34,21 @@ class FDTD:
         self.backend = get_backend(name=backend, **backend_options)
         # Initialize the fields with the backend
         self.nx, self.ny = self.mesh.shape
-        self.Ez = self.backend.zeros((self.nx, self.ny))
+        
+        # Create complex fields in a backend-compatible way
+        try:
+            # Try with dtype parameter if supported
+            self.Ez = self.backend.zeros((self.nx, self.ny), dtype=np.complex128)
+        except TypeError:
+            # Fallback if dtype not supported - create real array and handle complex values in code
+            self.Ez = self.backend.zeros((self.nx, self.ny))
+            self.is_complex_backend = False
+        else:
+            self.is_complex_backend = True
+            
         self.Hx = self.backend.zeros((self.nx, self.ny-1))
         self.Hy = self.backend.zeros((self.nx-1, self.ny))
+        
         # Convert material properties to backend arrays
         self.epsilon_r = self.backend.from_numpy(self.epsilon_r)
         self.mu_r = self.backend.from_numpy(self.mu_r)
@@ -80,6 +92,18 @@ class FDTD:
             t_idx = np.argmin(np.abs(np.array(self.results['t']) - t))
             current_field = self.results[field][t_idx]
             current_t = self.results['t'][t_idx]
+            
+        # Convert to NumPy array if it's a backend array
+        if hasattr(current_field, 'device'):
+            current_field = self.backend.to_numpy(current_field)
+            
+        # Handle complex data - we'll display the real part for visualization
+        if np.iscomplexobj(current_field):
+            current_field = np.real(current_field)
+            field_label = f'Re({field})'
+        else:
+            field_label = field
+            
         # Determine appropriate SI unit and scale for spatial dimensions
         scale, unit = get_si_scale_and_label(max(self.design.width, self.design.height))
         # Calculate figure size based on grid dimensions
@@ -93,8 +117,8 @@ class FDTD:
         plt.imshow(current_field, origin='lower', 
                   extent=(0, self.design.width, 0, self.design.height),
                   cmap='RdBu', aspect='equal', interpolation='bicubic')
-        plt.colorbar(label=f'{field} Field Amplitude')
-        plt.title(f'{field} Field at t = {current_t:.2e} s')
+        plt.colorbar(label=f'{field_label} Field Amplitude')
+        plt.title(f'{field_label} Field at t = {current_t:.2e} s')
         plt.xlabel(f'X ({unit})'); plt.ylabel(f'Y ({unit})')
         plt.gca().xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
         plt.gca().yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
@@ -106,6 +130,11 @@ class FDTD:
     def animate_live(self, field_data=None, field="Ez", axis_scale=[-1,1]):
         """Animate the field in real time using matplotlib animation."""
         if field_data is None: field_data = self.backend.to_numpy(getattr(self, field))
+        
+        # Handle complex data - we'll display the real part for visualization
+        if np.iscomplexobj(field_data):
+            field_data = np.real(field_data)
+            
         # If animation already exists, just update the data
         if self.fig is not None and plt.fignum_exists(self.fig.number):
             current_field = field_data
@@ -180,8 +209,6 @@ class FDTD:
         self.accumulate_power = accumulate_power
         
         # Display simulation header and parameters
-        display_header("FDTD Simulation Started", f"Grid size: {self.nx}x{self.ny}, dt: {self.dt:.2e}s")
-        display_status(f"Running simulation for {self.num_steps} steps...")
         sim_params = {
             "Domain size": f"{self.design.width:.2e} x {self.design.height:.2e} m",
             "Resolution": f"{self.resolution:.2e} m",
@@ -190,7 +217,10 @@ class FDTD:
             "Total time": f"{self.time[-1]:.2e} s",
             "Backend": self.backend.__class__.__name__,
             "Save fields": ", ".join(save_fields),
-            "Memory-saving mode": "Enabled" if save_memory_mode else "Disabled"
+            "Memory-saving mode": "Enabled" if save_memory_mode else "Disabled",
+            "Accumulate power": "Enabled" if accumulate_power else "Disabled",
+            "Live animation": "Enabled" if live else "Disabled",
+            "Save animation": "Enabled" if save_animation else "Disabled"
         }
         display_parameters(sim_params, "Simulation Parameters")
         
@@ -247,8 +277,20 @@ class FDTD:
                             y = int(round(y_raw / self.dy))
                             # Skip points outside the grid
                             if x < 0 or x >= self.nx or y < 0 or y >= self.ny: continue
-                            # Add the source contribution to the field (don't overwrite!)
-                            self.Ez[y, x] += amplitude * modulation 
+                            
+                            # Add the source contribution to the field (handling complex values)
+                            # This handles both complex-enabled and real-only backends
+                            if hasattr(self, 'is_complex_backend') and not self.is_complex_backend:
+                                # For backends that don't support complex numbers, we need to extract real part
+                                if isinstance(amplitude * modulation, complex):
+                                    # Only use real part for backends that don't support complex
+                                    self.Ez[y, x] += np.real(amplitude * modulation)
+                                else:
+                                    self.Ez[y, x] += amplitude * modulation
+                            else:
+                                # Backend supports complex values or we're using default handling
+                                self.Ez[y, x] += amplitude * modulation
+                                
                             # Apply direction to the source
                             if source.direction == "+x": self.Ez[y, x-1] = 0
                             elif source.direction == "-x": self.Ez[y, x+1] = 0
@@ -303,16 +345,58 @@ class FDTD:
                     Ez_np = self.backend.to_numpy(self.Ez)
                     Hx_np = self.backend.to_numpy(self.Hx)
                     Hy_np = self.backend.to_numpy(self.Hy)
+                    
+                    # Check if any field is complex
+                    is_complex = np.iscomplexobj(Ez_np) or np.iscomplexobj(Hx_np) or np.iscomplexobj(Hy_np)
+                    
+                    # Handle complex Ez data
+                    if np.iscomplexobj(Ez_np):
+                        Ez_real = np.real(Ez_np)
+                        Ez_imag = np.imag(Ez_np)
+                    else:
+                        Ez_real = Ez_np
+                        Ez_imag = np.zeros_like(Ez_np)
+                    
                     # Extend magnetic fields to match Ez dimensions
-                    Hx_full = np.zeros_like(Ez_np)
-                    Hx_full[:, :-1] = Hx_np
-                    Hy_full = np.zeros_like(Ez_np)
-                    Hy_full[:-1, :] = Hy_np
-                    # Calculate Poynting vector components (S = E × H)
-                    Sx = -Ez_np * Hy_full 
-                    Sy = Ez_np * Hx_full
+                    # Create arrays with matching dtype to avoid warnings
+                    if is_complex:
+                        Hx_full = np.zeros_like(Ez_np, dtype=np.complex128)
+                        Hy_full = np.zeros_like(Ez_np, dtype=np.complex128)
+                    else:
+                        Hx_full = np.zeros_like(Ez_real)
+                        Hy_full = np.zeros_like(Ez_real)
+                        
+                    # Properly handle filling the arrays
+                    if np.iscomplexobj(Hx_np):
+                        Hx_full[:, :-1] = Hx_np
+                    else:
+                        Hx_full[:, :-1] = Hx_np
+                        
+                    if np.iscomplexobj(Hy_np):
+                        Hy_full[:-1, :] = Hy_np
+                    else:
+                        Hy_full[:-1, :] = Hy_np
+                    
+                    # For complex fields, extract real/imag parts for power calculation
+                    if is_complex:
+                        Hx_real = np.real(Hx_full)
+                        Hx_imag = np.imag(Hx_full)
+                        Hy_real = np.real(Hy_full)
+                        Hy_imag = np.imag(Hy_full)
+                        
+                        # Calculate Poynting vector components for real and imaginary parts
+                        # Using complete formula for complex Poynting vector:
+                        # S = (1/2) Re[E × H*] where H* is complex conjugate of H
+                        Sx = -Ez_real * Hy_real - Ez_imag * Hy_imag
+                        Sy = Ez_real * Hx_real + Ez_imag * Hx_imag
+                    else:
+                        # Real-only fields, simple calculation
+                        Sx = -Ez_real * Hy_full
+                        Sy = Ez_real * Hx_full
+                    
                     # Calculate power magnitude (|S|²)
                     power_mag = Sx**2 + Sy**2
+                    
                     # Accumulate power
                     self.power_accumulated += power_mag
                     self.power_accumulation_count += 1
@@ -370,11 +454,12 @@ class FDTD:
         Ez_np = self.backend.to_numpy(self.Ez)
         Hx_np = self.backend.to_numpy(self.Hx)
         Hy_np = self.backend.to_numpy(self.Hy)
+        
         # Record data for each monitor
         for monitor in self.design.monitors:
             # Use the monitor's record_fields method
             monitor.record_fields(
-                Ez=Ez_np, 
+                Ez=Ez_np,  # Ez is already complex if needed
                 Hx=Hx_np, 
                 Hy=Hy_np,
                 t=self.t,
@@ -499,16 +584,56 @@ class FDTD:
                 Ez = self.results['Ez'][t_idx]
                 Hx_raw = self.results['Hx'][t_idx]
                 Hy_raw = self.results['Hy'][t_idx]
+                
+                # Check if any field is complex
+                is_complex = np.iscomplexobj(Ez) or np.iscomplexobj(Hx_raw) or np.iscomplexobj(Hy_raw)
+                
+                # Handle complex Ez data
+                if np.iscomplexobj(Ez):
+                    Ez_real = np.real(Ez)
+                    Ez_imag = np.imag(Ez)
+                else:
+                    Ez_real = Ez
+                    Ez_imag = np.zeros_like(Ez)
+                
                 # Extend magnetic fields to match Ez dimensions
-                Hx = np.zeros_like(Ez)
-                Hx[:, :-1] = Hx_raw
-                Hy = np.zeros_like(Ez)
-                Hy[:-1, :] = Hy_raw
-                # Calculate Poynting vector components (S = E × H)
-                Sx = -Ez * Hy 
-                Sy = Ez * Hx
+                if is_complex:
+                    Hx = np.zeros_like(Ez, dtype=np.complex128)
+                    Hy = np.zeros_like(Ez, dtype=np.complex128)
+                else:
+                    Hx = np.zeros_like(Ez_real)
+                    Hy = np.zeros_like(Ez_real)
+                    
+                # Properly handle filling the arrays
+                if np.iscomplexobj(Hx_raw):
+                    Hx[:, :-1] = Hx_raw
+                else:
+                    Hx[:, :-1] = Hx_raw
+                    
+                if np.iscomplexobj(Hy_raw):
+                    Hy[:-1, :] = Hy_raw
+                else:
+                    Hy[:-1, :] = Hy_raw
+                
+                # For complex fields, use proper calculation
+                if is_complex:
+                    Hx_real = np.real(Hx)
+                    Hx_imag = np.imag(Hx)
+                    Hy_real = np.real(Hy)
+                    Hy_imag = np.imag(Hy)
+                    
+                    # Calculate Poynting vector components for real and imaginary parts
+                    # Using formula for complex Poynting vector: S = (1/2) Re[E × H*]
+                    Sx = -Ez_real * Hy_real - Ez_imag * Hy_imag
+                    Sy = Ez_real * Hx_real + Ez_imag * Hx_imag
+                else:
+                    # Real-only fields
+                    Sx = -Ez_real * Hy
+                    Sy = Ez_real * Hx
+                
                 # Calculate power magnitude (|S|²)
                 power_mag = Sx**2 + Sy**2
+                
                 # Accumulate power
                 power += power_mag
             # Average power over time steps
