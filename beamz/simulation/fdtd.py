@@ -15,6 +15,7 @@ from beamz.helpers import (
     display_time_elapsed
 )
 import datetime
+from beamz.helpers import get_si_scale_and_label
 
 class FDTD:
     """FDTD simulation class."""
@@ -33,9 +34,21 @@ class FDTD:
         self.backend = get_backend(name=backend, **backend_options)
         # Initialize the fields with the backend
         self.nx, self.ny = self.mesh.shape
-        self.Ez = self.backend.zeros((self.nx, self.ny))
+        
+        # Create complex fields in a backend-compatible way
+        try:
+            # Try with dtype parameter if supported
+            self.Ez = self.backend.zeros((self.nx, self.ny), dtype=np.complex128)
+        except TypeError:
+            # Fallback if dtype not supported - create real array and handle complex values in code
+            self.Ez = self.backend.zeros((self.nx, self.ny))
+            self.is_complex_backend = False
+        else:
+            self.is_complex_backend = True
+            
         self.Hx = self.backend.zeros((self.nx, self.ny-1))
         self.Hy = self.backend.zeros((self.nx-1, self.ny))
+        
         # Convert material properties to backend arrays
         self.epsilon_r = self.backend.from_numpy(self.epsilon_r)
         self.mu_r = self.backend.from_numpy(self.mu_r)
@@ -72,43 +85,43 @@ class FDTD:
 
     def plot_field(self, field: str = "Ez", t: float = None) -> None:
         """Plot a field at a given time with proper scaling and units."""
-        # Handle the case where we're plotting current state (not from results)
         if len(self.results['t']) == 0:
-            current_field = getattr(self, field)  # Get current field state
+            current_field = getattr(self, field)
             current_t = self.t
-            print(f"Plotting current field state at t = {current_t:.2e} s")
         else:
-            if t is None: t = self.results['t'][-1]
-            # Find closest time step
             t_idx = np.argmin(np.abs(np.array(self.results['t']) - t))
             current_field = self.results[field][t_idx]
             current_t = self.results['t'][t_idx]
-            print(f"Plotting saved field at t = {current_t:.2e} s (index {t_idx})")
+            
+        # Convert to NumPy array if it's a backend array
+        if hasattr(current_field, 'device'):
+            current_field = self.backend.to_numpy(current_field)
+            
+        # Handle complex data - we'll display the real part for visualization
+        if np.iscomplexobj(current_field):
+            current_field = np.real(current_field)
+            field_label = f'Re({field})'
+        else:
+            field_label = field
+            
         # Determine appropriate SI unit and scale for spatial dimensions
-        max_dim = max(self.design.width, self.design.height)
-        if max_dim >= 1e-3: scale, unit = 1e3, 'mm'
-        elif max_dim >= 1e-6: scale, unit = 1e6, 'µm'
-        elif max_dim >= 1e-9: scale, unit = 1e9, 'nm'
-        else: scale, unit = 1e12, 'pm'
+        scale, unit = get_si_scale_and_label(max(self.design.width, self.design.height))
         # Calculate figure size based on grid dimensions
         grid_height, grid_width = current_field.shape
         aspect_ratio = grid_width / grid_height
         base_size = 6  # Base size for the smaller dimension
         if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
         else: figsize = (base_size, base_size / aspect_ratio)
-        # Create the figure
+        # Create the figure with the added structure outlines
         plt.figure(figsize=figsize)
         plt.imshow(current_field, origin='lower', 
                   extent=(0, self.design.width, 0, self.design.height),
                   cmap='RdBu', aspect='equal', interpolation='bicubic')
-        plt.colorbar(label=f'{field} Field Amplitude')
-        plt.title(f'{field} Field at t = {current_t:.2e} s')
-        plt.xlabel(f'X ({unit})')
-        plt.ylabel(f'Y ({unit})')
-        # Update tick labels with scaled values
+        plt.colorbar(label=f'{field_label} Field Amplitude')
+        plt.title(f'{field_label} Field at t = {current_t:.2e} s')
+        plt.xlabel(f'X ({unit})'); plt.ylabel(f'Y ({unit})')
         plt.gca().xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
         plt.gca().yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-        # Create an overlay of the design outlines
         for structure in self.design.structures:
             structure.add_to_plot(plt.gca(), facecolor="none", edgecolor="black", linestyle="-")
         plt.tight_layout()
@@ -117,6 +130,11 @@ class FDTD:
     def animate_live(self, field_data=None, field="Ez", axis_scale=[-1,1]):
         """Animate the field in real time using matplotlib animation."""
         if field_data is None: field_data = self.backend.to_numpy(getattr(self, field))
+        
+        # Handle complex data - we'll display the real part for visualization
+        if np.iscomplexobj(field_data):
+            field_data = np.real(field_data)
+            
         # If animation already exists, just update the data
         if self.fig is not None and plt.fignum_exists(self.fig.number):
             current_field = field_data
@@ -125,6 +143,7 @@ class FDTD:
             self.fig.canvas.draw_idle()
             self.fig.canvas.flush_events()
             return
+
         # Get current field data
         current_field = field_data
         # Calculate figure size based on grid dimensions
@@ -182,7 +201,6 @@ class FDTD:
         """
         # Record start time
         self.start_time = datetime.datetime.now()
-        
         # Initialize simulation state
         self.t = 0
         self._total_steps = self.num_steps
@@ -192,10 +210,6 @@ class FDTD:
         self.accumulate_power = accumulate_power
         
         # Display simulation header and parameters
-        display_header("FDTD Simulation Started", f"Grid size: {self.nx}x{self.ny}, dt: {self.dt:.2e}s")
-        display_status(f"Running simulation for {self.num_steps} steps...")
-        
-        # Display simulation parameters
         sim_params = {
             "Domain size": f"{self.design.width:.2e} x {self.design.height:.2e} m",
             "Resolution": f"{self.resolution:.2e} m",
@@ -204,29 +218,21 @@ class FDTD:
             "Total time": f"{self.time[-1]:.2e} s",
             "Backend": self.backend.__class__.__name__,
             "Save fields": ", ".join(save_fields),
-            "Memory-saving mode": "Enabled" if save_memory_mode else "Disabled"
+            "Memory-saving mode": "Enabled" if save_memory_mode else "Disabled",
+            "Accumulate power": "Enabled" if accumulate_power else "Disabled",
+            "Live animation": "Enabled" if live else "Disabled",
+            "Save animation": "Enabled" if save_animation else "Disabled"
         }
         display_parameters(sim_params, "Simulation Parameters")
         
         # Check stability using the helper function
         from beamz.helpers import check_fdtd_stability
-        
-        # Get maximum refractive index from the grid
         n_max = np.sqrt(np.max(self.epsilon_r))
-        
-        # Check stability with default safety factor
-        is_stable, courant, safe_limit = check_fdtd_stability(
-            dt=self.dt, 
-            dx=self.dx, 
-            dy=self.dy, 
-            n_max=n_max
-        )
-        
+        is_stable, courant, safe_limit = check_fdtd_stability(dt=self.dt, dx=self.dx, dy=self.dy, n_max=n_max)
         if not is_stable:
             display_status(f"Simulation may be unstable! Courant number = {courant:.3f} > {safe_limit:.3f}", "warning")
             display_status("Consider reducing dt or increasing dx/dy", "warning")
-        else:
-            display_status(f"Stability check passed (Courant number = {courant:.3f} / {safe_limit:.3f})", "success")
+        else: display_status(f"Stability check passed (Courant number = {courant:.3f} / {safe_limit:.3f})", "success")
         
         # Set up power accumulation if requested
         if accumulate_power:
@@ -239,42 +245,24 @@ class FDTD:
         if is_gpu_backend and save:
             save_freq = max(10, self.num_steps // 100)  # Save approximately every 1% of steps or min of 10 steps
             display_status(f"GPU backend detected: Optimizing result storage (saving every {save_freq} steps)", "info")
-        else: 
-            save_freq = 1  # Save every step for CPU backends
+        else: save_freq = 1  # Save every step for CPU backends
             
         # Apply additional decimation based on user setting
         effective_save_freq = save_freq * decimate_save
         
         # If in save_memory_mode, clear any existing results to start fresh
-        if save_memory_mode:
-            for field in self.results:
-                if field != 't':  # Keep time array
-                    self.results[field] = []
+        if save_memory_mode: 
+            for field in self.results: 
+                if field != 't': self.results[field] = []
             display_status("Memory-saving mode active: Only storing monitor data and/or power accumulation", "info")
-            
-        # For live visualization with GPU backends, don't update too frequently
-        if is_gpu_backend and live:
-            live_update_freq = max(5, self.num_steps // 50)  # Update visualization approximately every 2% of steps
-            display_status(f"GPU backend detected: Optimizing visualization (updating every {live_update_freq} steps)", "info")
-        else:
-            live_update_freq = 5  # Update visualization every 5 steps for CPU backends
-            
-        # Run simulation
-        # Using progress bar from rich instead of the simple one
-        #display_status("Running simulation...", "info")
         
         # Use a single progress bar for the entire simulation
         with create_rich_progress() as progress:
             # Create a task that will be updated throughout the simulation
-            task = progress.add_task("Running simulation...", total=self.num_steps)
-            
-            # Track if we've displayed metrics
-            displayed_metrics = False
-            
+            task = progress.add_task("Running simulation...", total=self.num_steps)            
             for step in range(self.num_steps):
                 # Update fields
                 self.simulate_step()
-                
                 # Apply sources
                 for source in self.sources:
                     if isinstance(source, ModeSource):
@@ -290,8 +278,20 @@ class FDTD:
                             y = int(round(y_raw / self.dy))
                             # Skip points outside the grid
                             if x < 0 or x >= self.nx or y < 0 or y >= self.ny: continue
-                            # Add the source contribution to the field (don't overwrite!)
-                            self.Ez[y, x] += amplitude * modulation 
+                            
+                            # Add the source contribution to the field (handling complex values)
+                            # This handles both complex-enabled and real-only backends
+                            if hasattr(self, 'is_complex_backend') and not self.is_complex_backend:
+                                # For backends that don't support complex numbers, we need to extract real part
+                                if isinstance(amplitude * modulation, complex):
+                                    # Only use real part for backends that don't support complex
+                                    self.Ez[y, x] += np.real(amplitude * modulation)
+                                else:
+                                    self.Ez[y, x] += amplitude * modulation
+                            else:
+                                # Backend supports complex values or we're using default handling
+                                self.Ez[y, x] += amplitude * modulation
+                                
                             # Apply direction to the source
                             if source.direction == "+x": self.Ez[y, x-1] = 0
                             elif source.direction == "-x": self.Ez[y, x+1] = 0
@@ -331,8 +331,8 @@ class FDTD:
                         sigma_x_sq = width_x_grid**2 + epsilon
                         sigma_y_sq = width_y_grid**2 + epsilon
                         exponent = -(dist_x_sq / (2 * sigma_x_sq) + dist_y_sq / (2 * sigma_y_sq))
-                        gaussian_amp = np.exp(exponent)                    
-                        # Convert to backend array type if not already
+                        gaussian_amp = np.exp(exponent) / 4 # TODO: This is normalized to 2D. In 3D, it should be / 8!!! (Right?)
+                        
                         gaussian_amp = self.backend.from_numpy(gaussian_amp)
                         # Add the source contribution to the Ez field slice
                         self.Ez[y_start:y_end, x_start:x_end] += gaussian_amp * modulation
@@ -346,16 +346,58 @@ class FDTD:
                     Ez_np = self.backend.to_numpy(self.Ez)
                     Hx_np = self.backend.to_numpy(self.Hx)
                     Hy_np = self.backend.to_numpy(self.Hy)
+                    
+                    # Check if any field is complex
+                    is_complex = np.iscomplexobj(Ez_np) or np.iscomplexobj(Hx_np) or np.iscomplexobj(Hy_np)
+                    
+                    # Handle complex Ez data
+                    if np.iscomplexobj(Ez_np):
+                        Ez_real = np.real(Ez_np)
+                        Ez_imag = np.imag(Ez_np)
+                    else:
+                        Ez_real = Ez_np
+                        Ez_imag = np.zeros_like(Ez_np)
+                    
                     # Extend magnetic fields to match Ez dimensions
-                    Hx_full = np.zeros_like(Ez_np)
-                    Hx_full[:, :-1] = Hx_np
-                    Hy_full = np.zeros_like(Ez_np)
-                    Hy_full[:-1, :] = Hy_np
-                    # Calculate Poynting vector components (S = E × H)
-                    Sx = -Ez_np * Hy_full 
-                    Sy = Ez_np * Hx_full
+                    # Create arrays with matching dtype to avoid warnings
+                    if is_complex:
+                        Hx_full = np.zeros_like(Ez_np, dtype=np.complex128)
+                        Hy_full = np.zeros_like(Ez_np, dtype=np.complex128)
+                    else:
+                        Hx_full = np.zeros_like(Ez_real)
+                        Hy_full = np.zeros_like(Ez_real)
+                        
+                    # Properly handle filling the arrays
+                    if np.iscomplexobj(Hx_np):
+                        Hx_full[:, :-1] = Hx_np
+                    else:
+                        Hx_full[:, :-1] = Hx_np
+                        
+                    if np.iscomplexobj(Hy_np):
+                        Hy_full[:-1, :] = Hy_np
+                    else:
+                        Hy_full[:-1, :] = Hy_np
+                    
+                    # For complex fields, extract real/imag parts for power calculation
+                    if is_complex:
+                        Hx_real = np.real(Hx_full)
+                        Hx_imag = np.imag(Hx_full)
+                        Hy_real = np.real(Hy_full)
+                        Hy_imag = np.imag(Hy_full)
+                        
+                        # Calculate Poynting vector components for real and imaginary parts
+                        # Using complete formula for complex Poynting vector:
+                        # S = (1/2) Re[E × H*] where H* is complex conjugate of H
+                        Sx = -Ez_real * Hy_real - Ez_imag * Hy_imag
+                        Sy = Ez_real * Hx_real + Ez_imag * Hx_imag
+                    else:
+                        # Real-only fields, simple calculation
+                        Sx = -Ez_real * Hy_full
+                        Sy = Ez_real * Hx_full
+                    
                     # Calculate power magnitude (|S|²)
                     power_mag = Sx**2 + Sy**2
+                    
                     # Accumulate power
                     self.power_accumulated += power_mag
                     self.power_accumulation_count += 1
@@ -370,22 +412,12 @@ class FDTD:
                     if 'Hy' in save_fields: self.results['Hy'].append(self.backend.to_numpy(self.backend.copy(self.Hy)))
                 
                 # Show live animation if requested and at the right frequency
-                if live and (step % live_update_freq == 0 or step == self.num_steps - 1):
-                    # Convert to numpy for visualization
+                if live and (step % 1 == 0 or step == self.num_steps - 1):
                     Ez_np = self.backend.to_numpy(self.Ez)
                     self.animate_live(field_data=Ez_np, field="Ez", axis_scale=axis_scale)
-                    
-                    # Update the progress bar description with metrics
-                    if step % max(1, self.num_steps // 10) == 0:
-                        progress_pct = 100 * (step+1) / self.num_steps
-                        max_ez = np.max(np.abs(Ez_np))
-                        # Update the task description with current metrics
-                        progress.update(task, description=f"Step {step+1}/{self.num_steps} | Time {self.t:.2e} s | Max Ez {max_ez:.3e}")
-                
-                # Update time
+
+                # Update time & progress
                 self.t += self.dt
-                
-                # Update progress
                 progress.update(task, advance=1)
                 
         # Clean up animation
@@ -423,11 +455,12 @@ class FDTD:
         Ez_np = self.backend.to_numpy(self.Ez)
         Hx_np = self.backend.to_numpy(self.Hx)
         Hy_np = self.backend.to_numpy(self.Hy)
+        
         # Record data for each monitor
         for monitor in self.design.monitors:
             # Use the monitor's record_fields method
             monitor.record_fields(
-                Ez=Ez_np, 
+                Ez=Ez_np,  # Ez is already complex if needed
                 Hx=Hx_np, 
                 Hy=Hy_np,
                 t=self.t,
@@ -552,16 +585,56 @@ class FDTD:
                 Ez = self.results['Ez'][t_idx]
                 Hx_raw = self.results['Hx'][t_idx]
                 Hy_raw = self.results['Hy'][t_idx]
+                
+                # Check if any field is complex
+                is_complex = np.iscomplexobj(Ez) or np.iscomplexobj(Hx_raw) or np.iscomplexobj(Hy_raw)
+                
+                # Handle complex Ez data
+                if np.iscomplexobj(Ez):
+                    Ez_real = np.real(Ez)
+                    Ez_imag = np.imag(Ez)
+                else:
+                    Ez_real = Ez
+                    Ez_imag = np.zeros_like(Ez)
+                
                 # Extend magnetic fields to match Ez dimensions
-                Hx = np.zeros_like(Ez)
-                Hx[:, :-1] = Hx_raw
-                Hy = np.zeros_like(Ez)
-                Hy[:-1, :] = Hy_raw
-                # Calculate Poynting vector components (S = E × H)
-                Sx = -Ez * Hy 
-                Sy = Ez * Hx
+                if is_complex:
+                    Hx = np.zeros_like(Ez, dtype=np.complex128)
+                    Hy = np.zeros_like(Ez, dtype=np.complex128)
+                else:
+                    Hx = np.zeros_like(Ez_real)
+                    Hy = np.zeros_like(Ez_real)
+                    
+                # Properly handle filling the arrays
+                if np.iscomplexobj(Hx_raw):
+                    Hx[:, :-1] = Hx_raw
+                else:
+                    Hx[:, :-1] = Hx_raw
+                    
+                if np.iscomplexobj(Hy_raw):
+                    Hy[:-1, :] = Hy_raw
+                else:
+                    Hy[:-1, :] = Hy_raw
+                
+                # For complex fields, use proper calculation
+                if is_complex:
+                    Hx_real = np.real(Hx)
+                    Hx_imag = np.imag(Hx)
+                    Hy_real = np.real(Hy)
+                    Hy_imag = np.imag(Hy)
+                    
+                    # Calculate Poynting vector components for real and imaginary parts
+                    # Using formula for complex Poynting vector: S = (1/2) Re[E × H*]
+                    Sx = -Ez_real * Hy_real - Ez_imag * Hy_imag
+                    Sy = Ez_real * Hx_real + Ez_imag * Hx_imag
+                else:
+                    # Real-only fields
+                    Sx = -Ez_real * Hy
+                    Sy = Ez_real * Hx
+                
                 # Calculate power magnitude (|S|²)
                 power_mag = Sx**2 + Sy**2
+                
                 # Accumulate power
                 power += power_mag
             # Average power over time steps

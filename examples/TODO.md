@@ -14,7 +14,6 @@
 + [ ] Waveguide crossing (2D shape optimization)
 
 
-
 ## 3D FDTD
 
 ## 3D Topology Optimization

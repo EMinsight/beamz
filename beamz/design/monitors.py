@@ -32,9 +32,6 @@ class Monitor():
         # Return list of grid points
         return list(zip(x_indices, y_indices))
     
-    def get_fields(self):
-        """Gets the values of the fields from the FDTD simulation at the monitor location."""
-
     def record_fields(self, Ez, Hx, Hy, t, dx, dy, save_memory=False, accumulate_power=False):
         """Record field data at the monitor location."""
         # Get grid points along monitor line

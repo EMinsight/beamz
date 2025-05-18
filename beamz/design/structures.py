@@ -28,7 +28,7 @@ class Design:
         display_status(f"Created design with size: {self.width:.2e} x {self.height:.2e} m")
         
     def add(self, structure):
-        """Add structures on top of the design."""
+        """Core add function for adding structures on top of the design."""
         if isinstance(structure, ModeSource):
             self.sources.append(structure)
             self.structures.append(structure)
@@ -38,12 +38,136 @@ class Design:
         elif isinstance(structure, Monitor):
             self.monitors.append(structure)
             self.structures.append(structure)
-        else:
-            self.structures.append(structure)
-        
+        else: self.structures.append(structure)
         # Check for 3D structures
-        if hasattr(structure, 'z') or hasattr(structure, 'depth'):
-            self.is_3d = True
+        if hasattr(structure, 'z') or hasattr(structure, 'depth'): self.is_3d = True
+
+    def __iadd__(self, structure):
+        """Implement += operator for adding structures."""
+        self.add(structure)
+        return self
+    
+    def unify_polygons(self):
+        """If polygons are the same material and overlap spatially, unify them into a single, simplified polygon."""
+        try:
+            from shapely.geometry import Polygon as ShapelyPolygon
+            from shapely.ops import unary_union
+        except ImportError:
+            display_status("Shapely library is required for polygon unification. Please install with: pip install shapely", "error")
+            return False
+            
+        # Group structures by material properties
+        material_groups = {}
+        non_polygon_structures = []
+        
+        # Track which structures to remove later
+        structures_to_remove = []
+        
+        # First pass: group polygons by material
+        for structure in self.structures:
+            # Skip PML visualizations, sources, monitors
+            if hasattr(structure, 'is_pml') and structure.is_pml:
+                non_polygon_structures.append(structure)
+                continue
+            if isinstance(structure, ModeSource) or isinstance(structure, GaussianSource) or isinstance(structure, Monitor):
+                non_polygon_structures.append(structure)
+                continue
+                
+            # Only process polygon-like structures with vertices
+            if not hasattr(structure, 'vertices') or not hasattr(structure, 'material'):
+                non_polygon_structures.append(structure)
+                continue
+                
+            # Create a material key based on material properties
+            material = structure.material
+            if not material:
+                non_polygon_structures.append(structure)
+                continue
+                
+            material_key = (
+                getattr(material, 'permittivity', None),
+                getattr(material, 'permeability', None),
+                getattr(material, 'conductivity', None)
+            )
+            
+            # Add to the appropriate group
+            if material_key not in material_groups:
+                material_groups[material_key] = []
+            
+            # Convert to Shapely polygon
+            try:
+                shapely_polygon = ShapelyPolygon(structure.vertices)
+                if shapely_polygon.is_valid:
+                    material_groups[material_key].append((structure, shapely_polygon))
+                    structures_to_remove.append(structure)
+                else:
+                    display_status(f"Skipping invalid polygon: {structure}", "warning")
+                    non_polygon_structures.append(structure)
+            except Exception as e:
+                display_status(f"Error converting structure to Shapely polygon: {e}", "warning")
+                non_polygon_structures.append(structure)
+        
+        # Second pass: unify polygons within each material group
+        new_structures = []
+        for material_key, structure_group in material_groups.items():
+            if len(structure_group) <= 1:
+                # Only one structure with this material, no merging needed
+                new_structures.extend([s[0] for s in structure_group])
+                for s in structure_group:
+                    if s[0] in structures_to_remove:
+                        structures_to_remove.remove(s[0])
+                continue
+                
+            # Extract shapely polygons for merging
+            shapely_polygons = [p[1] for p in structure_group]
+            
+            # Get the material from the first structure in the group
+            material = structure_group[0][0].material
+            
+            try:
+                # Unify the polygons
+                merged = unary_union(shapely_polygons)
+                
+                # The result could be a single polygon or a multipolygon
+                if merged.geom_type == 'Polygon':
+                    # Create a new polygon with the merged vertices
+                    vertices = list(merged.exterior.coords[:-1])  # Exclude the last point which repeats the first
+                    new_poly = Polygon(vertices=vertices, material=material)
+                    new_structures.append(new_poly)
+                    display_status(f"Unified {len(structure_group)} polygons with permittivity={material_key[0]}", "success")
+                elif merged.geom_type == 'MultiPolygon':
+                    # Create multiple polygons if the merger resulted in separate shapes
+                    for geom in merged.geoms:
+                        vertices = list(geom.exterior.coords[:-1])
+                        new_poly = Polygon(vertices=vertices, material=material)
+                        new_structures.append(new_poly)
+                    display_status(f"Unified into {len(merged.geoms)} separate polygons with permittivity={material_key[0]}", "success")
+                else:
+                    # If the result is something unexpected, keep the original structures
+                    display_status(f"Unexpected geometry type: {merged.geom_type}, keeping original structures", "warning")
+                    new_structures.extend([s[0] for s in structure_group])
+                    for s in structure_group:
+                        if s[0] in structures_to_remove:
+                            structures_to_remove.remove(s[0])
+            except Exception as e:
+                display_status(f"Error unifying polygons: {e}", "error")
+                # Keep original structures if unification fails
+                new_structures.extend([s[0] for s in structure_group])
+                for s in structure_group:
+                    if s[0] in structures_to_remove:
+                        structures_to_remove.remove(s[0])
+        
+        # Remove the structures that were unified
+        for structure in structures_to_remove:
+            if structure in self.structures:
+                self.structures.remove(structure)
+        
+        # Add the unified structures and non-polygon structures back
+        self.structures.extend(new_structures)
+        
+        # Final report
+        display_status(f"Polygon unification complete: {len(structures_to_remove)} structures merged into {len(new_structures)} unified shapes", "success")
+        return True
 
     def scatter(self, structure, n=1000, xyrange=(-5*µm, 5*µm), scale_range=(0.05, 1)):
         """Randomly distribute a given object over the design domain."""
@@ -131,7 +255,7 @@ class Design:
         )
         self.structures.append(top_pml)
 
-    def show(self):
+    def show(self, unify_structures=True):
         """Display the design visually."""
         # Determine appropriate SI unit and scale
         max_dim = max(self.width, self.height)
@@ -142,13 +266,26 @@ class Design:
         base_size = 5
         if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
         else: figsize = (base_size, base_size / aspect_ratio)
-        
+
+        # Do we want to show the indiviudal structures or a unified shape?
+        if unify_structures: self.unify_polygons()
+
         # Create a single figure for all structures
         fig, ax = plt.subplots(figsize=figsize)
         ax.set_aspect('equal')
         
         # Now plot each structure
-        for structure in self.structures: structure.add_to_plot(ax)
+        for structure in self.structures:
+            # Use dashed lines for PML regions
+            if hasattr(structure, 'is_pml') and structure.is_pml:
+                structure.add_to_plot(ax, edgecolor=self.border_color, linestyle='--', facecolor='none', alpha=0.5)
+            else:
+                structure.add_to_plot(ax)
+        
+        # Plot PML boundaries explicitly with dashed lines
+        for boundary in self.boundaries:
+            if hasattr(boundary, 'add_to_plot'):
+                boundary.add_to_plot(ax, edgecolor=self.border_color, linestyle='--', facecolor='none', alpha=0.5)
         
         # Set proper limits, title and label, and ensure the full design is visible
         ax.set_title('Design Layout')
@@ -369,6 +506,46 @@ class Polygon:
 
     def copy(self):
         return Polygon(self.vertices, self.material)
+        
+    def get_bounding_box(self):
+        """Get the bounding box of the polygon as (min_x, min_y, max_x, max_y)"""
+        if not self.vertices or len(self.vertices) == 0:
+            return (0, 0, 0, 0)
+        
+        # Extract x and y coordinates
+        x_coords = [v[0] for v in self.vertices]
+        y_coords = [v[1] for v in self.vertices]
+        
+        # Calculate min and max
+        min_x = min(x_coords)
+        min_y = min(y_coords)
+        max_x = max(x_coords)
+        max_y = max(y_coords)
+        
+        return (min_x, min_y, max_x, max_y)
+        
+    def _point_in_polygon(self, x, y, vertices=None):
+        """Check if a point (x,y) is inside this polygon.
+        
+        Uses the ray-casting algorithm.
+        """
+        if vertices is None:
+            vertices = self.vertices
+            
+        n = len(vertices)
+        inside = False
+        p1x, p1y = vertices[0]
+        for i in range(n + 1):
+            p2x, p2y = vertices[i % n]
+            if y > min(p1y, p2y):
+                if y <= max(p1y, p2y):
+                    if x <= max(p1x, p2x):
+                        if p1y != p2y:
+                            xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                        if p1x == p2x or x <= xinters:
+                            inside = not inside
+            p1x, p1y = p2x, p2y
+        return inside
 
 class Rectangle(Polygon):
     def __init__(self, position=(0,0), width=1, height=1, material=None, color=None, is_pml=False, optimize=False):
@@ -383,6 +560,16 @@ class Rectangle(Polygon):
         self.width = width
         self.height = height
         self.is_pml = is_pml
+        
+    def get_bounding_box(self):
+        """Get the axis-aligned bounding box for this rectangle."""
+        # For non-rotated rectangles, this is straightforward
+        if not hasattr(self, 'vertices') or len(self.vertices) == 0:
+            x, y = self.position
+            return (x, y, x + self.width, y + self.height)
+        
+        # For potentially rotated rectangles, use the vertices
+        return super().get_bounding_box()
 
     def shift(self, x, y):
         """Shift the rectangle by (x,y) and return self for method chaining."""
@@ -444,7 +631,8 @@ class Circle(Polygon):
         return self
     
     def copy(self):
-        return Circle(self.position, self.radius, self.material, self.color, self.optimize)
+        return Circle(position=self.position, radius=self.radius, points=len(self.vertices), 
+                     material=self.material, color=self.color, optimize=self.optimize)
 
 class Ring(Polygon):
     def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, material=None, color=None, optimize=False, points=256):
@@ -483,17 +671,17 @@ class Ring(Polygon):
         if alpha is None: alpha = 1
         if linestyle is None: linestyle = '-'
         # Create points for the ring
-        theta = np.linspace(0, 2 * np.pi, self.points, endpoint=True)
+        theta = np.linspace(0, 2 * np.pi, self.points +1, endpoint=True)
         # Outer circle points (counterclockwise) and inner circle points (clockwise)
         x_outer = self.position[0] + self.outer_radius * np.cos(theta)
         y_outer = self.position[1] + self.outer_radius * np.sin(theta)
-        x_inner = self.position[0] + self.inner_radius * np.cos(theta[::-1])
-        y_inner = self.position[1] + self.inner_radius * np.sin(theta[::-1])
+        x_inner = self.position[0] + self.inner_radius * np.cos(theta)
+        y_inner = self.position[1] + self.inner_radius * np.sin(theta)
         # Combine vertices
         vertices = np.vstack([np.column_stack([x_outer, y_outer]), np.column_stack([x_inner, y_inner])])
         # Define path codes
-        codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (self.points - 1),
-                                [Path.MOVETO] + [Path.LINETO] * (self.points - 1)])
+        codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (self.points),
+                                [Path.MOVETO] + [Path.LINETO] * (self.points)])
         # Create the path and patch
         path = Path(vertices, codes)
         ring_patch = PathPatch(path, facecolor=facecolor, alpha=alpha, edgecolor=edgecolor, linestyle=linestyle)
@@ -626,61 +814,86 @@ class PML:
         self.polynomial_order = polynomial_order  # Reduced to allow smoother transition
         self.sigma_factor = sigma_factor  # Reduced to allow waves to enter
         self.alpha_max = alpha_max  # Reduced frequency-shifting for smoother transition
-        
-        if region_type == "rect":
-            self.width, self.height = size
-        else:  # corner
-            self.radius = size
-    
+        if region_type == "rect": self.width, self.height = size
+        else: self.radius = size
+
+    def add_to_plot(self, ax, facecolor='none', edgecolor="black", alpha=0.5, linestyle='--'):
+        """Add the PML boundary to a plot with dashed lines."""
+        if self.region_type == "rect":
+            # Create a rectangle patch for rectangular PML regions
+            rect_patch = MatplotlibRectangle(
+                (self.position[0], self.position[1]),
+                self.width, self.height,
+                fill=False, 
+                edgecolor=edgecolor,
+                linestyle=linestyle,
+                alpha=alpha
+            )
+            ax.add_patch(rect_patch)
+        elif self.region_type == "corner":
+            # Use a rectangle for corner PML regions as well
+            # Position and size depend on orientation
+            if self.orientation == "bottom-left":
+                rect_patch = MatplotlibRectangle(
+                    (self.position[0] - self.radius, self.position[1] - self.radius),
+                    self.radius, self.radius,
+                    fill=False,
+                    edgecolor=edgecolor,
+                    linestyle=linestyle,
+                    alpha=alpha
+                )
+            elif self.orientation == "bottom-right":
+                rect_patch = MatplotlibRectangle(
+                    (self.position[0], self.position[1] - self.radius),
+                    self.radius, self.radius,
+                    fill=False,
+                    edgecolor=edgecolor,
+                    linestyle=linestyle,
+                    alpha=alpha
+                )
+            elif self.orientation == "top-right":
+                rect_patch = MatplotlibRectangle(
+                    (self.position[0], self.position[1]),
+                    self.radius, self.radius,
+                    fill=False,
+                    edgecolor=edgecolor,
+                    linestyle=linestyle,
+                    alpha=alpha
+                )
+            elif self.orientation == "top-left":
+                rect_patch = MatplotlibRectangle(
+                    (self.position[0] - self.radius, self.position[1]),
+                    self.radius, self.radius,
+                    fill=False,
+                    edgecolor=edgecolor,
+                    linestyle=linestyle,
+                    alpha=alpha
+                )
+            ax.add_patch(rect_patch)
+
     def get_profile(self, normalized_distance):
-        """Calculate PML absorption profile using gradual grading.
-        
-        Args:
-            normalized_distance: Distance from PML inner boundary (0.0) to outer boundary (1.0)
-            
-        Returns:
-            Tuple of (sigma, alpha) values for conductivity and frequency-shifting
-        """
+        """Calculate PML absorption profile using gradual grading."""
         # Ensure distance is within [0,1]
         d = min(max(normalized_distance, 0.0), 1.0)
-        
         # Create a smooth transition from 0 at the interface
         # Start with nearly zero conductivity at the interface and gradually increase
-        # This is crucial to prevent reflection at the boundary
-        if d < 0.05:
-            # Very gentle start at the boundary (nearly zero)
-            sigma = 0.01 * (d/0.05)**2
-        else:
-            # Smooth polynomial grading for the rest
-            sigma = ((d - 0.05) / 0.95)**self.polynomial_order
-        
+        if d < 0.05: sigma = 0.01 * (d/0.05)**2
+        else: sigma = ((d - 0.05) / 0.95)**self.polynomial_order
         # Smooth frequency-shifting profile
         alpha = self.alpha_max * d**2  # Quadratic profile for smooth transition
-        
         return sigma, alpha
     
     def get_conductivity(self, x, y, dx=None, dt=None, eps_avg=None):
-        """Calculate PML conductivity at a point using smooth-transition PML.
-        
-        Args:
-            x, y: Position to evaluate
-            dx: Grid cell size
-            dt: Time step size
-            eps_avg: Average permittivity
-            
-        Returns:
-            Conductivity value at the point
-        """
+        """Calculate PML conductivity at a point using smooth-transition PML."""
         # Calculate theoretical optimal conductivity based on impedance matching
         if dx is not None and eps_avg is not None:
             # Calculate impedance 
             eta = np.sqrt(MU_0 / (EPS_0 * eps_avg))
             # Optimal conductivity for minimal reflection at interface
             # Reduced from 1.2 to 0.8 for smoother transition
-            sigma_max = 0.8 / (eta * dx)
+            sigma_max = 1.2 / (eta * dx)
             sigma_max *= self.sigma_factor  # Apply gentler factor
-        else:
-            sigma_max = 1.0  # Lower default conductivity
+        else: sigma_max = 1.0  # Lower default conductivity
         
         # Get normalized distance based on region type and orientation
         if self.region_type == "rect":
@@ -688,56 +901,35 @@ class PML:
             if not (self.position[0] <= x <= self.position[0] + self.width and
                     self.position[1] <= y <= self.position[1] + self.height):
                 return 0.0
-                
             # Calculate normalized distance from boundary based on orientation
             # Distance should be 0 at inner boundary and 1 at outer boundary
-            if self.orientation == "left":
-                # For left PML, x=position[0]+width is inner (0), x=position[0] is outer (1)
-                distance = 1.0 - (x - self.position[0]) / self.width
-            elif self.orientation == "right":
-                # For right PML, x=position[0] is inner (0), x=position[0]+width is outer (1)
-                distance = (x - self.position[0]) / self.width
-            elif self.orientation == "top":
-                # For top PML, y=position[1] is inner (0), y=position[1]+height is outer (1)
-                distance = (y - self.position[1]) / self.height
-            elif self.orientation == "bottom":
-                # For bottom PML, y=position[1]+height is inner (0), y=position[1] is outer (1)
-                distance = 1.0 - (y - self.position[1]) / self.height
-            else:
-                return 0.0
+            if self.orientation == "left": distance = 1.0 - (x - self.position[0]) / self.width
+            elif self.orientation == "right": distance = (x - self.position[0]) / self.width
+            elif self.orientation == "top": distance = (y - self.position[1]) / self.height
+            elif self.orientation == "bottom": distance = 1.0 - (y - self.position[1]) / self.height
+            else: return 0.0
         
-        else:  # corner PML
+        else: # corner PML
             # Calculate distance from corner to point
             distance_from_corner = np.hypot(x - self.position[0], y - self.position[1])
             # Outside the PML region
-            if distance_from_corner > self.radius:
-                return 0.0
-                
+            if distance_from_corner > self.radius: return 0.0
             # Check if in correct quadrant
             dx_from_corner = x - self.position[0]
             dy_from_corner = y - self.position[1]
-            
-            if self.orientation == "top-left" and (dx_from_corner > 0 or dy_from_corner < 0):
-                return 0.0
-            elif self.orientation == "top-right" and (dx_from_corner < 0 or dy_from_corner < 0):
-                return 0.0
-            elif self.orientation == "bottom-left" and (dx_from_corner > 0 or dy_from_corner > 0):
-                return 0.0
-            elif self.orientation == "bottom-right" and (dx_from_corner < 0 or dy_from_corner > 0):
-                return 0.0
-                
+            if self.orientation == "top-left" and (dx_from_corner > 0 or dy_from_corner < 0): return 0.0
+            elif self.orientation == "top-right" and (dx_from_corner < 0 or dy_from_corner < 0): return 0.0
+            elif self.orientation == "bottom-left" and (dx_from_corner > 0 or dy_from_corner > 0): return 0.0
+            elif self.orientation == "bottom-right" and (dx_from_corner < 0 or dy_from_corner > 0): return 0.0
             # Normalize distance (0 at inner edge, 1 at corner)
             distance = distance_from_corner / self.radius
         
         # Get optimized profile values
         sigma_profile, alpha_profile = self.get_profile(distance)
-        
         # Apply stretched-coordinate PML with gradual absorption
         conductivity = sigma_max * sigma_profile
-        
         # The material-dependent scaling might have been causing excessive reflection
         # We'll use a gentler approach that smoothly transitions at the boundary
-        
         if dt is not None:
             # Apply frequency-shifting with reduced effect near boundary
             frequency_factor = 1.0 / (1.0 + alpha_profile)

@@ -15,17 +15,17 @@ design = Design(width=18*µm, height=7*µm, material=Material(n_clad**2), pml_si
 design.add(Rectangle(position=(0,3.5*µm-wg_width/2), width=18*µm, height=wg_width, material=Material(n_core**2)))
 design.show()
 
-grid = RegularGrid(design=design, resolution=resolution)
-grid.show(field="permittivity")
-grid.show(field="conductivity")
-grid.show(field="permeability")
+#grid = RegularGrid(design=design, resolution=resolution)
+#grid.show(field="permittivity")
+#grid.show(field="conductivity")
+#grid.show(field="permeability")
 
 signal = ramped_cosine(T, amplitude=1.0, frequency=LIGHT_SPEED/WL, phase=0, ramp_duration=WL*30/LIGHT_SPEED, t_max=TIME/2)
 import beamz
-beamz.design.signals.plot_signal(signal, T)
+#beamz.design.signals.plot_signal(signal, T)
 
 source = ModeSource(design=design, start=(2*µm, 3.5*µm-1.2*µm), end=(2*µm, 3.5*µm+1.2*µm), wavelength=WL, signal=signal)
-source.show()
+#source.show()
 design.add(source)
 design.show()
 

@@ -15,7 +15,7 @@ from beamz.design.sources import ModeSource, GaussianSource
 from beamz.design.monitors import Monitor
 
 # Import simulation-related classes and functions
-from beamz.design.signals import ramped_cosine
+from beamz.design.signals import ramped_cosine, plot_signal
 from beamz.simulation.meshing import RegularGrid
 from beamz.simulation.fdtd import FDTD
 
@@ -27,7 +27,7 @@ from beamz.helpers import (
     display_header, display_status, create_rich_progress,
     display_parameters, display_results, display_design_summary,
     display_simulation_status, display_optimization_progress,
-    display_time_elapsed, tree_view, code_preview
+    display_time_elapsed, tree_view, code_preview, get_si_scale_and_label, calc_optimal_fdtd_params
 )
 
 # Version information
