@@ -314,9 +314,19 @@ class Polygon:
         self.vertices = vertices
         self.material = material
         self.optimize = optimize
-        self.color = color if color is not None else self.get_random_color_consistent()
+        self.color = color if color is not None else self.__get_random_color_consistent__()
     
-    def get_random_color_consistent(self, saturation=0.6, value=0.7):
+    def get_bounding_box(self):
+        """Get the bounding box of the polygon. This is needed for fast meshing!"""
+        if self.vertices:
+            min_x = min(v[0] for v in self.vertices)
+            min_y = min(v[1] for v in self.vertices)
+            max_x = max(v[0] for v in self.vertices)
+            max_y = max(v[1] for v in self.vertices)
+            return min_x, min_y, max_x, max_y
+        return None
+
+    def __get_random_color_consistent__(self, saturation=0.6, value=0.7):
         """Generate a random color with consistent perceived brightness and saturation."""
         hue = random.random() # Generate random hue (0-1)
         r, g, b = colorsys.hsv_to_rgb(hue, saturation, value)

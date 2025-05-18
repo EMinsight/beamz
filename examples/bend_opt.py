@@ -31,11 +31,11 @@ time_steps = np.arange(0, TIME, DT)
 signal = ramped_cosine(time_steps, amplitude=1.0, frequency=LIGHT_SPEED/WL, ramp_duration=TIME/3, t_max=TIME)
 source = ModeSource(design=design, start=(WL*1.2, 4*µm-WG_WIDTH/2-WG_WIDTH), end=(WL*1.2, 4*µm+WG_WIDTH/2+WG_WIDTH),
                     wavelength=WL, signal=signal)
-design.add(source)
+design += source
 
 # Define the monitor and its function
 monitor = Monitor(start=(4*µm-WG_WIDTH/2 -WG_WIDTH, WL*1.2), end=(4*µm+WG_WIDTH/2+WG_WIDTH, WL*1.2), accumulate_power=True, record_fields=True)
-design.add(monitor)
+design += monitor
 
 # Show the design
 design.show()

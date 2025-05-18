@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from beamz.helpers import progress_bar
-from beamz.helpers import display_header, display_status, display_design_summary, tree_view, console, create_rich_progress
+from beamz.helpers import display_status, create_rich_progress
+from beamz.helpers import get_si_scale_and_label
 
 class RegularGrid:
     """Takes in a design and resolution and returns a rasterized grid of that design."""
@@ -15,12 +15,12 @@ class RegularGrid:
         self.permittivity = np.zeros((grid_height, grid_width))
         self.permeability = np.zeros((grid_height, grid_width))
         self.conductivity = np.zeros((grid_height, grid_width))
-        self.rasterize()
+        self.__rasterize__()
         self.shape = self.permittivity.shape
         self.dx = self.resolution
         self.dy = self.resolution
 
-    def rasterize(self):
+    def __rasterize__(self):
         """Rasterize the design into a grid with the given resolution using fully vectorized operations."""
         width, height = self.design.width, self.design.height
         grid_width, grid_height = int(width / self.resolution), int(height / self.resolution)
@@ -70,43 +70,26 @@ class RegularGrid:
 
     def show(self, field: str = "permittivity"):
         """Display the rasterized grid with properly scaled SI units."""
-        if field == "permittivity":
-            grid = self.permittivity
-        elif field == "permeability":
-            grid = self.permeability
-        elif field == "conductivity":
-            grid = self.conductivity
+        if field == "permittivity": grid = self.permittivity
+        elif field == "permeability": grid = self.permeability
+        elif field == "conductivity": grid = self.conductivity
         if grid is not None:
-            # Determine appropriate SI unit and scale
-            max_dim = max(self.design.width, self.design.height)
-            if max_dim >= 1e-3: scale, unit = 1e3, 'mm'
-            elif max_dim >= 1e-6: scale, unit = 1e6, 'µm'
-            elif max_dim >= 1e-9: scale, unit = 1e9, 'nm'
-            else: scale, unit = 1e12, 'pm'
-
+            scale, unit = get_si_scale_and_label(max(self.design.width, self.design.height))
             # Calculate figure size based on grid dimensions
             grid_height, grid_width = grid.shape
             aspect_ratio = grid_width / grid_height
             base_size = 2.5  # Base size for the smaller dimension
             if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
             else: figsize = (base_size, base_size / aspect_ratio)
-
+            # PLot the figure
             plt.figure(figsize=figsize)
             plt.imshow(grid, origin='lower', cmap='Grays', extent=(0, self.design.width, 0, self.design.height))
             plt.colorbar(label=field)
             plt.title('Rasterized Design Grid')
             plt.xlabel(f'X ({unit})')
             plt.ylabel(f'Y ({unit})')
-            # Update tick labels with scaled values
             plt.gca().xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
             plt.gca().yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
             plt.tight_layout()
             plt.show()
-        else:
-            print("Grid not rasterized yet.")
-
-
-
-# RectilinearGrid
-
-# ================================ UnstructuredGrid
+        else: print("Grid not rasterized yet.")
