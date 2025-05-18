@@ -21,7 +21,7 @@ design.show()
 #grid.show(field="permeability")
 
 signal = ramped_cosine(T, amplitude=1.0, frequency=LIGHT_SPEED/WL, phase=0, ramp_duration=WL*30/LIGHT_SPEED, t_max=TIME/2)
-#import beamz
+import beamz
 #beamz.design.signals.plot_signal(signal, T)
 
 source = ModeSource(design=design, start=(2*µm, 3.5*µm-1.2*µm), end=(2*µm, 3.5*µm+1.2*µm), wavelength=WL, signal=signal)

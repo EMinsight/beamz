@@ -621,7 +621,8 @@ class Circle(Polygon):
         return self
     
     def copy(self):
-        return Circle(self.position, self.radius, self.material, self.color, self.optimize)
+        return Circle(position=self.position, radius=self.radius, points=len(self.vertices), 
+                     material=self.material, color=self.color, optimize=self.optimize)
 
 class Ring(Polygon):
     def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, material=None, color=None, optimize=False, points=256):

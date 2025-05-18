@@ -1,7 +1,5 @@
 from beamz import *
 import numpy as np
-from beamz.design.materials import VarMaterial
-from beamz.helpers import calc_optimal_fdtd_params
 
 # Define basic parameters of the simulation
 X = 10*µm
