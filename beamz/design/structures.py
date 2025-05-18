@@ -275,7 +275,17 @@ class Design:
         ax.set_aspect('equal')
         
         # Now plot each structure
-        for structure in self.structures: structure.add_to_plot(ax)
+        for structure in self.structures:
+            # Use dashed lines for PML regions
+            if hasattr(structure, 'is_pml') and structure.is_pml:
+                structure.add_to_plot(ax, edgecolor=self.border_color, linestyle='--', facecolor='none', alpha=0.5)
+            else:
+                structure.add_to_plot(ax)
+        
+        # Plot PML boundaries explicitly with dashed lines
+        for boundary in self.boundaries:
+            if hasattr(boundary, 'add_to_plot'):
+                boundary.add_to_plot(ax, edgecolor=self.border_color, linestyle='--', facecolor='none', alpha=0.5)
         
         # Set proper limits, title and label, and ensure the full design is visible
         ax.set_title('Design Layout')
@@ -661,17 +671,17 @@ class Ring(Polygon):
         if alpha is None: alpha = 1
         if linestyle is None: linestyle = '-'
         # Create points for the ring
-        theta = np.linspace(0, 2 * np.pi, self.points, endpoint=True)
+        theta = np.linspace(0, 2 * np.pi, self.points +1, endpoint=True)
         # Outer circle points (counterclockwise) and inner circle points (clockwise)
         x_outer = self.position[0] + self.outer_radius * np.cos(theta)
         y_outer = self.position[1] + self.outer_radius * np.sin(theta)
-        x_inner = self.position[0] + self.inner_radius * np.cos(theta[::-1])
-        y_inner = self.position[1] + self.inner_radius * np.sin(theta[::-1])
+        x_inner = self.position[0] + self.inner_radius * np.cos(theta)
+        y_inner = self.position[1] + self.inner_radius * np.sin(theta)
         # Combine vertices
         vertices = np.vstack([np.column_stack([x_outer, y_outer]), np.column_stack([x_inner, y_inner])])
         # Define path codes
-        codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (self.points - 1),
-                                [Path.MOVETO] + [Path.LINETO] * (self.points - 1)])
+        codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (self.points),
+                                [Path.MOVETO] + [Path.LINETO] * (self.points)])
         # Create the path and patch
         path = Path(vertices, codes)
         ring_patch = PathPatch(path, facecolor=facecolor, alpha=alpha, edgecolor=edgecolor, linestyle=linestyle)
@@ -807,23 +817,66 @@ class PML:
         if region_type == "rect": self.width, self.height = size
         else: self.radius = size
 
-    def add_to_plot(self, ax, facecolor=None, edgecolor="black", alpha=None, linestyle=None):
-        if facecolor is None: facecolor = self.color
-        if alpha is None: alpha = 1
-        if linestyle is None: linestyle = '--'
-        # Create a rectangle or circle patch
+    def add_to_plot(self, ax, facecolor='none', edgecolor="black", alpha=0.5, linestyle='--'):
+        """Add the PML boundary to a plot with dashed lines."""
         if self.region_type == "rect":
-            rect_patch = Rectangle(self.position, self.width, self.height, facecolor=facecolor, alpha=alpha, edgecolor=edgecolor, linestyle=linestyle)
-    
+            # Create a rectangle patch for rectangular PML regions
+            rect_patch = MatplotlibRectangle(
+                (self.position[0], self.position[1]),
+                self.width, self.height,
+                fill=False, 
+                edgecolor=edgecolor,
+                linestyle=linestyle,
+                alpha=alpha
+            )
+            ax.add_patch(rect_patch)
+        elif self.region_type == "corner":
+            # Use a rectangle for corner PML regions as well
+            # Position and size depend on orientation
+            if self.orientation == "bottom-left":
+                rect_patch = MatplotlibRectangle(
+                    (self.position[0] - self.radius, self.position[1] - self.radius),
+                    self.radius, self.radius,
+                    fill=False,
+                    edgecolor=edgecolor,
+                    linestyle=linestyle,
+                    alpha=alpha
+                )
+            elif self.orientation == "bottom-right":
+                rect_patch = MatplotlibRectangle(
+                    (self.position[0], self.position[1] - self.radius),
+                    self.radius, self.radius,
+                    fill=False,
+                    edgecolor=edgecolor,
+                    linestyle=linestyle,
+                    alpha=alpha
+                )
+            elif self.orientation == "top-right":
+                rect_patch = MatplotlibRectangle(
+                    (self.position[0], self.position[1]),
+                    self.radius, self.radius,
+                    fill=False,
+                    edgecolor=edgecolor,
+                    linestyle=linestyle,
+                    alpha=alpha
+                )
+            elif self.orientation == "top-left":
+                rect_patch = MatplotlibRectangle(
+                    (self.position[0] - self.radius, self.position[1]),
+                    self.radius, self.radius,
+                    fill=False,
+                    edgecolor=edgecolor,
+                    linestyle=linestyle,
+                    alpha=alpha
+                )
+            ax.add_patch(rect_patch)
+
     def get_profile(self, normalized_distance):
         """Calculate PML absorption profile using gradual grading."""
         # Ensure distance is within [0,1]
         d = min(max(normalized_distance, 0.0), 1.0)
         # Create a smooth transition from 0 at the interface
         # Start with nearly zero conductivity at the interface and gradually increase
-        # This is crucial to prevent reflection at the boundary
-        # Very gentle start at the boundary (nearly zero)
-        # Smooth polynomial grading for the rest
         if d < 0.05: sigma = 0.01 * (d/0.05)**2
         else: sigma = ((d - 0.05) / 0.95)**self.polynomial_order
         # Smooth frequency-shifting profile
@@ -838,7 +891,7 @@ class PML:
             eta = np.sqrt(MU_0 / (EPS_0 * eps_avg))
             # Optimal conductivity for minimal reflection at interface
             # Reduced from 1.2 to 0.8 for smoother transition
-            sigma_max = 0.8 / (eta * dx)
+            sigma_max = 1.2 / (eta * dx)
             sigma_max *= self.sigma_factor  # Apply gentler factor
         else: sigma_max = 1.0  # Lower default conductivity
         

@@ -331,8 +331,8 @@ class FDTD:
                         sigma_x_sq = width_x_grid**2 + epsilon
                         sigma_y_sq = width_y_grid**2 + epsilon
                         exponent = -(dist_x_sq / (2 * sigma_x_sq) + dist_y_sq / (2 * sigma_y_sq))
-                        gaussian_amp = np.exp(exponent)                    
-                        # Convert to backend array type if not already
+                        gaussian_amp = np.exp(exponent) / 4 # TODO: This is normalized to 2D. In 3D, it should be / 8!!! (Right?)
+                        
                         gaussian_amp = self.backend.from_numpy(gaussian_amp)
                         # Add the source contribution to the Ez field slice
                         self.Ez[y_start:y_end, x_start:x_end] += gaussian_amp * modulation
