@@ -8,6 +8,7 @@ from beamz.const import µm, EPS_0, MU_0
 from beamz.design.sources import ModeSource, GaussianSource
 from beamz.design.monitors import Monitor
 from beamz.design.helpers import get_si_scale_and_label
+from beamz.helpers import display_header, display_status, display_design_summary, tree_view, console
 import colorsys
 
 class Design:
@@ -22,8 +23,10 @@ class Design:
         self.depth = depth
         self.border_color = border_color
         self.time = 0
+        self.is_3d = False if depth is None else True
         if auto_pml: self.init_boundaries(pml_size)
-
+        display_status(f"Created design with size: {self.width:.2e} x {self.height:.2e} m")
+        
     def add(self, structure):
         """Add structures on top of the design."""
         if isinstance(structure, ModeSource):
@@ -37,16 +40,21 @@ class Design:
             self.structures.append(structure)
         else:
             self.structures.append(structure)
-        if hasattr(structure, 'z') or hasattr(structure, 'depth'): self.is_3d = True
+        
+        # Check for 3D structures
+        if hasattr(structure, 'z') or hasattr(structure, 'depth'):
+            self.is_3d = True
 
     def scatter(self, structure, n=1000, xyrange=(-5*µm, 5*µm), scale_range=(0.05, 1)):
         """Randomly distribute a given object over the design domain."""
+        display_status(f"Scattering {n} instances of {structure.__class__.__name__}", "info")
         for _ in range(n):
             new_structure = structure.copy()
             new_structure.shift(random.uniform(xyrange[0], xyrange[1]), random.uniform(xyrange[0], xyrange[1]))
             new_structure.rotate(random.uniform(0, 360))
             new_structure.scale(random.uniform(scale_range[0], scale_range[1]))
             self.add(new_structure)
+        display_status(f"Completed scattering {n} structures", "success")
 
     def init_boundaries(self, pml_size=None):
         """Add boundary conditions to the design area (using PML)."""
@@ -57,37 +65,39 @@ class Design:
             for structure in self.structures:
                 if hasattr(structure, 'material') and hasattr(structure.material, 'permittivity'):
                     max_permittivity = max(max_permittivity, structure.material.permittivity)
-            # Estimate minimum wavelength (assuming 1550nm free space wavelength typical for photonics)
-            # This is a practical approximation for common photonic applications
+            # Estimate minimum wavelength
             wavelength_estimate = 1.55e-6 / np.sqrt(max_permittivity)
-            # Set PML size to be at least 1 wavelength and at most 20% of domain size
-            min_size = wavelength_estimate
-            max_size = min(self.width, self.height) * 0.2
-            # Use a heuristic to set PML size based on domain dimensions and wavelength
-            # At least 1 wavelength and at most 20% of the domain size
-            pml_size = max(min_size, min(max_size, min(self.width, self.height) / 5))
-            print(f"Auto-selected PML size: {pml_size:.2e} m (~{pml_size/wavelength_estimate:.1f} wavelengths)")
-        # Create transparent material for PML outlines
+            # Make PML thicker to allow for more gradual absorption
+            min_size = 1.5 * wavelength_estimate  # Increased from 1.0
+            max_size = min(self.width, self.height) * 0.3  # Increased thickness for gradual absorption
+            pml_size = max(min_size, min(max_size, min(self.width, self.height) / 3))
+            display_status(f"Auto-selected PML size: {pml_size:.2e} m (~{pml_size/wavelength_estimate:.1f} wavelengths)", "info")
+        
+        # Create transparent material for PML outlines (for visualization only)
         pml_material = Material(permittivity=1.0, permeability=1.0, conductivity=0.0)
-        # Edges of the design domain - create functional PML boundaries
-        self.boundaries.append(RectPML(position=(0, 0), width=pml_size, height=self.height, orientation="left"))
-        self.boundaries.append(RectPML(position=(self.width - pml_size, 0), width=pml_size, height=self.height, orientation="right"))
-        self.boundaries.append(RectPML(position=(0, self.height - pml_size), width=self.width, height=pml_size, orientation="top"))
-        self.boundaries.append(RectPML(position=(0, 0), width=self.width, height=pml_size, orientation="bot"))
-        # Corners of the design domain - create functional PML boundaries
-        self.boundaries.append(CircularPML(position=(0, 0), radius=pml_size, orientation="top-left"))
-        self.boundaries.append(CircularPML(position=(self.width, 0), radius=pml_size, orientation="top-right"))
-        self.boundaries.append(CircularPML(position=(0, self.height), radius=pml_size, orientation="bottom-left"))
-        self.boundaries.append(CircularPML(position=(self.width, self.height), radius=pml_size, orientation="bottom-right"))
-        # Add visual representations of PML regions to the structures list
-        # Left PML region
+        
+        # Create unified PML regions with optimized parameters for gradual absorption
+        # Rectangular edge PMLs
+        self.boundaries.append(PML("rect", (0, 0), (pml_size, self.height), "left"))
+        self.boundaries.append(PML("rect", (self.width - pml_size, 0), (pml_size, self.height), "right"))
+        self.boundaries.append(PML("rect", (0, self.height - pml_size), (self.width, pml_size), "top"))
+        self.boundaries.append(PML("rect", (0, 0), (self.width, pml_size), "bottom"))
+        
+        # Corner PMLs
+        self.boundaries.append(PML("corner", (0, 0), pml_size, "bottom-left"))
+        self.boundaries.append(PML("corner", (self.width, 0), pml_size, "bottom-right"))
+        self.boundaries.append(PML("corner", (0, self.height), pml_size, "top-left"))
+        self.boundaries.append(PML("corner", (self.width, self.height), pml_size, "top-right"))
+        
+        # Add visual representations of PML regions to the structures list (for display only)
+        # These are just visualization helpers and don't affect the actual simulation
         left_pml = Rectangle(
             position=(0, 0),
             width=pml_size,
             height=self.height,
             material=pml_material,
             color='none',
-            is_pml=True
+            is_pml=True  # Flag to identify it as a visual PML marker
         )
         self.structures.append(left_pml)
         # Right PML region
@@ -123,30 +133,34 @@ class Design:
 
     def show(self):
         """Display the design visually."""
-        if not self.structures: print("No structures to display"); return
         # Determine appropriate SI unit and scale
         max_dim = max(self.width, self.height)
         scale, unit = get_si_scale_and_label(max_dim)
-        print("Showing 2D design...")
+
         # Calculate figure size based on domain dimensions
         aspect_ratio = self.width / self.height
         base_size = 5
         if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
         else: figsize = (base_size, base_size / aspect_ratio)
+        
         # Create a single figure for all structures
         fig, ax = plt.subplots(figsize=figsize)
         ax.set_aspect('equal')
+        
         # Now plot each structure
         for structure in self.structures: structure.add_to_plot(ax)
+        
         # Set proper limits, title and label, and ensure the full design is visible
         ax.set_title('Design Layout')
         ax.set_xlabel(f'X ({unit})')
         ax.set_ylabel(f'Y ({unit})')
         ax.set_xlim(0, self.width)
         ax.set_ylim(0, self.height)
+        
         # Update tick labels with scaled values
         ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
         ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+        
         # Adjust layout for clean appearance
         plt.tight_layout()
         plt.show()
@@ -156,56 +170,61 @@ class Design:
 
     def get_material_value(self, x, y, dx=None, dt=None):
         """Return the material value at a given (x, y) coordinate, prioritizing the topmost structure."""
-        # First check if we're in a PML boundary region
-        pml_conductivity = 0.0
-        # Calculate average permittivity in the domain for PML calculation
-        if dx is not None:
-            eps_values = []
-            for structure in self.structures:
-                if hasattr(structure, 'material') and hasattr(structure.material, 'permittivity'):
-                    eps_values.append(structure.material.permittivity)
-            eps_avg = np.mean(eps_values) if eps_values else 1.0
-        else: eps_avg = None
-        # Apply all PML boundaries
-        for boundary in self.boundaries:
-            if isinstance(boundary, RectPML) or isinstance(boundary, CircularPML):
-                pml_conductivity += boundary.get_conductivity(x, y, dx=dx, dt=dt, eps_avg=eps_avg)
-        # Get material values from structures
+        # First get material values from underlying structures
+        # Start with default background material 
+        epsilon = 1.0
+        mu = 1.0
+        sigma_base = 0.0
+        
+        # Find the material values from the structures (outside PML calculation)
         for structure in reversed(self.structures):
             if isinstance(structure, Rectangle):
+                if structure.is_pml:
+                    # Skip visual PML structures - they're just for display
+                    continue
                 if self._point_in_polygon(x, y, structure.vertices):
-                    # Return with added PML conductivity
-                    return [structure.material.permittivity, 
-                            structure.material.permeability, 
-                            structure.material.conductivity + pml_conductivity]
+                    epsilon = structure.material.permittivity
+                    mu = structure.material.permeability
+                    sigma_base = structure.material.conductivity
+                    break
             elif isinstance(structure, Circle):
                 if np.hypot(x - structure.position[0], y - structure.position[1]) <= structure.radius:
-                    # Return with added PML conductivity
-                    return [structure.material.permittivity, 
-                            structure.material.permeability, 
-                            structure.material.conductivity + pml_conductivity]
+                    epsilon = structure.material.permittivity
+                    mu = structure.material.permeability
+                    sigma_base = structure.material.conductivity
+                    break
             elif isinstance(structure, Ring):
                 distance = np.hypot(x - structure.position[0], y - structure.position[1])
                 if structure.inner_radius <= distance <= structure.outer_radius:
-                    # Return with added PML conductivity
-                    return [structure.material.permittivity, 
-                            structure.material.permeability, 
-                            structure.material.conductivity + pml_conductivity]
+                    epsilon = structure.material.permittivity
+                    mu = structure.material.permeability
+                    sigma_base = structure.material.conductivity
+                    break
             elif isinstance(structure, CircularBend):
                 distance = np.hypot(x - structure.position[0], y - structure.position[1])
                 if structure.inner_radius <= distance <= structure.outer_radius:
-                    # Return with added PML conductivity
-                    return [structure.material.permittivity, 
-                            structure.material.permeability, 
-                            structure.material.conductivity + pml_conductivity]
+                    epsilon = structure.material.permittivity
+                    mu = structure.material.permeability
+                    sigma_base = structure.material.conductivity
+                    break
             elif isinstance(structure, Polygon):
                 if self._point_in_polygon(x, y, structure.vertices):
-                    # Return with added PML conductivity
-                    return [structure.material.permittivity, 
-                            structure.material.permeability, 
-                            structure.material.conductivity + pml_conductivity]
-        # Default with added PML conductivity
-        return [1.0, 1.0, pml_conductivity]  # Default permittivity if no structure contains the point
+                    epsilon = structure.material.permittivity
+                    mu = structure.material.permeability
+                    sigma_base = structure.material.conductivity
+                    break
+        
+        # Calculate PML conductivity based on the UNDERLYING material
+        # This is crucial for proper absorption without reflection
+        pml_conductivity = 0.0
+        if dx is not None:
+            eps_avg = epsilon  # Use the actual permittivity at this point
+            # Apply all PML boundaries
+            for boundary in self.boundaries:
+                pml_conductivity += boundary.get_conductivity(x, y, dx=dx, dt=dt, eps_avg=eps_avg)
+        
+        # Return with the permittivity of the underlying structure plus PML conductivity
+        return [epsilon, mu, sigma_base + pml_conductivity]
 
     def _point_in_polygon(self, x, y, vertices):
         """Check if a point is inside a polygon using the ray-casting algorithm."""
@@ -224,6 +243,70 @@ class Design:
             p1x, p1y = p2x, p2y
         return inside
 
+    def get_tree_view(self):
+        """Return a structured view of the design as a tree"""
+        design_data = {
+            "Properties": {
+                "Width": self.width,
+                "Height": self.height,
+                "Depth": self.depth,
+                "Dimension": "3D" if self.is_3d else "2D"
+            },
+            "Structures": {},
+            "Sources": {},
+            "Monitors": {}
+        }
+        
+        # Add structure data
+        for idx, structure in enumerate(self.structures):
+            if isinstance(structure, ModeSource) or isinstance(structure, GaussianSource) or isinstance(structure, Monitor):
+                continue
+                
+            struct_type = structure.__class__.__name__
+            if struct_type not in design_data["Structures"]:
+                design_data["Structures"][struct_type] = []
+                
+            struct_info = {"position": getattr(structure, "position", None)}
+            if hasattr(structure, "material"):
+                mat = structure.material
+                struct_info["material"] = {
+                    "permittivity": getattr(mat, "permittivity", None),
+                    "permeability": getattr(mat, "permeability", None),
+                    "conductivity": getattr(mat, "conductivity", None)
+                }
+            design_data["Structures"][struct_type].append(struct_info)
+        
+        # Add source data
+        for idx, source in enumerate(self.sources):
+            source_type = source.__class__.__name__
+            if source_type not in design_data["Sources"]:
+                design_data["Sources"][source_type] = []
+            
+            source_info = {
+                "position": source.position,
+                "wavelength": getattr(source, "wavelength", None)
+            }
+            design_data["Sources"][source_type].append(source_info)
+        
+        # Add monitor data
+        for idx, monitor in enumerate(self.monitors):
+            monitor_type = monitor.__class__.__name__
+            if monitor_type not in design_data["Monitors"]:
+                design_data["Monitors"][monitor_type] = []
+            
+            monitor_info = {
+                "position": monitor.position,
+                "size": getattr(monitor, "size", None)
+            }
+            design_data["Monitors"][monitor_type].append(monitor_info)
+            
+        return design_data
+        
+    def display_tree(self):
+        """Display the design as a hierarchical tree"""
+        design_data = self.get_tree_view()
+        tree_view(design_data, "Design Structure")
+
 class Polygon:
     def __init__(self, vertices=None, material=None, color=None, optimize=False):
         self.vertices = vertices
@@ -231,7 +314,7 @@ class Polygon:
         self.optimize = optimize
         self.color = color if color is not None else self.get_random_color_consistent()
     
-    def get_random_color_consistent(self, saturation=0.5, value=0.5):
+    def get_random_color_consistent(self, saturation=0.6, value=0.7):
         """Generate a random color with consistent perceived brightness and saturation."""
         hue = random.random() # Generate random hue (0-1)
         r, g, b = colorsys.hsv_to_rgb(hue, saturation, value)
@@ -364,7 +447,7 @@ class Circle(Polygon):
         return Circle(self.position, self.radius, self.material, self.color, self.optimize)
 
 class Ring(Polygon):
-    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, material=None, color=None, optimize=False, points=64):
+    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, material=None, color=None, optimize=False, points=256):
         theta = np.linspace(0, 2*np.pi, points, endpoint=False)
         outer_vertices = [(position[0] + outer_radius * np.cos(t), position[1] + outer_radius * np.sin(t)) for t in theta]
         inner_vertices = [(position[0] + inner_radius * np.cos(t), position[1] + inner_radius * np.sin(t)) for t in reversed(theta)]
@@ -422,18 +505,15 @@ class Ring(Polygon):
 class CircularBend(Polygon):
     def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, angle=90, rotation=0, material=None, 
                  facecolor=None, optimize=False, points=64):
-        # Generate vertices for the bend
+        self.points = points
         theta = np.linspace(0, np.radians(angle), points)
         rotation_rad = np.radians(rotation)
-        # Outer arc points
         outer_vertices = [(position[0] + outer_radius * np.cos(t + rotation_rad),
                           position[1] + outer_radius * np.sin(t + rotation_rad)) for t in theta]
-        # Inner arc points (in reverse to maintain correct winding)
         inner_vertices = [(position[0] + inner_radius * np.cos(t + rotation_rad),
                           position[1] + inner_radius * np.sin(t + rotation_rad)) for t in reversed(theta)]
-        # Combine vertices and close the shape
         vertices = outer_vertices + inner_vertices
-        super().__init__(vertices=vertices, material=material, color=color, optimize=optimize)
+        super().__init__(vertices=vertices, material=material, color=facecolor, optimize=optimize)
         self.position = position
         self.inner_radius = inner_radius
         self.outer_radius = outer_radius
@@ -455,14 +535,11 @@ class CircularBend(Polygon):
     def scale(self, s):
         """Scale the bend radii by s and return self for method chaining."""
         self.inner_radius *= s; self.outer_radius *= s
-        # Regenerate vertices with new radii
         N = len(self.vertices) // 2  # Half the vertices for each arc
         theta = np.linspace(0, np.radians(self.angle), N)
         rotation_rad = np.radians(self.rotation)
-        # Outer arc points
         outer_vertices = [(self.position[0] + self.outer_radius * np.cos(t + rotation_rad),
                           self.position[1] + self.outer_radius * np.sin(t + rotation_rad)) for t in theta]
-        # Inner arc points (in reverse to maintain correct winding)
         inner_vertices = [(self.position[0] + self.inner_radius * np.cos(t + rotation_rad),
                           self.position[1] + self.inner_radius * np.sin(t + rotation_rad)) for t in reversed(theta)]
         self.vertices = outer_vertices + inner_vertices
@@ -471,7 +548,7 @@ class CircularBend(Polygon):
     def add_to_plot(self, ax, facecolor=None, edgecolor="black", alpha=None, linestyle=None):
         if facecolor is None: facecolor = self.color
         if alpha is None: alpha = 1
-        if linestyle is None: linestyle = '--'
+        if linestyle is None: linestyle = '-'
         # Convert angles to radians
         angle_rad = np.radians(self.angle)
         rotation_rad = np.radians(self.rotation)
@@ -540,92 +617,130 @@ class Taper(Polygon):
         new_taper.vertices = [(x, y) for x, y in self.vertices]
         return new_taper
 
-class RectPML:
-    """Rectangular Perfectly Matched Layer (PML) for absorbing boundary conditions."""
-    def __init__(self, position=(0,0), width=1, height=1, orientation="left", max_conductivity=None, polynomial_order=3):
+class PML:
+    """Unified PML (Perfectly Matched Layer) class for absorbing boundary conditions."""
+    def __init__(self, region_type, position, size, orientation, polynomial_order=2.0, sigma_factor=1.0, alpha_max=0.1):
+        self.region_type = region_type  # "rect" or "corner"
         self.position = position
-        self.width = width
-        self.height = height
         self.orientation = orientation
-        self.polynomial_order = polynomial_order
-        # Default max conductivity or let it be calculated later
-        self.max_conductivity = max_conductivity if max_conductivity is not None else 1.0
+        self.polynomial_order = polynomial_order  # Reduced to allow smoother transition
+        self.sigma_factor = sigma_factor  # Reduced to allow waves to enter
+        self.alpha_max = alpha_max  # Reduced frequency-shifting for smoother transition
         
-    def get_conductivity(self, x, y, dx=None, dt=None, eps_avg=None):
-        """Calculate PML conductivity at a point.
+        if region_type == "rect":
+            self.width, self.height = size
+        else:  # corner
+            self.radius = size
+    
+    def get_profile(self, normalized_distance):
+        """Calculate PML absorption profile using gradual grading.
         
         Args:
-            x, y: Position to evaluate
-            dx: Grid cell size (if None, use default max_conductivity)
-            dt: Time step size (if None, use default max_conductivity)
-            eps_avg: Average permittivity (if None, use default max_conductivity)
+            normalized_distance: Distance from PML inner boundary (0.0) to outer boundary (1.0)
             
         Returns:
-            Conductivity value at the point
+            Tuple of (sigma, alpha) values for conductivity and frequency-shifting
         """
-        # Check if point is within the PML region
-        if not (self.position[0] <= x <= self.position[0] + self.width and
-                self.position[1] <= y <= self.position[1] + self.height):
-            return 0.0
-        # Calculate max conductivity based on grid parameters if provided
-        sigma_max = self.max_conductivity
-        if dx is not None and eps_avg is not None:
-            # Calculate impedance and max conductivity as in pml.py
-            eta = np.sqrt(MU_0 / (EPS_0 * eps_avg))
-            sigma_max = 0.5 / (eta * dx)
-        # Calculate normalized distance from boundary based on orientation
-        if self.orientation == "left": distance = (x - self.position[0]) / self.width
-        elif self.orientation == "right": distance = 1.0 - (x - self.position[0]) / self.width
-        elif self.orientation == "top": distance = 1.0 - (y - self.position[1]) / self.height
-        elif self.orientation == "bottom": distance = (y - self.position[1]) / self.height
-        else: return 0.0  # Default if orientation is not recognized
         # Ensure distance is within [0,1]
-        distance = min(max(distance, 0.0), 1.0)
-        # Calculate conductivity with polynomial scaling (default cubic as in pml.py)
-        return sigma_max * (1.0 - distance) ** self.polynomial_order
-
-
-class CircularPML:
-    """Circular corner PML for better wave absorption at corners."""
-    def __init__(self, position=(0,0), radius=1, orientation="top-left", max_conductivity=None, polynomial_order=3):
-        self.position = position
-        self.radius = radius
-        self.orientation = orientation
-        self.polynomial_order = polynomial_order
-        # Default max conductivity or let it be calculated later
-        self.max_conductivity = max_conductivity if max_conductivity is not None else 1.0
+        d = min(max(normalized_distance, 0.0), 1.0)
         
+        # Create a smooth transition from 0 at the interface
+        # Start with nearly zero conductivity at the interface and gradually increase
+        # This is crucial to prevent reflection at the boundary
+        if d < 0.05:
+            # Very gentle start at the boundary (nearly zero)
+            sigma = 0.01 * (d/0.05)**2
+        else:
+            # Smooth polynomial grading for the rest
+            sigma = ((d - 0.05) / 0.95)**self.polynomial_order
+        
+        # Smooth frequency-shifting profile
+        alpha = self.alpha_max * d**2  # Quadratic profile for smooth transition
+        
+        return sigma, alpha
+    
     def get_conductivity(self, x, y, dx=None, dt=None, eps_avg=None):
-        """Calculate PML conductivity at a point.
+        """Calculate PML conductivity at a point using smooth-transition PML.
         
         Args:
             x, y: Position to evaluate
-            dx: Grid cell size (if None, use default max_conductivity)
-            dt: Time step size (if None, use default max_conductivity)
-            eps_avg: Average permittivity (if None, use default max_conductivity)
+            dx: Grid cell size
+            dt: Time step size
+            eps_avg: Average permittivity
             
         Returns:
             Conductivity value at the point
         """
-        # Calculate distance from corner to point (x,y)
-        distance_from_corner = np.hypot(x - self.position[0], y - self.position[1])
-        # Scale distance based on radius
-        if distance_from_corner > self.radius: return 0.0  # Outside the PML region
-        # For corners, we need to check if the point is in the correct quadrant
-        # This prevents the corner PML from extending into the non-corner regions
-        dx = x - self.position[0]
-        dy = y - self.position[1]
-        if self.orientation == "top-left" and (dx > 0 or dy > 0): return 0.0
-        elif self.orientation == "top-right" and (dx < 0 or dy > 0): return 0.0
-        elif self.orientation == "bottom-left" and (dx > 0 or dy < 0): return 0.0
-        elif self.orientation == "bottom-right" and (dx < 0 or dy < 0): return 0.0
-        # Calculate max conductivity based on grid parameters if provided
-        sigma_max = self.max_conductivity
+        # Calculate theoretical optimal conductivity based on impedance matching
         if dx is not None and eps_avg is not None:
-            # Calculate impedance and max conductivity as in pml.py
+            # Calculate impedance 
             eta = np.sqrt(MU_0 / (EPS_0 * eps_avg))
-            sigma_max = 0.5 / (eta * dx)
-        # Normalize distance to [0,1] range (1 at corner, 0 at edge of PML)
-        normalized_distance = 1.0 - (distance_from_corner / self.radius)
-        # Calculate conductivity with polynomial scaling (default cubic as in pml.py)
-        return sigma_max * normalized_distance ** self.polynomial_order
+            # Optimal conductivity for minimal reflection at interface
+            # Reduced from 1.2 to 0.8 for smoother transition
+            sigma_max = 0.8 / (eta * dx)
+            sigma_max *= self.sigma_factor  # Apply gentler factor
+        else:
+            sigma_max = 1.0  # Lower default conductivity
+        
+        # Get normalized distance based on region type and orientation
+        if self.region_type == "rect":
+            # Check if point is within rectangular PML region
+            if not (self.position[0] <= x <= self.position[0] + self.width and
+                    self.position[1] <= y <= self.position[1] + self.height):
+                return 0.0
+                
+            # Calculate normalized distance from boundary based on orientation
+            # Distance should be 0 at inner boundary and 1 at outer boundary
+            if self.orientation == "left":
+                # For left PML, x=position[0]+width is inner (0), x=position[0] is outer (1)
+                distance = 1.0 - (x - self.position[0]) / self.width
+            elif self.orientation == "right":
+                # For right PML, x=position[0] is inner (0), x=position[0]+width is outer (1)
+                distance = (x - self.position[0]) / self.width
+            elif self.orientation == "top":
+                # For top PML, y=position[1] is inner (0), y=position[1]+height is outer (1)
+                distance = (y - self.position[1]) / self.height
+            elif self.orientation == "bottom":
+                # For bottom PML, y=position[1]+height is inner (0), y=position[1] is outer (1)
+                distance = 1.0 - (y - self.position[1]) / self.height
+            else:
+                return 0.0
+        
+        else:  # corner PML
+            # Calculate distance from corner to point
+            distance_from_corner = np.hypot(x - self.position[0], y - self.position[1])
+            # Outside the PML region
+            if distance_from_corner > self.radius:
+                return 0.0
+                
+            # Check if in correct quadrant
+            dx_from_corner = x - self.position[0]
+            dy_from_corner = y - self.position[1]
+            
+            if self.orientation == "top-left" and (dx_from_corner > 0 or dy_from_corner < 0):
+                return 0.0
+            elif self.orientation == "top-right" and (dx_from_corner < 0 or dy_from_corner < 0):
+                return 0.0
+            elif self.orientation == "bottom-left" and (dx_from_corner > 0 or dy_from_corner > 0):
+                return 0.0
+            elif self.orientation == "bottom-right" and (dx_from_corner < 0 or dy_from_corner > 0):
+                return 0.0
+                
+            # Normalize distance (0 at inner edge, 1 at corner)
+            distance = distance_from_corner / self.radius
+        
+        # Get optimized profile values
+        sigma_profile, alpha_profile = self.get_profile(distance)
+        
+        # Apply stretched-coordinate PML with gradual absorption
+        conductivity = sigma_max * sigma_profile
+        
+        # The material-dependent scaling might have been causing excessive reflection
+        # We'll use a gentler approach that smoothly transitions at the boundary
+        
+        if dt is not None:
+            # Apply frequency-shifting with reduced effect near boundary
+            frequency_factor = 1.0 / (1.0 + alpha_profile)
+            conductivity *= frequency_factor
+            
+        return conductivity

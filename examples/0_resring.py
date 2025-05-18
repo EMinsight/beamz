@@ -1,16 +1,38 @@
+"""
+paper inspiration: https://photonics.intec.ugent.be/download/pub_3105.pdf
+code: Quentin Wach
+"""
 from beamz import *
 import numpy as np
+from beamz.helpers import calc_optimal_fdtd_params
+from beamz.design.signals import plot_signal
 
+# Parameters
 WL = 1.55*µm
-TIME = 40*WL/LIGHT_SPEED
-T = np.linspace(0, TIME, int(TIME/(0.015*WL/LIGHT_SPEED)))
-design = Design(width=6*µm, height=6*µm, material=Material(2.1), pml_size=WL/5)
-design.add(Rectangle(position=(0,1*µm), width=6*µm, height=0.4*µm, material=Material(6.25)))
-design.add(Ring(position=(3*µm, 3.35*µm), inner_radius=1.5*µm, outer_radius=1.9*µm, material=Material(6.25)))
-signal = ramped_cosine(T, amplitude=1.0, frequency=LIGHT_SPEED/WL, phase=0, ramp_duration=TIME/5, t_max=TIME/3)
-design.add(ModeSource(design=design, start=(0.5*µm, 0.8*µm), end=(0.5*µm, 1.6*µm), wavelength=WL, signal=signal))
+TIME = 120*WL/LIGHT_SPEED
+X = 20*µm
+Y = 19*µm
+N_CORE = 2.04 # Si3N4
+N_CLAD = 1.444 # SiO2
+WG_WIDTH = 0.565*µm
+DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE, N_CLAD), safety_factor=0.4, points_per_wavelength=20)
+RING_RADIUS = 6*µm
+
+# Design
+design = Design(width=X, height=Y, material=Material(N_CLAD**2), pml_size=WL)
+design.add(Rectangle(position=(0,WL*2), width=X, height=WG_WIDTH, material=Material(N_CORE**2)))
+design.add(Ring(position=(X/2, WL*2+WG_WIDTH+RING_RADIUS+WG_WIDTH/2+0.2*WG_WIDTH), inner_radius=RING_RADIUS-WG_WIDTH/2, outer_radius=RING_RADIUS+WG_WIDTH/2, material=Material(N_CORE**2)))
+
+# Signal
+time_steps = np.arange(0, TIME, DT)
+signal = ramped_cosine(time_steps, amplitude=1.0, frequency=LIGHT_SPEED/WL, phase=0, ramp_duration=WL*20/LIGHT_SPEED, t_max=TIME/3)
+plot_signal(signal, time_steps)
+
+# Source
+design.add(ModeSource(design=design, start=(WL*2, WL*2+WG_WIDTH/2-1.5*µm), end=(WL*2, WL*2+WG_WIDTH/2+1.5*µm), wavelength=WL, signal=signal))
 design.show()
 
-sim = FDTD(design=design, time=T, mesh="regular", resolution=WL/40, backend="numpy")
-sim.run(live=True)
-sim.plot_power(log_scale=False, db_colorbar=True)
+# Simulation
+sim = FDTD(design=design, time=time_steps, mesh="regular", resolution=DX, backend="numpy")
+sim.run(live=True, save_memory_mode=True, accumulate_power=True)
+sim.plot_power(db_colorbar=True)

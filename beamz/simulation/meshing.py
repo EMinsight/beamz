@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from beamz.helpers import progress_bar
+from beamz.helpers import display_header, display_status, display_design_summary, tree_view, console, create_rich_progress
 
 class RegularGrid:
     """Takes in a design and resolution and returns a rasterized grid of that design."""
@@ -40,27 +41,32 @@ class RegularGrid:
         dt_estimate = 0.5 * self.resolution / (c * np.sqrt(2))
         
         # Process each point in the grid
-        print("Rasterizing design as a regular grid...")
-        for i in range(grid_height):
-            for j in range(grid_width):
-                progress_bar(i*grid_width + j, grid_height*grid_width)
-                # Get the center point
-                x_center = X_centers[i, j]
-                y_center = Y_centers[i, j]
-                # Create sample points around this center
-                x_samples = x_center + dx
-                y_samples = y_center + dy
-                # Get material values for all sample points, passing grid parameters
-                values = [self.design.get_material_value(x, y, dx=self.resolution, dt=dt_estimate) 
-                         for x, y in zip(x_samples, y_samples)]
-                # Calculate the mean permittivity, permeability, and conductivity
-                permittivity = np.mean([value[0] for value in values])
-                permeability = np.mean([value[1] for value in values])
-                conductivity = np.mean([value[2] for value in values])
-                # Average the values
-                self.permittivity[i, j] = permittivity
-                self.permeability[i, j] = permeability
-                self.conductivity[i, j] = conductivity
+        display_status("Rasterizing design as a regular grid...")
+        
+        # Use a single progress bar for the entire simulation
+        with create_rich_progress() as progress:
+            task = progress.add_task("Rasterizing design...", total=grid_height*grid_width)
+            for i in range(grid_height):
+                for j in range(grid_width):
+                    # Get the center point
+                    x_center = X_centers[i, j]
+                    y_center = Y_centers[i, j]
+                    # Create sample points around this center
+                    x_samples = x_center + dx
+                    y_samples = y_center + dy
+                    # Get material values for all sample points, passing grid parameters
+                    values = [self.design.get_material_value(x, y, dx=self.resolution, dt=dt_estimate) 
+                            for x, y in zip(x_samples, y_samples)]
+                    # Calculate the mean permittivity, permeability, and conductivity
+                    permittivity = np.mean([value[0] for value in values])
+                    permeability = np.mean([value[1] for value in values])
+                    conductivity = np.mean([value[2] for value in values])
+                    # Average the values
+                    self.permittivity[i, j] = permittivity
+                    self.permeability[i, j] = permeability
+                    self.conductivity[i, j] = conductivity
+                    # Update the progress bar
+                    progress.update(task, advance=1)
 
     def show(self, field: str = "permittivity"):
         """Display the rasterized grid with properly scaled SI units."""
