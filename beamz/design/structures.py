@@ -683,13 +683,12 @@ class Polygon:
                              #This can be problematic, robust point-in-polygon is hard.
                              pass # Let standard check handle, or needs specific rule for horizontal edges.
 
-
                         if p1x == p2x or x <= xinters: # For vertical edge or point left of intersection
                             inside = not inside
             p1x, p1y = p2x, p2y
         return inside
 
-    def _point_in_polygon(self, x, y, vertices=None):
+    def point_in_polygon(self, x, y):
         """Check if a point (x,y) is inside this polygon (which may have holes).
         
         'vertices' argument is ignored here, uses self.vertices and self.interiors.
@@ -697,20 +696,15 @@ class Polygon:
         # Use self.vertices for exterior and self.interiors for holes
         exterior_path = self.vertices
         interior_paths = self.interiors
-
-        if not exterior_path: 
-            return False
-        
+        if not exterior_path: return False
         # Check if point is in the exterior boundary
         if not self._point_in_polygon_single_path(x, y, exterior_path):
-            return False # Not in exterior, so definitely not in polygon
-
+            return False # Not in exterior, so definitely not in polygom
         # If in exterior, check if it's in any of the holes
         # Winding order of interiors (CW) should make _point_in_polygon_single_path return true if inside.
         for interior_path_pts in interior_paths:
             if interior_path_pts and self._point_in_polygon_single_path(x, y, interior_path_pts):
                 return False # Point is in a hole, so not in polygon (as part of the material)
-        
         return True # In exterior and not in any hole
 
 class Rectangle(Polygon):

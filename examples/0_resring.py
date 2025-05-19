@@ -34,9 +34,11 @@ design += ModeSource(design=design, start=(WL*2, WL*2+WG_WIDTH/2-1.5*µm), end=(
                      wavelength=WL, signal=signal)
 design.show()
 
-grid = RegularGrid(design, DX)
+grid = RegularGrid(design=design, resolution=DX)
 grid.show(field="permittivity")
 grid.show(field="conductivity")
+grid.show(field="permeability")
+
 
 # Simulation
 sim = FDTD(design=design, time=time_steps, mesh="regular", resolution=DX, backend="numpy")
