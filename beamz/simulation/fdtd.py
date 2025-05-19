@@ -123,7 +123,11 @@ class FDTD:
         plt.gca().xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
         plt.gca().yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
         for structure in self.design.structures:
-            structure.add_to_plot(plt.gca(), facecolor="none", edgecolor="black", linestyle="-")
+            # Use dashed lines for PML regions
+            if hasattr(structure, 'is_pml') and structure.is_pml:
+                structure.add_to_plot(plt.gca(), edgecolor="black", linestyle='--', facecolor='none', alpha=0.5)
+            else:
+                structure.add_to_plot(plt.gca(), facecolor="none", edgecolor="black", linestyle="-")
         plt.tight_layout()
         plt.show()
 
@@ -162,7 +166,12 @@ class FDTD:
         colorbar = plt.colorbar(self.im, orientation='vertical', aspect=30, extend='both')
         colorbar.set_label(f'{field} Field Amplitude')
         # Add design structure outlines
-        for structure in self.design.structures: structure.add_to_plot(self.ax, facecolor="none")
+        for structure in self.design.structures:
+            # Use dashed lines for PML regions
+            if hasattr(structure, 'is_pml') and structure.is_pml:
+                structure.add_to_plot(self.ax, edgecolor="black", linestyle='--', facecolor='none', alpha=0.5)
+            else:
+                structure.add_to_plot(self.ax, facecolor="none")
         # Set axis labels with proper scaling
         max_dim = max(self.design.width, self.design.height)
         if max_dim >= 1e-3: scale, unit = 1e3, 'mm'
@@ -522,7 +531,11 @@ class FDTD:
             colorbar.set_label(f'{field} Field Amplitude')
         # Add design structure outlines
         for structure in self.design.structures:
-            structure.add_to_plot(ax, facecolor="none", edgecolor="black")
+            # Use dashed lines for PML regions
+            if hasattr(structure, 'is_pml') and structure.is_pml:
+                structure.add_to_plot(ax, edgecolor="black", linestyle='--', facecolor='none', alpha=0.5)
+            else:
+                structure.add_to_plot(ax, facecolor="none", edgecolor="black")
         # Configure standard plot elements if not using clean visualization
         if not clean_visualization:
             # Add axis labels with proper scaling
@@ -681,7 +694,12 @@ class FDTD:
             colorbar.set_label('Relative Power (dB)')
         else: colorbar.set_label('Power (a.u.)')
         # Add design structure outlines
-        for structure in self.design.structures: structure.add_to_plot(self.ax, facecolor="none", edgecolor="white")
+        for structure in self.design.structures:
+            # Use dashed lines for PML regions
+            if hasattr(structure, 'is_pml') and structure.is_pml:
+                structure.add_to_plot(self.ax, edgecolor="white", linestyle='--', facecolor='none', alpha=0.5)
+            else:
+                structure.add_to_plot(self.ax, facecolor="none", edgecolor="white")
         # Add axis labels with proper scaling
         plt.xlabel(f'X ({unit})')
         plt.ylabel(f'Y ({unit})')
