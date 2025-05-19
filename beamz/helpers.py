@@ -166,29 +166,6 @@ def display_results(results: Dict[str, Any], title: str = "Results") -> None:
     
     console.print(table)
 
-def display_design_summary(design_name: str, properties: Dict[str, Any]) -> None:
-    """
-    Display a summary of a design with its key properties.
-    
-    Args:
-        design_name: Name of the design
-        properties: Dictionary of design properties
-    """
-    console.print(Panel(
-        f"[bold cyan]Design:[/] [yellow]{design_name}[/]",
-        title="Design Summary",
-        expand=False
-    ))
-    
-    table = Table(show_header=False, box=None)
-    table.add_column("Property", style="blue")
-    table.add_column("Value", style="white")
-    
-    for prop, value in properties.items():
-        table.add_row(prop, str(value))
-    
-    console.print(table)
-
 def display_simulation_status(progress: float, metrics: Dict[str, Any] = None) -> None:
     """
     Display current simulation status with progress and metrics.

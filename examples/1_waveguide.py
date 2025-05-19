@@ -12,7 +12,7 @@ T = np.arange(0, TIME, dt)
 
 
 design = Design(width=18*µm, height=7*µm, material=Material(n_clad**2), pml_size=WL)
-design.add(Rectangle(position=(0,3.5*µm-wg_width/2), width=18*µm, height=wg_width, material=Material(n_core**2)))
+design += Rectangle(position=(0,3.5*µm-wg_width/2), width=18*µm, height=wg_width, material=Material(n_core**2))
 design.show()
 
 grid = RegularGrid(design=design, resolution=resolution)
@@ -26,7 +26,7 @@ import beamz
 
 source = ModeSource(design=design, start=(2*µm, 3.5*µm-1.2*µm), end=(2*µm, 3.5*µm+1.2*µm), wavelength=WL, signal=signal)
 #source.show()
-design.add(source)
+design += source
 design.show()
 
 sim = FDTD(design=design, time=T, mesh="regular", resolution=resolution)

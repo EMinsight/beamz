@@ -8,7 +8,7 @@ from beamz.const import µm, EPS_0, MU_0
 from beamz.design.sources import ModeSource, GaussianSource
 from beamz.design.monitors import Monitor
 from beamz.design.helpers import get_si_scale_and_label
-from beamz.helpers import display_header, display_status, display_design_summary, tree_view, console
+from beamz.helpers import display_header, display_status, tree_view, console
 import colorsys
 
 class Design:
@@ -179,7 +179,8 @@ class Design:
                 
                 # The result could be a single polygon or a multipolygon
                 if merged.geom_type == 'Polygon':
-                    exterior_coords = list(merged.exterior.coords[:-1])
+                    # Don't slice off the last vertex - our add_to_plot method needs complete vertices
+                    exterior_coords = list(merged.exterior.coords[:-1])  # Keep [:-1] to remove duplicate closing vertex from Shapely
                     interior_coords_lists = [list(interior.coords[:-1]) for interior in merged.interiors]
                     
                     if exterior_coords:
@@ -197,6 +198,7 @@ class Design:
                     all_geoms_converted_successfully = True
                     temp_new_polys_for_multipolygon = []
                     for geom in merged.geoms:
+                        # Keep [:-1] to remove duplicate closing vertex from Shapely (our add_to_plot will add it back)
                         exterior_coords = list(geom.exterior.coords[:-1])
                         interior_coords_lists = [list(interior.coords[:-1]) for interior in geom.interiors]
 
@@ -611,21 +613,30 @@ class Polygon:
         all_path_codes = []
 
         # Exterior path (assume CCW from shapely, Path will handle fill direction)
-        # A Path needs N vertices and N codes. For a polygon segment: MOVETO, LINETO,...,LINETO
+        # A Path needs N vertices and N codes. For a polygon segment: MOVETO, LINETO,...,LINETO, CLOSEPOLY
         if len(self.vertices) > 0:
+            # Add all vertices
             all_path_coords.extend(self.vertices)
+            # Add the first vertex again to close the path visually
+            all_path_coords.append(self.vertices[0])
+            # Set codes: MOVETO for first vertex, LINETO for middle vertices, CLOSEPOLY for last
             all_path_codes.append(Path.MOVETO)
             if len(self.vertices) > 1:
-                 all_path_codes.extend([Path.LINETO] * (len(self.vertices) - 1))
-            # For a single point, it will be MOVETO. For two points, MOVETO, LINETO.
+                all_path_codes.extend([Path.LINETO] * (len(self.vertices) - 1))
+            all_path_codes.append(Path.CLOSEPOLY)
 
         # Interior paths (assume CW from shapely for holes)
         for interior_v_list in self.interiors:
             if interior_v_list and len(interior_v_list) > 0:
+                # Add all interior vertices
                 all_path_coords.extend(interior_v_list)
+                # Add the first vertex again to close the interior path
+                all_path_coords.append(interior_v_list[0])
+                # Set codes: MOVETO for first vertex, LINETO for middle vertices, CLOSEPOLY for last
                 all_path_codes.append(Path.MOVETO)
                 if len(interior_v_list) > 1:
                     all_path_codes.extend([Path.LINETO] * (len(interior_v_list) - 1))
+                all_path_codes.append(Path.CLOSEPOLY)
         
         if not all_path_coords or not all_path_codes: # Nothing to draw
             return
