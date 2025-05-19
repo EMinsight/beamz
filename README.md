@@ -9,4 +9,3 @@ pip install beamz
 ```
 
 > **Note**: _BEAMZ is currently in a premature state and not publically advertised. If you're a friend of Quentin Wach, feel free to get a first peek, otherwise, consider this package yet to be released._
-
