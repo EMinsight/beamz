@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from beamz.design.structures import Rectangle
-from beamz.helpers import create_rich_progress
+from beamz.helpers import create_rich_progress, get_si_scale_and_label
 
 class RegularGrid:
     """Takes in a design and resolution and returns a rasterized grid of that design."""
@@ -22,12 +22,16 @@ class RegularGrid:
 
     def __rasterize__(self):
         """Painters algorithm to rasterize the design into a grid using super-sampling
-        by utilizing the ordered nature of the structures and their bounding boxes."
+        by utilizing the ordered nature of the structures and their bounding boxes.
         We iterate through the sorted list of objects:
         1. First, draw the background layer without any anti-aliasing or boundary box consideration.
         2. Then take the boundary box of the next object and create a mask for the material arrays.
         3. Then use super-sampling over that boundary box to draw this object.
         4. Do this until all objects are drawn.
+
+        TODO: 
+            + Refactor into more readable code with distinct repeatable functions.
+            + Write detailed documentation (see Quentin's personal notes for details).
         """
         width, height = self.design.width, self.design.height
         grid_width, grid_height = int(width / self.resolution), int(height / self.resolution)
@@ -311,7 +315,6 @@ class RegularGrid:
                                     y_sample = center_y + dy[k]
                                     if contains_func(x_sample, y_sample):
                                         samples_inside += 1
-                                
                                 if samples_inside > 0:
                                     # Calculate blend factor
                                     blend_factor = samples_inside / num_samples
@@ -334,7 +337,6 @@ class RegularGrid:
                                     y_sample = center_y + dy[k]
                                     if contains_func(x_sample, y_sample):
                                         samples_inside += 1
-                                
                                 if samples_inside > 0:
                                     # Calculate blend factor
                                     blend_factor = samples_inside / num_samples
@@ -423,10 +425,6 @@ class RegularGrid:
         self.permittivity = permittivity
         self.permeability = permeability
         self.conductivity = conductivity
-        # Log material ranges for debugging
-        print(f"Permittivity range: [{np.min(permittivity):.2f}, {np.max(permittivity):.2f}]")
-        print(f"Permeability range: [{np.min(permeability):.2f}, {np.max(permeability):.2f}]")
-        print(f"Conductivity range: [{np.min(conductivity):.2e}, {np.max(conductivity):.2e}]")
 
     def show(self, field: str = "permittivity"):
         """Display the rasterized grid with properly scaled SI units."""
@@ -436,18 +434,14 @@ class RegularGrid:
         if grid is not None:
             # Determine appropriate SI unit and scale
             max_dim = max(self.design.width, self.design.height)
-            if max_dim >= 1e-3: scale, unit = 1e3, 'mm'
-            elif max_dim >= 1e-6: scale, unit = 1e6, 'µm'
-            elif max_dim >= 1e-9: scale, unit = 1e9, 'nm'
-            else: scale, unit = 1e12, 'pm'
-
+            scale, unit = get_si_scale_and_label(max_dim)
             # Calculate figure size based on grid dimensions
             grid_height, grid_width = grid.shape
             aspect_ratio = grid_width / grid_height
             base_size = 2.5  # Base size for the smaller dimension
             if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
             else: figsize = (base_size, base_size / aspect_ratio)
-
+            # Make the actual figure
             plt.figure(figsize=figsize)
             plt.imshow(grid, origin='lower', cmap='Grays', extent=(0, self.design.width, 0, self.design.height))
             plt.colorbar(label=field)
