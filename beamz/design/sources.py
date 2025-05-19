@@ -112,6 +112,11 @@ class ModeSource():
         self.mode_profiles = []
         for mode_number in range(self.mode_vectors.shape[1]):
             self.mode_profiles.append(self.get_xy_mode_line(self.mode_vectors, mode_number))
+            
+    @property
+    def position(self):
+        """Return the midpoint between start and end points."""
+        return ((self.start[0] + self.end[0]) / 2, (self.start[1] + self.end[1]) / 2)
 
     def get_eps_1d(self):
         """Calculate the 1D permittivity profile by stepping along the line from start to end point."""
@@ -199,8 +204,8 @@ class ModeSource():
         if alpha is None: alpha = 1
         if linestyle is None: linestyle = '-'
         # Draw the source line
-        ax.plot((self.start[0], self.end[0]), (self.start[1], self.end[1]), '-', lw=4, color=facecolor, label='Mode Source')
-        ax.plot((self.start[0], self.end[0]), (self.start[1], self.end[1]), '-', lw=1, color=edgecolor)
+        ax.plot((self.start[0], self.end[0]), (self.start[1], self.end[1]), '-', lw=4, color=facecolor, label='Mode Source', zorder=10)
+        ax.plot((self.start[0], self.end[0]), (self.start[1], self.end[1]), '-', lw=1, color=edgecolor, zorder=10)
         # Calculate arrow position and direction
         mid_x = (self.start[0] + self.end[0]) / 2
         mid_y = (self.start[1] + self.end[1]) / 2
@@ -214,21 +219,22 @@ class ModeSource():
         elif self.direction == "-y": dx, dy = 0, -1
         # Scale the arrow - adaptive sizing based on line length
         # Use minimum size for very short lines
-        min_arrow_length = 0.5 * self.wavelength  # Minimum size related to wavelength
-        arrow_length = max(line_length * 0.15, min_arrow_length)
+        min_arrow_length = 0.8 * self.wavelength  # Increased minimum size
+        arrow_length = max(line_length * 0.2, min_arrow_length)
         # Use normalized direction vector
         magnitude = np.sqrt(dx**2 + dy**2)
         if magnitude > 0:  # Avoid division by zero
             dx = dx / magnitude * arrow_length
             dy = dy / magnitude * arrow_length
         # Calculate appropriate head width and length
-        head_width = arrow_length
-        head_length = arrow_length * 0.6
-        # Draw the arrow
+        head_width = arrow_length * 0.7
+        head_length = arrow_length * 0.5
+        # Draw the arrow with higher zorder to ensure visibility
         ax.arrow(mid_x, mid_y, dx, dy, 
                 head_width=head_width,
                 head_length=head_length, 
-                fc=facecolor, ec=edgecolor, 
-                alpha=alpha, linewidth=1,
-                width=head_width*0.4,  # Narrower arrow body
-                length_includes_head=True)
+                fc=facecolor, ec="black",  # Use black for better visibility
+                alpha=alpha, linewidth=1,  # Thicker line
+                width=head_width*0.5,  # Narrower arrow body
+                length_includes_head=True,
+                zorder=11)  # Higher zorder to ensure it's drawn on top
