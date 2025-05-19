@@ -124,7 +124,39 @@ class Design:
                 display_status(f"Error converting structure to Shapely polygon: {e}", "warning")
                 non_polygon_structures.append(structure)
         
-        # Second pass: unify polygons within each material group
+        # Second pass: Check for Ring objects that don't touch other objects
+        rings_to_preserve = []
+        
+        for material_key, structure_group in material_groups.items():
+            if len(structure_group) <= 1:
+                continue  # Skip material groups with only one structure
+                
+            rings_in_group = [(idx, s) for idx, s in enumerate(structure_group) if isinstance(s[0], Ring)]
+            if not rings_in_group:
+                continue  # No rings in this group
+                
+            # For each Ring, check if it touches any other object
+            for ring_idx, (ring, ring_shapely) in rings_in_group:
+                touches_other_object = False
+                
+                # Check against other polygons in the same material group
+                for other_idx, (other_struct, other_shapely) in enumerate(structure_group):
+                    if ring_idx == other_idx:
+                        continue  # Skip self-comparison
+                        
+                    if ring_shapely.intersects(other_shapely):
+                        touches_other_object = True
+                        break
+                        
+                # If the Ring doesn't touch any other object, preserve it
+                if not touches_other_object:
+                    rings_to_preserve.append(ring)
+                    # Remove it from the material group to prevent it from being unified
+                    material_groups[material_key].pop(ring_idx)
+                    if ring in structures_to_remove:
+                        structures_to_remove.remove(ring)
+                        
+        # Third pass: unify polygons within each material group
         new_structures = []
         for material_key, structure_group in material_groups.items():
             if len(structure_group) <= 1:
@@ -205,11 +237,12 @@ class Design:
             if structure in self.structures:
                 self.structures.remove(structure)
         
-        # Add the unified structures and non-polygon structures back
+        # Add the unified structures, non-polygon structures, and preserved rings back
         self.structures.extend(new_structures)
+        self.structures.extend(rings_to_preserve)
         
         # Final report
-        display_status(f"Polygon unification complete: {len(structures_to_remove)} structures merged into {len(new_structures)} unified shapes", "success")
+        display_status(f"Polygon unification complete: {len(structures_to_remove)} structures merged into {len(new_structures)} unified shapes, {len(rings_to_preserve)} isolated rings preserved", "success")
         return True
 
     def scatter(self, structure, n=1000, xyrange=(-5*µm, 5*µm), scale_range=(0.05, 1)):
