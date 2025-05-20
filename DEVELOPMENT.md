@@ -3,11 +3,15 @@
 
 
 ## Documentation
-
+To test out the documentation locally, do:
 ```bash
 mkdocs serve
 ```
-
+To deploy it, type:
+```bash
+mkdocs gh-deploy
+```
+which will then create all the needed files on the gh-deploy branch and, well, deploy it there as a github-page.
 
 
 ## Package Publishing
