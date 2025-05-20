@@ -14,6 +14,6 @@ python patch_wheel.py
 ```
 then
 ```bash
- python -m twine upload dist/beamz-0.1.0-py3-none-any.whl   
+python -m twine upload dist/beamz-0.1.0-py3-none-any.whl   
 ```
 (though with the correct version) in order to publis the newest version of the package to pypi.

@@ -11,7 +11,7 @@ try:
 
     setup(
         name="beamz",
-        version="0.1.4",
+        version="0.1.5",
         author="Quentin Wach",
         author_email="quentin.wach+beamz@gmail.com",
         description="EM package to create inverse / generative designs for your photonic devices with ease and efficiency.",
@@ -32,7 +32,7 @@ try:
         ],
         python_requires=">=3.8",
         install_requires=[
-            "numpy>=1.26.0",
+            "numpy>=1.24.4",
             "matplotlib>=3.8.2",
             "gdspy>=1.6.0",
             "scipy>=1.13.0",
