@@ -1,12 +1,12 @@
+"""
+BeamZ - A Python package for electromagnetic simulations.
+"""
+
 # Import constants from the const module
 from beamz.const import (
     LIGHT_SPEED, VAC_PERMITTIVITY, VAC_PERMEABILITY, 
-    EPS_0, MU_0, um, nm
+    EPS_0, MU_0, um, nm, µm, μm
 )
-
-# Define micro-meter constants directly for multiple Unicode variants
-globals()['µm'] = 1e-6  # variant 1
-globals()['μm'] = 1e-6  # variant 2 (different unicode)
 
 # Import design-related classes and functions
 from beamz.design.materials import Material, VarMaterial
@@ -45,8 +45,8 @@ _exports = {
     'MU_0': MU_0,
     'um': um,
     'nm': nm,
-    'µm': globals()['µm'],
-    'μm': globals()['μm'],
+    'µm': µm,
+    'μm': μm,
     
     # Materials
     'Material': Material,
