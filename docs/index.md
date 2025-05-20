@@ -1,4 +1,4 @@
-BEAMZ is a **GPU-accelerated** electromagnetic simulation and **inverse / generative design** package with support for multiple backends. It features a **high-level API** that enables fast prototyping and  design with just a few lines of code, ideal for engineers. For researchers, BEAMZ also exposes low-level functionality, making it a flexible playground for developing and testing novel simulation and optimization methods.
+BEAMZ is a **GPU-accelerated electromagnetic simulation and inverse / generative design** package with support for multiple backends. It features a **high-level API** that enables fast prototyping and  design with just a few lines of code, ideal for engineers. For researchers, BEAMZ also exposes low-level functionality, making it a flexible playground for developing and testing novel simulation and optimization methods.
 
 
 ```bash
