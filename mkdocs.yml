@@ -1,7 +1,8 @@
 site_name: BEAMZ Docs
 site_description: Documentation for the BEAMZ project
 site_author: BEAMZ Team
-repo_url: https://github.com/yourusername/beamz
+site_url: https://quentinwach.com/beamz/
+repo_url: https://github.com/quentinwach/beamz
 repo_name: beamz
 
 theme:
