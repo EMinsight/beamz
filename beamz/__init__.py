@@ -103,4 +103,4 @@ globals().update(_exports)
 __all__ = list(_exports.keys())
 
 # Version information
-__version__ = "0.1.3"
+__version__ = "0.1.4"
