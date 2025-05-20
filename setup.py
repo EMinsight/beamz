@@ -32,10 +32,12 @@ try:
         ],
         python_requires=">=3.8",
         install_requires=[
-            "numpy>=1.20.0",
-            "matplotlib>=3.4.0",
+            "numpy>=1.26.0",
+            "matplotlib>=3.8.2",
             "gdspy>=1.6.0",
-            "scipy>=1.10.0"
+            "scipy>=1.13.0",
+            "rich>=13.9.4",
+            "shapely>=2.0.6"
         ],
         extras_require={
             "dev": [
@@ -44,10 +46,10 @@ try:
                 "black>=22.0.0",
                 "isort>=5.0.0",
                 "flake8>=4.0.0",
-                "myst-parser>=2.0.0",
+                "myst-parser>=2.0.0"
             ],
             "gpu": [
-                "torch>=2.0.0",
+                "torch>=2.6.0",
             ],
         },
         include_package_data=True,
