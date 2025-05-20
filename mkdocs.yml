@@ -1,0 +1,55 @@
+site_name: BEAMZ Docs
+site_description: Documentation for the BEAMZ project
+site_author: BEAMZ Team
+repo_url: https://github.com/yourusername/beamz
+repo_name: beamz
+
+theme:
+  name: material
+  default_theme: slate
+  custom_dir: docs/stylesheets
+  logo: assets/z.png
+  favicon: assets/z.png
+  features:
+    - navigation.sections
+    - navigation.expand
+    - search.highlight
+    - search.share
+    - content.code.copy
+  palette:
+    - scheme: slate
+      primary: black
+      accent: black
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: black
+      accent: black
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed
+  - admonition
+  - footnotes
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+  - Examples:
+    - Overview: examples/index.md
+    - Basic Dipole: examples/dipole.md
+    - Waveguide: examples/waveguide.md
+    - Ring Resonator: examples/ring-resonator.md
+    - MMI Coupler: examples/mmi-coupler.md

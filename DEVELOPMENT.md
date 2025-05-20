@@ -2,8 +2,15 @@
 
 
 
+## Documentation
 
-## Publishing
+```bash
+mkdocs serve
+```
+
+
+
+## Package Publishing
 First update the version numbers in the `setup.py` file and others! Then
 ```bash
 python -m build

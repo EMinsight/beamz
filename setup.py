@@ -33,7 +33,7 @@ try:
         python_requires=">=3.8",
         install_requires=[
             "numpy>=1.24.4",
-            "matplotlib>=3.8.2",
+            "matplotlib>=3.7.5",
             "gdspy>=1.6.0",
             "scipy>=1.13.0",
             "rich>=13.9.4",
