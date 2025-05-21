@@ -1,3 +1,6 @@
+![Last Commit](https://img.shields.io/github/last-commit/QuentinWach/beamz)
+![PyPI](https://img.shields.io/pypi/v/beamz)
+
 <div align="left">
 <img src="docs/assets/head_icon.png" alt="HEADER" width="150" align="left" hspace="15" vspace="0"/>
 
