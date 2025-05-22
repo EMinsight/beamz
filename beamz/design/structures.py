@@ -7,8 +7,7 @@ from beamz.design.materials import Material
 from beamz.const import µm, EPS_0, MU_0
 from beamz.design.sources import ModeSource, GaussianSource
 from beamz.design.monitors import Monitor
-from beamz.design.helpers import get_si_scale_and_label
-from beamz.helpers import display_header, display_status, tree_view, console
+from beamz.helpers import display_header, display_status, tree_view, console, get_si_scale_and_label
 import colorsys
 
 class Design:
