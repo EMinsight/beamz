@@ -2,6 +2,9 @@ import gdspy
 from itertools import groupby
 import os
 import numpy as np
+# Import the Polygon class from structures.py
+from beamz.design.structures import Polygon
+# TODO: Add support for gltf for 3D models!
 
 def import_file(input_file):
     """Import a file with format detection based on file extension."""
@@ -33,15 +36,34 @@ def export_polygon_as_gds(polygon, output_file):
     print(f"GDS file saved as '{output_file}'")
 
 def import_gds_as_polygons(gds_file):
-    """Import a GDS file and return a list of polygons."""
+    """Import a GDS file and return a list of beamz polygons."""
+    # First import the gds file as gdspy polygons
     gds_lib = gdspy.GdsLibrary(infile=gds_file)
     cells = gds_lib.cells # get all cells from the library
-    polygons = []
+    gdspy_polygons = []
     for cell_name, cell in cells.items():
         for polygon in cell.get_polygons():
-            polygons.append(gdspy.Polygon(polygon))
-    print(f"Imported {len(polygons)} polygons from '{gds_file}'")
-    return polygons
+            gdspy_polygons.append(gdspy.Polygon(polygon))
+    
+    # Then convert the gdspy polygons to beamz polygons
+    beamz_polygons = []
+    for gdspy_polygon in gdspy_polygons:
+        # Extract vertices from gdspy polygon
+        vertices = []
+        if hasattr(gdspy_polygon, 'polygons'):
+            # Handle PolygonSet case
+            for poly in gdspy_polygon.polygons:
+                vertices.extend([(point[0], point[1]) for point in poly])
+        else:
+            # Handle single Polygon case
+            vertices = [(point[0], point[1]) for point in gdspy_polygon.points]
+        
+        # Create beamz polygon with extracted vertices
+        beamz_polygon = Polygon(vertices=vertices)
+        beamz_polygons.append(beamz_polygon)
+    
+    print(f"Imported {len(beamz_polygons)} polygons from '{gds_file}'")
+    return beamz_polygons
 
 def export_bin_numpy_as_gds(image, output_file):
     """Convert a binary NumPy array to a GDS file."""
