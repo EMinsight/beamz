@@ -1,5 +1,6 @@
 # create a numpy array of 10x10 pixels
 import numpy as np
+from beamz.const import µm
 
 image = np.zeros((5, 5))
 
@@ -13,4 +14,4 @@ image[4, 4] = 1
 
 # save the image to a gds file
 from beamz.design.io import export_bin_numpy_as_gds
-export_bin_numpy_as_gds(image, "test.gds")
+export_bin_numpy_as_gds(image, "test.gds", scale=100*µm)

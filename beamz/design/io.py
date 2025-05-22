@@ -4,6 +4,7 @@ import os
 import numpy as np
 # Import the Polygon class from structures.py
 from beamz.design.structures import Polygon
+from beamz.const import µm
 # TODO: Add support for gltf for 3D models!
 
 def import_file(input_file):
@@ -65,16 +66,22 @@ def import_gds_as_polygons(gds_file):
     print(f"Imported {len(beamz_polygons)} polygons from '{gds_file}'")
     return beamz_polygons
 
-def export_bin_numpy_as_gds(image, output_file):
-    """Convert a binary NumPy array to a GDS file."""
+def export_bin_numpy_as_gds(image, output_file, scale=µm):
+    """Convert a binary NumPy array to a GDS file.
+    
+    Args:
+        image: Binary NumPy array representation of the image
+        output_file: Output GDS file path
+        scale: Scale factor for the dimensions (default: µm)
+    """
     height, width = image.shape
     lib = gdspy.GdsLibrary(unit=1, precision=1e-3)
     cell = lib.new_cell("TOP")
     # Process each row of the image
     for i in range(height):
         # Map y-coordinates: row 0 (top) to y=height-1, row height-1 (bottom) to y=0
-        y_bottom = height - 1 - i
-        y_top = height - i
+        y_bottom = (height - 1 - i)
+        y_top = (height - i)
         # Get the current row
         row = image[i, :]
         # Find runs of consecutive 1's using groupby
@@ -86,7 +93,7 @@ def export_bin_numpy_as_gds(image, output_file):
                 # Create a rectangle from (j_start, y_bottom) to (j_end + 1, y_top)
                 rect = gdspy.Rectangle(
                     (j_start, y_bottom),
-                    (j_end + 1, y_top),
+                    ((j_end + 1), y_top),
                     layer=0) # Place all rectangles on layer 0
                 cell.add(rect)
     # Write the library to a GDS file
