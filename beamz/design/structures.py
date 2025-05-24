@@ -39,8 +39,10 @@ class Design:
             self.monitors.append(structure)
             self.structures.append(structure)
         else: self.structures.append(structure)
-        # Check for 3D structures
-        if hasattr(structure, 'z') or hasattr(structure, 'depth'): self.is_3d = True
+        # Check for 3D structures (only if they have meaningful 3D properties)
+        if (hasattr(structure, 'depth') and structure.depth is not None) or \
+           (hasattr(structure, 'z') and structure.z != 0): 
+            self.is_3d = True
 
     def __iadd__(self, structure):
         """Implement += operator for adding structures."""
@@ -334,7 +336,14 @@ class Design:
         self.structures.append(top_pml)
 
     def show(self, unify_structures=True):
-        """Display the design visually."""
+        """Display the design visually using 2D matplotlib or 3D plotly."""
+        if self.is_3d:
+            self.show_3d(unify_structures)
+        else:
+            self.show_2d(unify_structures)
+    
+    def show_2d(self, unify_structures=True):
+        """Display the design using 2D matplotlib visualization."""
         # Determine appropriate SI unit and scale
         max_dim = max(self.width, self.height)
         scale, unit = get_si_scale_and_label(max_dim)
@@ -345,7 +354,7 @@ class Design:
         if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
         else: figsize = (base_size, base_size / aspect_ratio)
 
-        # Do we want to show the indiviudal structures or a unified shape?
+        # Do we want to show the individual structures or a unified shape?
         if unify_structures: self.unify_polygons()
 
         # Create a single figure for all structures
@@ -379,7 +388,175 @@ class Design:
         # Adjust layout for clean appearance
         plt.tight_layout()
         plt.show()
+    
+    def show_3d(self, unify_structures=True):
+        """Display the design using 3D plotly visualization."""
+        try:
+            import plotly.graph_objects as go
+            import plotly.figure_factory as ff
+            from plotly.subplots import make_subplots
+        except ImportError:
+            display_status("Plotly is required for 3D visualization. Install with: pip install plotly", "error")
+            display_status("Falling back to 2D visualization...", "warning")
+            self.show_2d(unify_structures)
+            return
         
+        # Determine appropriate SI unit and scale
+        max_dim = max(self.width, self.height, self.depth if self.depth else 0)
+        scale, unit = get_si_scale_and_label(max_dim)
+        
+        # Do we want to show the individual structures or a unified shape?
+        if unify_structures: self.unify_polygons()
+        
+        # Create 3D figure
+        fig = go.Figure()
+        
+        # Default depth for 2D structures in 3D view
+        default_depth = self.depth if self.depth else min(self.width, self.height) * 0.1
+        
+        # Process each structure
+        for structure in self.structures:
+            # Skip PML structures for now (they would clutter the 3D view)
+            if hasattr(structure, 'is_pml') and structure.is_pml:
+                continue
+                
+            # Get structure depth
+            struct_depth = getattr(structure, 'depth', default_depth)
+            struct_z = getattr(structure, 'z', 0)
+            
+            # Add 3D representation based on structure type
+            mesh_data = self._structure_to_3d_mesh(structure, struct_depth, struct_z)
+            if mesh_data:
+                x, y, z = mesh_data['vertices']
+                i, j, k = mesh_data['faces']
+                color = structure.color if hasattr(structure, 'color') and structure.color else '#1f77b4'
+                
+                # Convert hex color to rgba if needed
+                if color.startswith('#'):
+                    color = f"rgba({int(color[1:3], 16)},{int(color[3:5], 16)},{int(color[5:7], 16)},0.8)"
+                
+                fig.add_trace(go.Mesh3d(
+                    x=x, y=y, z=z,
+                    i=i, j=j, k=k,
+                    color=color,
+                    opacity=0.8,
+                    name=f"{structure.__class__.__name__}",
+                    showscale=False
+                ))
+        
+        # Set layout
+        fig.update_layout(
+            title='3D Design Layout',
+            scene=dict(
+                xaxis_title=f'X ({unit})',
+                yaxis_title=f'Y ({unit})',
+                zaxis_title=f'Z ({unit})',
+                xaxis=dict(range=[0, self.width]),
+                yaxis=dict(range=[0, self.height]),
+                zaxis=dict(range=[0, self.depth if self.depth else default_depth]),
+                aspectmode='manual',
+                aspectratio=dict(
+                    x=1,
+                    y=self.height/self.width if self.width > 0 else 1,
+                    z=(self.depth if self.depth else default_depth)/self.width if self.width > 0 else 1
+                )
+            ),
+            width=800,
+            height=600
+        )
+        
+        # Update tick labels with scaled values
+        fig.update_layout(
+            scene=dict(
+                xaxis=dict(
+                    tickmode='array',
+                    tickvals=np.linspace(0, self.width, 6),
+                    ticktext=[f'{val*scale:.1f}' for val in np.linspace(0, self.width, 6)]
+                ),
+                yaxis=dict(
+                    tickmode='array',
+                    tickvals=np.linspace(0, self.height, 6),
+                    ticktext=[f'{val*scale:.1f}' for val in np.linspace(0, self.height, 6)]
+                ),
+                zaxis=dict(
+                    tickmode='array',
+                    tickvals=np.linspace(0, self.depth if self.depth else default_depth, 6),
+                    ticktext=[f'{val*scale:.1f}' for val in np.linspace(0, self.depth if self.depth else default_depth, 6)]
+                )
+            )
+        )
+        
+        fig.show()
+    
+    def _structure_to_3d_mesh(self, structure, depth, z_offset=0):
+        """Convert a 2D structure to 3D mesh data for plotly."""
+        if not hasattr(structure, 'vertices') or not structure.vertices:
+            return None
+            
+        # Ensure depth has a valid value
+        if depth is None:
+            depth = 0.1 * min(self.width, self.height)  # Default depth for 2D structures
+            
+        vertices_2d = structure.vertices
+        n_vertices = len(vertices_2d)
+        
+        if n_vertices < 3:
+            return None  # Need at least 3 vertices for a face
+        
+        # Create 3D vertices by extruding the 2D shape
+        vertices_3d = []
+        
+        # Bottom face vertices (z = z_offset)
+        for x, y in vertices_2d:
+            vertices_3d.append([x, y, z_offset])
+        
+        # Top face vertices (z = z_offset + depth)
+        for x, y in vertices_2d:
+            vertices_3d.append([x, y, z_offset + depth])
+        
+        # Extract coordinates
+        x_coords = [v[0] for v in vertices_3d]
+        y_coords = [v[1] for v in vertices_3d]
+        z_coords = [v[2] for v in vertices_3d]
+        
+        # Create triangular faces for the mesh
+        faces_i, faces_j, faces_k = [], [], []
+        
+        # Bottom face triangulation (fan triangulation from vertex 0)
+        for i in range(1, n_vertices - 1):
+            faces_i.append(0)
+            faces_j.append(i)
+            faces_k.append(i + 1)
+        
+        # Top face triangulation (fan triangulation from vertex n_vertices, reverse order for proper normals)
+        for i in range(1, n_vertices - 1):
+            faces_i.append(n_vertices)
+            faces_j.append(n_vertices + i + 1)
+            faces_k.append(n_vertices + i)
+        
+        # Side faces (rectangles split into two triangles each)
+        for i in range(n_vertices):
+            next_i = (i + 1) % n_vertices
+            
+            # Each side face is a rectangle with 4 vertices:
+            # Bottom: i, next_i
+            # Top: i + n_vertices, next_i + n_vertices
+            
+            # Triangle 1: bottom-left, bottom-right, top-left
+            faces_i.append(i)
+            faces_j.append(next_i)
+            faces_k.append(i + n_vertices)
+            
+            # Triangle 2: bottom-right, top-right, top-left  
+            faces_i.append(next_i)
+            faces_j.append(next_i + n_vertices)
+            faces_k.append(i + n_vertices)
+        
+        return {
+            'vertices': (x_coords, y_coords, z_coords),
+            'faces': (faces_i, faces_j, faces_k)
+        }
+
     def __str__(self):
         return f"Design with {len(self.structures)} structures ({'3D' if self.is_3d else '2D'})"
 
@@ -523,12 +700,14 @@ class Design:
         tree_view(design_data, "Design Structure")
 
 class Polygon:
-    def __init__(self, vertices=None, material=None, color=None, optimize=False, interiors=None):
+    def __init__(self, vertices=None, material=None, color=None, optimize=False, interiors=None, depth=None, z=0):
         self.vertices = vertices if vertices is not None else [] # Exterior path
         self.interiors = interiors if interiors is not None else [] # List of interior paths
         self.material = material
         self.optimize = optimize
         self.color = color if color is not None else self.get_random_color_consistent()
+        self.depth = depth  # 3D extrusion depth
+        self.z = z          # Z position (height above base plane)
     
     def get_random_color_consistent(self, saturation=0.6, value=0.7):
         """Generate a random color with consistent perceived brightness and saturation."""
@@ -652,7 +831,9 @@ class Polygon:
                        interiors=copied_interiors, 
                        material=self.material, # Material can be shared
                        color=self.color, 
-                       optimize=self.optimize)
+                       optimize=self.optimize,
+                       depth=self.depth,
+                       z=self.z)
         
     def get_bounding_box(self):
         """Get the bounding box of the polygon as (min_x, min_y, max_x, max_y)"""
@@ -719,14 +900,14 @@ class Polygon:
         return True # In exterior and not in any hole
 
 class Rectangle(Polygon):
-    def __init__(self, position=(0,0), width=1, height=1, material=None, color=None, is_pml=False, optimize=False):
+    def __init__(self, position=(0,0), width=1, height=1, material=None, color=None, is_pml=False, optimize=False, depth=None, z=0):
         # Calculate vertices for the rectangle
         x, y = position
         vertices = [(x, y),  # Bottom left
                     (x + width, y),  # Bottom right
                     (x + width, y + height),  # Top right
                     (x, y + height)]
-        super().__init__(vertices=vertices, material=material, color=color, optimize=optimize)
+        super().__init__(vertices=vertices, material=material, color=color, optimize=optimize, depth=depth, z=z)
         self.position = position
         self.width = width
         self.height = height
@@ -771,16 +952,16 @@ class Rectangle(Polygon):
     def copy(self):
         """Create a copy of this rectangle with the same attributes and vertices."""
         new_rect = Rectangle(self.position, self.width, self.height, 
-                            self.material, self.color, self.is_pml, self.optimize)
+                            self.material, self.color, self.is_pml, self.optimize, self.depth, self.z)
         # Ensure vertices are copied exactly as they are (important for rotated rectangles)
         new_rect.vertices = [(x, y) for x, y in self.vertices]
         return new_rect
 
 class Circle(Polygon):
-    def __init__(self, position=(0,0), radius=1, points=32, material=None, color=None, optimize=False):
+    def __init__(self, position=(0,0), radius=1, points=32, material=None, color=None, optimize=False, depth=None, z=0):
         theta = np.linspace(0, 2*np.pi, points, endpoint=False)
         vertices = [(position[0] + radius * np.cos(t), position[1] + radius * np.sin(t)) for t in theta]
-        super().__init__(vertices=vertices, material=material, color=color, optimize=optimize)
+        super().__init__(vertices=vertices, material=material, color=color, optimize=optimize, depth=depth, z=z)
         self.position = position
         self.radius = radius
     
@@ -802,10 +983,10 @@ class Circle(Polygon):
     
     def copy(self):
         return Circle(position=self.position, radius=self.radius, points=len(self.vertices), 
-                     material=self.material, color=self.color, optimize=self.optimize)
+                     material=self.material, color=self.color, optimize=self.optimize, depth=self.depth, z=self.z)
 
 class Ring(Polygon):
-    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, material=None, color=None, optimize=False, points=256):
+    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, material=None, color=None, optimize=False, points=256, depth=None, z=0):
         theta = np.linspace(0, 2*np.pi, points, endpoint=False) # CCW, N points
         # Exterior path (CCW, N points)
         # These are unclosed paths, as expected by Polygon.add_to_plot's Path logic
@@ -817,7 +998,7 @@ class Ring(Polygon):
                                   position[1] + inner_radius * np.sin(t)) for t in reversed(theta)]
         super().__init__(vertices=outer_ext_vertices, 
                          interiors=[inner_int_vertices_cw] if inner_int_vertices_cw else [], 
-                         material=material, color=color, optimize=optimize)
+                         material=material, color=color, optimize=optimize, depth=depth, z=z)
         self.points = points # Store for potential regeneration or other logic if needed
         self.position = position
         self.inner_radius = inner_radius
@@ -859,11 +1040,13 @@ class Ring(Polygon):
                     material=self.material, # Material can be shared
                     color=self.color, 
                     optimize=self.optimize,
-                    points=self.points)
+                    points=self.points,
+                    depth=self.depth,
+                    z=self.z)
 
 class CircularBend(Polygon):
     def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, angle=90, rotation=0, material=None, 
-                 facecolor=None, optimize=False, points=64):
+                 facecolor=None, optimize=False, points=64, depth=None, z=0):
         self.points = points
         theta = np.linspace(0, np.radians(angle), points)
         rotation_rad = np.radians(rotation)
@@ -872,7 +1055,7 @@ class CircularBend(Polygon):
         inner_vertices = [(position[0] + inner_radius * np.cos(t + rotation_rad),
                           position[1] + inner_radius * np.sin(t + rotation_rad)) for t in reversed(theta)]
         vertices = outer_vertices + inner_vertices
-        super().__init__(vertices=vertices, material=material, color=facecolor, optimize=optimize)
+        super().__init__(vertices=vertices, material=material, color=facecolor, optimize=optimize, depth=depth, z=z)
         self.position = position
         self.inner_radius = inner_radius
         self.outer_radius = outer_radius
@@ -936,18 +1119,19 @@ class CircularBend(Polygon):
         
     def copy(self):
         return CircularBend(self.position, self.inner_radius, self.outer_radius, 
-                            self.angle, self.rotation, self.material, self.color, self.optimize)
+                            self.angle, self.rotation, self.material, self.color, self.optimize, 
+                            self.points, self.depth, self.z)
 
 class Taper(Polygon):
     """Taper is a structure that tapers from a width to a height."""
-    def __init__(self, position=(0,0), input_width=1, output_width=0.5, length=1, material=None, color=None, optimize=False):
+    def __init__(self, position=(0,0), input_width=1, output_width=0.5, length=1, material=None, color=None, optimize=False, depth=None, z=0):
         # Calculate vertices for the trapezoid shape
         x, y = position
         vertices = [(x, y - input_width/2),  # Bottom left
                     (x + length, y - output_width/2),  # Bottom right
                     (x + length, y + output_width/2),  # Top right
                     (x, y + input_width/2)] # Top left
-        super().__init__(vertices=vertices, material=material, color=color)
+        super().__init__(vertices=vertices, material=material, color=color, depth=depth, z=z)
         self.position = position
         self.input_width = input_width
         self.output_width = output_width
@@ -971,7 +1155,7 @@ class Taper(Polygon):
     def copy(self):
         """Create a copy of this taper with the same attributes and vertices."""
         new_taper = Taper(self.position, self.input_width, self.output_width, 
-                          self.length, self.material, self.color, self.optimize)
+                          self.length, self.material, self.color, self.optimize, self.depth, self.z)
         # Ensure vertices are copied exactly as they are (important for rotated tapers)
         new_taper.vertices = [(x, y) for x, y in self.vertices]
         return new_taper
