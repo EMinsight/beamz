@@ -175,16 +175,25 @@ class Design:
                 
                 # The result could be a single polygon or a multipolygon
                 if merged.geom_type == 'Polygon':
-                    # Don't slice off the last vertex - our add_to_plot method needs complete vertices
-                    exterior_coords = list(merged.exterior.coords[:-1])  # Keep [:-1] to remove duplicate closing vertex from Shapely
-                    interior_coords_lists = [list(interior.coords[:-1]) for interior in merged.interiors]
+                    # Simplify the unified polygon to reduce complexity for 3D triangulation
+                    simplified = self._simplify_polygon_for_3d(merged)
                     
-                    if exterior_coords:
-                        new_poly = Polygon(vertices=exterior_coords, interiors=interior_coords_lists, material=material)
+                    # Don't slice off the last vertex - our add_to_plot method needs complete vertices
+                    exterior_coords = list(simplified.exterior.coords[:-1])  # Keep [:-1] to remove duplicate closing vertex from Shapely
+                    interior_coords_lists = [list(interior.coords[:-1]) for interior in simplified.interiors]
+                    
+                    if exterior_coords and len(exterior_coords) >= 3:
+                        # Add depth and z information from the first structure
+                        first_structure = structure_group[0][0]
+                        depth = getattr(first_structure, 'depth', 0)
+                        z = getattr(first_structure, 'z', 0)
+                        
+                        new_poly = Polygon(vertices=exterior_coords, interiors=interior_coords_lists, 
+                                         material=material, depth=depth, z=z)
                         new_structures.append(new_poly)
-                        display_status(f"Unified {len(structure_group)} polygons with permittivity={material_key[0]}", "success")
+                        display_status(f"Unified {len(structure_group)} polygons with permittivity={material_key[0]} (simplified to {len(exterior_coords)} vertices)", "success")
                     else:
-                        display_status(f"Failed to convert merged polygon for material {material_key[0]} (no exterior), keeping original {len(structure_group)} structures.", "warning")
+                        display_status(f"Failed to convert merged polygon for material {material_key[0]} (no exterior or too few vertices), keeping original {len(structure_group)} structures.", "warning")
                         new_structures.extend([s[0] for s in structure_group])
                         for s_tuple in structure_group: # Ensure these are not removed
                             if s_tuple[0] in structures_to_remove:
@@ -194,21 +203,31 @@ class Design:
                     all_geoms_converted_successfully = True
                     temp_new_polys_for_multipolygon = []
                     for geom in merged.geoms:
+                        # Simplify each polygon in the multipolygon
+                        simplified_geom = self._simplify_polygon_for_3d(geom)
+                        
                         # Keep [:-1] to remove duplicate closing vertex from Shapely (our add_to_plot will add it back)
-                        exterior_coords = list(geom.exterior.coords[:-1])
-                        interior_coords_lists = [list(interior.coords[:-1]) for interior in geom.interiors]
+                        exterior_coords = list(simplified_geom.exterior.coords[:-1])
+                        interior_coords_lists = [list(interior.coords[:-1]) for interior in simplified_geom.interiors]
 
-                        if exterior_coords:
-                            new_poly = Polygon(vertices=exterior_coords, interiors=interior_coords_lists, material=material)
+                        if exterior_coords and len(exterior_coords) >= 3:
+                            # Add depth and z information from the first structure
+                            first_structure = structure_group[0][0]
+                            depth = getattr(first_structure, 'depth', 0)
+                            z = getattr(first_structure, 'z', 0)
+                            
+                            new_poly = Polygon(vertices=exterior_coords, interiors=interior_coords_lists, 
+                                             material=material, depth=depth, z=z)
                             temp_new_polys_for_multipolygon.append(new_poly)
-                        else: # A sub-geometry had no exterior
+                        else: # A sub-geometry had no exterior or too few vertices
                             all_geoms_converted_successfully = False
-                            display_status(f"Failed to convert a geometry (no exterior) within MultiPolygon for material {material_key[0]}.", "warning")
+                            display_status(f"Failed to convert a geometry (no exterior or too few vertices) within MultiPolygon for material {material_key[0]}.", "warning")
                             break 
                     
                     if all_geoms_converted_successfully:
                         new_structures.extend(temp_new_polys_for_multipolygon)
-                        display_status(f"Unified into {len(merged.geoms)} separate polygons with permittivity={material_key[0]}", "success")
+                        total_vertices = sum(len(p.vertices) for p in temp_new_polys_for_multipolygon)
+                        display_status(f"Unified into {len(merged.geoms)} separate polygons with permittivity={material_key[0]} (simplified to {total_vertices} total vertices)", "success")
                     else:
                         display_status(f"Reverting unification for material {material_key[0]} due to conversion error in MultiPolygon, keeping original {len(structure_group)} structures.", "warning")
                         new_structures.extend([s[0] for s in structure_group])
@@ -242,6 +261,37 @@ class Design:
         # Final report
         display_status(f"Polygon unification complete: {len(structures_to_remove)} structures merged into {len(new_structures)} unified shapes, {len(rings_to_preserve)} isolated rings preserved", "success")
         return True
+    
+    def _simplify_polygon_for_3d(self, shapely_polygon, tolerance_factor=0.01):
+        """Simplify a Shapely polygon to reduce vertex count for better 3D triangulation."""
+        try:
+            # Calculate appropriate tolerance based on polygon size
+            bounds = shapely_polygon.bounds
+            size = max(bounds[2] - bounds[0], bounds[3] - bounds[1])  # max of width, height
+            tolerance = size * tolerance_factor
+            
+            # Apply simplification
+            simplified = shapely_polygon.simplify(tolerance, preserve_topology=True)
+            
+            # Check if simplification was successful and polygon is still valid
+            if simplified.is_valid and not simplified.is_empty:
+                # Check if we still have a reasonable number of vertices
+                if simplified.geom_type == 'Polygon':
+                    exterior_coords = len(list(simplified.exterior.coords))
+                    if 3 <= exterior_coords <= 100:  # Reasonable range for 3D visualization
+                        return simplified
+                    elif exterior_coords > 100:
+                        # Try more aggressive simplification
+                        more_simplified = shapely_polygon.simplify(tolerance * 2.0, preserve_topology=True)
+                        if more_simplified.is_valid and not more_simplified.is_empty:
+                            return more_simplified
+            
+            # If simplification failed or created invalid geometry, return original
+            return shapely_polygon
+            
+        except Exception as e:
+            print(f"Warning: Polygon simplification failed ({e}), using original")
+            return shapely_polygon
 
     def scatter(self, structure, n=1000, xyrange=(-5*µm, 5*µm), scale_range=(0.05, 1)):
         """Randomly distribute a given object over the design domain."""
@@ -409,7 +459,7 @@ class Design:
         plt.tight_layout()
         plt.show()
     
-    def show_3d(self, unify_structures=True):
+    def show_3d(self, unify_structures=True, max_vertices_for_unification=50):
         """Display the design using 3D plotly visualization."""
         try:
             import plotly.graph_objects as go
@@ -424,8 +474,26 @@ class Design:
         # Determine appropriate SI unit and scale
         max_dim = max(self.width, self.height, self.depth if self.depth else 0)
         scale, unit = get_si_scale_and_label(max_dim)
-        # Do we want to show the individual structures or a unified shape?
-        if unify_structures: self.unify_polygons()
+        
+        # For 3D visualization, be more selective about unification
+        if unify_structures:
+            # Check if we have complex structures that might not unify well
+            complex_structures = 0
+            total_vertices = 0
+            for structure in self.structures:
+                if hasattr(structure, 'vertices') and structure.vertices:
+                    vertices_count = len(structure.vertices)
+                    total_vertices += vertices_count
+                    if vertices_count > max_vertices_for_unification:
+                        complex_structures += 1
+            
+            # Disable unification if we have too many complex structures
+            if complex_structures > 2 or total_vertices > 200:
+                display_status(f"Disabling polygon unification for 3D (too complex: {complex_structures} complex structures, {total_vertices} total vertices)", "warning")
+                unify_structures = False
+            else:
+                self.unify_polygons()
+        
         # Create 3D figure with modern styling
         fig = go.Figure()
         # Default depth for 2D structures in 3D view
@@ -644,7 +712,7 @@ class Design:
         fig.show()
     
     def _structure_to_3d_mesh(self, structure, depth, z_offset=0):
-        """Convert a 2D structure to 3D mesh data for plotly with improved triangulation."""
+        """Convert a 2D structure to 3D mesh data for plotly with robust triangulation for complex polygons."""
         if not hasattr(structure, 'vertices') or not structure.vertices: return None
         # Ensure depth has a valid value
         if depth is None: depth = 0.1 * min(self.width, self.height)
@@ -672,16 +740,16 @@ class Design:
                     interior_2d.append([(v[0], v[1]) for v in interior])
             return self._triangulate_polygon_with_holes(vertices_2d, interior_2d, depth, actual_z)
     
-        # Simple polygon triangulation using corrected ear clipping
-        def simple_triangulation(vertices):
-            """Simple triangulation for convex/simple polygons."""
-            if len(vertices) < 3: return []
-            if len(vertices) == 3: return [(0, 1, 2)]
-            if len(vertices) == 4: return [(0, 1, 2), (0, 2, 3)] # split quads into two triangles
-            # For more complex polygons, use fan triangulation from centroid
-            triangles = []
-            for i in range(len(vertices) - 2): triangles.append((0, i + 1, i + 2))
-            return triangles
+        # For complex unified polygons, we need robust triangulation
+        try:
+            bottom_triangles = self._robust_triangulation(vertices_2d)
+        except Exception as e:
+            print(f"Warning: Robust triangulation failed ({e}), using fallback")
+            bottom_triangles = self._fallback_triangulation(vertices_2d)
+        
+        if not bottom_triangles:
+            print("Warning: All triangulation methods failed, skipping structure")
+            return None
         
         # Create 3D vertices by extruding the 2D shape
         vertices_3d = []
@@ -695,17 +763,21 @@ class Design:
         z_coords = [v[2] for v in vertices_3d]
         # Create triangular faces for the mesh
         faces_i, faces_j, faces_k = [], [], []
+        
         # Bottom face triangulation (CCW when viewed from above = normal pointing down)
-        bottom_triangles = simple_triangulation(vertices_2d)
         for tri in bottom_triangles:
-            faces_i.append(tri[0])
-            faces_j.append(tri[1]) 
-            faces_k.append(tri[2])
+            if len(tri) == 3 and all(0 <= idx < n_vertices for idx in tri):
+                faces_i.append(tri[0])
+                faces_j.append(tri[1]) 
+                faces_k.append(tri[2])
+        
         # Top face triangulation (CW when viewed from above = normal pointing up)
         for tri in bottom_triangles:
-            faces_i.append(tri[0] + n_vertices)
-            faces_j.append(tri[2] + n_vertices)  # Swap j,k for opposite winding
-            faces_k.append(tri[1] + n_vertices)
+            if len(tri) == 3 and all(0 <= idx < n_vertices for idx in tri):
+                faces_i.append(tri[0] + n_vertices)
+                faces_j.append(tri[2] + n_vertices)  # Swap j,k for opposite winding
+                faces_k.append(tri[1] + n_vertices)
+        
         # Side faces (rectangles split into two triangles each)
         for i in range(n_vertices):
             next_i = (i + 1) % n_vertices
@@ -726,6 +798,197 @@ class Design:
             'faces': (faces_i, faces_j, faces_k)
         }
     
+    def _robust_triangulation(self, vertices_2d):
+        """Robust triangulation for complex polygons including unified shapes."""
+        if len(vertices_2d) < 3:
+            return []
+        if len(vertices_2d) == 3:
+            return [(0, 1, 2)]
+        if len(vertices_2d) == 4:
+            return [(0, 1, 2), (0, 2, 3)]
+        
+        # Try ear clipping algorithm for complex polygons
+        try:
+            return self._ear_clipping_triangulation(vertices_2d)
+        except Exception as e:
+            print(f"Ear clipping failed: {e}")
+            # Fallback to constrained triangulation if available
+            try:
+                return self._constrained_triangulation(vertices_2d)
+            except Exception as e:
+                print(f"Constrained triangulation failed: {e}")
+                raise Exception("All robust triangulation methods failed")
+    
+    def _ear_clipping_triangulation(self, vertices):
+        """Ear clipping algorithm for triangulating simple polygons."""
+        if len(vertices) < 3:
+            return []
+            
+        # Create a list of vertex indices
+        indices = list(range(len(vertices)))
+        triangles = []
+        
+        # Remove ears until only 3 vertices remain
+        while len(indices) > 3:
+            ear_found = False
+            
+            for i in range(len(indices)):
+                prev_idx = indices[i - 1]
+                curr_idx = indices[i]
+                next_idx = indices[(i + 1) % len(indices)]
+                
+                # Check if this is a valid ear
+                if self._is_ear(vertices, prev_idx, curr_idx, next_idx, indices):
+                    # Add triangle
+                    triangles.append((prev_idx, curr_idx, next_idx))
+                    # Remove the ear vertex
+                    indices.pop(i)
+                    ear_found = True
+                    break
+            
+            # Safety check to avoid infinite loops
+            if not ear_found:
+                print("Warning: No ears found, falling back to fan triangulation")
+                # Fallback to simple fan triangulation
+                for i in range(1, len(indices) - 1):
+                    triangles.append((indices[0], indices[i], indices[i + 1]))
+                break
+        
+        # Add the final triangle
+        if len(indices) == 3:
+            triangles.append((indices[0], indices[1], indices[2]))
+        
+        return triangles
+    
+    def _is_ear(self, vertices, prev_idx, curr_idx, next_idx, remaining_indices):
+        """Check if a vertex forms a valid ear for ear clipping."""
+        # Get the three vertices
+        prev_pt = vertices[prev_idx]
+        curr_pt = vertices[curr_idx]
+        next_pt = vertices[next_idx]
+        
+        # Check if the angle is convex (interior angle < 180 degrees)
+        if not self._is_convex_vertex(prev_pt, curr_pt, next_pt):
+            return False
+        
+        # Check if any other vertex is inside this triangle
+        for idx in remaining_indices:
+            if idx not in [prev_idx, curr_idx, next_idx]:
+                if self._point_in_triangle(vertices[idx], prev_pt, curr_pt, next_pt):
+                    return False
+        
+        return True
+    
+    def _is_convex_vertex(self, prev_pt, curr_pt, next_pt):
+        """Check if a vertex is convex (interior angle < 180 degrees)."""
+        # Calculate cross product to determine if angle is convex
+        v1 = (prev_pt[0] - curr_pt[0], prev_pt[1] - curr_pt[1])
+        v2 = (next_pt[0] - curr_pt[0], next_pt[1] - curr_pt[1])
+        cross = v1[0] * v2[1] - v1[1] * v2[0]
+        return cross > 0  # Assuming CCW polygon orientation
+    
+    def _constrained_triangulation(self, vertices_2d):
+        """Constrained triangulation using scipy if available."""
+        try:
+            import scipy.spatial
+            # Use Delaunay triangulation with constraints
+            points = np.array(vertices_2d)
+            tri = scipy.spatial.Delaunay(points)
+            
+            # Filter triangles to only include those inside the polygon
+            valid_triangles = []
+            for triangle in tri.simplices:
+                # Check if triangle centroid is inside the polygon
+                centroid = np.mean(points[triangle], axis=0)
+                if self._point_in_polygon_2d(centroid[0], centroid[1], vertices_2d):
+                    valid_triangles.append(tuple(triangle))
+            
+            return valid_triangles
+        except ImportError:
+            raise Exception("scipy not available for constrained triangulation")
+    
+    def _fallback_triangulation(self, vertices_2d):
+        """Simple fallback triangulation methods."""
+        if len(vertices_2d) < 3:
+            return []
+        if len(vertices_2d) == 3:
+            return [(0, 1, 2)]
+        if len(vertices_2d) == 4:
+            return [(0, 1, 2), (0, 2, 3)]
+        
+        # Try convex hull based triangulation
+        try:
+            return self._convex_hull_triangulation(vertices_2d)
+        except Exception:
+            # Last resort: simple fan triangulation from centroid
+            print("Warning: Using simple fan triangulation as last resort")
+            triangles = []
+            for i in range(1, len(vertices_2d) - 1):
+                triangles.append((0, i, i + 1))
+            return triangles
+    
+    def _convex_hull_triangulation(self, vertices_2d):
+        """Triangulation using convex hull approach."""
+        try:
+            import scipy.spatial
+            points = np.array(vertices_2d)
+            
+            # Compute convex hull
+            hull = scipy.spatial.ConvexHull(points)
+            hull_vertices = hull.vertices
+            
+            # If the polygon is already convex, use simple fan triangulation
+            if len(hull_vertices) == len(vertices_2d):
+                triangles = []
+                for i in range(1, len(vertices_2d) - 1):
+                    triangles.append((0, i, i + 1))
+                return triangles
+            else:
+                # For non-convex polygons, try to decompose
+                return self._decompose_polygon(vertices_2d)
+        except ImportError:
+            raise Exception("scipy not available for convex hull triangulation")
+    
+    def _decompose_polygon(self, vertices_2d):
+        """Decompose complex polygon into simpler triangles."""
+        # Simple polygon decomposition - find the "most convex" triangulation
+        triangles = []
+        n = len(vertices_2d)
+        
+        # Use a modified fan triangulation that skips problematic triangles
+        center_idx = 0
+        for i in range(1, n - 1):
+            next_i = i + 1
+            # Check if this triangle is valid (not self-intersecting)
+            if self._is_valid_triangle(vertices_2d, center_idx, i, next_i):
+                triangles.append((center_idx, i, next_i))
+        
+        return triangles if triangles else [(0, 1, 2)]  # Emergency fallback
+    
+    def _is_valid_triangle(self, vertices, i, j, k):
+        """Check if a triangle formed by vertices i, j, k is valid."""
+        # Check for degenerate triangles (zero area)
+        p1, p2, p3 = vertices[i], vertices[j], vertices[k]
+        area = abs((p2[0] - p1[0]) * (p3[1] - p1[1]) - (p3[0] - p1[0]) * (p2[1] - p1[1]))
+        return area > 1e-10  # Small threshold for numerical stability
+    
+    def _point_in_polygon_2d(self, x, y, polygon_vertices):
+        """Simple point-in-polygon test for 2D coordinates."""
+        n = len(polygon_vertices)
+        inside = False
+        p1x, p1y = polygon_vertices[0]
+        for i in range(1, n + 1):
+            p2x, p2y = polygon_vertices[i % n]
+            if y > min(p1y, p2y):
+                if y <= max(p1y, p2y):
+                    if x <= max(p1x, p2x):
+                        if p1y != p2y:
+                            xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                        if p1x == p2x or x <= xinters:
+                            inside = not inside
+            p1x, p1y = p2x, p2y
+        return inside
+
     def _triangulate_polygon_with_holes(self, exterior_vertices, interior_paths, depth, z_offset):
         """Handle polygons with holes (like Ring structures) using proper triangulation."""
         try:
