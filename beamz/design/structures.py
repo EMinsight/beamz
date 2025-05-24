@@ -649,6 +649,7 @@ class Design:
             )
         )
         
+
         # Add subtle shadow effect with a ground plane if structures are elevated
         if any(getattr(s, 'z', 0) > 0 for s in self.structures if not (hasattr(s, 'is_pml') and s.is_pml)):
             # Create a subtle ground plane
