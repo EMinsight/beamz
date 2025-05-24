@@ -12,7 +12,7 @@ Y = 19*µm
 N_CORE = 2.04 # Si3N4
 N_CLAD = 1.444 # SiO2
 WG_WIDTH = 0.565*µm
-DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE, N_CLAD))
+DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE, N_CLAD), dims=2, safety_factor=0.70, points_per_wavelength=12)
 RING_RADIUS = 6*µm
 
 # Create the design
@@ -31,6 +31,6 @@ design += ModeSource(design=design, start=(WL*2, WL*2+WG_WIDTH/2-1.5*µm), end=(
 design.show()
 
 # Run the simulation
-sim = FDTD(design=design, time=time_steps, mesh="regular", resolution=DX, backend="numpy")
+sim = FDTD(design=design, time=time_steps, mesh="regular", resolution=DX)
 sim.run(live=True, save_memory_mode=True, accumulate_power=True)
 sim.plot_power(db_colorbar=True)
