@@ -49,8 +49,6 @@ nav:
   - Getting Started:
     - Installation: getting-started/installation.md
   - Examples:
-    - Overview: examples/index.md
+    - MMI Splitter: examples/mmi-splitter.md
     - Basic Dipole: examples/dipole.md
-    - Waveguide: examples/waveguide.md
     - Ring Resonator: examples/ring-resonator.md
-    - MMI Coupler: examples/mmi-coupler.md
