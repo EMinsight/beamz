@@ -546,7 +546,7 @@ class Design:
                     color=face_color,  # Use 'color' for uniform coloring
                     opacity=1.0,  # Slightly higher opacity for better visibility
                     name=hovertext,
-                    showscale=False,
+                    showscale=True,
                     hovertemplate=hovertext + "<extra></extra>",
                     # Prominent black outlines for all shapes
                     contour=dict(
@@ -556,8 +556,8 @@ class Design:
                     ),
                     # Flat shading - minimal lighting for clean appearance
                     lighting=dict(
-                        ambient=0.8,    # High ambient for flat appearance
-                        diffuse=0.2,    # Low diffuse for minimal shadows
+                        ambient=0.5,    # High ambient for flat appearance
+                        diffuse=0.5,    # Low diffuse for minimal shadows
                         fresnel=0.0,    # No fresnel effects
                         specular=0.5,   # No specular highlights  
                         roughness=1.0   # Maximum roughness for flat appearance
@@ -572,11 +572,6 @@ class Design:
         
         # Modern layout with better styling
         fig.update_layout(
-            title=dict(
-                text='3D Design Layout',
-                x=0.5,
-                font=dict(size=20, color='#2c3e50', family="Arial Black")
-            ),
             scene=dict(
                 xaxis=dict(
                     title=dict(text=f'X ({unit})', font=dict(size=14, color='#34495e')),
@@ -677,7 +672,7 @@ class Design:
                 ),
                 flatshading=True,
                 # No outline for ground plane (to keep it subtle)
-                contour=dict(show=False)
+                contour=dict(show=True, color="black", width=5)
             ))
         
         fig.show()
