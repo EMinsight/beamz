@@ -331,37 +331,30 @@ class Design:
 
     def show(self, unify_structures=True):
         """Display the design visually using 2D matplotlib or 3D plotly."""
-        if self.is_3d:
-            self.show_3d(unify_structures)
-        else:
-            self.show_2d(unify_structures)
+        if self.is_3d: self.show_3d(unify_structures)
+        else: self.show_2d(unify_structures)
     
     def show_2d(self, unify_structures=True):
         """Display the design using 2D matplotlib visualization."""
         # Determine appropriate SI unit and scale
         max_dim = max(self.width, self.height)
         scale, unit = get_si_scale_and_label(max_dim)
-
         # Calculate figure size based on domain dimensions
         aspect_ratio = self.width / self.height
         base_size = 5
         if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
         else: figsize = (base_size, base_size / aspect_ratio)
-
         # Do we want to show the individual structures or a unified shape?
         if unify_structures: self.unify_polygons()
-
         # Create a single figure for all structures
         fig, ax = plt.subplots(figsize=figsize)
         ax.set_aspect('equal')
-        
         # Now plot each structure
         for structure in self.structures:
             # Use dashed lines for PML regions
             if hasattr(structure, 'is_pml') and structure.is_pml:
                 structure.add_to_plot(ax, edgecolor=self.border_color, linestyle='--', facecolor='none', alpha=0.5)
-            else:
-                structure.add_to_plot(ax)
+            else: structure.add_to_plot(ax)
         
         # Plot PML boundaries explicitly with dashed lines
         for boundary in self.boundaries:
@@ -374,11 +367,9 @@ class Design:
         ax.set_ylabel(f'Y ({unit})')
         ax.set_xlim(0, self.width)
         ax.set_ylim(0, self.height)
-        
         # Update tick labels with scaled values
         ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
         ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-        
         # Adjust layout for clean appearance
         plt.tight_layout()
         plt.show()
@@ -398,13 +389,10 @@ class Design:
         # Determine appropriate SI unit and scale
         max_dim = max(self.width, self.height, self.depth if self.depth else 0)
         scale, unit = get_si_scale_and_label(max_dim)
-        
         # Do we want to show the individual structures or a unified shape?
         if unify_structures: self.unify_polygons()
-        
         # Create 3D figure with modern styling
         fig = go.Figure()
-        
         # Default depth for 2D structures in 3D view
         default_depth = self.depth if self.depth else min(self.width, self.height) * 0.1
         
@@ -425,7 +413,6 @@ class Design:
         # Track materials for consistent coloring
         material_colors = {}
         color_index = 0
-        
         # Process each structure
         for structure in self.structures:
             # Skip PML structures for now (they would clutter the 3D view)
@@ -435,13 +422,11 @@ class Design:
             # Get structure depth
             struct_depth = getattr(structure, 'depth', default_depth)
             struct_z = getattr(structure, 'z', 0)
-            
             # Add 3D representation based on structure type
             mesh_data = self._structure_to_3d_mesh(structure, struct_depth, struct_z)
             if mesh_data:
                 x, y, z = mesh_data['vertices']
                 i, j, k = mesh_data['faces']
-                
                 # Assign color based on material properties for consistency
                 material_key = None
                 if hasattr(structure, 'material') and structure.material:
@@ -485,7 +470,7 @@ class Design:
                     x=x, y=y, z=z,
                     i=i, j=j, k=k,
                     color=face_color,  # Use 'color' for uniform coloring
-                    opacity=0.9,  # Slightly higher opacity for better visibility
+                    opacity=1.0,  # Slightly higher opacity for better visibility
                     name=hovertext,
                     showscale=False,
                     hovertemplate=hovertext + "<extra></extra>",
@@ -493,19 +478,19 @@ class Design:
                     contour=dict(
                         show=True,
                         color="black",  # Always black outlines
-                        width=3  # Thicker lines for better visibility
+                        width=5  # Thicker lines for better visibility
                     ),
                     # Flat shading - minimal lighting for clean appearance
                     lighting=dict(
                         ambient=0.8,    # High ambient for flat appearance
                         diffuse=0.2,    # Low diffuse for minimal shadows
                         fresnel=0.0,    # No fresnel effects
-                        specular=0.0,   # No specular highlights  
+                        specular=0.5,   # No specular highlights  
                         roughness=1.0   # Maximum roughness for flat appearance
                     ),
                     # Simple light position
                     lightposition=dict(
-                        x=0, y=0, z=1000  # Far away light for even illumination
+                        x=0, y=50, z=100  # Far away light for even illumination
                     ),
                     # Force flat shading
                     flatshading=True
@@ -625,88 +610,62 @@ class Design:
     
     def _structure_to_3d_mesh(self, structure, depth, z_offset=0):
         """Convert a 2D structure to 3D mesh data for plotly with improved triangulation."""
-        if not hasattr(structure, 'vertices') or not structure.vertices:
-            return None
-            
+        if not hasattr(structure, 'vertices') or not structure.vertices: return None
         # Ensure depth has a valid value
-        if depth is None:
-            depth = 0.1 * min(self.width, self.height)  # Default depth for 2D structures
-            
+        if depth is None: depth = 0.1 * min(self.width, self.height)
         vertices_2d = structure.vertices
         n_vertices = len(vertices_2d)
-        
-        if n_vertices < 3:
-            return None  # Need at least 3 vertices for a face
-        
+        if n_vertices < 3: return None  # Need at least 3 vertices for a face
         # Handle polygons with holes (like Ring structures)
         interior_paths = getattr(structure, 'interiors', [])
-        
         # For complex polygons with holes, use a different approach
         if interior_paths and len(interior_paths) > 0:
             return self._triangulate_polygon_with_holes(vertices_2d, interior_paths, depth, z_offset)
-        
+    
         # Simple polygon triangulation using corrected ear clipping
         def simple_triangulation(vertices):
             """Simple triangulation for convex/simple polygons."""
-            if len(vertices) < 3:
-                return []
-            if len(vertices) == 3:
-                return [(0, 1, 2)]
-            if len(vertices) == 4:
-                # For quads, split into two triangles
-                return [(0, 1, 2), (0, 2, 3)]
-            
+            if len(vertices) < 3: return []
+            if len(vertices) == 3: return [(0, 1, 2)]
+            if len(vertices) == 4: return [(0, 1, 2), (0, 2, 3)] # split quads into two triangles
             # For more complex polygons, use fan triangulation from centroid
             triangles = []
-            for i in range(len(vertices) - 2):
-                triangles.append((0, i + 1, i + 2))
+            for i in range(len(vertices) - 2): triangles.append((0, i + 1, i + 2))
             return triangles
         
         # Create 3D vertices by extruding the 2D shape
         vertices_3d = []
-        
         # Bottom face vertices (z = z_offset)
-        for x, y in vertices_2d:
-            vertices_3d.append([x, y, z_offset])
-        
+        for x, y in vertices_2d: vertices_3d.append([x, y, z_offset])
         # Top face vertices (z = z_offset + depth)
-        for x, y in vertices_2d:
-            vertices_3d.append([x, y, z_offset + depth])
-        
+        for x, y in vertices_2d: vertices_3d.append([x, y, z_offset + depth])
         # Extract coordinates
         x_coords = [v[0] for v in vertices_3d]
         y_coords = [v[1] for v in vertices_3d]
         z_coords = [v[2] for v in vertices_3d]
-        
         # Create triangular faces for the mesh
         faces_i, faces_j, faces_k = [], [], []
-        
         # Bottom face triangulation (CCW when viewed from above = normal pointing down)
         bottom_triangles = simple_triangulation(vertices_2d)
         for tri in bottom_triangles:
             faces_i.append(tri[0])
             faces_j.append(tri[1]) 
             faces_k.append(tri[2])
-        
         # Top face triangulation (CW when viewed from above = normal pointing up)
         for tri in bottom_triangles:
             faces_i.append(tri[0] + n_vertices)
             faces_j.append(tri[2] + n_vertices)  # Swap j,k for opposite winding
             faces_k.append(tri[1] + n_vertices)
-        
         # Side faces (rectangles split into two triangles each)
         for i in range(n_vertices):
             next_i = (i + 1) % n_vertices
-            
             # Each side face is a rectangle with 4 vertices:
             # Bottom: i, next_i
             # Top: i + n_vertices, next_i + n_vertices
-            
             # Triangle 1: bottom-left, bottom-right, top-left (CCW from outside)
             faces_i.append(i)
             faces_j.append(next_i)
             faces_k.append(i + n_vertices)
-            
             # Triangle 2: bottom-right, top-right, top-left (CCW from outside)
             faces_i.append(next_i)
             faces_j.append(next_i + n_vertices)
@@ -723,14 +682,11 @@ class Design:
             # Try to use a proper constrained triangulation library if available
             import scipy.spatial
             from matplotlib.path import Path
-            
             # For now, use a simpler approach for Ring-like structures
             # Create separate meshes for exterior and interior, then combine
-            
             n_ext = len(exterior_vertices)
             total_vertices = n_ext
             all_vertices_2d = list(exterior_vertices)
-            
             # Add interior vertices
             interior_starts = []
             for interior in interior_paths:
@@ -740,11 +696,9 @@ class Design:
             
             # Create 3D vertices
             vertices_3d = []
-            
             # Bottom face vertices
             for x, y in all_vertices_2d:
                 vertices_3d.append([x, y, z_offset])
-            
             # Top face vertices
             for x, y in all_vertices_2d:
                 vertices_3d.append([x, y, z_offset + depth])
@@ -753,42 +707,34 @@ class Design:
             x_coords = [v[0] for v in vertices_3d]
             y_coords = [v[1] for v in vertices_3d]
             z_coords = [v[2] for v in vertices_3d]
-            
             faces_i, faces_j, faces_k = [], [], []
             
             # For Ring structures, create triangular strip between inner and outer
             if len(interior_paths) == 1 and len(interior_paths[0]) == len(exterior_vertices):
                 # This is likely a Ring structure with equal number of points
                 inner_start = interior_starts[0]
-                
                 # Create triangular strips connecting outer to inner
                 for i in range(n_ext):
                     next_i = (i + 1) % n_ext
-                    
                     # Bottom face triangles (outer ring)
                     outer_i = i
                     outer_next = next_i
                     inner_i = inner_start + i
                     inner_next = inner_start + next_i
-                    
                     # Triangle 1: outer_i -> outer_next -> inner_i
                     faces_i.append(outer_i)
                     faces_j.append(outer_next)
                     faces_k.append(inner_i)
-                    
                     # Triangle 2: outer_next -> inner_next -> inner_i  
                     faces_i.append(outer_next)
                     faces_j.append(inner_next)
                     faces_k.append(inner_i)
-                    
                     # Top face triangles (same pattern but offset by total_vertices)
                     top_offset = total_vertices
-                    
                     # Triangle 1: outer_i -> inner_i -> outer_next (reversed winding)
                     faces_i.append(outer_i + top_offset)
                     faces_j.append(inner_i + top_offset)
                     faces_k.append(outer_next + top_offset)
-                    
                     # Triangle 2: outer_next -> inner_i -> inner_next (reversed winding)
                     faces_i.append(outer_next + top_offset)
                     faces_j.append(inner_i + top_offset)
@@ -797,12 +743,10 @@ class Design:
                 # Side faces for outer ring
                 for i in range(n_ext):
                     next_i = (i + 1) % n_ext
-                    
                     # Outer side face
                     faces_i.append(i)
                     faces_j.append(next_i)
                     faces_k.append(i + total_vertices)
-                    
                     faces_i.append(next_i)
                     faces_j.append(next_i + total_vertices)
                     faces_k.append(i + total_vertices)
@@ -812,12 +756,10 @@ class Design:
                     next_i = (i + 1) % len(interior_paths[0])
                     inner_i = inner_start + i
                     inner_next = inner_start + next_i
-                    
                     # Inner side face (reversed winding)
                     faces_i.append(inner_i + total_vertices)
                     faces_j.append(inner_next + total_vertices)
                     faces_k.append(inner_i)
-                    
                     faces_i.append(inner_i)
                     faces_j.append(inner_next + total_vertices)
                     faces_k.append(inner_next)
@@ -838,15 +780,12 @@ class Design:
         
         # Create 3D vertices
         vertices_3d = []
-        for x, y in vertices_2d:
-            vertices_3d.append([x, y, z_offset])
-        for x, y in vertices_2d:
-            vertices_3d.append([x, y, z_offset + depth])
+        for x, y in vertices_2d: vertices_3d.append([x, y, z_offset])
+        for x, y in vertices_2d: vertices_3d.append([x, y, z_offset + depth])
         
         x_coords = [v[0] for v in vertices_3d]
         y_coords = [v[1] for v in vertices_3d]
         z_coords = [v[2] for v in vertices_3d]
-        
         faces_i, faces_j, faces_k = [], [], []
         
         # Simple fan triangulation for bottom
@@ -854,13 +793,11 @@ class Design:
             faces_i.append(0)
             faces_j.append(i)
             faces_k.append(i + 1)
-        
         # Simple fan triangulation for top (reversed)
         for i in range(1, n_vertices - 1):
             faces_i.append(n_vertices)
             faces_j.append(n_vertices + i + 1)
             faces_k.append(n_vertices + i)
-        
         # Side faces
         for i in range(n_vertices):
             next_i = (i + 1) % n_vertices
@@ -883,15 +820,11 @@ class Design:
         x1, y1 = a
         x2, y2 = b
         x3, y3 = c
-        
         denominator = (y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3)
-        if abs(denominator) < 1e-10:
-            return False
-        
+        if abs(denominator) < 1e-10: return False
         a_coord = ((y2 - y3) * (x - x3) + (x3 - x2) * (y - y3)) / denominator
         b_coord = ((y3 - y1) * (x - x3) + (x1 - x3) * (y - y3)) / denominator
         c_coord = 1 - a_coord - b_coord
-        
         return a_coord >= 0 and b_coord >= 0 and c_coord >= 0
 
     def __str__(self):
@@ -1290,13 +1223,9 @@ class Polygon:
 class Rectangle(Polygon):
     def __init__(self, position=(0,0,0), width=1, height=1, depth=1, material=None, color=None, is_pml=False, optimize=False):
         # Handle 2D position input (x,y) by adding z=0
-        if len(position) == 2:
-            position = (position[0], position[1], 0.0)
-        elif len(position) == 3:
-            position = position
-        else:
-            raise ValueError("Position must be (x,y) or (x,y,z)")
-            
+        if len(position) == 2: position = (position[0], position[1], 0.0)
+        elif len(position) == 3: position = position
+        else: raise ValueError("Position must be (x,y) or (x,y,z)")
         # Calculate vertices for the rectangle in 3D
         x, y, z = position
         vertices = [(x, y, z),  # Bottom left
@@ -1347,7 +1276,6 @@ class Rectangle(Polygon):
         """Scale the rectangle around its center of mass and return self for method chaining."""
         if s_y is None: s_y = s_x  # Uniform scaling in xy if only one parameter given
         if s_z is None: s_z = 1.0 if s_y != s_x else s_x  # Keep z unchanged for 2D, or uniform for 3D
-        
         super().scale(s_x, s_y, s_z)
         self.width *= s_x
         self.height *= s_y
@@ -1365,13 +1293,9 @@ class Rectangle(Polygon):
 class Circle(Polygon):
     def __init__(self, position=(0,0), radius=1, points=32, material=None, color=None, optimize=False):
         # Handle 2D position input (x,y) by adding z=0
-        if len(position) == 2:
-            position = (position[0], position[1], 0.0)
-        elif len(position) == 3:
-            position = position
-        else:
-            raise ValueError("Position must be (x,y) or (x,y,z)")
-            
+        if len(position) == 2: position = (position[0], position[1], 0.0)
+        elif len(position) == 3: position = position
+        else: raise ValueError("Position must be (x,y) or (x,y,z)")
         theta = np.linspace(0, 2*np.pi, points, endpoint=False)
         vertices = [(position[0] + radius * np.cos(t), position[1] + radius * np.sin(t), position[2]) for t in theta]
         super().__init__(vertices=vertices, material=material, color=color, optimize=optimize)
@@ -1390,7 +1314,6 @@ class Circle(Polygon):
         For circles, s_x is used as the radius scaling factor. s_y and s_z affect shape if different."""
         if s_y is None: s_y = s_x  # Uniform scaling in xy if only one parameter given
         if s_z is None: s_z = 1.0   # Don't scale z for circles by default
-        
         self.radius *= s_x
         # Regenerate vertices with new radius
         theta = np.linspace(0, 2*np.pi, self.points, endpoint=False)
@@ -1406,13 +1329,9 @@ class Circle(Polygon):
 class Ring(Polygon):
     def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, material=None, color=None, optimize=False, points=256):
         # Handle 2D position input (x,y) by adding z=0
-        if len(position) == 2:
-            position = (position[0], position[1], 0.0)
-        elif len(position) == 3:
-            position = position
-        else:
-            raise ValueError("Position must be (x,y) or (x,y,z)")
-            
+        if len(position) == 2: position = (position[0], position[1], 0.0)
+        elif len(position) == 3: position = position
+        else: raise ValueError("Position must be (x,y) or (x,y,z)")
         theta = np.linspace(0, 2*np.pi, points, endpoint=False) # CCW, N points
         # Exterior path (CCW, N points)
         # These are unclosed paths, as expected by Polygon.add_to_plot's Path logic
@@ -1442,7 +1361,6 @@ class Ring(Polygon):
         """Scale the ring radii and return self for method chaining."""
         if s_y is None: s_y = s_x  # Uniform scaling in xy if only one parameter given
         if s_z is None: s_z = 1.0   # Don't scale z for rings by default
-        
         self.inner_radius *= s_x; self.outer_radius *= s_x
         # Regenerate vertices with new radii
         theta = np.linspace(0, 2*np.pi, self.points, endpoint=False)
@@ -1481,12 +1399,9 @@ class CircularBend(Polygon):
     def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, angle=90, rotation=0, material=None, 
                  facecolor=None, optimize=False, points=64):
         # Handle 2D position input (x,y) by adding z=0
-        if len(position) == 2:
-            position = (position[0], position[1], 0.0)
-        elif len(position) == 3:
-            position = position
-        else:
-            raise ValueError("Position must be (x,y) or (x,y,z)")
+        if len(position) == 2: position = (position[0], position[1], 0.0)
+        elif len(position) == 3: position = position
+        else: raise ValueError("Position must be (x,y) or (x,y,z)")
             
         self.points = points
         theta = np.linspace(0, np.radians(angle), points)
