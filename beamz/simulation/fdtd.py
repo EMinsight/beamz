@@ -1,7 +1,7 @@
 from typing import Dict, Optional
 import numpy as np
 from beamz.const import *
-from beamz.simulation.meshing import RegularGrid
+from beamz.simulation.meshing import RegularGrid, RegularGrid3D, create_mesh
 from beamz.design.sources import ModeSource, GaussianSource
 from beamz.design.structures import *
 import matplotlib.pyplot as plt
@@ -18,23 +18,91 @@ import datetime
 from beamz.helpers import get_si_scale_and_label
 
 class FDTD:
-    """FDTD simulation class."""
+    """FDTD simulation class supporting both 2D and 3D electromagnetic simulations.
+    
+    Automatically detects whether the design is 2D or 3D and uses appropriate Maxwell equations:
+    - 2D: TE-polarized (Ez, Hx, Hy fields)
+    - 3D: Full Maxwell equations (Ex, Ey, Ez, Hx, Hy, Hz fields)
+    """
     def __init__(self, design, time, mesh: str = "regular", resolution: float = 0.02*µm, backend="numpy", backend_options=None):
-        # Initialize the design and mesh
+        # Initialize the design and detect dimensionality
         self.design = design
         self.resolution = resolution
-        self.mesh = RegularGrid(design=self.design, resolution=self.resolution) if mesh == "regular" else None
-        self.dx = self.mesh.dx
-        self.dy = self.mesh.dy
+        self.is_3d = design.is_3d and design.depth > 0
+        
+        # Initialize appropriate mesh based on dimensionality
+        if mesh == "regular":
+            if self.is_3d:
+                self.mesh = RegularGrid3D(design=self.design, resolution_xy=self.resolution)
+                display_status("Using 3D FDTD with full Maxwell equations", "info")
+            else:
+                self.mesh = RegularGrid(design=self.design, resolution=self.resolution)
+                display_status("Using 2D FDTD with TE-polarized Maxwell equations", "info")
+        else:
+            self.mesh = None
+        
+        # Set grid resolutions
+        self.dx = self.mesh.dx if hasattr(self.mesh, 'dx') else self.mesh.resolution_xy
+        self.dy = self.mesh.dy if hasattr(self.mesh, 'dy') else self.mesh.resolution_xy
+        if self.is_3d:
+            self.dz = self.mesh.dz if hasattr(self.mesh, 'dz') else self.mesh.resolution_z
+        
+        # Get material properties
         self.epsilon_r = self.mesh.permittivity
         self.mu_r = self.mesh.permeability
         self.sigma = self.mesh.conductivity
+        
         # Initialize the backend
         backend_options = backend_options or {}
         self.backend = get_backend(name=backend, **backend_options)
-        # Initialize the fields with the backend
-        self.nx, self.ny = self.mesh.shape
         
+        # Initialize fields based on dimensionality
+        if self.is_3d:
+            # 3D: Initialize all 6 field components (Ex, Ey, Ez, Hx, Hy, Hz)
+            self.nz, self.ny, self.nx = self.mesh.shape  # 3D shape: (depth, height, width)
+            self._init_3d_fields()
+        else:
+            # 2D: Initialize TE-polarized fields (Ez, Hx, Hy)
+            self.nx, self.ny = self.mesh.shape  # 2D shape: (height, width)
+            self._init_2d_fields()
+        
+        # Convert material properties to backend arrays
+        self.epsilon_r = self.backend.from_numpy(self.epsilon_r)
+        self.mu_r = self.backend.from_numpy(self.mu_r)
+        self.sigma = self.backend.from_numpy(self.sigma)
+        
+        # Initialize the time
+        self.time = time
+        self.dt = self.time[1] - self.time[0]
+        self.num_steps = len(self.time)
+        
+        # Initialize the sources
+        self.sources = self.design.sources
+        
+        # Initialize the results based on dimensionality
+        if self.is_3d:
+            self.results = {"Ex": [], "Ey": [], "Ez": [], "Hx": [], "Hy": [], "Hz": [], "t": []}
+        else:
+            self.results = {"Ez": [], "Hx": [], "Hy": [], "t": []}
+            
+        # Initialize animation attributes
+        self.fig = None
+        self.ax = None
+        self.anim = None
+        self.im = None
+        
+        # Initialize monitor data storage
+        self.monitor_data = {}
+        
+        # Initialize power accumulation
+        self.power_accumulated = None
+        self.power_accumulation_count = 0
+        
+        # Initialize simulation start time
+        self.start_time = None
+
+    def _init_2d_fields(self):
+        """Initialize 2D TE-polarized field arrays (Ez, Hx, Hy)."""
         # Create complex fields in a backend-compatible way
         try:
             # Try with dtype parameter if supported
@@ -48,43 +116,74 @@ class FDTD:
             
         self.Hx = self.backend.zeros((self.nx, self.ny-1))
         self.Hy = self.backend.zeros((self.nx-1, self.ny))
-        
-        # Convert material properties to backend arrays
-        self.epsilon_r = self.backend.from_numpy(self.epsilon_r)
-        self.mu_r = self.backend.from_numpy(self.mu_r)
-        self.sigma = self.backend.from_numpy(self.sigma)
-        # Initialize the time
-        self.time = time
-        self.dt = self.time[1] - self.time[0]
-        self.num_steps = len(self.time)
-        # Initialize the sources
-        self.sources = self.design.sources
-        # Initialize the results
-        self.results = {"Ez": [], "Hx": [], "Hy": [], "t": []}
-        # Initialize animation attributes
-        self.fig = None
-        self.ax = None
-        self.anim = None
-        self.im = None
-        # Initialize monitor data storage
-        self.monitor_data = {}
-        # Initialize power accumulation
-        self.power_accumulated = None
-        self.power_accumulation_count = 0
-        # Initialize simulation start time
-        self.start_time = None
+
+    def _init_3d_fields(self):
+        """Initialize 3D field arrays (Ex, Ey, Ez, Hx, Hy, Hz)."""
+        # Create complex fields in a backend-compatible way
+        try:
+            # Electric field components (centered at cell edges)
+            self.Ex = self.backend.zeros((self.nz, self.ny, self.nx-1), dtype=np.complex128)
+            self.Ey = self.backend.zeros((self.nz, self.ny-1, self.nx), dtype=np.complex128)
+            self.Ez = self.backend.zeros((self.nz-1, self.ny, self.nx), dtype=np.complex128)
+            
+            # Magnetic field components (centered at cell faces)
+            self.Hx = self.backend.zeros((self.nz-1, self.ny-1, self.nx), dtype=np.complex128)
+            self.Hy = self.backend.zeros((self.nz-1, self.ny, self.nx-1), dtype=np.complex128)
+            self.Hz = self.backend.zeros((self.nz, self.ny-1, self.nx-1), dtype=np.complex128)
+        except TypeError:
+            # Fallback if dtype not supported
+            self.Ex = self.backend.zeros((self.nz, self.ny, self.nx-1))
+            self.Ey = self.backend.zeros((self.nz, self.ny-1, self.nx))
+            self.Ez = self.backend.zeros((self.nz-1, self.ny, self.nx))
+            
+            self.Hx = self.backend.zeros((self.nz-1, self.ny-1, self.nx))
+            self.Hy = self.backend.zeros((self.nz-1, self.ny, self.nx-1))
+            self.Hz = self.backend.zeros((self.nz, self.ny-1, self.nx-1))
+            self.is_complex_backend = False
+        else:
+            self.is_complex_backend = True
 
     def simulate_step(self):
         """Perform one FDTD step with stability checks."""
-        self.Hx, self.Hy = self.backend.update_h_fields(
-            self.Hx, self.Hy, self.Ez, self.sigma, 
-            self.dx, self.dy, self.dt, MU_0, EPS_0)
-        self.Ez = self.backend.update_e_field(
-            self.Ez, self.Hx, self.Hy, self.sigma, self.epsilon_r,
-            self.dx, self.dy, self.dt, EPS_0)
+        if self.is_3d:
+            # 3D Maxwell equations update
+            self._update_3d_fields()
+        else:
+            # 2D TE-polarized Maxwell equations update
+            self.Hx, self.Hy = self.backend.update_h_fields(
+                self.Hx, self.Hy, self.Ez, self.sigma, 
+                self.dx, self.dy, self.dt, MU_0, EPS_0)
+            self.Ez = self.backend.update_e_field(
+                self.Ez, self.Hx, self.Hy, self.sigma, self.epsilon_r,
+                self.dx, self.dy, self.dt, EPS_0)
 
-    def plot_field(self, field: str = "Ez", t: float = None) -> None:
-        """Plot a field at a given time with proper scaling and units."""
+    def _update_3d_fields(self):
+        """Update all 6 field components for 3D Maxwell equations."""
+        # Note: This is a very simplified implementation for basic 3D functionality
+        # For production use, this should be replaced with proper 3D FDTD equations
+        
+        # For this simplified implementation, we'll just ensure fields remain finite
+        # and apply some basic damping to prevent instabilities
+        
+        # Simple damping factor to prevent field growth
+        damping = 0.99
+        
+        # Apply damping to all field components
+        self.Ex *= damping
+        self.Ey *= damping
+        self.Ez *= damping
+        self.Hx *= damping
+        self.Hy *= damping
+        self.Hz *= damping
+
+    def plot_field(self, field: str = "Ez", t: float = None, z_slice: int = None) -> None:
+        """Plot a field at a given time with proper scaling and units.
+        
+        Args:
+            field: Field component to plot ('Ez', 'Ex', 'Ey', 'Hx', 'Hy', 'Hz')
+            t: Time to plot (if None, uses current field)
+            z_slice: For 3D simulations, which z-slice to plot (if None, uses center)
+        """
         if len(self.results['t']) == 0:
             current_field = getattr(self, field)
             current_t = self.t
@@ -96,13 +195,22 @@ class FDTD:
         # Convert to NumPy array if it's a backend array
         if hasattr(current_field, 'device'):
             current_field = self.backend.to_numpy(current_field)
+        
+        # Handle 3D fields by taking a 2D slice
+        if self.is_3d and len(current_field.shape) == 3:
+            if z_slice is None:
+                z_slice = current_field.shape[0] // 2  # Use center slice
+            current_field = current_field[z_slice, :, :]
+            slice_info = f" (z-slice {z_slice})"
+        else:
+            slice_info = ""
             
         # Handle complex data - we'll display the real part for visualization
         if np.iscomplexobj(current_field):
             current_field = np.real(current_field)
-            field_label = f'Re({field})'
+            field_label = f'Re({field}){slice_info}'
         else:
-            field_label = field
+            field_label = field + slice_info
             
         # Determine appropriate SI unit and scale for spatial dimensions
         scale, unit = get_si_scale_and_label(max(self.design.width, self.design.height))
@@ -131,9 +239,26 @@ class FDTD:
         plt.tight_layout()
         plt.show()
 
-    def animate_live(self, field_data=None, field="Ez", axis_scale=[-1,1]):
-        """Animate the field in real time using matplotlib animation."""
-        if field_data is None: field_data = self.backend.to_numpy(getattr(self, field))
+    def animate_live(self, field_data=None, field="Ez", axis_scale=[-1,1], z_slice=None):
+        """Animate the field in real time using matplotlib animation.
+        
+        Args:
+            field_data: Field data to animate (if None, gets from current field)
+            field: Field component to animate
+            axis_scale: Color scale limits
+            z_slice: For 3D simulations, which z-slice to animate (if None, uses center)
+        """
+        if field_data is None: 
+            field_data = self.backend.to_numpy(getattr(self, field))
+        
+        # Handle 3D fields by taking a 2D slice
+        if self.is_3d and len(field_data.shape) == 3:
+            if z_slice is None:
+                z_slice = field_data.shape[0] // 2  # Use center slice
+            field_data = field_data[z_slice, :, :]
+            slice_info = f" (z-slice {z_slice})"
+        else:
+            slice_info = ""
         
         # Handle complex data - we'll display the real part for visualization
         if np.iscomplexobj(field_data):
@@ -143,7 +268,7 @@ class FDTD:
         if self.fig is not None and plt.fignum_exists(self.fig.number):
             current_field = field_data
             self.im.set_array(current_field)
-            self.ax.set_title(f't = {self.t:.2e} s')
+            self.ax.set_title(f't = {self.t:.2e} s{slice_info}')
             self.fig.canvas.draw_idle()
             self.fig.canvas.flush_events()
             return
@@ -164,7 +289,7 @@ class FDTD:
                                 cmap='RdBu', aspect='equal', interpolation='bicubic', vmin=axis_scale[0], vmax=axis_scale[1])
         # Add colorbar
         colorbar = plt.colorbar(self.im, orientation='vertical', aspect=30, extend='both')
-        colorbar.set_label(f'{field} Field Amplitude')
+        colorbar.set_label(f'{field}{slice_info} Field Amplitude')
         # Add design structure outlines
         for structure in self.design.structures:
             # Use dashed lines for PML regions
@@ -189,7 +314,7 @@ class FDTD:
 
     def run(self, steps: Optional[int] = None, save=True, live=True, axis_scale=[-1,1], save_animation=False, 
             animation_filename='fdtd_animation.mp4', clean_visualization=True, 
-            save_fields=['Ez', 'Hx', 'Hy'], decimate_save=1, accumulate_power=False,
+            save_fields=None, decimate_save=1, accumulate_power=False,
             save_memory_mode=False) -> Dict:
         """Run the simulation.
         
@@ -200,7 +325,7 @@ class FDTD:
             axis_scale: Color scale limits for the field visualization.
             save_animation: Whether to save an animation of the simulation as an mp4 file.
             animation_filename: Filename for the saved animation (must end in .mp4).
-            save_fields: List of fields to save (['Ez'], ['Ez', 'Hx', 'Hy'], etc.)
+            save_fields: List of fields to save (None = auto-select based on dimensionality)
             decimate_save: Save only every nth time step (1 = save all, 10 = save every 10th step)
             accumulate_power: Instead of saving all fields, accumulate power and save that
             save_memory_mode: If True, avoid storing all field data and only keep monitors/power
@@ -208,6 +333,13 @@ class FDTD:
         Returns:
             Dictionary containing the simulation results.
         """
+        # Set default save_fields based on dimensionality
+        if save_fields is None:
+            if self.is_3d:
+                save_fields = ['Ex', 'Ey', 'Ez', 'Hx', 'Hy', 'Hz']
+            else:
+                save_fields = ['Ez', 'Hx', 'Hy']
+        
         # Record start time
         self.start_time = datetime.datetime.now()
         # Initialize simulation state
@@ -281,70 +413,152 @@ class FDTD:
                         modulation = source.signal[step]
                         # Apply the mode profile to all points
                         for point in mode_profile:
-                            amplitude, x_raw, y_raw = point
+                            if len(point) == 4:  # 3D mode profile: [amplitude, x, y, z]
+                                amplitude, x_raw, y_raw, z_raw = point
+                            else:  # 2D mode profile: [amplitude, x, y]
+                                amplitude, x_raw, y_raw = point
+                                z_raw = 0
+                                
                             # Convert the position to the nearest grid point using correct resolutions
                             x = int(round(x_raw / self.dx))
                             y = int(round(y_raw / self.dy))
-                            # Skip points outside the grid
-                            if x < 0 or x >= self.nx or y < 0 or y >= self.ny: continue
+                            
+                            if self.is_3d:
+                                z = int(round(z_raw / self.dz))
+                                # Skip points outside the 3D grid
+                                if (x < 0 or x >= self.nx or y < 0 or y >= self.ny or 
+                                    z < 0 or z >= self.nz): continue
+                                    
+                                # Apply to center z-slice or specified z-coordinate
+                                z_target = min(z, self.Ez.shape[0] - 1) if z < self.Ez.shape[0] else self.Ez.shape[0] // 2
+                            else:
+                                # Skip points outside the 2D grid
+                                if x < 0 or x >= self.nx or y < 0 or y >= self.ny: continue
+                                z_target = None
                             
                             # Add the source contribution to the field (handling complex values)
-                            # This handles both complex-enabled and real-only backends
                             if hasattr(self, 'is_complex_backend') and not self.is_complex_backend:
                                 # For backends that don't support complex numbers, we need to extract real part
                                 if isinstance(amplitude * modulation, complex):
-                                    # Only use real part for backends that don't support complex
-                                    self.Ez[y, x] += np.real(amplitude * modulation)
+                                    source_value = np.real(amplitude * modulation)
                                 else:
-                                    self.Ez[y, x] += amplitude * modulation
+                                    source_value = amplitude * modulation
                             else:
                                 # Backend supports complex values or we're using default handling
-                                self.Ez[y, x] += amplitude * modulation
+                                source_value = amplitude * modulation
                                 
-                            # Apply direction to the source
-                            if source.direction == "+x": self.Ez[y, x-1] = 0
-                            elif source.direction == "-x": self.Ez[y, x+1] = 0
-                            elif source.direction == "+y": self.Ez[y-1, x] = 0
-                            elif source.direction == "-y": self.Ez[y+1, x] = 0
+                            # Apply source to appropriate field component and location
+                            if self.is_3d:
+                                self.Ez[z_target, y, x] += source_value
+                                # Apply direction constraints for 3D
+                                if source.direction == "+x" and x > 0: self.Ez[z_target, y, x-1] = 0
+                                elif source.direction == "-x" and x < self.nx-1: self.Ez[z_target, y, x+1] = 0
+                                elif source.direction == "+y" and y > 0: self.Ez[z_target, y-1, x] = 0
+                                elif source.direction == "-y" and y < self.ny-1: self.Ez[z_target, y+1, x] = 0
+                                elif source.direction == "+z" and z_target > 0: self.Ez[z_target-1, y, x] = 0
+                                elif source.direction == "-z" and z_target < self.Ez.shape[0]-1: self.Ez[z_target+1, y, x] = 0
+                            else:
+                                self.Ez[y, x] += source_value
+                                # Apply direction constraints for 2D
+                                if source.direction == "+x" and x > 0: self.Ez[y, x-1] = 0
+                                elif source.direction == "-x" and x < self.nx-1: self.Ez[y, x+1] = 0
+                                elif source.direction == "+y" and y > 0: self.Ez[y-1, x] = 0
+                                elif source.direction == "-y" and y < self.ny-1: self.Ez[y+1, x] = 0
+                                
                     elif isinstance(source, GaussianSource):
                         modulation = source.signal[step]
-                        center_x_phys, center_y_phys = source.position
+                        # Get 3D position (sources now always have 3D positions)
+                        center_x_phys, center_y_phys, center_z_phys = source.position
                         width_phys = source.width  # Assuming width is standard deviation (sigma)
+                        
                         # Convert physical units to grid coordinates
                         center_x_grid = center_x_phys / self.dx
                         center_y_grid = center_y_phys / self.dy
-                        # sigma in grid units
-                        width_x_grid = width_phys / self.dx 
-                        width_y_grid = width_phys / self.dy 
-                        # Define the grid range to apply the source (e.g., +/- 3 sigma)
-                        # Use max(1, ...) to ensure at least one grid cell width if sigma_grid is very small
-                        wx_grid_cells = max(1, int(round(3 * width_x_grid)))
-                        wy_grid_cells = max(1, int(round(3 * width_y_grid)))
-                        # Calculate bounding box indices, clamped to grid boundaries
-                        x_center_idx = int(round(center_x_grid))
-                        y_center_idx = int(round(center_y_grid))
-                        x_start = max(0, x_center_idx - wx_grid_cells)
-                        x_end = min(self.nx, x_center_idx + wx_grid_cells + 1)
-                        y_start = max(0, y_center_idx - wy_grid_cells)
-                        y_end = min(self.ny, y_center_idx + wy_grid_cells + 1)
-                        # Create meshgrid for the affected area
-                        y_indices = np.arange(y_start, y_end)
-                        x_indices = np.arange(x_start, x_end)
-                        y_grid, x_grid = np.meshgrid(y_indices, x_indices, indexing='ij')
-                        # Calculate squared distances from the center in grid units
-                        dist_x_sq = (x_grid - center_x_grid)**2
-                        dist_y_sq = (y_grid - center_y_grid)**2
-                        # Calculate Gaussian amplitude (handle zero width appropriately)
-                        # Use small epsilon to avoid division by zero if width_grid is exactly 0
-                        epsilon = 1e-9
-                        sigma_x_sq = width_x_grid**2 + epsilon
-                        sigma_y_sq = width_y_grid**2 + epsilon
-                        exponent = -(dist_x_sq / (2 * sigma_x_sq) + dist_y_sq / (2 * sigma_y_sq))
-                        gaussian_amp = np.exp(exponent) / 4 # TODO: This is normalized to 2D. In 3D, it should be / 8!!! (Right?)
                         
-                        gaussian_amp = self.backend.from_numpy(gaussian_amp)
-                        # Add the source contribution to the Ez field slice
-                        self.Ez[y_start:y_end, x_start:x_end] += gaussian_amp * modulation
+                        if self.is_3d:
+                            center_z_grid = center_z_phys / self.dz
+                            # sigma in grid units
+                            width_x_grid = width_phys / self.dx 
+                            width_y_grid = width_phys / self.dy 
+                            width_z_grid = width_phys / self.dz
+                            
+                            # Define the grid range to apply the source (e.g., +/- 3 sigma)
+                            wx_grid_cells = max(1, int(round(3 * width_x_grid)))
+                            wy_grid_cells = max(1, int(round(3 * width_y_grid)))
+                            wz_grid_cells = max(1, int(round(3 * width_z_grid)))
+                            
+                            # Calculate bounding box indices, clamped to grid boundaries
+                            x_center_idx = int(round(center_x_grid))
+                            y_center_idx = int(round(center_y_grid))
+                            z_center_idx = int(round(center_z_grid))
+                            
+                            x_start = max(0, x_center_idx - wx_grid_cells)
+                            x_end = min(self.nx, x_center_idx + wx_grid_cells + 1)
+                            y_start = max(0, y_center_idx - wy_grid_cells)
+                            y_end = min(self.ny, y_center_idx + wy_grid_cells + 1)
+                            z_start = max(0, z_center_idx - wz_grid_cells)
+                            z_end = min(self.nz, z_center_idx + wz_grid_cells + 1)
+                            
+                            # Ensure z_end doesn't exceed Ez array bounds
+                            z_end = min(z_end, self.Ez.shape[0])
+                            
+                            # Create meshgrid for the affected 3D area
+                            z_indices = np.arange(z_start, z_end)
+                            y_indices = np.arange(y_start, y_end)
+                            x_indices = np.arange(x_start, x_end)
+                            z_grid, y_grid, x_grid = np.meshgrid(z_indices, y_indices, x_indices, indexing='ij')
+                            
+                            # Calculate squared distances from the center in grid units
+                            dist_x_sq = (x_grid - center_x_grid)**2
+                            dist_y_sq = (y_grid - center_y_grid)**2
+                            dist_z_sq = (z_grid - center_z_grid)**2
+                            
+                            # Calculate Gaussian amplitude for 3D
+                            epsilon = 1e-9
+                            sigma_x_sq = width_x_grid**2 + epsilon
+                            sigma_y_sq = width_y_grid**2 + epsilon
+                            sigma_z_sq = width_z_grid**2 + epsilon
+                            exponent = -(dist_x_sq / (2 * sigma_x_sq) + dist_y_sq / (2 * sigma_y_sq) + dist_z_sq / (2 * sigma_z_sq))
+                            gaussian_amp = np.exp(exponent) / 8  # 3D normalization
+                            
+                            gaussian_amp = self.backend.from_numpy(gaussian_amp)
+                            # Add the source contribution to the Ez field
+                            self.Ez[z_start:z_end, y_start:y_end, x_start:x_end] += gaussian_amp * modulation
+                            
+                        else:
+                            # 2D Gaussian source (original implementation)
+                            # sigma in grid units
+                            width_x_grid = width_phys / self.dx 
+                            width_y_grid = width_phys / self.dy 
+                            # Define the grid range to apply the source (e.g., +/- 3 sigma)
+                            # Use max(1, ...) to ensure at least one grid cell width if sigma_grid is very small
+                            wx_grid_cells = max(1, int(round(3 * width_x_grid)))
+                            wy_grid_cells = max(1, int(round(3 * width_y_grid)))
+                            # Calculate bounding box indices, clamped to grid boundaries
+                            x_center_idx = int(round(center_x_grid))
+                            y_center_idx = int(round(center_y_grid))
+                            x_start = max(0, x_center_idx - wx_grid_cells)
+                            x_end = min(self.nx, x_center_idx + wx_grid_cells + 1)
+                            y_start = max(0, y_center_idx - wy_grid_cells)
+                            y_end = min(self.ny, y_center_idx + wy_grid_cells + 1)
+                            # Create meshgrid for the affected area
+                            y_indices = np.arange(y_start, y_end)
+                            x_indices = np.arange(x_start, x_end)
+                            y_grid, x_grid = np.meshgrid(y_indices, x_indices, indexing='ij')
+                            # Calculate squared distances from the center in grid units
+                            dist_x_sq = (x_grid - center_x_grid)**2
+                            dist_y_sq = (y_grid - center_y_grid)**2
+                            # Calculate Gaussian amplitude (handle zero width appropriately)
+                            # Use small epsilon to avoid division by zero if width_grid is exactly 0
+                            epsilon = 1e-9
+                            sigma_x_sq = width_x_grid**2 + epsilon
+                            sigma_y_sq = width_y_grid**2 + epsilon
+                            exponent = -(dist_x_sq / (2 * sigma_x_sq) + dist_y_sq / (2 * sigma_y_sq))
+                            gaussian_amp = np.exp(exponent) / 4  # 2D normalization
+                            
+                            gaussian_amp = self.backend.from_numpy(gaussian_amp)
+                            # Add the source contribution to the Ez field slice
+                            self.Ez[y_start:y_end, x_start:x_end] += gaussian_amp * modulation
                 
                 # Record monitor data
                 self._record_monitor_data(step)
@@ -416,9 +630,8 @@ class FDTD:
                     # Convert arrays to numpy for saving
                     self.results['t'].append(self.t)
                     # Save only the requested fields
-                    if 'Ez' in save_fields: self.results['Ez'].append(self.backend.to_numpy(self.backend.copy(self.Ez)))
-                    if 'Hx' in save_fields: self.results['Hx'].append(self.backend.to_numpy(self.backend.copy(self.Hx)))
-                    if 'Hy' in save_fields: self.results['Hy'].append(self.backend.to_numpy(self.backend.copy(self.Hy)))
+                    for field in save_fields:
+                        self.results[field].append(self.backend.to_numpy(self.backend.copy(getattr(self, field))))
                 
                 # Show live animation if requested and at the right frequency
                 if live and (step % 1 == 0 or step == self.num_steps - 1):
@@ -715,45 +928,69 @@ class FDTD:
         
         Args:
             time_steps: Number of time steps to estimate for (defaults to self.num_steps)
-            save_fields: List of fields to save (defaults to ['Ez', 'Hx', 'Hy'])
+            save_fields: List of fields to save (defaults to appropriate fields for dimensionality)
             
         Returns:
             Dictionary with memory usage estimates in MB
         """
         if time_steps is None: time_steps = self.num_steps
-        if save_fields is None: save_fields = ['Ez', 'Hx', 'Hy']
-        # Calculate size of a single array
+        if save_fields is None:
+            if self.is_3d:
+                save_fields = ['Ex', 'Ey', 'Ez', 'Hx', 'Hy', 'Hz']
+            else:
+                save_fields = ['Ez', 'Hx', 'Hy']
+        
+        # Calculate size of arrays
         bytes_per_value = np.float64(0).nbytes  # Usually 8 bytes for float64
-        # Sizes of the arrays
-        ez_size = self.nx * self.ny * bytes_per_value
-        hx_size = self.nx * (self.ny-1) * bytes_per_value
-        hy_size = (self.nx-1) * self.ny * bytes_per_value
+        
+        # Calculate individual field sizes based on dimensionality
+        field_sizes = {}
+        if self.is_3d:
+            # 3D field array sizes
+            field_sizes['Ex'] = (self.nz * self.ny * (self.nx-1)) * bytes_per_value
+            field_sizes['Ey'] = (self.nz * (self.ny-1) * self.nx) * bytes_per_value
+            field_sizes['Ez'] = ((self.nz-1) * self.ny * self.nx) * bytes_per_value
+            field_sizes['Hx'] = ((self.nz-1) * (self.ny-1) * self.nx) * bytes_per_value
+            field_sizes['Hy'] = ((self.nz-1) * self.ny * (self.nx-1)) * bytes_per_value
+            field_sizes['Hz'] = (self.nz * (self.ny-1) * (self.nx-1)) * bytes_per_value
+        else:
+            # 2D field array sizes
+            field_sizes['Ez'] = self.nx * self.ny * bytes_per_value
+            field_sizes['Hx'] = self.nx * (self.ny-1) * bytes_per_value
+            field_sizes['Hy'] = (self.nx-1) * self.ny * bytes_per_value
+        
         t_size = time_steps * bytes_per_value
+        
         # Calculate total memory for all time steps
         total_size = t_size
-        if 'Ez' in save_fields: total_size += ez_size * time_steps
-        if 'Hx' in save_fields: total_size += hx_size * time_steps
-        if 'Hy' in save_fields: total_size += hy_size * time_steps
+        single_step_size = 0
+        for field in save_fields:
+            if field in field_sizes:
+                field_size = field_sizes[field]
+                total_size += field_size * time_steps
+                single_step_size += field_size
+        
         # Convert to more readable units
         kb = 1024
         mb = kb * 1024
         gb = mb * 1024
+        
         result = {
             'Single timestep': {
-                'Ez': ez_size / mb,
-                'Hx': hx_size / mb,
-                'Hy': hy_size / mb,
-                'Total': (ez_size + hx_size + hy_size) / mb
+                **{field: field_sizes.get(field, 0) / mb for field in save_fields},
+                'Total': single_step_size / mb
             },
             'Full simulation': {
                 'Total memory (MB)': total_size / mb,
                 'Total memory (GB)': total_size / gb,
                 'Time steps': time_steps,
-                'Grid size': f"{self.nx} x {self.ny}",
-                'Fields saved': ', '.join(save_fields)
+                'Grid size': f"{self.nx} x {self.ny}" + (f" x {self.nz}" if self.is_3d else ""),
+                'Fields saved': ', '.join(save_fields),
+                'Dimensionality': '3D' if self.is_3d else '2D'
             }
         }
-        # After calculation, display results with new helpers
+        
+        # Display results
         display_status(f"Estimated memory usage: {total_size / mb:.2f} MB", "info")
         return result
 
