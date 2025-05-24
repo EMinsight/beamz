@@ -12,9 +12,9 @@ from beamz.helpers import display_header, display_status, tree_view, console
 import colorsys
 
 class Design:
-    def __init__(self, width=1, height=1, depth=None, material=None, color=None, border_color="black", auto_pml=True, pml_size=None):
+    def __init__(self, width=5*µm, height=5*µm, depth=0, material=None, color=None, border_color="black", auto_pml=True, pml_size=None):
         if material is None: material = Material(permittivity=1.0, permeability=1.0, conductivity=0.0)
-        self.structures = [Rectangle(position=(0,0), width=width, height=height, depth=depth, material=material, color=color)]
+        self.structures = [Rectangle(position=(0,0,0), width=width, height=height, depth=depth, material=material, color=color)]
         self.sources = []
         self.monitors = []
         self.boundaries = []
@@ -23,9 +23,9 @@ class Design:
         self.depth = depth
         self.border_color = border_color
         self.time = 0
-        self.is_3d = False if depth is None else True
+        self.is_3d = False if depth is None or depth == 0 else True
         if auto_pml: self.init_boundaries(pml_size)
-        display_status(f"Created design with size: {self.width:.2e} x {self.height:.2e} m")
+        display_status(f"Created design with size: {self.width:.2e} x {self.height:.2e} x {self.depth:.2e} m")
         
     def add(self, structure):
         """Core add function for adding structures on top of the design."""
@@ -39,10 +39,18 @@ class Design:
             self.monitors.append(structure)
             self.structures.append(structure)
         else: self.structures.append(structure)
-        # Check for 3D structures (only if they have meaningful 3D properties)
-        if (hasattr(structure, 'depth') and structure.depth is not None) or \
-           (hasattr(structure, 'z') and structure.z != 0): 
+        
+        # Check for 3D structures - improved detection
+        if hasattr(structure, 'depth') and structure.depth != 0:
             self.is_3d = True
+        elif hasattr(structure, 'position') and len(structure.position) > 2 and structure.position[2] != 0:
+            self.is_3d = True
+        elif hasattr(structure, 'vertices') and structure.vertices:
+            # Check if any vertex has non-zero z coordinate
+            for vertex in structure.vertices:
+                if len(vertex) > 2 and vertex[2] != 0:
+                    self.is_3d = True
+                    break
 
     def __iadd__(self, structure):
         """Implement += operator for adding structures."""
@@ -889,8 +897,8 @@ class Design:
     def __str__(self):
         return f"Design with {len(self.structures)} structures ({'3D' if self.is_3d else '2D'})"
 
-    def get_material_value(self, x, y, dx=None, dt=None):
-        """Return the material value at a given (x, y) coordinate, prioritizing the topmost structure."""
+    def get_material_value(self, x, y, z=0, dx=None, dt=None):
+        """Return the material value at a given (x, y, z) coordinate, prioritizing the topmost structure."""
         # First get material values from underlying structures
         # Start with default background material 
         epsilon = 1.0
@@ -903,7 +911,7 @@ class Design:
                 if structure.is_pml:
                     # Skip visual PML structures - they're just for display
                     continue
-                if self._point_in_polygon(x, y, structure.vertices):
+                if structure.point_in_polygon(x, y, z):
                     epsilon = structure.material.permittivity
                     mu = structure.material.permeability
                     sigma_base = structure.material.conductivity
@@ -929,7 +937,7 @@ class Design:
                     sigma_base = structure.material.conductivity
                     break
             elif isinstance(structure, Polygon):
-                if self._point_in_polygon(x, y, structure.vertices):
+                if structure.point_in_polygon(x, y, z):
                     epsilon = structure.material.permittivity
                     mu = structure.material.permeability
                     sigma_base = structure.material.conductivity
@@ -948,21 +956,11 @@ class Design:
         return [epsilon, mu, sigma_base + pml_conductivity]
 
     def _point_in_polygon(self, x, y, vertices):
-        """Check if a point is inside a polygon using the ray-casting algorithm."""
-        n = len(vertices)
-        inside = False
-        p1x, p1y = vertices[0]
-        for i in range(n + 1):
-            p2x, p2y = vertices[i % n]
-            if y > min(p1y, p2y):
-                if y <= max(p1y, p2y):
-                    if x <= max(p1x, p2x):
-                        if p1y != p2y:
-                            xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
-                        if p1x == p2x or x <= xinters:
-                            inside = not inside
-            p1x, p1y = p2x, p2y
-        return inside
+        """Check if a point is inside a polygon using the ray-casting algorithm.
+        This method is kept for backwards compatibility but now uses the Polygon.point_in_polygon method."""
+        # Create a temporary polygon to use the new point_in_polygon method
+        temp_polygon = Polygon(vertices=vertices)
+        return temp_polygon.point_in_polygon(x, y)
 
     def get_tree_view(self):
         """Return a structured view of the design as a tree"""
@@ -1029,14 +1027,32 @@ class Design:
         tree_view(design_data, "Design Structure")
 
 class Polygon:
-    def __init__(self, vertices=None, material=None, color=None, optimize=False, interiors=None, depth=None, z=0):
-        self.vertices = vertices if vertices is not None else [] # Exterior path
-        self.interiors = interiors if interiors is not None else [] # List of interior paths
+    def __init__(self, vertices=None, material=None, color=None, optimize=False, interiors=None):
+        self.vertices = self._ensure_3d_vertices(vertices if vertices is not None else []) # Exterior path
+        self.interiors = [self._ensure_3d_vertices(interior) for interior in (interiors if interiors is not None else [])] # List of interior paths
         self.material = material
         self.optimize = optimize
         self.color = color if color is not None else self.get_random_color_consistent()
-        self.depth = depth  # 3D extrusion depth
-        self.z = z          # Z position (height above base plane)
+    
+    def _ensure_3d_vertices(self, vertices):
+        """Convert 2D vertices (x,y) to 3D vertices (x,y,z) with z=0 if not provided."""
+        if not vertices:
+            return []
+        result = []
+        for v in vertices:
+            if len(v) == 2:
+                result.append((v[0], v[1], 0.0))  # Add z=0 for 2D vertices
+            elif len(v) == 3:
+                result.append(v)  # Keep 3D vertices as-is
+            else:
+                raise ValueError(f"Vertex must have 2 or 3 coordinates, got {len(v)}")
+        return result
+    
+    def _vertices_2d(self, vertices=None):
+        """Get 2D projection of vertices for plotting (x,y only)."""
+        if vertices is None:
+            vertices = self.vertices
+        return [(v[0], v[1]) for v in vertices]
     
     def get_random_color_consistent(self, saturation=0.6, value=0.7):
         """Generate a random color with consistent perceived brightness and saturation."""
@@ -1044,41 +1060,50 @@ class Polygon:
         r, g, b = colorsys.hsv_to_rgb(hue, saturation, value)
         return '#{:02x}{:02x}{:02x}'.format(int(r * 255), int(g * 255), int(b * 255))
     
-    def shift(self, x, y):
-        """Shift the polygon by (x,y) and return self for method chaining."""
-        if self.vertices: self.vertices = [(v[0] + x, v[1] + y) for v in self.vertices]
+    def shift(self, x, y, z=0):
+        """Shift the polygon by (x,y,z) and return self for method chaining. z is optional for 2D compatibility."""
+        if self.vertices: 
+            self.vertices = [(v[0] + x, v[1] + y, v[2] + z) for v in self.vertices]
         new_interiors_paths = []
         for interior_path in self.interiors:
             if interior_path: # Ensure path is not empty
-                new_interiors_paths.append([(v[0] + x, v[1] + y) for v in interior_path])
+                new_interiors_paths.append([(v[0] + x, v[1] + y, v[2] + z) for v in interior_path])
         self.interiors = new_interiors_paths
         return self
     
-    def scale(self, s):
-        """Scale the polygon around its center of mass and return self for method chaining."""
+    def scale(self, s_x, s_y=None, s_z=None):
+        """Scale the polygon around its center of mass and return self for method chaining.
+        If s_y and s_z are None, uniform scaling is applied to all dimensions."""
+        if s_y is None: s_y = s_x  # Uniform scaling in xy if only one parameter given
+        if s_z is None: s_z = 1.0 if s_y != s_x else s_x  # Keep z unchanged for 2D, or uniform for 3D
+        
         if self.vertices:
             # Calculate center of mass of the exterior
             x_center = sum(v[0] for v in self.vertices) / len(self.vertices)
             y_center = sum(v[1] for v in self.vertices) / len(self.vertices)
+            z_center = sum(v[2] for v in self.vertices) / len(self.vertices)
             
             # Scale exterior
-            self.vertices = [(x_center + (v[0] - x_center) * s,
-                              y_center + (v[1] - y_center) * s)
+            self.vertices = [(x_center + (v[0] - x_center) * s_x,
+                              y_center + (v[1] - y_center) * s_y,
+                              z_center + (v[2] - z_center) * s_z)
                               for v in self.vertices]
             # Scale interiors
             new_interiors_paths = []
             for interior_path in self.interiors:
                 if interior_path:
-                    new_interiors_paths.append([(x_center + (v[0] - x_center) * s,
-                                                 y_center + (v[1] - y_center) * s)
+                    new_interiors_paths.append([(x_center + (v[0] - x_center) * s_x,
+                                                 y_center + (v[1] - y_center) * s_y,
+                                                 z_center + (v[2] - z_center) * s_z)
                                                  for v in interior_path])
             self.interiors = new_interiors_paths
         return self
     
-    def rotate(self, angle, point=None):
+    def rotate(self, angle, axis='z', point=None):
         """Rotate the polygon around its center of mass or specified point.
         angle: Rotation angle in degrees
-        point: Optional (x,y) point to rotate around. If None, rotates around center of exterior.
+        axis: Rotation axis ('x', 'y', or 'z'). Default 'z' for 2D compatibility
+        point: Optional (x,y,z) point to rotate around. If None, rotates around center of exterior.
         """
         if self.vertices:
             angle_rad = np.radians(angle)
@@ -1086,29 +1111,69 @@ class Polygon:
                 # Calculate center of mass of the exterior
                 x_center = sum(v[0] for v in self.vertices) / len(self.vertices)
                 y_center = sum(v[1] for v in self.vertices) / len(self.vertices)
+                z_center = sum(v[2] for v in self.vertices) / len(self.vertices)
             else:
-                x_center, y_center = point
+                x_center, y_center, z_center = (point[0], point[1], point[2] if len(point) > 2 else 0)
 
-            # Rotate exterior
-            self.vertices = [
-                (x_center + (v[0] - x_center) * np.cos(angle_rad) - (v[1] - y_center) * np.sin(angle_rad),
-                 y_center + (v[0] - x_center) * np.sin(angle_rad) + (v[1] - y_center) * np.cos(angle_rad))
-                for v in self.vertices
-            ]
+            # Define rotation matrices for each axis
+            if axis == 'z':  # 2D rotation in xy plane (most common)
+                cos_a, sin_a = np.cos(angle_rad), np.sin(angle_rad)
+                self.vertices = [
+                    (x_center + (v[0] - x_center) * cos_a - (v[1] - y_center) * sin_a,
+                     y_center + (v[0] - x_center) * sin_a + (v[1] - y_center) * cos_a,
+                     v[2])
+                    for v in self.vertices
+                ]
+            elif axis == 'x':  # Rotation around x-axis (yz plane)
+                cos_a, sin_a = np.cos(angle_rad), np.sin(angle_rad)
+                self.vertices = [
+                    (v[0],
+                     y_center + (v[1] - y_center) * cos_a - (v[2] - z_center) * sin_a,
+                     z_center + (v[1] - y_center) * sin_a + (v[2] - z_center) * cos_a)
+                    for v in self.vertices
+                ]
+            elif axis == 'y':  # Rotation around y-axis (xz plane)
+                cos_a, sin_a = np.cos(angle_rad), np.sin(angle_rad)
+                self.vertices = [
+                    (x_center + (v[0] - x_center) * cos_a + (v[2] - z_center) * sin_a,
+                     v[1],
+                     z_center - (v[0] - x_center) * sin_a + (v[2] - z_center) * cos_a)
+                    for v in self.vertices
+                ]
+            else:
+                raise ValueError(f"Invalid rotation axis '{axis}'. Must be 'x', 'y', or 'z'.")
+            
             # Rotate interiors
             new_interiors_paths = []
             for interior_path in self.interiors:
                 if interior_path:
-                    new_interiors_paths.append([
-                        (x_center + (v[0] - x_center) * np.cos(angle_rad) - (v[1] - y_center) * np.sin(angle_rad),
-                         y_center + (v[0] - x_center) * np.sin(angle_rad) + (v[1] - y_center) * np.cos(angle_rad))
-                        for v in interior_path
-                    ])
+                    if axis == 'z':
+                        new_interiors_paths.append([
+                            (x_center + (v[0] - x_center) * cos_a - (v[1] - y_center) * sin_a,
+                             y_center + (v[0] - x_center) * sin_a + (v[1] - y_center) * cos_a,
+                             v[2])
+                            for v in interior_path
+                        ])
+                    elif axis == 'x':
+                        new_interiors_paths.append([
+                            (v[0],
+                             y_center + (v[1] - y_center) * cos_a - (v[2] - z_center) * sin_a,
+                             z_center + (v[1] - y_center) * sin_a + (v[2] - z_center) * cos_a)
+                            for v in interior_path
+                        ])
+                    elif axis == 'y':
+                        new_interiors_paths.append([
+                            (x_center + (v[0] - x_center) * cos_a + (v[2] - z_center) * sin_a,
+                             v[1],
+                             z_center - (v[0] - x_center) * sin_a + (v[2] - z_center) * cos_a)
+                            for v in interior_path
+                        ])
             self.interiors = new_interiors_paths
         return self
 
     def add_to_plot(self, ax, facecolor=None, edgecolor="black", alpha=None, linestyle=None):
-        """Add the polygon as a patch to the axis, handling holes correctly."""
+        """Add the polygon as a patch to the axis, handling holes correctly.
+        For 3D vertices, project to 2D (xy plane) for plotting."""
         if facecolor is None: facecolor = self.color
         if alpha is None: alpha = 1.0 # Default alpha to 1.0 for visibility
         if linestyle is None: linestyle = '-'
@@ -1120,30 +1185,31 @@ class Polygon:
         all_path_coords = []
         all_path_codes = []
 
-        # Exterior path (assume CCW from shapely, Path will handle fill direction)
-        # A Path needs N vertices and N codes. For a polygon segment: MOVETO, LINETO,...,LINETO, CLOSEPOLY
-        if len(self.vertices) > 0:
+        # Exterior path - project 3D to 2D for plotting
+        vertices_2d = self._vertices_2d(self.vertices)
+        if len(vertices_2d) > 0:
             # Add all vertices
-            all_path_coords.extend(self.vertices)
+            all_path_coords.extend(vertices_2d)
             # Add the first vertex again to close the path visually
-            all_path_coords.append(self.vertices[0])
+            all_path_coords.append(vertices_2d[0])
             # Set codes: MOVETO for first vertex, LINETO for middle vertices, CLOSEPOLY for last
             all_path_codes.append(Path.MOVETO)
-            if len(self.vertices) > 1:
-                all_path_codes.extend([Path.LINETO] * (len(self.vertices) - 1))
+            if len(vertices_2d) > 1:
+                all_path_codes.extend([Path.LINETO] * (len(vertices_2d) - 1))
             all_path_codes.append(Path.CLOSEPOLY)
 
-        # Interior paths (assume CW from shapely for holes)
+        # Interior paths - project 3D to 2D for plotting
         for interior_v_list in self.interiors:
             if interior_v_list and len(interior_v_list) > 0:
+                interior_2d = self._vertices_2d(interior_v_list)
                 # Add all interior vertices
-                all_path_coords.extend(interior_v_list)
+                all_path_coords.extend(interior_2d)
                 # Add the first vertex again to close the interior path
-                all_path_coords.append(interior_v_list[0])
+                all_path_coords.append(interior_2d[0])
                 # Set codes: MOVETO for first vertex, LINETO for middle vertices, CLOSEPOLY for last
                 all_path_codes.append(Path.MOVETO)
-                if len(interior_v_list) > 1:
-                    all_path_codes.extend([Path.LINETO] * (len(interior_v_list) - 1))
+                if len(interior_2d) > 1:
+                    all_path_codes.extend([Path.LINETO] * (len(interior_2d) - 1))
                 all_path_codes.append(Path.CLOSEPOLY)
         
         if not all_path_coords or not all_path_codes: # Nothing to draw
@@ -1165,30 +1231,33 @@ class Polygon:
                        z=self.z)
         
     def get_bounding_box(self):
-        """Get the bounding box of the polygon as (min_x, min_y, max_x, max_y)"""
+        """Get the bounding box of the polygon as (min_x, min_y, min_z, max_x, max_y, max_z)"""
         if not self.vertices or len(self.vertices) == 0:
-            return (0, 0, 0, 0)
+            return (0, 0, 0, 0, 0, 0)
         
-        # Extract x and y coordinates
+        # Extract x, y, and z coordinates
         x_coords = [v[0] for v in self.vertices]
         y_coords = [v[1] for v in self.vertices]
+        z_coords = [v[2] for v in self.vertices]
         
         # Calculate min and max
-        min_x = min(x_coords)
-        min_y = min(y_coords)
-        max_x = max(x_coords)
-        max_y = max(y_coords)
+        min_x, max_x = min(x_coords), max(x_coords)
+        min_y, max_y = min(y_coords), max(y_coords)
+        min_z, max_z = min(z_coords), max(z_coords)
         
-        return (min_x, min_y, max_x, max_y)
+        return (min_x, min_y, min_z, max_x, max_y, max_z)
         
     def _point_in_polygon_single_path(self, x, y, path_vertices):
-        """Check if a point is inside a single, simple polygon path using ray-casting."""
+        """Check if a point is inside a single, simple polygon path using ray-casting.
+        Uses 2D projection (xy plane) for 3D vertices."""
         if not path_vertices: return False
-        n = len(path_vertices)
+        # Project to 2D for point-in-polygon test
+        path_2d = self._vertices_2d(path_vertices)
+        n = len(path_2d)
         inside = False
-        p1x, p1y = path_vertices[0]
+        p1x, p1y = path_2d[0]
         for i in range(n + 1):
-            p2x, p2y = path_vertices[i % n] # Ensure closure for ray casting
+            p2x, p2y = path_2d[i % n] # Ensure closure for ray casting
             if y > min(p1y, p2y):
                 if y <= max(p1y, p2y):
                     if x <= max(p1x, p2x):
@@ -1197,134 +1266,164 @@ class Polygon:
                         else: # Edge is horizontal
                             xinters = p1x # Doesn't matter, will compare x <= max(p1x, p2x)
                         
-                        # For horizontal edge, if point.y is on edge, only count if x is to the left
-                        if p1y == p2y and y == p1y and x > min(p1x,p2x) and x <= max(p1x,p2x):
-                             #This case is tricky, often handled by convention (e.g. points on edge)
-                             #For now, if on horizontal line, consider it an intersection if x is to the left.
-                             #This can be problematic, robust point-in-polygon is hard.
-                             pass # Let standard check handle, or needs specific rule for horizontal edges.
-
                         if p1x == p2x or x <= xinters: # For vertical edge or point left of intersection
                             inside = not inside
             p1x, p1y = p2x, p2y
         return inside
 
-    def point_in_polygon(self, x, y):
-        """Check if a point (x,y) is inside this polygon (which may have holes).
-        
-        'vertices' argument is ignored here, uses self.vertices and self.interiors.
-        """
+    def point_in_polygon(self, x, y, z=None):
+        """Check if a point (x,y,z) is inside this polygon (which may have holes).
+        For 3D, currently uses 2D projection in xy plane. z parameter is for future 3D containment."""
         # Use self.vertices for exterior and self.interiors for holes
         exterior_path = self.vertices
         interior_paths = self.interiors
         if not exterior_path: return False
-        # Check if point is in the exterior boundary
+        # Check if point is in the exterior boundary (2D projection)
         if not self._point_in_polygon_single_path(x, y, exterior_path):
-            return False # Not in exterior, so definitely not in polygom
+            return False # Not in exterior, so definitely not in polygon
         # If in exterior, check if it's in any of the holes
-        # Winding order of interiors (CW) should make _point_in_polygon_single_path return true if inside.
         for interior_path_pts in interior_paths:
             if interior_path_pts and self._point_in_polygon_single_path(x, y, interior_path_pts):
-                return False # Point is in a hole, so not in polygon (as part of the material)
+                return False # Point is in a hole, so not in polygon
         return True # In exterior and not in any hole
 
 class Rectangle(Polygon):
-    def __init__(self, position=(0,0), width=1, height=1, material=None, color=None, is_pml=False, optimize=False, depth=None, z=0):
-        # Calculate vertices for the rectangle
-        x, y = position
-        vertices = [(x, y),  # Bottom left
-                    (x + width, y),  # Bottom right
-                    (x + width, y + height),  # Top right
-                    (x, y + height)]
-        super().__init__(vertices=vertices, material=material, color=color, optimize=optimize, depth=depth, z=z)
+    def __init__(self, position=(0,0,0), width=1, height=1, depth=1, material=None, color=None, is_pml=False, optimize=False):
+        # Handle 2D position input (x,y) by adding z=0
+        if len(position) == 2:
+            position = (position[0], position[1], 0.0)
+        elif len(position) == 3:
+            position = position
+        else:
+            raise ValueError("Position must be (x,y) or (x,y,z)")
+            
+        # Calculate vertices for the rectangle in 3D
+        x, y, z = position
+        vertices = [(x, y, z),  # Bottom left
+                    (x + width, y, z),  # Bottom right
+                    (x + width, y + height, z),  # Top right
+                    (x, y + height, z)]
+        super().__init__(vertices=vertices, material=material, color=color, optimize=optimize)
         self.position = position
         self.width = width
         self.height = height
+        self.depth = depth
         self.is_pml = is_pml
         
     def get_bounding_box(self):
         """Get the axis-aligned bounding box for this rectangle."""
         # For non-rotated rectangles, this is straightforward
         if not hasattr(self, 'vertices') or len(self.vertices) == 0:
-            x, y = self.position
-            return (x, y, x + self.width, y + self.height)
+            x, y, z = self.position
+            return (x, y, z, x + self.width, y + self.height, z + self.depth)
         # For potentially rotated rectangles, use the vertices
         return super().get_bounding_box()
 
-    def shift(self, x, y):
-        """Shift the rectangle by (x,y) and return self for method chaining."""
-        self.position = (self.position[0] + x, self.position[1] + y)
-        super().shift(x, y)
+    def shift(self, x, y, z=0):
+        """Shift the rectangle by (x,y,z) and return self for method chaining."""
+        self.position = (self.position[0] + x, self.position[1] + y, self.position[2] + z)
+        super().shift(x, y, z)
         return self
 
-    def rotate(self, angle, point=None):
+    def rotate(self, angle, axis='z', point=None):
         """Rotate the rectangle around its center of mass or specified point."""        
-        # Use parent class rotation method (which now handles degree to radian conversion)
-        super().rotate(angle, point)
+        # Use parent class rotation method
+        super().rotate(angle, axis, point)
         # Calculate new bounding box after rotation
         min_x = min(v[0] for v in self.vertices)
         min_y = min(v[1] for v in self.vertices)
+        min_z = min(v[2] for v in self.vertices)
         max_x = max(v[0] for v in self.vertices)
         max_y = max(v[1] for v in self.vertices)
+        max_z = max(v[2] for v in self.vertices)
         # Update position to be the bottom-left corner
-        self.position = (min_x, min_y)
+        self.position = (min_x, min_y, min_z)
         self.width = max_x - min_x
         self.height = max_y - min_y
+        self.depth = max_z - min_z
         return self
 
-    def scale(self, s):
+    def scale(self, s_x, s_y=None, s_z=None):
         """Scale the rectangle around its center of mass and return self for method chaining."""
-        super().scale(s)
-        self.width *= s; self.height *= s
+        if s_y is None: s_y = s_x  # Uniform scaling in xy if only one parameter given
+        if s_z is None: s_z = 1.0 if s_y != s_x else s_x  # Keep z unchanged for 2D, or uniform for 3D
+        
+        super().scale(s_x, s_y, s_z)
+        self.width *= s_x
+        self.height *= s_y
+        self.depth *= s_z
         return self
     
     def copy(self):
         """Create a copy of this rectangle with the same attributes and vertices."""
-        new_rect = Rectangle(self.position, self.width, self.height, 
-                            self.material, self.color, self.is_pml, self.optimize, self.depth, self.z)
+        new_rect = Rectangle(self.position, self.width, self.height, self.depth, 
+                            self.material, self.color, self.is_pml, self.optimize)
         # Ensure vertices are copied exactly as they are (important for rotated rectangles)
-        new_rect.vertices = [(x, y) for x, y in self.vertices]
+        new_rect.vertices = [(x, y, z) for x, y, z in self.vertices]
         return new_rect
 
 class Circle(Polygon):
-    def __init__(self, position=(0,0), radius=1, points=32, material=None, color=None, optimize=False, depth=None, z=0):
+    def __init__(self, position=(0,0), radius=1, points=32, material=None, color=None, optimize=False):
+        # Handle 2D position input (x,y) by adding z=0
+        if len(position) == 2:
+            position = (position[0], position[1], 0.0)
+        elif len(position) == 3:
+            position = position
+        else:
+            raise ValueError("Position must be (x,y) or (x,y,z)")
+            
         theta = np.linspace(0, 2*np.pi, points, endpoint=False)
-        vertices = [(position[0] + radius * np.cos(t), position[1] + radius * np.sin(t)) for t in theta]
-        super().__init__(vertices=vertices, material=material, color=color, optimize=optimize, depth=depth, z=z)
+        vertices = [(position[0] + radius * np.cos(t), position[1] + radius * np.sin(t), position[2]) for t in theta]
+        super().__init__(vertices=vertices, material=material, color=color, optimize=optimize)
         self.position = position
         self.radius = radius
+        self.points = points
     
-    def shift(self, x, y):
-        """Shift the circle by (x,y) and return self for method chaining."""
-        self.position = (self.position[0] + x, self.position[1] + y)
-        super().shift(x, y)
+    def shift(self, x, y, z=0):
+        """Shift the circle by (x,y,z) and return self for method chaining."""
+        self.position = (self.position[0] + x, self.position[1] + y, self.position[2] + z)
+        super().shift(x, y, z)
         return self
     
-    def scale(self, s):
-        """Scale the circle radius by s and return self for method chaining."""
-        self.radius *= s
+    def scale(self, s_x, s_y=None, s_z=None):
+        """Scale the circle radius and return self for method chaining.
+        For circles, s_x is used as the radius scaling factor. s_y and s_z affect shape if different."""
+        if s_y is None: s_y = s_x  # Uniform scaling in xy if only one parameter given
+        if s_z is None: s_z = 1.0   # Don't scale z for circles by default
+        
+        self.radius *= s_x
         # Regenerate vertices with new radius
-        N = len(self.vertices)
-        theta = np.linspace(0, 2*np.pi, N, endpoint=False)
+        theta = np.linspace(0, 2*np.pi, self.points, endpoint=False)
         self.vertices = [(self.position[0] + self.radius * np.cos(t), 
-                         self.position[1] + self.radius * np.sin(t)) for t in theta]
+                         self.position[1] + self.radius * np.sin(t),
+                         self.position[2]) for t in theta]
         return self
     
     def copy(self):
-        return Circle(position=self.position, radius=self.radius, points=len(self.vertices), 
-                     material=self.material, color=self.color, optimize=self.optimize, depth=self.depth, z=self.z)
+        return Circle(position=self.position, radius=self.radius, points=self.points, 
+                     material=self.material, color=self.color, optimize=self.optimize)
 
 class Ring(Polygon):
-    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, material=None, color=None, optimize=False, points=256, depth=None, z=0):
+    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, material=None, color=None, optimize=False, points=256):
+        # Handle 2D position input (x,y) by adding z=0
+        if len(position) == 2:
+            position = (position[0], position[1], 0.0)
+        elif len(position) == 3:
+            position = position
+        else:
+            raise ValueError("Position must be (x,y) or (x,y,z)")
+            
         theta = np.linspace(0, 2*np.pi, points, endpoint=False) # CCW, N points
         # Exterior path (CCW, N points)
         # These are unclosed paths, as expected by Polygon.add_to_plot's Path logic
         outer_ext_vertices = [(position[0] + outer_radius * np.cos(t), 
-                               position[1] + outer_radius * np.sin(t)) for t in theta]
+                               position[1] + outer_radius * np.sin(t),
+                               position[2]) for t in theta]
         # Interior path (should be CW for Matplotlib Path hole convention if exterior is CCW)
         # Generate points CW by reversing theta or using reversed(theta)
         inner_int_vertices_cw = [(position[0] + inner_radius * np.cos(t), 
-                                  position[1] + inner_radius * np.sin(t)) for t in reversed(theta)]
+                                  position[1] + inner_radius * np.sin(t),
+                                  position[2]) for t in reversed(theta)]
         super().__init__(vertices=outer_ext_vertices, 
                          interiors=[inner_int_vertices_cw] if inner_int_vertices_cw else [], 
                          material=material, color=color, optimize=optimize, depth=depth, z=z)
@@ -1333,24 +1432,29 @@ class Ring(Polygon):
         self.inner_radius = inner_radius
         self.outer_radius = outer_radius
     
-    def shift(self, x, y):
-        """Shift the ring by (x,y) and return self for method chaining."""
-        self.position = (self.position[0] + x, self.position[1] + y)
-        super().shift(x, y)
+    def shift(self, x, y, z=0):
+        """Shift the ring by (x,y,z) and return self for method chaining."""
+        self.position = (self.position[0] + x, self.position[1] + y, self.position[2] + z)
+        super().shift(x, y, z)
         return self
     
-    def scale(self, s):
-        """Scale the ring radii by s and return self for method chaining."""
-        self.inner_radius *= s; self.outer_radius *= s
+    def scale(self, s_x, s_y=None, s_z=None):
+        """Scale the ring radii and return self for method chaining."""
+        if s_y is None: s_y = s_x  # Uniform scaling in xy if only one parameter given
+        if s_z is None: s_z = 1.0   # Don't scale z for rings by default
+        
+        self.inner_radius *= s_x; self.outer_radius *= s_x
         # Regenerate vertices with new radii
-        N = len(self.vertices) // 2  # Half the vertices for each circle
-        theta = np.linspace(0, 2*np.pi, N, endpoint=False)
-        # Outer circle points (clockwise) and inner circle points (counterclockwise)
+        theta = np.linspace(0, 2*np.pi, self.points, endpoint=False)
+        # Outer circle points (exterior) and inner circle points (interior hole)
         outer_vertices = [(self.position[0] + self.outer_radius * np.cos(t), 
-                          self.position[1] + self.outer_radius * np.sin(t)) for t in theta]
+                          self.position[1] + self.outer_radius * np.sin(t),
+                          self.position[2]) for t in theta]
         inner_vertices = [(self.position[0] + self.inner_radius * np.cos(t), 
-                          self.position[1] + self.inner_radius * np.sin(t)) for t in reversed(theta)]
-        self.vertices = outer_vertices + inner_vertices
+                          self.position[1] + self.inner_radius * np.sin(t),
+                          self.position[2]) for t in reversed(theta)]
+        self.vertices = outer_vertices
+        self.interiors = [inner_vertices]
         return self
     
     def add_to_plot(self, ax, facecolor=None, edgecolor="black", alpha=None, linestyle=None):
@@ -1375,14 +1479,24 @@ class Ring(Polygon):
 
 class CircularBend(Polygon):
     def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, angle=90, rotation=0, material=None, 
-                 facecolor=None, optimize=False, points=64, depth=None, z=0):
+                 facecolor=None, optimize=False, points=64):
+        # Handle 2D position input (x,y) by adding z=0
+        if len(position) == 2:
+            position = (position[0], position[1], 0.0)
+        elif len(position) == 3:
+            position = position
+        else:
+            raise ValueError("Position must be (x,y) or (x,y,z)")
+            
         self.points = points
         theta = np.linspace(0, np.radians(angle), points)
         rotation_rad = np.radians(rotation)
         outer_vertices = [(position[0] + outer_radius * np.cos(t + rotation_rad),
-                          position[1] + outer_radius * np.sin(t + rotation_rad)) for t in theta]
+                          position[1] + outer_radius * np.sin(t + rotation_rad),
+                          position[2]) for t in theta]
         inner_vertices = [(position[0] + inner_radius * np.cos(t + rotation_rad),
-                          position[1] + inner_radius * np.sin(t + rotation_rad)) for t in reversed(theta)]
+                          position[1] + inner_radius * np.sin(t + rotation_rad),
+                          position[2]) for t in reversed(theta)]
         vertices = outer_vertices + inner_vertices
         super().__init__(vertices=vertices, material=material, color=facecolor, optimize=optimize, depth=depth, z=z)
         self.position = position
@@ -1391,28 +1505,33 @@ class CircularBend(Polygon):
         self.angle = angle
         self.rotation = rotation
     
-    def shift(self, x, y):
-        """Shift the bend by (x,y) and return self for method chaining."""
-        self.position = (self.position[0] + x, self.position[1] + y)
-        super().shift(x, y)
+    def shift(self, x, y, z=0):
+        """Shift the bend by (x,y,z) and return self for method chaining."""
+        self.position = (self.position[0] + x, self.position[1] + y, self.position[2] + z)
+        super().shift(x, y, z)
         return self
     
-    def rotate(self, angle, point=None):
+    def rotate(self, angle, axis='z', point=None):
         """Rotate the bend around its center or specified point."""
-        self.rotation = (self.rotation + angle) % 360
-        super().rotate(angle, point or self.position)
+        if axis == 'z':  # Only z-rotation makes sense for circular bends in xy plane
+            self.rotation = (self.rotation + angle) % 360
+        super().rotate(angle, axis, point or self.position)
         return self
     
-    def scale(self, s):
-        """Scale the bend radii by s and return self for method chaining."""
-        self.inner_radius *= s; self.outer_radius *= s
-        N = len(self.vertices) // 2  # Half the vertices for each arc
-        theta = np.linspace(0, np.radians(self.angle), N)
+    def scale(self, s_x, s_y=None, s_z=None):
+        """Scale the bend radii and return self for method chaining."""
+        if s_y is None: s_y = s_x  # Uniform scaling in xy if only one parameter given
+        if s_z is None: s_z = 1.0   # Don't scale z for bends by default
+        
+        self.inner_radius *= s_x; self.outer_radius *= s_x
+        theta = np.linspace(0, np.radians(self.angle), self.points)
         rotation_rad = np.radians(self.rotation)
         outer_vertices = [(self.position[0] + self.outer_radius * np.cos(t + rotation_rad),
-                          self.position[1] + self.outer_radius * np.sin(t + rotation_rad)) for t in theta]
+                          self.position[1] + self.outer_radius * np.sin(t + rotation_rad),
+                          self.position[2]) for t in theta]
         inner_vertices = [(self.position[0] + self.inner_radius * np.cos(t + rotation_rad),
-                          self.position[1] + self.inner_radius * np.sin(t + rotation_rad)) for t in reversed(theta)]
+                          self.position[1] + self.inner_radius * np.sin(t + rotation_rad),
+                          self.position[2]) for t in reversed(theta)]
         self.vertices = outer_vertices + inner_vertices
         return self
     
@@ -1424,7 +1543,7 @@ class CircularBend(Polygon):
         angle_rad = np.radians(self.angle)
         rotation_rad = np.radians(self.rotation)
         theta = np.linspace(rotation_rad, rotation_rad + angle_rad, self.points, endpoint=True)
-        # Outer and inner arc points
+        # Outer and inner arc points (project 3D to 2D for plotting)
         x_outer = self.position[0] + self.outer_radius * np.cos(theta)
         y_outer = self.position[1] + self.outer_radius * np.sin(theta)
         x_inner = self.position[0] + self.inner_radius * np.cos(theta)
@@ -1453,31 +1572,41 @@ class CircularBend(Polygon):
 
 class Taper(Polygon):
     """Taper is a structure that tapers from a width to a height."""
-    def __init__(self, position=(0,0), input_width=1, output_width=0.5, length=1, material=None, color=None, optimize=False, depth=None, z=0):
-        # Calculate vertices for the trapezoid shape
-        x, y = position
-        vertices = [(x, y - input_width/2),  # Bottom left
-                    (x + length, y - output_width/2),  # Bottom right
-                    (x + length, y + output_width/2),  # Top right
-                    (x, y + input_width/2)] # Top left
-        super().__init__(vertices=vertices, material=material, color=color, depth=depth, z=z)
+    def __init__(self, position=(0,0), input_width=1, output_width=0.5, length=1, material=None, color=None, optimize=False):
+        # Handle 2D position input (x,y) by adding z=0
+        if len(position) == 2:
+            position = (position[0], position[1], 0.0)
+        elif len(position) == 3:
+            position = position
+        else:
+            raise ValueError("Position must be (x,y) or (x,y,z)")
+            
+        # Calculate vertices for the trapezoid shape in 3D
+        x, y, z = position
+        vertices = [(x, y - input_width/2, z),  # Bottom left
+                    (x + length, y - output_width/2, z),  # Bottom right
+                    (x + length, y + output_width/2, z),  # Top right
+                    (x, y + input_width/2, z)] # Top left
+        super().__init__(vertices=vertices, material=material, color=color)
         self.position = position
         self.input_width = input_width
         self.output_width = output_width
         self.length = length
         self.optimize = optimize
 
-    def rotate(self, angle, point=None):
+    def rotate(self, angle, axis='z', point=None):
         """Rotate the taper around its center of mass or specified point."""
         # Use parent class rotation method
-        super().rotate(angle, point)
+        super().rotate(angle, axis, point)
         # Calculate new bounding box after rotation
         min_x = min(v[0] for v in self.vertices)
         min_y = min(v[1] for v in self.vertices)
+        min_z = min(v[2] for v in self.vertices)
         max_x = max(v[0] for v in self.vertices)
         max_y = max(v[1] for v in self.vertices)
+        max_z = max(v[2] for v in self.vertices)
         # Update position to left bottom corner and update length
-        self.position = (min_x, min_y)
+        self.position = (min_x, min_y, min_z)
         self.length = max_x - min_x
         return self
 
@@ -1486,7 +1615,7 @@ class Taper(Polygon):
         new_taper = Taper(self.position, self.input_width, self.output_width, 
                           self.length, self.material, self.color, self.optimize, self.depth, self.z)
         # Ensure vertices are copied exactly as they are (important for rotated tapers)
-        new_taper.vertices = [(x, y) for x, y in self.vertices]
+        new_taper.vertices = [(x, y, z) for x, y, z in self.vertices]
         return new_taper
 
 class PML:
