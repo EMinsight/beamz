@@ -69,10 +69,8 @@ class Design:
         # Group structures by material properties
         material_groups = {}
         non_polygon_structures = []
-        
         # Track which structures to remove later
         structures_to_remove = []
-        
         # First pass: group polygons by material
         for structure in self.structures:
             # Skip PML visualizations, sources, monitors
@@ -82,7 +80,6 @@ class Design:
             if isinstance(structure, ModeSource) or isinstance(structure, GaussianSource) or isinstance(structure, Monitor):
                 non_polygon_structures.append(structure)
                 continue
-                
             # Only process polygon-like structures with vertices
             if not hasattr(structure, 'vertices') or not hasattr(structure, 'material'):
                 non_polygon_structures.append(structure)
@@ -93,7 +90,6 @@ class Design:
             if not material:
                 non_polygon_structures.append(structure)
                 continue
-                
             material_key = (
                 getattr(material, 'permittivity', None),
                 getattr(material, 'permeability', None),
@@ -101,9 +97,7 @@ class Design:
             )
             
             # Add to the appropriate group
-            if material_key not in material_groups:
-                material_groups[material_key] = []
-            
+            if material_key not in material_groups: material_groups[material_key] = []
             # Convert to Shapely polygon
             try:
                 # Handle polygons that might have interiors defined
@@ -136,15 +130,12 @@ class Design:
         
         # Second pass: Check for Ring objects that don't touch other objects
         rings_to_preserve = []
-        
         for material_key, structure_group in material_groups.items():
             if len(structure_group) <= 1:
                 continue  # Skip material groups with only one structure
-                
             rings_in_group = [(idx, s) for idx, s in enumerate(structure_group) if isinstance(s[0], Ring)]
             if not rings_in_group:
                 continue  # No rings in this group
-                
             # For each Ring, preserve it unconditionally to maintain hole structure
             for ring_idx, (ring, ring_shapely) in rings_in_group:
                 rings_to_preserve.append(ring)
@@ -165,23 +156,18 @@ class Design:
                 
             # Extract shapely polygons for merging
             shapely_polygons = [p[1] for p in structure_group]
-            
             # Get the material from the first structure in the group
             material = structure_group[0][0].material
-            
             try:
                 # Unify the polygons
                 merged = unary_union(shapely_polygons)
-                
                 # The result could be a single polygon or a multipolygon
                 if merged.geom_type == 'Polygon':
                     # Simplify the unified polygon to reduce complexity for 3D triangulation
                     simplified = self._simplify_polygon_for_3d(merged)
-                    
                     # Don't slice off the last vertex - our add_to_plot method needs complete vertices
                     exterior_coords = list(simplified.exterior.coords[:-1])  # Keep [:-1] to remove duplicate closing vertex from Shapely
                     interior_coords_lists = [list(interior.coords[:-1]) for interior in simplified.interiors]
-                    
                     if exterior_coords and len(exterior_coords) >= 3:
                         # Add depth and z information from the first structure
                         first_structure = structure_group[0][0]
@@ -205,17 +191,14 @@ class Design:
                     for geom in merged.geoms:
                         # Simplify each polygon in the multipolygon
                         simplified_geom = self._simplify_polygon_for_3d(geom)
-                        
                         # Keep [:-1] to remove duplicate closing vertex from Shapely (our add_to_plot will add it back)
                         exterior_coords = list(simplified_geom.exterior.coords[:-1])
                         interior_coords_lists = [list(interior.coords[:-1]) for interior in simplified_geom.interiors]
-
                         if exterior_coords and len(exterior_coords) >= 3:
                             # Add depth and z information from the first structure
                             first_structure = structure_group[0][0]
                             depth = getattr(first_structure, 'depth', 0)
                             z = getattr(first_structure, 'z', 0)
-                            
                             new_poly = Polygon(vertices=exterior_coords, interiors=interior_coords_lists, 
                                              material=material, depth=depth, z=z)
                             temp_new_polys_for_multipolygon.append(new_poly)
@@ -253,7 +236,6 @@ class Design:
         for structure in structures_to_remove:
             if structure in self.structures:
                 self.structures.remove(structure)
-        
         # Add the unified structures, non-polygon structures, and preserved rings back
         self.structures.extend(new_structures)
         self.structures.extend(rings_to_preserve)
@@ -269,10 +251,8 @@ class Design:
             bounds = shapely_polygon.bounds
             size = max(bounds[2] - bounds[0], bounds[3] - bounds[1])  # max of width, height
             tolerance = size * tolerance_factor
-            
             # Apply simplification
             simplified = shapely_polygon.simplify(tolerance, preserve_topology=True)
-            
             # Check if simplification was successful and polygon is still valid
             if simplified.is_valid and not simplified.is_empty:
                 # Check if we still have a reasonable number of vertices
@@ -330,7 +310,6 @@ class Design:
         self.boundaries.append(PML("rect", (self.width - pml_size, 0), (pml_size, self.height), "right"))
         self.boundaries.append(PML("rect", (0, self.height - pml_size), (self.width, pml_size), "top"))
         self.boundaries.append(PML("rect", (0, 0), (self.width, pml_size), "bottom"))
-        
         # Corner PMLs
         self.boundaries.append(PML("corner", (0, 0), pml_size, "bottom-left"))
         self.boundaries.append(PML("corner", (self.width, 0), pml_size, "bottom-right"))
@@ -398,25 +377,20 @@ class Design:
                 # Skip PML structures from consideration
                 if hasattr(structure, 'is_pml') and structure.is_pml:
                     continue
-                    
                 # Check for non-zero depth
                 if hasattr(structure, 'depth') and structure.depth and structure.depth > 0:
                     return True
-                    
                 # Check for non-zero z position
                 if hasattr(structure, 'z') and structure.z and structure.z != 0:
                     return True
-                    
                 # Check position z-coordinate 
                 if hasattr(structure, 'position') and len(structure.position) > 2 and structure.position[2] != 0:
                     return True
-                    
                 # Check if any vertex has non-zero z coordinate
                 if hasattr(structure, 'vertices') and structure.vertices:
                     for vertex in structure.vertices:
                         if len(vertex) > 2 and vertex[2] != 0:
                             return True
-        
         return False
     
     def show_2d(self, unify_structures=True):
@@ -470,11 +444,9 @@ class Design:
             display_status("Falling back to 2D visualization...", "warning")
             self.show_2d(unify_structures)
             return
-        
         # Determine appropriate SI unit and scale
         max_dim = max(self.width, self.height, self.depth if self.depth else 0)
         scale, unit = get_si_scale_and_label(max_dim)
-        
         # For 3D visualization, be more selective about unification
         if unify_structures:
             # Check if we have complex structures that might not unify well
@@ -486,7 +458,6 @@ class Design:
                     total_vertices += vertices_count
                     if vertices_count > max_vertices_for_unification:
                         complex_structures += 1
-            
             # Disable unification if we have too many complex structures
             if complex_structures > 2 or total_vertices > 200:
                 display_status(f"Disabling polygon unification for 3D (too complex: {complex_structures} complex structures, {total_vertices} total vertices)", "warning")
@@ -716,19 +687,16 @@ class Design:
         if not hasattr(structure, 'vertices') or not structure.vertices: return None
         # Ensure depth has a valid value
         if depth is None: depth = 0.1 * min(self.width, self.height)
-        
         # Get 2D projection of vertices for triangulation
         vertices_2d = structure._vertices_2d() if hasattr(structure, '_vertices_2d') else [(v[0], v[1]) for v in structure.vertices]
         n_vertices = len(vertices_2d)
         if n_vertices < 3: return None  # Need at least 3 vertices for a face
-        
         # Get the actual z position from the structure
         actual_z = z_offset
         if hasattr(structure, 'z') and structure.z is not None:
             actual_z = structure.z
         elif hasattr(structure, 'position') and len(structure.position) > 2:
             actual_z = structure.position[2]
-        
         # Handle polygons with holes (like Ring structures)
         interior_paths = getattr(structure, 'interiors', [])
         # For complex polygons with holes, use a different approach
@@ -800,12 +768,9 @@ class Design:
     
     def _robust_triangulation(self, vertices_2d):
         """Robust triangulation for complex polygons including unified shapes."""
-        if len(vertices_2d) < 3:
-            return []
-        if len(vertices_2d) == 3:
-            return [(0, 1, 2)]
-        if len(vertices_2d) == 4:
-            return [(0, 1, 2), (0, 2, 3)]
+        if len(vertices_2d) < 3: return []
+        if len(vertices_2d) == 3: return [(0, 1, 2)]
+        if len(vertices_2d) == 4: return [(0, 1, 2), (0, 2, 3)]
         
         # Try ear clipping algorithm for complex polygons
         try:
@@ -821,17 +786,14 @@ class Design:
     
     def _ear_clipping_triangulation(self, vertices):
         """Ear clipping algorithm for triangulating simple polygons."""
-        if len(vertices) < 3:
-            return []
+        if len(vertices) < 3: return []
             
         # Create a list of vertex indices
         indices = list(range(len(vertices)))
         triangles = []
-        
         # Remove ears until only 3 vertices remain
         while len(indices) > 3:
             ear_found = False
-            
             for i in range(len(indices)):
                 prev_idx = indices[i - 1]
                 curr_idx = indices[i]
@@ -866,11 +828,9 @@ class Design:
         prev_pt = vertices[prev_idx]
         curr_pt = vertices[curr_idx]
         next_pt = vertices[next_idx]
-        
         # Check if the angle is convex (interior angle < 180 degrees)
         if not self._is_convex_vertex(prev_pt, curr_pt, next_pt):
             return False
-        
         # Check if any other vertex is inside this triangle
         for idx in remaining_indices:
             if idx not in [prev_idx, curr_idx, next_idx]:
@@ -894,7 +854,6 @@ class Design:
             # Use Delaunay triangulation with constraints
             points = np.array(vertices_2d)
             tri = scipy.spatial.Delaunay(points)
-            
             # Filter triangles to only include those inside the polygon
             valid_triangles = []
             for triangle in tri.simplices:
@@ -909,16 +868,12 @@ class Design:
     
     def _fallback_triangulation(self, vertices_2d):
         """Simple fallback triangulation methods."""
-        if len(vertices_2d) < 3:
-            return []
-        if len(vertices_2d) == 3:
-            return [(0, 1, 2)]
-        if len(vertices_2d) == 4:
-            return [(0, 1, 2), (0, 2, 3)]
+        if len(vertices_2d) < 3: return []
+        if len(vertices_2d) == 3: return [(0, 1, 2)]
+        if len(vertices_2d) == 4: return [(0, 1, 2), (0, 2, 3)]
         
         # Try convex hull based triangulation
-        try:
-            return self._convex_hull_triangulation(vertices_2d)
+        try: return self._convex_hull_triangulation(vertices_2d)
         except Exception:
             # Last resort: simple fan triangulation from centroid
             print("Warning: Using simple fan triangulation as last resort")
@@ -932,11 +887,9 @@ class Design:
         try:
             import scipy.spatial
             points = np.array(vertices_2d)
-            
             # Compute convex hull
             hull = scipy.spatial.ConvexHull(points)
             hull_vertices = hull.vertices
-            
             # If the polygon is already convex, use simple fan triangulation
             if len(hull_vertices) == len(vertices_2d):
                 triangles = []
@@ -954,7 +907,6 @@ class Design:
         # Simple polygon decomposition - find the "most convex" triangulation
         triangles = []
         n = len(vertices_2d)
-        
         # Use a modified fan triangulation that skips problematic triangles
         center_idx = 0
         for i in range(1, n - 1):
@@ -1006,7 +958,6 @@ class Design:
                 interior_starts.append(total_vertices)
                 all_vertices_2d.extend(interior)
                 total_vertices += len(interior)
-            
             # Create 3D vertices
             vertices_3d = []
             # Bottom face vertices
@@ -1015,13 +966,11 @@ class Design:
             # Top face vertices
             for x, y in all_vertices_2d:
                 vertices_3d.append([x, y, z_offset + depth])
-            
             # Extract coordinates
             x_coords = [v[0] for v in vertices_3d]
             y_coords = [v[1] for v in vertices_3d]
             z_coords = [v[2] for v in vertices_3d]
             faces_i, faces_j, faces_k = [], [], []
-            
             # For Ring structures, create triangular strip between inner and outer
             if len(interior_paths) == 1 and len(interior_paths[0]) == len(exterior_vertices):
                 # This is likely a Ring structure with equal number of points
@@ -1052,7 +1001,6 @@ class Design:
                     faces_i.append(outer_next + top_offset)
                     faces_j.append(inner_i + top_offset)
                     faces_k.append(inner_next + top_offset)
-                
                 # Side faces for outer ring
                 for i in range(n_ext):
                     next_i = (i + 1) % n_ext
@@ -1063,7 +1011,6 @@ class Design:
                     faces_i.append(next_i)
                     faces_j.append(next_i + total_vertices)
                     faces_k.append(i + total_vertices)
-                
                 # Side faces for inner ring (reversed winding for inward-facing)
                 for i in range(len(interior_paths[0])):
                     next_i = (i + 1) % len(interior_paths[0])
@@ -1076,7 +1023,6 @@ class Design:
                     faces_i.append(inner_i)
                     faces_j.append(inner_next + total_vertices)
                     faces_k.append(inner_next)
-            
             return {
                 'vertices': (x_coords, y_coords, z_coords),
                 'faces': (faces_i, faces_j, faces_k)
@@ -1090,17 +1036,14 @@ class Design:
     def _structure_to_3d_mesh_simple(self, vertices_2d, depth, z_offset):
         """Fallback simple mesh generation."""
         n_vertices = len(vertices_2d)
-        
         # Create 3D vertices (vertices_2d is already in 2D format)
         vertices_3d = []
         for x, y in vertices_2d: vertices_3d.append([x, y, z_offset])
         for x, y in vertices_2d: vertices_3d.append([x, y, z_offset + depth])
-        
         x_coords = [v[0] for v in vertices_3d]
         y_coords = [v[1] for v in vertices_3d]
         z_coords = [v[2] for v in vertices_3d]
         faces_i, faces_j, faces_k = [], [], []
-        
         # Simple fan triangulation for bottom
         for i in range(1, n_vertices - 1):
             faces_i.append(0)
@@ -1117,11 +1060,9 @@ class Design:
             faces_i.append(i)
             faces_j.append(next_i)
             faces_k.append(i + n_vertices)
-            
             faces_i.append(next_i)
             faces_j.append(next_i + n_vertices)
             faces_k.append(i + n_vertices)
-        
         return {
             'vertices': (x_coords, y_coords, z_coords),
             'faces': (faces_i, faces_j, faces_k)
@@ -1150,7 +1091,6 @@ class Design:
         epsilon = 1.0
         mu = 1.0
         sigma_base = 0.0
-        
         # Find the material values from the structures (outside PML calculation)
         for structure in reversed(self.structures):
             if isinstance(structure, Rectangle):
@@ -1188,7 +1128,6 @@ class Design:
                     mu = structure.material.permeability
                     sigma_base = structure.material.conductivity
                     break
-        
         # Calculate PML conductivity based on the UNDERLYING material
         # This is crucial for proper absorption without reflection
         pml_conductivity = 0.0
@@ -1226,11 +1165,9 @@ class Design:
         for idx, structure in enumerate(self.structures):
             if isinstance(structure, ModeSource) or isinstance(structure, GaussianSource) or isinstance(structure, Monitor):
                 continue
-                
             struct_type = structure.__class__.__name__
             if struct_type not in design_data["Structures"]:
                 design_data["Structures"][struct_type] = []
-                
             struct_info = {"position": getattr(structure, "position", None)}
             if hasattr(structure, "material"):
                 mat = structure.material
@@ -1246,7 +1183,6 @@ class Design:
             source_type = source.__class__.__name__
             if source_type not in design_data["Sources"]:
                 design_data["Sources"][source_type] = []
-            
             source_info = {
                 "position": source.position,
                 "wavelength": getattr(source, "wavelength", None)
@@ -1258,7 +1194,6 @@ class Design:
             monitor_type = monitor.__class__.__name__
             if monitor_type not in design_data["Monitors"]:
                 design_data["Monitors"][monitor_type] = []
-            
             monitor_info = {
                 "position": monitor.position,
                 "size": getattr(monitor, "size", None)
@@ -1284,22 +1219,17 @@ class Polygon:
     
     def _ensure_3d_vertices(self, vertices):
         """Convert 2D vertices (x,y) to 3D vertices (x,y,z) with z=0 if not provided."""
-        if not vertices:
-            return []
+        if not vertices: return []
         result = []
         for v in vertices:
-            if len(v) == 2:
-                result.append((v[0], v[1], 0.0))  # Add z=0 for 2D vertices
-            elif len(v) == 3:
-                result.append(v)  # Keep 3D vertices as-is
-            else:
-                raise ValueError(f"Vertex must have 2 or 3 coordinates, got {len(v)}")
+            if len(v) == 2: result.append((v[0], v[1], 0.0))  # Add z=0 for 2D vertices
+            elif len(v) == 3: result.append(v)  # Keep 3D vertices as-is
+            else: raise ValueError(f"Vertex must have 2 or 3 coordinates, got {len(v)}")
         return result
     
     def _vertices_2d(self, vertices=None):
         """Get 2D projection of vertices for plotting (x,y only)."""
-        if vertices is None:
-            vertices = self.vertices
+        if vertices is None: vertices = self.vertices
         return [(v[0], v[1]) for v in vertices]
     
     def get_random_color_consistent(self, saturation=0.6, value=0.7):
@@ -1310,8 +1240,7 @@ class Polygon:
     
     def shift(self, x, y, z=0):
         """Shift the polygon by (x,y,z) and return self for method chaining. z is optional for 2D compatibility."""
-        if self.vertices: 
-            self.vertices = [(v[0] + x, v[1] + y, v[2] + z) for v in self.vertices]
+        if self.vertices: self.vertices = [(v[0] + x, v[1] + y, v[2] + z) for v in self.vertices]
         new_interiors_paths = []
         for interior_path in self.interiors:
             if interior_path: # Ensure path is not empty
@@ -1330,7 +1259,6 @@ class Polygon:
             x_center = sum(v[0] for v in self.vertices) / len(self.vertices)
             y_center = sum(v[1] for v in self.vertices) / len(self.vertices)
             z_center = sum(v[2] for v in self.vertices) / len(self.vertices)
-            
             # Scale exterior
             self.vertices = [(x_center + (v[0] - x_center) * s_x,
                               y_center + (v[1] - y_center) * s_y,
@@ -1360,8 +1288,7 @@ class Polygon:
                 x_center = sum(v[0] for v in self.vertices) / len(self.vertices)
                 y_center = sum(v[1] for v in self.vertices) / len(self.vertices)
                 z_center = sum(v[2] for v in self.vertices) / len(self.vertices)
-            else:
-                x_center, y_center, z_center = (point[0], point[1], point[2] if len(point) > 2 else 0)
+            else: x_center, y_center, z_center = (point[0], point[1], point[2] if len(point) > 2 else 0)
 
             # Define rotation matrices for each axis
             if axis == 'z':  # 2D rotation in xy plane (most common)
@@ -1425,14 +1352,10 @@ class Polygon:
         if facecolor is None: facecolor = self.color
         if alpha is None: alpha = 1.0 # Default alpha to 1.0 for visibility
         if linestyle is None: linestyle = '-'
-        
-        if not self.vertices: # No exterior to draw
-            return
-
+        if not self.vertices: return
         # Path components: first is exterior, subsequent are interiors
         all_path_coords = []
         all_path_codes = []
-
         # Exterior path - project 3D to 2D for plotting
         vertices_2d = self._vertices_2d(self.vertices)
         if len(vertices_2d) > 0:
@@ -1445,7 +1368,6 @@ class Polygon:
             if len(vertices_2d) > 1:
                 all_path_codes.extend([Path.LINETO] * (len(vertices_2d) - 1))
             all_path_codes.append(Path.CLOSEPOLY)
-
         # Interior paths - project 3D to 2D for plotting
         for interior_v_list in self.interiors:
             if interior_v_list and len(interior_v_list) > 0:
@@ -1482,17 +1404,14 @@ class Polygon:
         """Get the bounding box of the polygon as (min_x, min_y, min_z, max_x, max_y, max_z)"""
         if not self.vertices or len(self.vertices) == 0:
             return (0, 0, 0, 0, 0, 0)
-        
         # Extract x, y, and z coordinates
         x_coords = [v[0] for v in self.vertices]
         y_coords = [v[1] for v in self.vertices]
         z_coords = [v[2] for v in self.vertices]
-        
         # Calculate min and max
         min_x, max_x = min(x_coords), max(x_coords)
         min_y, max_y = min(y_coords), max(y_coords)
         min_z, max_z = min(z_coords), max(z_coords)
-        
         return (min_x, min_y, min_z, max_x, max_y, max_z)
         
     def _point_in_polygon_single_path(self, x, y, path_vertices):
@@ -1513,7 +1432,6 @@ class Polygon:
                             xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
                         else: # Edge is horizontal
                             xinters = p1x # Doesn't matter, will compare x <= max(p1x, p2x)
-                        
                         if p1x == p2x or x <= xinters: # For vertical edge or point left of intersection
                             inside = not inside
             p1x, p1y = p2x, p2y
@@ -1543,7 +1461,6 @@ class Rectangle(Polygon):
                 position = (position[0], position[1], z)
             elif len(position) == 3:
                 position = (position[0], position[1], z)  # Override z from position
-        
         # Handle 2D position input (x,y) by adding z=0
         if len(position) == 2: position = (position[0], position[1], 0.0)
         elif len(position) == 3: position = position
@@ -1653,10 +1570,8 @@ class Ring(Polygon):
     def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, material=None, color=None, optimize=False, points=256, depth=0, z=None):
         # Handle z parameter for backward compatibility
         if z is not None:
-            if len(position) == 2:
-                position = (position[0], position[1], z)
-            elif len(position) == 3:
-                position = (position[0], position[1], z)  # Override z from position
+            if len(position) == 2: position = (position[0], position[1], z)
+            elif len(position) == 3: position = (position[0], position[1], z)  # Override z from position
         
         # Handle 2D position input (x,y) by adding z=0
         if len(position) == 2: position = (position[0], position[1], 0.0)
@@ -1732,7 +1647,6 @@ class CircularBend(Polygon):
         if len(position) == 2: position = (position[0], position[1], 0.0)
         elif len(position) == 3: position = position
         else: raise ValueError("Position must be (x,y) or (x,y,z)")
-            
         self.points = points
         theta = np.linspace(0, np.radians(angle), points)
         rotation_rad = np.radians(rotation)
@@ -1819,13 +1733,9 @@ class Taper(Polygon):
     """Taper is a structure that tapers from a width to a height."""
     def __init__(self, position=(0,0), input_width=1, output_width=0.5, length=1, material=None, color=None, optimize=False, depth=0, z=0):
         # Handle 2D position input (x,y) by adding z=0
-        if len(position) == 2:
-            position = (position[0], position[1], 0.0)
-        elif len(position) == 3:
-            position = position
-        else:
-            raise ValueError("Position must be (x,y) or (x,y,z)")
-            
+        if len(position) == 2: position = (position[0], position[1], 0.0)
+        elif len(position) == 3: position = position
+        else: raise ValueError("Position must be (x,y) or (x,y,z)")
         # Calculate vertices for the trapezoid shape in 3D
         x, y, z = position
         vertices = [(x, y - input_width/2, z),  # Bottom left

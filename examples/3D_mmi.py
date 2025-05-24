@@ -22,15 +22,4 @@ design += Rectangle(position=(0, Y/2-WG_W/2, Z/2), width=X/2, height=WG_W, depth
 design += Rectangle(position=(X/2, Y/2 + OFFSET - WG_W/2, Z/2), width=X/2, height=WG_W, depth=Z/8, material=Material(N_CORE**2))
 design += Rectangle(position=(X/2, Y/2 - OFFSET - WG_W/2, Z/2), width=X/2, height=WG_W, depth=Z/8, material=Material(N_CORE**2))
 design += Rectangle(position=(X/2-W/2, Y/2-H/2, Z/2), width=W, height=H, depth=Z/8, material=Material(N_CORE**2))
-
-# Define the source
-#time_steps = np.arange(0, TIME, DT)
-#signal = ramped_cosine(time_steps, amplitude=1.0, frequency=LIGHT_SPEED/WL, phase=0, ramp_duration=WL*5/LIGHT_SPEED, t_max=TIME/2)
-#source = ModeSource(design=design, start=(2*µm, Y/2-1.2*µm), end=(2*µm, Y/2+1.2*µm), wavelength=WL, signal=signal)
-#design += source
 design.show()
-
-# Run the simulation and show results
-#sim = FDTD(design=design, time=time_steps, mesh="regular", resolution=DX)
-#sim.run(live=True, save_memory_mode=True, accumulate_power=True)
-#sim.plot_power(db_colorbar=True)
