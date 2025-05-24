@@ -14,7 +14,7 @@ import colorsys
 class Design:
     def __init__(self, width=1, height=1, depth=None, material=None, color=None, border_color="black", auto_pml=True, pml_size=None):
         if material is None: material = Material(permittivity=1.0, permeability=1.0, conductivity=0.0)
-        self.structures = [Rectangle(position=(0,0), width=width, height=height, material=material, color=color)]
+        self.structures = [Rectangle(position=(0,0), width=width, height=height, depth=depth, material=material, color=color)]
         self.sources = []
         self.monitors = []
         self.boundaries = []
@@ -137,27 +137,13 @@ class Design:
             if not rings_in_group:
                 continue  # No rings in this group
                 
-            # For each Ring, check if it touches any other object
+            # For each Ring, preserve it unconditionally to maintain hole structure
             for ring_idx, (ring, ring_shapely) in rings_in_group:
-                touches_other_object = False
-                
-                # Check against other polygons in the same material group
-                for other_idx, (other_struct, other_shapely) in enumerate(structure_group):
-                    if ring_idx == other_idx:
-                        continue  # Skip self-comparison
-                        
-                    if ring_shapely.intersects(other_shapely):
-                        touches_other_object = True
-                        break
-                        
-                # If the Ring doesn't touch any other object, preserve it
-                if not touches_other_object:
-                    rings_to_preserve.append(ring)
-                    # Remove it from the material group to prevent it from being unified
-                    material_groups[material_key].pop(ring_idx)
-                    if ring in structures_to_remove:
-                        structures_to_remove.remove(ring)
-                        
+                rings_to_preserve.append(ring)
+                # Remove it from the material group to prevent it from being unified
+                if ring in structures_to_remove:
+                    structures_to_remove.remove(ring)
+        
         # Third pass: unify polygons within each material group
         new_structures = []
         for material_key, structure_group in material_groups.items():
@@ -647,64 +633,25 @@ class Design:
         # Handle polygons with holes (like Ring structures)
         interior_paths = getattr(structure, 'interiors', [])
         
-        # Use ear clipping triangulation for better polygon handling
-        def ear_clipping_triangulation(vertices):
-            """Simple ear clipping triangulation for polygon faces."""
+        # For complex polygons with holes, use a different approach
+        if interior_paths and len(interior_paths) > 0:
+            return self._triangulate_polygon_with_holes(vertices_2d, interior_paths, depth, z_offset)
+        
+        # Simple polygon triangulation using corrected ear clipping
+        def simple_triangulation(vertices):
+            """Simple triangulation for convex/simple polygons."""
             if len(vertices) < 3:
                 return []
             if len(vertices) == 3:
                 return [(0, 1, 2)]
+            if len(vertices) == 4:
+                # For quads, split into two triangles
+                return [(0, 1, 2), (0, 2, 3)]
             
+            # For more complex polygons, use fan triangulation from centroid
             triangles = []
-            remaining = list(range(len(vertices)))
-            
-            def is_ear(i, vertices, remaining):
-                n = len(remaining)
-                prev_idx = remaining[(i - 1) % n]
-                curr_idx = remaining[i]
-                next_idx = remaining[(i + 1) % n]
-                
-                prev_pt = vertices[prev_idx]
-                curr_pt = vertices[curr_idx]
-                next_pt = vertices[next_idx]
-                
-                # Check if angle is convex (less than 180 degrees)
-                cross = (curr_pt[0] - prev_pt[0]) * (next_pt[1] - curr_pt[1]) - (curr_pt[1] - prev_pt[1]) * (next_pt[0] - curr_pt[0])
-                if cross <= 0:  # Reflex angle
-                    return False
-                
-                # Check if any other vertex is inside this triangle
-                for j, v_idx in enumerate(remaining):
-                    if v_idx in [prev_idx, curr_idx, next_idx]:
-                        continue
-                    
-                    vertex = vertices[v_idx]
-                    if self._point_in_triangle(vertex, prev_pt, curr_pt, next_pt):
-                        return False
-                
-                return True
-            
-            while len(remaining) > 3:
-                ear_found = False
-                for i in range(len(remaining)):
-                    if is_ear(i, vertices, remaining):
-                        prev_idx = remaining[(i - 1) % len(remaining)]
-                        curr_idx = remaining[i]
-                        next_idx = remaining[(i + 1) % len(remaining)]
-                        
-                        triangles.append((prev_idx, curr_idx, next_idx))
-                        remaining.pop(i)
-                        ear_found = True
-                        break
-                
-                if not ear_found:
-                    # Fallback to simple fan triangulation
-                    break
-            
-            # Add the last triangle
-            if len(remaining) == 3:
-                triangles.append((remaining[0], remaining[1], remaining[2]))
-            
+            for i in range(len(vertices) - 2):
+                triangles.append((0, i + 1, i + 2))
             return triangles
         
         # Create 3D vertices by extruding the 2D shape
@@ -726,18 +673,18 @@ class Design:
         # Create triangular faces for the mesh
         faces_i, faces_j, faces_k = [], [], []
         
-        # Bottom face triangulation using ear clipping
-        bottom_triangles = ear_clipping_triangulation(vertices_2d)
+        # Bottom face triangulation (CCW when viewed from above = normal pointing down)
+        bottom_triangles = simple_triangulation(vertices_2d)
         for tri in bottom_triangles:
             faces_i.append(tri[0])
-            faces_j.append(tri[1])
+            faces_j.append(tri[1]) 
             faces_k.append(tri[2])
         
-        # Top face triangulation (reverse order for proper normals)
+        # Top face triangulation (CW when viewed from above = normal pointing up)
         for tri in bottom_triangles:
             faces_i.append(tri[0] + n_vertices)
-            faces_j.append(tri[2] + n_vertices)  # Reversed order
-            faces_k.append(tri[1] + n_vertices)  # Reversed order
+            faces_j.append(tri[2] + n_vertices)  # Swap j,k for opposite winding
+            faces_k.append(tri[1] + n_vertices)
         
         # Side faces (rectangles split into two triangles each)
         for i in range(n_vertices):
@@ -747,12 +694,172 @@ class Design:
             # Bottom: i, next_i
             # Top: i + n_vertices, next_i + n_vertices
             
-            # Triangle 1: bottom-left, bottom-right, top-left
+            # Triangle 1: bottom-left, bottom-right, top-left (CCW from outside)
             faces_i.append(i)
             faces_j.append(next_i)
             faces_k.append(i + n_vertices)
             
-            # Triangle 2: bottom-right, top-right, top-left  
+            # Triangle 2: bottom-right, top-right, top-left (CCW from outside)
+            faces_i.append(next_i)
+            faces_j.append(next_i + n_vertices)
+            faces_k.append(i + n_vertices)
+        
+        return {
+            'vertices': (x_coords, y_coords, z_coords),
+            'faces': (faces_i, faces_j, faces_k)
+        }
+    
+    def _triangulate_polygon_with_holes(self, exterior_vertices, interior_paths, depth, z_offset):
+        """Handle polygons with holes (like Ring structures) using proper triangulation."""
+        try:
+            # Try to use a proper constrained triangulation library if available
+            import scipy.spatial
+            from matplotlib.path import Path
+            
+            # For now, use a simpler approach for Ring-like structures
+            # Create separate meshes for exterior and interior, then combine
+            
+            n_ext = len(exterior_vertices)
+            total_vertices = n_ext
+            all_vertices_2d = list(exterior_vertices)
+            
+            # Add interior vertices
+            interior_starts = []
+            for interior in interior_paths:
+                interior_starts.append(total_vertices)
+                all_vertices_2d.extend(interior)
+                total_vertices += len(interior)
+            
+            # Create 3D vertices
+            vertices_3d = []
+            
+            # Bottom face vertices
+            for x, y in all_vertices_2d:
+                vertices_3d.append([x, y, z_offset])
+            
+            # Top face vertices
+            for x, y in all_vertices_2d:
+                vertices_3d.append([x, y, z_offset + depth])
+            
+            # Extract coordinates
+            x_coords = [v[0] for v in vertices_3d]
+            y_coords = [v[1] for v in vertices_3d]
+            z_coords = [v[2] for v in vertices_3d]
+            
+            faces_i, faces_j, faces_k = [], [], []
+            
+            # For Ring structures, create triangular strip between inner and outer
+            if len(interior_paths) == 1 and len(interior_paths[0]) == len(exterior_vertices):
+                # This is likely a Ring structure with equal number of points
+                inner_start = interior_starts[0]
+                
+                # Create triangular strips connecting outer to inner
+                for i in range(n_ext):
+                    next_i = (i + 1) % n_ext
+                    
+                    # Bottom face triangles (outer ring)
+                    outer_i = i
+                    outer_next = next_i
+                    inner_i = inner_start + i
+                    inner_next = inner_start + next_i
+                    
+                    # Triangle 1: outer_i -> outer_next -> inner_i
+                    faces_i.append(outer_i)
+                    faces_j.append(outer_next)
+                    faces_k.append(inner_i)
+                    
+                    # Triangle 2: outer_next -> inner_next -> inner_i  
+                    faces_i.append(outer_next)
+                    faces_j.append(inner_next)
+                    faces_k.append(inner_i)
+                    
+                    # Top face triangles (same pattern but offset by total_vertices)
+                    top_offset = total_vertices
+                    
+                    # Triangle 1: outer_i -> inner_i -> outer_next (reversed winding)
+                    faces_i.append(outer_i + top_offset)
+                    faces_j.append(inner_i + top_offset)
+                    faces_k.append(outer_next + top_offset)
+                    
+                    # Triangle 2: outer_next -> inner_i -> inner_next (reversed winding)
+                    faces_i.append(outer_next + top_offset)
+                    faces_j.append(inner_i + top_offset)
+                    faces_k.append(inner_next + top_offset)
+                
+                # Side faces for outer ring
+                for i in range(n_ext):
+                    next_i = (i + 1) % n_ext
+                    
+                    # Outer side face
+                    faces_i.append(i)
+                    faces_j.append(next_i)
+                    faces_k.append(i + total_vertices)
+                    
+                    faces_i.append(next_i)
+                    faces_j.append(next_i + total_vertices)
+                    faces_k.append(i + total_vertices)
+                
+                # Side faces for inner ring (reversed winding for inward-facing)
+                for i in range(len(interior_paths[0])):
+                    next_i = (i + 1) % len(interior_paths[0])
+                    inner_i = inner_start + i
+                    inner_next = inner_start + next_i
+                    
+                    # Inner side face (reversed winding)
+                    faces_i.append(inner_i + total_vertices)
+                    faces_j.append(inner_next + total_vertices)
+                    faces_k.append(inner_i)
+                    
+                    faces_i.append(inner_i)
+                    faces_j.append(inner_next + total_vertices)
+                    faces_k.append(inner_next)
+            
+            return {
+                'vertices': (x_coords, y_coords, z_coords),
+                'faces': (faces_i, faces_j, faces_k)
+            }
+            
+        except Exception as e:
+            # Fallback to simple approach if triangulation fails
+            print(f"Warning: Complex triangulation failed, using simple approach: {e}")
+            return self._structure_to_3d_mesh_simple(exterior_vertices, depth, z_offset)
+    
+    def _structure_to_3d_mesh_simple(self, vertices_2d, depth, z_offset):
+        """Fallback simple mesh generation."""
+        n_vertices = len(vertices_2d)
+        
+        # Create 3D vertices
+        vertices_3d = []
+        for x, y in vertices_2d:
+            vertices_3d.append([x, y, z_offset])
+        for x, y in vertices_2d:
+            vertices_3d.append([x, y, z_offset + depth])
+        
+        x_coords = [v[0] for v in vertices_3d]
+        y_coords = [v[1] for v in vertices_3d]
+        z_coords = [v[2] for v in vertices_3d]
+        
+        faces_i, faces_j, faces_k = [], [], []
+        
+        # Simple fan triangulation for bottom
+        for i in range(1, n_vertices - 1):
+            faces_i.append(0)
+            faces_j.append(i)
+            faces_k.append(i + 1)
+        
+        # Simple fan triangulation for top (reversed)
+        for i in range(1, n_vertices - 1):
+            faces_i.append(n_vertices)
+            faces_j.append(n_vertices + i + 1)
+            faces_k.append(n_vertices + i)
+        
+        # Side faces
+        for i in range(n_vertices):
+            next_i = (i + 1) % n_vertices
+            faces_i.append(i)
+            faces_j.append(next_i)
+            faces_k.append(i + n_vertices)
+            
             faces_i.append(next_i)
             faces_j.append(next_i + n_vertices)
             faces_k.append(i + n_vertices)
