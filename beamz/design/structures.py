@@ -501,6 +501,12 @@ class Design:
             if mesh_data:
                 x, y, z = mesh_data['vertices']
                 i, j, k = mesh_data['faces']
+                
+                # Get material properties for transparency determination
+                material_permittivity = 1.0  # Default air/vacuum
+                if hasattr(structure, 'material') and structure.material:
+                    material_permittivity = getattr(structure.material, 'permittivity', 1.0)
+                
                 # Assign color based on material properties for consistency
                 material_key = None
                 if hasattr(structure, 'material') and structure.material:
@@ -519,14 +525,23 @@ class Design:
                 
                 color = material_colors[material_key]
                 
-                # Convert hex color to rgba if needed for transparency
+                # Determine transparency based on material properties
+                # Materials close to air/vacuum (permittivity ≈ 1.0) are fully transparent
+                # All other materials are fully opaque
+                is_air_like = abs(material_permittivity - 1.0) < 0.1  # Within 10% of air/vacuum
+                
+                # Convert hex color to rgba with appropriate transparency
                 if color.startswith('#'):
                     r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
-                    face_color = f"rgba({r},{g},{b},0.8)"
-                    edge_color = "rgba(0,0,0,0.8)"  # Black edges
+                    if is_air_like:
+                        face_color = f"rgba({r},{g},{b},0.0)"  # Fully transparent for air/vacuum
+                        opacity = 0.0
+                    else:
+                        face_color = f"rgba({r},{g},{b},1.0)"  # Fully opaque for all other materials
+                        opacity = 1.0
                 else:
                     face_color = color
-                    edge_color = "black"
+                    opacity = 0.0 if is_air_like else 1.0
                 
                 # Add material name to hover info if available
                 hovertext = f"{structure.__class__.__name__}"
@@ -544,15 +559,15 @@ class Design:
                     x=x, y=y, z=z,
                     i=i, j=j, k=k,
                     color=face_color,  # Use 'color' for uniform coloring
-                    opacity=1.0,  # Slightly higher opacity for better visibility
+                    opacity=opacity,  # Fully transparent for air/vacuum, fully opaque for others
                     name=hovertext,
                     showscale=True,
                     hovertemplate=hovertext + "<extra></extra>",
-                    # Prominent black outlines for all shapes
+                    # Prominent black outlines for ALL shapes (including transparent ones)
                     contour=dict(
                         show=True,
                         color="black",  # Always black outlines
-                        width=5  # Thicker lines for better visibility
+                        width=5  # Thick lines for better visibility
                     ),
                     # Flat shading - minimal lighting for clean appearance
                     lighting=dict(
@@ -644,14 +659,12 @@ class Design:
             )
         )
         
-
         # Add subtle shadow effect with a ground plane if structures are elevated
         if any(getattr(s, 'z', 0) > 0 for s in self.structures if not (hasattr(s, 'is_pml') and s.is_pml)):
             # Create a subtle ground plane
             ground_x = [0, self.width, self.width, 0]
             ground_y = [0, 0, self.height, self.height]
             ground_z = [0, 0, 0, 0]
-            
             fig.add_trace(go.Mesh3d(
                 x=ground_x + ground_x,  # Duplicate for thickness
                 y=ground_y + ground_y,
@@ -727,21 +740,18 @@ class Design:
         z_coords = [v[2] for v in vertices_3d]
         # Create triangular faces for the mesh
         faces_i, faces_j, faces_k = [], [], []
-        
         # Bottom face triangulation (CCW when viewed from above = normal pointing down)
         for tri in bottom_triangles:
             if len(tri) == 3 and all(0 <= idx < n_vertices for idx in tri):
                 faces_i.append(tri[0])
                 faces_j.append(tri[1]) 
                 faces_k.append(tri[2])
-        
         # Top face triangulation (CW when viewed from above = normal pointing up)
         for tri in bottom_triangles:
             if len(tri) == 3 and all(0 <= idx < n_vertices for idx in tri):
                 faces_i.append(tri[0] + n_vertices)
                 faces_j.append(tri[2] + n_vertices)  # Swap j,k for opposite winding
                 faces_k.append(tri[1] + n_vertices)
-        
         # Side faces (rectangles split into two triangles each)
         for i in range(n_vertices):
             next_i = (i + 1) % n_vertices
