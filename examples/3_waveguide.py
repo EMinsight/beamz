@@ -20,6 +20,6 @@ design += ModeSource(design=design, start=(2*µm, 3.5*µm-1.2*µm), end=(2*µm, 
 design.show()
 
 # Run the simulation
-#sim = FDTD(design=design, time=time_steps, mesh="regular", resolution=DX)
-#sim.run(live=True, save_memory_mode=True, accumulate_power=True)
-#sim.plot_power(db_colorbar=True)
+sim = FDTD(design=design, time=time_steps, mesh="regular", resolution=DX)
+sim.run(live=True, save_memory_mode=True, accumulate_power=True)
+sim.plot_power(db_colorbar=True)

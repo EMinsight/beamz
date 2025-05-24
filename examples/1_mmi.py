@@ -29,6 +29,6 @@ design += source
 design.show()
 
 # Run the simulation and show results
-#sim = FDTD(design=design, time=time_steps, mesh="regular", resolution=DX)
-#sim.run(live=True, save_memory_mode=True, accumulate_power=True)
-#sim.plot_power(db_colorbar=True)
+sim = FDTD(design=design, time=time_steps, mesh="regular", resolution=DX)
+sim.run(live=True, save_memory_mode=True, accumulate_power=True)
+sim.plot_power(db_colorbar=True)

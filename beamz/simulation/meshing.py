@@ -1,24 +1,67 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 from beamz.design.structures import Rectangle
-from beamz.helpers import create_rich_progress, get_si_scale_and_label
+from beamz.helpers import create_rich_progress, get_si_scale_and_label, display_status
 
-class RegularGrid:
-    """Takes in a design and resolution and returns a rasterized grid of that design."""
+
+class BaseMeshGrid:
+    """Base class for mesh grids with common functionality."""
+    
     def __init__(self, design, resolution):
         self.design = design
         self.resolution = resolution
-        # Calculate grid dimensions in order to initialize the grids
+        self._validate_inputs()
+    
+    def _validate_inputs(self):
+        """Validate input parameters."""
+        if self.resolution <= 0:
+            raise ValueError("Resolution must be positive")
+        if self.design is None:
+            raise ValueError("Design cannot be None")
+    
+    def _estimate_dt(self):
+        """Estimate time step for PML calculations."""
+        c = 3e8  # Speed of light
+        return 0.5 * self.resolution / (c * np.sqrt(2))
+    
+    def _get_material_at_point(self, x, y, z=0):
+        """Get material properties at a specific point."""
+        return self.design.get_material_value(x, y, z)
+
+
+class RegularGrid(BaseMeshGrid):
+    """2D Regular grid meshing for 2D designs (backwards compatible)."""
+    
+    def __init__(self, design, resolution):
+        super().__init__(design, resolution)
+        
+        # Check if this is actually a 2D design
+        if design.is_3d and design.depth > 0:
+            display_status(
+                "Warning: Using 2D RegularGrid for a 3D design. Use RegularGrid3D for proper 3D meshing.",
+                "warning"
+            )
+        
+        # Calculate 2D grid dimensions
         width, height = self.design.width, self.design.height
-        grid_width, grid_height = int(width / self.resolution), int(height / self.resolution)
-        # We have three grids of the same shape: permittivity, permeability, and conductivity
+        grid_width = int(width / self.resolution)
+        grid_height = int(height / self.resolution)
+        
+        # Initialize 2D material grids
         self.permittivity = np.zeros((grid_height, grid_width))
         self.permeability = np.zeros((grid_height, grid_width))
         self.conductivity = np.zeros((grid_height, grid_width))
+        
+        # Rasterize the design
         self.__rasterize__()
+        
+        # Set grid properties
         self.shape = self.permittivity.shape
         self.dx = self.resolution
         self.dy = self.resolution
+        
+        display_status(f"Created 2D mesh: {grid_width} × {grid_height} cells", "success")
 
     def __rasterize__(self):
         """Painters algorithm to rasterize the design into a grid using super-sampling
@@ -90,7 +133,15 @@ class RegularGrid:
                     # Get bounding box of the structure
                     bbox = structure.get_bounding_box()
                     if bbox is None: raise AttributeError("Bounding box is None")
-                    min_x, min_y, max_x, max_y = bbox
+                    
+                    # Handle both 2D and 3D bounding boxes
+                    if len(bbox) == 6:  # 3D bounding box: (min_x, min_y, min_z, max_x, max_y, max_z)
+                        min_x, min_y, min_z, max_x, max_y, max_z = bbox
+                    elif len(bbox) == 4:  # 2D bounding box: (min_x, min_y, max_x, max_y)
+                        min_x, min_y, max_x, max_y = bbox
+                    else:
+                        raise ValueError(f"Invalid bounding box format: {bbox}")
+                        
                     # Convert to grid indices
                     min_i = max(0, int(min_y / cell_size) - 1)
                     min_j = max(0, int(min_x / cell_size) - 1)
@@ -156,7 +207,10 @@ class RegularGrid:
                     elif hasattr(structure, 'radius'):  # Circle
                         # FAST PATH: Circle
                         # Get circle parameters
-                        center_x, center_y = structure.position
+                        if len(structure.position) == 3:
+                            center_x, center_y, _ = structure.position  # 3D position
+                        else:
+                            center_x, center_y = structure.position     # 2D position
                         radius = structure.radius
                         # Create local coordinate arrays for the bounding box region
                         j_indices = np.arange(min_j, max_j)
@@ -203,7 +257,10 @@ class RegularGrid:
                     elif hasattr(structure, 'inner_radius') and hasattr(structure, 'outer_radius'):  # Ring
                         # FAST PATH: Ring
                         # Get ring parameters
-                        center_x, center_y = structure.position
+                        if len(structure.position) == 3:
+                            center_x, center_y, _ = structure.position  # 3D position
+                        else:
+                            center_x, center_y = structure.position     # 2D position
                         inner_radius = structure.inner_radius
                         outer_radius = structure.outer_radius
                         # Create local coordinate arrays for the bounding box region
@@ -258,7 +315,7 @@ class RegularGrid:
                         else:
                             # Fallback method using material values
                             contains_func = lambda x, y: any(val != def_val for val, def_val in zip(
-                                self.design.get_material_value(x, y), [1.0, 1.0, 0.0]))
+                                self.design.get_material_value(x, y, z=0), [1.0, 1.0, 0.0]))
                         # First, try to identify fully inside cells if possible to minimize super-sampling
                         if hasattr(structure, 'vertices') and len(getattr(structure, 'vertices', [])) > 0:
                             # Sample a center grid of points in each cell to detect likely inside areas
@@ -455,3 +512,374 @@ class RegularGrid:
             plt.show()
         else:
             print("Grid not rasterized yet.")
+
+
+class RegularGrid3D(BaseMeshGrid):
+    """3D Regular grid meshing for 3D designs."""
+    
+    def __init__(self, design, resolution_xy=None, resolution_z=None):
+        # Handle different resolution input formats
+        if isinstance(design, (int, float)) and resolution_xy is None:
+            # Legacy format: RegularGrid3D(resolution) - set uniform resolution
+            resolution = design
+            design = resolution_xy  # Second argument is actually design
+            resolution_xy = resolution
+            resolution_z = resolution
+        elif resolution_xy is None:
+            # Default to design.resolution if available, otherwise same as xy
+            resolution_xy = getattr(design, 'resolution', resolution_xy)
+            resolution_z = resolution_xy
+        elif resolution_z is None:
+            # Only xy resolution provided, use same for z
+            resolution_z = resolution_xy
+            
+        super().__init__(design, resolution_xy)
+        
+        # Store separate resolutions for xy and z
+        self.resolution_xy = resolution_xy
+        self.resolution_z = resolution_z
+        
+        # Calculate 3D grid dimensions
+        width, height, depth = self.design.width, self.design.height, self.design.depth
+        grid_width = int(width / self.resolution_xy)
+        grid_height = int(height / self.resolution_xy)
+        grid_depth = int(depth / self.resolution_z) if depth > 0 else 1
+        
+        # Initialize 3D material grids
+        self.permittivity = np.zeros((grid_depth, grid_height, grid_width))
+        self.permeability = np.zeros((grid_depth, grid_height, grid_width))
+        self.conductivity = np.zeros((grid_depth, grid_height, grid_width))
+        
+        # Rasterize the design
+        self.__rasterize_3d__()
+        
+        # Set grid properties
+        self.shape = self.permittivity.shape
+        self.dx = self.resolution_xy
+        self.dy = self.resolution_xy
+        self.dz = self.resolution_z
+        
+        display_status(f"Created 3D mesh: {grid_width} × {grid_height} × {grid_depth} cells", "success")
+    
+    def __rasterize_3d__(self):
+        """3D rasterization using layered 2D approach with z-layer processing."""
+        width, height, depth = self.design.width, self.design.height, self.design.depth
+        grid_width = int(width / self.resolution_xy)
+        grid_height = int(height / self.resolution_xy)
+        grid_depth = int(depth / self.resolution_z) if depth > 0 else 1
+        
+        cell_size_xy = self.resolution_xy
+        cell_size_z = self.resolution_z
+        
+        # Create grid of cell centers for xy plane
+        x_centers = np.linspace(0.5 * cell_size_xy, width - 0.5 * cell_size_xy, grid_width)
+        y_centers = np.linspace(0.5 * cell_size_xy, height - 0.5 * cell_size_xy, grid_height)
+        z_centers = np.linspace(0.5 * cell_size_z, depth - 0.5 * cell_size_z, grid_depth) if depth > 0 else [0]
+        
+        # Precompute offsets for 3D super-sampling (3x3x3 = 27 samples)
+        offsets_xy = np.array([-0.25, 0, 0.25]) * cell_size_xy
+        offsets_z = np.array([-0.25, 0, 0.25]) * cell_size_z if depth > 0 else [0]
+        dx, dy, dz = np.meshgrid(offsets_xy, offsets_xy, offsets_z)
+        dx, dy, dz = dx.flatten(), dy.flatten(), dz.flatten()
+        num_samples = len(dx)
+        
+        # Estimate dt for PML calculations
+        dt_estimate = self._estimate_dt()
+        
+        # Initialize material grids with vacuum properties
+        permittivity = np.ones((grid_depth, grid_height, grid_width))
+        permeability = np.ones((grid_depth, grid_height, grid_width))
+        conductivity = np.zeros((grid_depth, grid_height, grid_width))
+        
+        # Start with the background (first structure)
+        if len(self.design.structures) > 0:
+            background = self.design.structures[0]
+            if hasattr(background, 'material') and background.material is not None:
+                permittivity.fill(background.material.permittivity)
+                permeability.fill(background.material.permeability)
+                conductivity.fill(background.material.conductivity)
+        
+        # Process structures layer by layer
+        with create_rich_progress() as progress:
+            task = progress.add_task("Rasterizing 3D structures...", total=len(self.design.structures))
+            progress.update(task, advance=1)  # Skip background
+            
+            for idx in range(1, len(self.design.structures)):
+                structure = self.design.structures[idx]
+                
+                # Skip PML visualization structures
+                if hasattr(structure, 'is_pml') and structure.is_pml:
+                    progress.update(task, advance=1)
+                    continue
+                    
+                # Skip structures without material
+                if not hasattr(structure, 'material') or structure.material is None:
+                    progress.update(task, advance=1)
+                    continue
+                
+                # Cache material properties
+                mat_perm = structure.material.permittivity
+                mat_permb = structure.material.permeability
+                mat_cond = structure.material.conductivity
+                
+                try:
+                    # Get 3D bounding box
+                    bbox = structure.get_bounding_box()
+                    if bbox is None:
+                        raise AttributeError("Bounding box is None")
+                    
+                    if len(bbox) == 6:  # 3D bounding box
+                        min_x, min_y, min_z, max_x, max_y, max_z = bbox
+                    else:  # 2D bounding box - extend to 3D
+                        min_x, min_y, max_x, max_y = bbox
+                        min_z, max_z = 0, 0
+                    
+                    # Convert to grid indices
+                    min_i = max(0, int(min_y / cell_size_xy) - 1)
+                    min_j = max(0, int(min_x / cell_size_xy) - 1)
+                    min_k = max(0, int(min_z / cell_size_z) - 1) if depth > 0 else 0
+                    max_i = min(grid_height, int(np.ceil(max_y / cell_size_xy)) + 1)
+                    max_j = min(grid_width, int(np.ceil(max_x / cell_size_xy)) + 1)
+                    max_k = min(grid_depth, int(np.ceil(max_z / cell_size_z)) + 1) if depth > 0 else 1
+                    
+                    # Skip if bounding box is outside grid
+                    if (min_i >= grid_height or min_j >= grid_width or min_k >= grid_depth or 
+                        max_i <= 0 or max_j <= 0 or max_k <= 0):
+                        progress.update(task, advance=1)
+                        continue
+                    
+                    # Process each z-layer
+                    for k in range(min_k, max_k):
+                        z_center = z_centers[k]
+                        
+                        # Process xy grid for this z-layer
+                        for i in range(min_i, max_i):
+                            for j in range(min_j, max_j):
+                                x_center = x_centers[j]
+                                y_center = y_centers[i]
+                                
+                                # Super-sample this cell
+                                samples_inside = 0
+                                for sample_idx in range(num_samples):
+                                    x_sample = x_center + dx[sample_idx]
+                                    y_sample = y_center + dy[sample_idx] 
+                                    z_sample = z_center + dz[sample_idx]
+                                    
+                                    # Check if sample point is inside structure
+                                    if hasattr(structure, 'point_in_polygon'):
+                                        # Use 3D-aware point-in-polygon
+                                        if structure.point_in_polygon(x_sample, y_sample, z_sample):
+                                            samples_inside += 1
+                                    else:
+                                        # Fallback: use design's material value method
+                                        material_vals = self.design.get_material_value(x_sample, y_sample, z_sample)
+                                        # Check if material is different from background
+                                        if any(val != def_val for val, def_val in zip(material_vals, [1.0, 1.0, 0.0])):
+                                            samples_inside += 1
+                                
+                                if samples_inside > 0:
+                                    # Calculate blend factor
+                                    blend_factor = samples_inside / num_samples
+                                    
+                                    # Update material properties with blending
+                                    permittivity[k, i, j] = (permittivity[k, i, j] * (1 - blend_factor) + 
+                                                           mat_perm * blend_factor)
+                                    permeability[k, i, j] = (permeability[k, i, j] * (1 - blend_factor) + 
+                                                           mat_permb * blend_factor)
+                                    conductivity[k, i, j] = (conductivity[k, i, j] * (1 - blend_factor) + 
+                                                           mat_cond * blend_factor)
+                
+                except (AttributeError, TypeError) as e:
+                    display_status(f"Warning: Structure {type(structure)} processing failed: {e}", "warning")
+                
+                progress.update(task, advance=1)
+        
+        # Process 3D PML boundaries
+        self._process_3d_pml(permittivity, permeability, conductivity, 
+                           x_centers, y_centers, z_centers, dt_estimate)
+        
+        # Assign final arrays
+        self.permittivity = permittivity
+        self.permeability = permeability
+        self.conductivity = conductivity
+    
+    def _process_3d_pml(self, permittivity, permeability, conductivity, 
+                       x_centers, y_centers, z_centers, dt_estimate):
+        """Process 3D PML boundaries."""
+        if not hasattr(self.design, 'boundaries') or not self.design.boundaries:
+            return
+            
+        with create_rich_progress() as progress:
+            task = progress.add_task("Processing 3D PML boundaries...", total=len(self.design.boundaries))
+            
+            for boundary in self.design.boundaries:
+                # For now, apply 2D PML to all z-layers (can be enhanced for true 3D PML)
+                for k, z in enumerate(z_centers):
+                    for i, y in enumerate(y_centers):
+                        for j, x in enumerate(x_centers):
+                            # Add PML conductivity
+                            pml_conductivity = boundary.get_conductivity(
+                                x, y, 
+                                dx=self.resolution_xy, 
+                                dt=dt_estimate,
+                                eps_avg=permittivity[k, i, j]
+                            )
+                            if pml_conductivity > 0:
+                                conductivity[k, i, j] += pml_conductivity
+                
+                progress.update(task, advance=1)
+    
+    def get_2d_slice(self, z_index=None, z_position=None):
+        """Extract a 2D slice from the 3D grid.
+        
+        Args:
+            z_index: Index of the z-layer to extract
+            z_position: Physical z-position to extract (will find nearest layer)
+            
+        Returns:
+            dict with 'permittivity', 'permeability', 'conductivity' 2D arrays
+        """
+        if z_index is None and z_position is None:
+            z_index = self.shape[0] // 2  # Middle layer
+        elif z_position is not None:
+            z_index = int(z_position / self.resolution_z)
+            z_index = max(0, min(self.shape[0] - 1, z_index))
+        
+        return {
+            'permittivity': self.permittivity[z_index, :, :],
+            'permeability': self.permeability[z_index, :, :],
+            'conductivity': self.conductivity[z_index, :, :]
+        }
+    
+    def show_3d(self, field="permittivity", slice_spacing=1, alpha=0.3):
+        """Display 3D visualization of the mesh."""
+        if field == "permittivity": 
+            grid = self.permittivity
+        elif field == "permeability": 
+            grid = self.permeability
+        elif field == "conductivity": 
+            grid = self.conductivity
+        else:
+            raise ValueError(f"Unknown field: {field}")
+        
+        # Create 3D plot
+        fig = plt.figure(figsize=(12, 10))
+        ax = fig.add_subplot(111, projection='3d')
+        
+        # Create coordinate grids
+        nz, ny, nx = grid.shape
+        x = np.linspace(0, self.design.width, nx)
+        y = np.linspace(0, self.design.height, ny)
+        z = np.linspace(0, self.design.depth, nz)
+        
+        # Show slices with different spacing
+        for k in range(0, nz, slice_spacing):
+            X, Y = np.meshgrid(x, y)
+            Z = np.full_like(X, z[k])
+            colors = grid[k, :, :]
+            
+            # Plot surface
+            surf = ax.plot_surface(X, Y, Z, facecolors=plt.cm.viridis(colors), 
+                                 alpha=alpha, linewidth=0, antialiased=True)
+        
+        # Set labels and title
+        max_dim = max(self.design.width, self.design.height, self.design.depth)
+        scale, unit = get_si_scale_and_label(max_dim)
+        
+        ax.set_xlabel(f'X ({unit})')
+        ax.set_ylabel(f'Y ({unit})')
+        ax.set_zlabel(f'Z ({unit})')
+        ax.set_title(f'3D {field.capitalize()} Distribution')
+        
+        # Scale the axes
+        ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+        ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+        ax.zaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+        
+        plt.tight_layout()
+        plt.show()
+    
+    def show(self, field="permittivity", z_index=None, z_position=None):
+        """Display a 2D slice of the 3D mesh (backwards compatible interface)."""
+        slice_data = self.get_2d_slice(z_index, z_position)
+        grid = slice_data[field]
+        
+        if grid is not None:
+            # Determine appropriate SI unit and scale
+            max_dim = max(self.design.width, self.design.height)
+            scale, unit = get_si_scale_and_label(max_dim)
+            
+            # Calculate figure size based on grid dimensions
+            grid_height, grid_width = grid.shape
+            aspect_ratio = grid_width / grid_height
+            base_size = 2.5
+            if aspect_ratio > 1: 
+                figsize = (base_size * aspect_ratio, base_size)
+            else: 
+                figsize = (base_size, base_size / aspect_ratio)
+            
+            # Create the plot
+            plt.figure(figsize=figsize)
+            plt.imshow(grid, origin='lower', cmap='Grays', 
+                      extent=(0, self.design.width, 0, self.design.height))
+            plt.colorbar(label=field)
+            
+            # Determine z-layer info
+            z_idx = z_index if z_index is not None else self.shape[0] // 2
+            z_pos = z_idx * self.resolution_z
+            plt.title(f'3D {field.capitalize()} at z = {z_pos*scale:.2f} {unit}')
+            
+            plt.xlabel(f'X ({unit})')
+            plt.ylabel(f'Y ({unit})')
+            
+            # Update tick labels with scaled values
+            plt.gca().xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+            plt.gca().yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+            
+            plt.tight_layout()
+            plt.show()
+        else:
+            display_status("Grid not rasterized yet.", "error")
+
+
+# Convenience functions for automatic mesh selection
+def create_mesh(design, resolution, auto_select=True, force_3d=False):
+    """Create a mesh automatically selecting 2D or 3D based on design properties.
+    
+    Args:
+        design: Design object to mesh
+        resolution: Mesh resolution (or xy resolution for 3D)
+        auto_select: If True, automatically choose between 2D and 3D meshing
+        force_3d: If True, force 3D meshing even for 2D designs
+    
+    Returns:
+        RegularGrid or RegularGrid3D instance
+    """
+    if force_3d or (auto_select and design.is_3d and design.depth > 0):
+        display_status("Auto-selecting 3D meshing for 3D design", "info")
+        return RegularGrid3D(design, resolution)
+    else:
+        if auto_select and design.is_3d:
+            display_status("Auto-selecting 2D meshing for effectively 2D design (depth=0)", "info")
+        return RegularGrid(design, resolution)
+
+
+def mesh_2d(design, resolution):
+    """Create a 2D mesh (backwards compatible function)."""
+    return RegularGrid(design, resolution)
+
+
+def mesh_3d(design, resolution_xy, resolution_z=None):
+    """Create a 3D mesh with optional separate z-resolution."""
+    return RegularGrid3D(design, resolution_xy, resolution_z)
+
+
+# Export classes and functions
+__all__ = [
+    'BaseMeshGrid',
+    'RegularGrid', 
+    'RegularGrid3D',
+    'create_mesh',
+    'mesh_2d', 
+    'mesh_3d'
+]
