@@ -24,8 +24,8 @@ def demo_2d_photonic_device():
     design = Design(width=20*µm, height=12*µm, auto_pml=True)
     
     # Materials
-    silicon = Material(permittivity=12.0, name="Silicon")
-    sio2 = Material(permittivity=2.25, name="SiO2")
+    silicon = Material(permittivity=12.0)
+    sio2 = Material(permittivity=2.25)
     
     # Waveguide structures
     design.add(Rectangle(position=(2*µm, 5*µm), width=15*µm, height=0.5*µm, material=silicon))
@@ -51,9 +51,9 @@ def demo_3d_photonic_device():
     design = Design(width=20*µm, height=12*µm, depth=3*µm, auto_pml=True)
     
     # Materials
-    silicon = Material(permittivity=12.0, name="Silicon")
-    sin = Material(permittivity=7.0, name="SiN") 
-    sio2 = Material(permittivity=2.25, name="SiO2")
+    silicon = Material(permittivity=12.0)
+    sin = Material(permittivity=7.0) 
+    sio2 = Material(permittivity=2.25)
     
     # Bottom layer - Silicon substrate
     design.add(Rectangle(position=(0*µm, 0*µm), width=20*µm, height=12*µm, 
@@ -91,8 +91,8 @@ def demo_complex_3d_structure():
     design = Design(width=15*µm, height=15*µm, depth=2*µm, auto_pml=True)
     
     # Materials
-    silicon = Material(permittivity=12.0, name="Silicon")
-    air = Material(permittivity=1.0, name="Air")
+    silicon = Material(permittivity=12.0)
+    air = Material(permittivity=1.0)
     
     # Create a photonic crystal lattice
     lattice_constant = 2*µm

@@ -408,11 +408,29 @@ class Design:
         # Do we want to show the individual structures or a unified shape?
         if unify_structures: self.unify_polygons()
         
-        # Create 3D figure
+        # Create 3D figure with modern styling
         fig = go.Figure()
         
         # Default depth for 2D structures in 3D view
         default_depth = self.depth if self.depth else min(self.width, self.height) * 0.1
+        
+        # Modern color palette for different materials
+        modern_colors = [
+            '#1f77b4',  # Blue
+            '#ff7f0e',  # Orange  
+            '#2ca02c',  # Green
+            '#d62728',  # Red
+            '#9467bd',  # Purple
+            '#8c564b',  # Brown
+            '#e377c2',  # Pink
+            '#7f7f7f',  # Gray
+            '#bcbd22',  # Olive
+            '#17becf'   # Cyan
+        ]
+        
+        # Track materials for consistent coloring
+        material_colors = {}
+        color_index = 0
         
         # Process each structure
         for structure in self.structures:
@@ -429,67 +447,190 @@ class Design:
             if mesh_data:
                 x, y, z = mesh_data['vertices']
                 i, j, k = mesh_data['faces']
-                color = structure.color if hasattr(structure, 'color') and structure.color else '#1f77b4'
                 
-                # Convert hex color to rgba if needed
+                # Assign color based on material properties for consistency
+                material_key = None
+                if hasattr(structure, 'material') and structure.material:
+                    material_key = (
+                        getattr(structure.material, 'permittivity', 1.0),
+                        getattr(structure.material, 'permeability', 1.0),
+                        getattr(structure.material, 'conductivity', 0.0)
+                    )
+                
+                if material_key not in material_colors:
+                    if hasattr(structure, 'color') and structure.color and structure.color != 'none':
+                        material_colors[material_key] = structure.color
+                    else:
+                        material_colors[material_key] = modern_colors[color_index % len(modern_colors)]
+                        color_index += 1
+                
+                color = material_colors[material_key]
+                
+                # Convert hex color to rgba if needed for transparency
                 if color.startswith('#'):
-                    color = f"rgba({int(color[1:3], 16)},{int(color[3:5], 16)},{int(color[5:7], 16)},0.8)"
+                    r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+                    face_color = f"rgba({r},{g},{b},0.8)"
+                    edge_color = "rgba(0,0,0,0.8)"  # Black edges
+                else:
+                    face_color = color
+                    edge_color = "black"
+                
+                # Add material name to hover info if available
+                hovertext = f"{structure.__class__.__name__}"
+                if hasattr(structure, 'material') and structure.material:
+                    if hasattr(structure.material, 'name'):
+                        hovertext += f"<br>Material: {structure.material.name}"
+                    if hasattr(structure.material, 'permittivity'):
+                        hovertext += f"<br>εᵣ = {structure.material.permittivity:.1f}"
+                    if hasattr(structure.material, 'permeability') and structure.material.permeability != 1.0:
+                        hovertext += f"<br>μᵣ = {structure.material.permeability:.1f}"
+                    if hasattr(structure.material, 'conductivity') and structure.material.conductivity != 0.0:
+                        hovertext += f"<br>σ = {structure.material.conductivity:.2e} S/m"
                 
                 fig.add_trace(go.Mesh3d(
                     x=x, y=y, z=z,
                     i=i, j=j, k=k,
-                    color=color,
-                    opacity=0.8,
-                    name=f"{structure.__class__.__name__}",
-                    showscale=False
+                    color=face_color,  # Use 'color' for uniform coloring
+                    opacity=0.9,  # Slightly higher opacity for better visibility
+                    name=hovertext,
+                    showscale=False,
+                    hovertemplate=hovertext + "<extra></extra>",
+                    # Prominent black outlines for all shapes
+                    contour=dict(
+                        show=True,
+                        color="black",  # Always black outlines
+                        width=3  # Thicker lines for better visibility
+                    ),
+                    # Flat shading - minimal lighting for clean appearance
+                    lighting=dict(
+                        ambient=0.8,    # High ambient for flat appearance
+                        diffuse=0.2,    # Low diffuse for minimal shadows
+                        fresnel=0.0,    # No fresnel effects
+                        specular=0.0,   # No specular highlights  
+                        roughness=1.0   # Maximum roughness for flat appearance
+                    ),
+                    # Simple light position
+                    lightposition=dict(
+                        x=0, y=0, z=1000  # Far away light for even illumination
+                    ),
+                    # Force flat shading
+                    flatshading=True
                 ))
         
-        # Set layout
+        # Modern layout with better styling
         fig.update_layout(
-            title='3D Design Layout',
+            title=dict(
+                text='3D Design Layout',
+                x=0.5,
+                font=dict(size=20, color='#2c3e50', family="Arial Black")
+            ),
             scene=dict(
-                xaxis_title=f'X ({unit})',
-                yaxis_title=f'Y ({unit})',
-                zaxis_title=f'Z ({unit})',
-                xaxis=dict(range=[0, self.width]),
-                yaxis=dict(range=[0, self.height]),
-                zaxis=dict(range=[0, self.depth if self.depth else default_depth]),
+                xaxis=dict(
+                    title=dict(text=f'X ({unit})', font=dict(size=14, color='#34495e')),
+                    range=[0, self.width],
+                    showgrid=True,
+                    gridcolor='rgba(128,128,128,0.3)',
+                    showbackground=True,
+                    backgroundcolor='rgba(248,249,250,0.8)',
+                    tickmode='array',
+                    tickvals=np.linspace(0, self.width, 6),
+                    ticktext=[f'{val*scale:.1f}' for val in np.linspace(0, self.width, 6)],
+                    tickfont=dict(size=11, color='#34495e')
+                ),
+                yaxis=dict(
+                    title=dict(text=f'Y ({unit})', font=dict(size=14, color='#34495e')),
+                    range=[0, self.height],
+                    showgrid=True,
+                    gridcolor='rgba(128,128,128,0.3)',
+                    showbackground=True,
+                    backgroundcolor='rgba(248,249,250,0.8)',
+                    tickmode='array',
+                    tickvals=np.linspace(0, self.height, 6),
+                    ticktext=[f'{val*scale:.1f}' for val in np.linspace(0, self.height, 6)],
+                    tickfont=dict(size=11, color='#34495e')
+                ),
+                zaxis=dict(
+                    title=dict(text=f'Z ({unit})', font=dict(size=14, color='#34495e')),
+                    range=[0, self.depth if self.depth else default_depth],
+                    showgrid=True,
+                    gridcolor='rgba(128,128,128,0.3)',
+                    showbackground=True,
+                    backgroundcolor='rgba(248,249,250,0.8)',
+                    tickmode='array',
+                    tickvals=np.linspace(0, self.depth if self.depth else default_depth, 6),
+                    ticktext=[f'{val*scale:.1f}' for val in np.linspace(0, self.depth if self.depth else default_depth, 6)],
+                    tickfont=dict(size=11, color='#34495e')
+                ),
                 aspectmode='manual',
                 aspectratio=dict(
                     x=1,
                     y=self.height/self.width if self.width > 0 else 1,
                     z=(self.depth if self.depth else default_depth)/self.width if self.width > 0 else 1
+                ),
+                # Modern camera angle for better initial view
+                camera=dict(
+                    eye=dict(x=1.5, y=1.5, z=1.2),
+                    center=dict(x=0, y=0, z=0),
+                    up=dict(x=0, y=0, z=1)
                 )
             ),
-            width=800,
-            height=600
-        )
-        
-        # Update tick labels with scaled values
-        fig.update_layout(
-            scene=dict(
-                xaxis=dict(
-                    tickmode='array',
-                    tickvals=np.linspace(0, self.width, 6),
-                    ticktext=[f'{val*scale:.1f}' for val in np.linspace(0, self.width, 6)]
-                ),
-                yaxis=dict(
-                    tickmode='array',
-                    tickvals=np.linspace(0, self.height, 6),
-                    ticktext=[f'{val*scale:.1f}' for val in np.linspace(0, self.height, 6)]
-                ),
-                zaxis=dict(
-                    tickmode='array',
-                    tickvals=np.linspace(0, self.depth if self.depth else default_depth, 6),
-                    ticktext=[f'{val*scale:.1f}' for val in np.linspace(0, self.depth if self.depth else default_depth, 6)]
-                )
+            # Modern layout styling
+            width=900,
+            height=700,
+            margin=dict(l=60, r=60, t=80, b=60),
+            paper_bgcolor='white',
+            plot_bgcolor='white',
+            font=dict(family="Arial, sans-serif", size=12, color='#2c3e50'),
+            # Enhanced legend
+            showlegend=True,
+            legend=dict(
+                orientation="v",
+                yanchor="top",
+                y=1,
+                xanchor="left", 
+                x=1.02,
+                bgcolor="rgba(255,255,255,0.8)",
+                bordercolor="rgba(0,0,0,0.2)",
+                borderwidth=1,
+                font=dict(size=10)
             )
         )
+        
+        # Add subtle shadow effect with a ground plane if structures are elevated
+        if any(getattr(s, 'z', 0) > 0 for s in self.structures if not (hasattr(s, 'is_pml') and s.is_pml)):
+            # Create a subtle ground plane
+            ground_x = [0, self.width, self.width, 0]
+            ground_y = [0, 0, self.height, self.height]
+            ground_z = [0, 0, 0, 0]
+            
+            fig.add_trace(go.Mesh3d(
+                x=ground_x + ground_x,  # Duplicate for thickness
+                y=ground_y + ground_y,
+                z=ground_z + [-default_depth*0.05]*4,  # Thin ground plane
+                i=[0, 0, 4, 4, 0, 1, 2, 3],
+                j=[1, 3, 5, 7, 4, 5, 6, 7], 
+                k=[2, 2, 6, 6, 1, 2, 3, 0],
+                color='rgba(220,220,220,0.3)',  # Use 'color' instead of 'facecolor'
+                name="Ground Plane",
+                showlegend=False,
+                hoverinfo='skip',
+                # Consistent flat shading for ground plane
+                lighting=dict(
+                    ambient=0.8,
+                    diffuse=0.2,
+                    fresnel=0.0,
+                    specular=0.0,
+                    roughness=1.0
+                ),
+                flatshading=True,
+                # No outline for ground plane (to keep it subtle)
+                contour=dict(show=False)
+            ))
         
         fig.show()
     
     def _structure_to_3d_mesh(self, structure, depth, z_offset=0):
-        """Convert a 2D structure to 3D mesh data for plotly."""
+        """Convert a 2D structure to 3D mesh data for plotly with improved triangulation."""
         if not hasattr(structure, 'vertices') or not structure.vertices:
             return None
             
@@ -502,6 +643,69 @@ class Design:
         
         if n_vertices < 3:
             return None  # Need at least 3 vertices for a face
+        
+        # Handle polygons with holes (like Ring structures)
+        interior_paths = getattr(structure, 'interiors', [])
+        
+        # Use ear clipping triangulation for better polygon handling
+        def ear_clipping_triangulation(vertices):
+            """Simple ear clipping triangulation for polygon faces."""
+            if len(vertices) < 3:
+                return []
+            if len(vertices) == 3:
+                return [(0, 1, 2)]
+            
+            triangles = []
+            remaining = list(range(len(vertices)))
+            
+            def is_ear(i, vertices, remaining):
+                n = len(remaining)
+                prev_idx = remaining[(i - 1) % n]
+                curr_idx = remaining[i]
+                next_idx = remaining[(i + 1) % n]
+                
+                prev_pt = vertices[prev_idx]
+                curr_pt = vertices[curr_idx]
+                next_pt = vertices[next_idx]
+                
+                # Check if angle is convex (less than 180 degrees)
+                cross = (curr_pt[0] - prev_pt[0]) * (next_pt[1] - curr_pt[1]) - (curr_pt[1] - prev_pt[1]) * (next_pt[0] - curr_pt[0])
+                if cross <= 0:  # Reflex angle
+                    return False
+                
+                # Check if any other vertex is inside this triangle
+                for j, v_idx in enumerate(remaining):
+                    if v_idx in [prev_idx, curr_idx, next_idx]:
+                        continue
+                    
+                    vertex = vertices[v_idx]
+                    if self._point_in_triangle(vertex, prev_pt, curr_pt, next_pt):
+                        return False
+                
+                return True
+            
+            while len(remaining) > 3:
+                ear_found = False
+                for i in range(len(remaining)):
+                    if is_ear(i, vertices, remaining):
+                        prev_idx = remaining[(i - 1) % len(remaining)]
+                        curr_idx = remaining[i]
+                        next_idx = remaining[(i + 1) % len(remaining)]
+                        
+                        triangles.append((prev_idx, curr_idx, next_idx))
+                        remaining.pop(i)
+                        ear_found = True
+                        break
+                
+                if not ear_found:
+                    # Fallback to simple fan triangulation
+                    break
+            
+            # Add the last triangle
+            if len(remaining) == 3:
+                triangles.append((remaining[0], remaining[1], remaining[2]))
+            
+            return triangles
         
         # Create 3D vertices by extruding the 2D shape
         vertices_3d = []
@@ -522,17 +726,18 @@ class Design:
         # Create triangular faces for the mesh
         faces_i, faces_j, faces_k = [], [], []
         
-        # Bottom face triangulation (fan triangulation from vertex 0)
-        for i in range(1, n_vertices - 1):
-            faces_i.append(0)
-            faces_j.append(i)
-            faces_k.append(i + 1)
+        # Bottom face triangulation using ear clipping
+        bottom_triangles = ear_clipping_triangulation(vertices_2d)
+        for tri in bottom_triangles:
+            faces_i.append(tri[0])
+            faces_j.append(tri[1])
+            faces_k.append(tri[2])
         
-        # Top face triangulation (fan triangulation from vertex n_vertices, reverse order for proper normals)
-        for i in range(1, n_vertices - 1):
-            faces_i.append(n_vertices)
-            faces_j.append(n_vertices + i + 1)
-            faces_k.append(n_vertices + i)
+        # Top face triangulation (reverse order for proper normals)
+        for tri in bottom_triangles:
+            faces_i.append(tri[0] + n_vertices)
+            faces_j.append(tri[2] + n_vertices)  # Reversed order
+            faces_k.append(tri[1] + n_vertices)  # Reversed order
         
         # Side faces (rectangles split into two triangles each)
         for i in range(n_vertices):
@@ -556,6 +761,23 @@ class Design:
             'vertices': (x_coords, y_coords, z_coords),
             'faces': (faces_i, faces_j, faces_k)
         }
+    
+    def _point_in_triangle(self, point, a, b, c):
+        """Check if a point is inside a triangle using barycentric coordinates."""
+        x, y = point
+        x1, y1 = a
+        x2, y2 = b
+        x3, y3 = c
+        
+        denominator = (y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3)
+        if abs(denominator) < 1e-10:
+            return False
+        
+        a_coord = ((y2 - y3) * (x - x3) + (x3 - x2) * (y - y3)) / denominator
+        b_coord = ((y3 - y1) * (x - x3) + (x1 - x3) * (y - y3)) / denominator
+        c_coord = 1 - a_coord - b_coord
+        
+        return a_coord >= 0 and b_coord >= 0 and c_coord >= 0
 
     def __str__(self):
         return f"Design with {len(self.structures)} structures ({'3D' if self.is_3d else '2D'})"
