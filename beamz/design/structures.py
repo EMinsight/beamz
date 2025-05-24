@@ -331,8 +331,43 @@ class Design:
 
     def show(self, unify_structures=True):
         """Display the design visually using 2D matplotlib or 3D plotly."""
-        if self.is_3d: self.show_3d(unify_structures)
-        else: self.show_2d(unify_structures)
+        # Enhanced 3D detection logic
+        is_truly_3d = self._determine_if_3d()
+        
+        if is_truly_3d: 
+            self.show_3d(unify_structures)
+        else: 
+            self.show_2d(unify_structures)
+    
+    def _determine_if_3d(self):
+        """Determine if the design should be visualized in 3D based on structure properties."""
+        # Check design-level depth
+        if self.depth and self.depth > 0:
+            # If any structure has non-zero depth or z-position, it's 3D
+            for structure in self.structures:
+                # Skip PML structures from consideration
+                if hasattr(structure, 'is_pml') and structure.is_pml:
+                    continue
+                    
+                # Check for non-zero depth
+                if hasattr(structure, 'depth') and structure.depth and structure.depth > 0:
+                    return True
+                    
+                # Check for non-zero z position
+                if hasattr(structure, 'z') and structure.z and structure.z != 0:
+                    return True
+                    
+                # Check position z-coordinate 
+                if hasattr(structure, 'position') and len(structure.position) > 2 and structure.position[2] != 0:
+                    return True
+                    
+                # Check if any vertex has non-zero z coordinate
+                if hasattr(structure, 'vertices') and structure.vertices:
+                    for vertex in structure.vertices:
+                        if len(vertex) > 2 and vertex[2] != 0:
+                            return True
+        
+        return False
     
     def show_2d(self, unify_structures=True):
         """Display the design using 2D matplotlib visualization."""
@@ -613,14 +648,29 @@ class Design:
         if not hasattr(structure, 'vertices') or not structure.vertices: return None
         # Ensure depth has a valid value
         if depth is None: depth = 0.1 * min(self.width, self.height)
-        vertices_2d = structure.vertices
+        
+        # Get 2D projection of vertices for triangulation
+        vertices_2d = structure._vertices_2d() if hasattr(structure, '_vertices_2d') else [(v[0], v[1]) for v in structure.vertices]
         n_vertices = len(vertices_2d)
         if n_vertices < 3: return None  # Need at least 3 vertices for a face
+        
+        # Get the actual z position from the structure
+        actual_z = z_offset
+        if hasattr(structure, 'z') and structure.z is not None:
+            actual_z = structure.z
+        elif hasattr(structure, 'position') and len(structure.position) > 2:
+            actual_z = structure.position[2]
+        
         # Handle polygons with holes (like Ring structures)
         interior_paths = getattr(structure, 'interiors', [])
         # For complex polygons with holes, use a different approach
         if interior_paths and len(interior_paths) > 0:
-            return self._triangulate_polygon_with_holes(vertices_2d, interior_paths, depth, z_offset)
+            # Convert interior paths to 2D
+            interior_2d = []
+            for interior in interior_paths:
+                if interior:
+                    interior_2d.append([(v[0], v[1]) for v in interior])
+            return self._triangulate_polygon_with_holes(vertices_2d, interior_2d, depth, actual_z)
     
         # Simple polygon triangulation using corrected ear clipping
         def simple_triangulation(vertices):
@@ -635,10 +685,10 @@ class Design:
         
         # Create 3D vertices by extruding the 2D shape
         vertices_3d = []
-        # Bottom face vertices (z = z_offset)
-        for x, y in vertices_2d: vertices_3d.append([x, y, z_offset])
-        # Top face vertices (z = z_offset + depth)
-        for x, y in vertices_2d: vertices_3d.append([x, y, z_offset + depth])
+        # Bottom face vertices (z = actual_z)
+        for x, y in vertices_2d: vertices_3d.append([x, y, actual_z])
+        # Top face vertices (z = actual_z + depth)
+        for x, y in vertices_2d: vertices_3d.append([x, y, actual_z + depth])
         # Extract coordinates
         x_coords = [v[0] for v in vertices_3d]
         y_coords = [v[1] for v in vertices_3d]
@@ -687,7 +737,7 @@ class Design:
             n_ext = len(exterior_vertices)
             total_vertices = n_ext
             all_vertices_2d = list(exterior_vertices)
-            # Add interior vertices
+            # Add interior vertices (these are now already 2D)
             interior_starts = []
             for interior in interior_paths:
                 interior_starts.append(total_vertices)
@@ -778,7 +828,7 @@ class Design:
         """Fallback simple mesh generation."""
         n_vertices = len(vertices_2d)
         
-        # Create 3D vertices
+        # Create 3D vertices (vertices_2d is already in 2D format)
         vertices_3d = []
         for x, y in vertices_2d: vertices_3d.append([x, y, z_offset])
         for x, y in vertices_2d: vertices_3d.append([x, y, z_offset + depth])
@@ -960,12 +1010,14 @@ class Design:
         tree_view(design_data, "Design Structure")
 
 class Polygon:
-    def __init__(self, vertices=None, material=None, color=None, optimize=False, interiors=None):
+    def __init__(self, vertices=None, material=None, color=None, optimize=False, interiors=None, depth=0, z=0):
         self.vertices = self._ensure_3d_vertices(vertices if vertices is not None else []) # Exterior path
         self.interiors = [self._ensure_3d_vertices(interior) for interior in (interiors if interiors is not None else [])] # List of interior paths
         self.material = material
         self.optimize = optimize
         self.color = color if color is not None else self.get_random_color_consistent()
+        self.depth = depth if depth is not None else 0
+        self.z = z if z is not None else 0
     
     def _ensure_3d_vertices(self, vertices):
         """Convert 2D vertices (x,y) to 3D vertices (x,y,z) with z=0 if not provided."""
@@ -1221,18 +1273,25 @@ class Polygon:
         return True # In exterior and not in any hole
 
 class Rectangle(Polygon):
-    def __init__(self, position=(0,0,0), width=1, height=1, depth=1, material=None, color=None, is_pml=False, optimize=False):
+    def __init__(self, position=(0,0,0), width=1, height=1, depth=1, material=None, color=None, is_pml=False, optimize=False, z=None):
+        # Handle z parameter for backward compatibility
+        if z is not None:
+            if len(position) == 2:
+                position = (position[0], position[1], z)
+            elif len(position) == 3:
+                position = (position[0], position[1], z)  # Override z from position
+        
         # Handle 2D position input (x,y) by adding z=0
         if len(position) == 2: position = (position[0], position[1], 0.0)
         elif len(position) == 3: position = position
         else: raise ValueError("Position must be (x,y) or (x,y,z)")
         # Calculate vertices for the rectangle in 3D
-        x, y, z = position
-        vertices = [(x, y, z),  # Bottom left
-                    (x + width, y, z),  # Bottom right
-                    (x + width, y + height, z),  # Top right
-                    (x, y + height, z)]
-        super().__init__(vertices=vertices, material=material, color=color, optimize=optimize)
+        x, y, z_pos = position
+        vertices = [(x, y, z_pos),  # Bottom left
+                    (x + width, y, z_pos),  # Bottom right
+                    (x + width, y + height, z_pos),  # Top right
+                    (x, y + height, z_pos)]
+        super().__init__(vertices=vertices, material=material, color=color, optimize=optimize, depth=depth, z=z_pos)
         self.position = position
         self.width = width
         self.height = height
@@ -1291,14 +1350,14 @@ class Rectangle(Polygon):
         return new_rect
 
 class Circle(Polygon):
-    def __init__(self, position=(0,0), radius=1, points=32, material=None, color=None, optimize=False):
+    def __init__(self, position=(0,0), radius=1, points=32, material=None, color=None, optimize=False, depth=0, z=0):
         # Handle 2D position input (x,y) by adding z=0
         if len(position) == 2: position = (position[0], position[1], 0.0)
         elif len(position) == 3: position = position
         else: raise ValueError("Position must be (x,y) or (x,y,z)")
         theta = np.linspace(0, 2*np.pi, points, endpoint=False)
         vertices = [(position[0] + radius * np.cos(t), position[1] + radius * np.sin(t), position[2]) for t in theta]
-        super().__init__(vertices=vertices, material=material, color=color, optimize=optimize)
+        super().__init__(vertices=vertices, material=material, color=color, optimize=optimize, depth=depth, z=z)
         self.position = position
         self.radius = radius
         self.points = points
@@ -1324,10 +1383,18 @@ class Circle(Polygon):
     
     def copy(self):
         return Circle(position=self.position, radius=self.radius, points=self.points, 
-                     material=self.material, color=self.color, optimize=self.optimize)
+                     material=self.material, color=self.color, optimize=self.optimize, 
+                     depth=self.depth, z=self.z)
 
 class Ring(Polygon):
-    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, material=None, color=None, optimize=False, points=256):
+    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, material=None, color=None, optimize=False, points=256, depth=0, z=None):
+        # Handle z parameter for backward compatibility
+        if z is not None:
+            if len(position) == 2:
+                position = (position[0], position[1], z)
+            elif len(position) == 3:
+                position = (position[0], position[1], z)  # Override z from position
+        
         # Handle 2D position input (x,y) by adding z=0
         if len(position) == 2: position = (position[0], position[1], 0.0)
         elif len(position) == 3: position = position
@@ -1345,7 +1412,7 @@ class Ring(Polygon):
                                   position[2]) for t in reversed(theta)]
         super().__init__(vertices=outer_ext_vertices, 
                          interiors=[inner_int_vertices_cw] if inner_int_vertices_cw else [], 
-                         material=material, color=color, optimize=optimize, depth=depth, z=z)
+                         material=material, color=color, optimize=optimize, depth=depth, z=position[2])
         self.points = points # Store for potential regeneration or other logic if needed
         self.position = position
         self.inner_radius = inner_radius
@@ -1397,7 +1464,7 @@ class Ring(Polygon):
 
 class CircularBend(Polygon):
     def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, angle=90, rotation=0, material=None, 
-                 facecolor=None, optimize=False, points=64):
+                 facecolor=None, optimize=False, points=64, depth=0, z=0):
         # Handle 2D position input (x,y) by adding z=0
         if len(position) == 2: position = (position[0], position[1], 0.0)
         elif len(position) == 3: position = position
@@ -1487,7 +1554,7 @@ class CircularBend(Polygon):
 
 class Taper(Polygon):
     """Taper is a structure that tapers from a width to a height."""
-    def __init__(self, position=(0,0), input_width=1, output_width=0.5, length=1, material=None, color=None, optimize=False):
+    def __init__(self, position=(0,0), input_width=1, output_width=0.5, length=1, material=None, color=None, optimize=False, depth=0, z=0):
         # Handle 2D position input (x,y) by adding z=0
         if len(position) == 2:
             position = (position[0], position[1], 0.0)
@@ -1502,7 +1569,7 @@ class Taper(Polygon):
                     (x + length, y - output_width/2, z),  # Bottom right
                     (x + length, y + output_width/2, z),  # Top right
                     (x, y + input_width/2, z)] # Top left
-        super().__init__(vertices=vertices, material=material, color=color)
+        super().__init__(vertices=vertices, material=material, color=color, optimize=optimize, depth=depth, z=z)
         self.position = position
         self.input_width = input_width
         self.output_width = output_width
