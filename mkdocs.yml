@@ -34,6 +34,23 @@ theme:
 extra_css:
   - stylesheets/extra.css
 
+plugins:
+  - search
+  - mkdocs-jupyter:
+      execute: true
+      allow_errors: false
+      theme: dark
+      include_source: true
+      ignore_h1_titles: true
+      show_input: true
+      remove_tag_config:
+        remove_cell_tags:
+          - hide_code
+        remove_all_outputs_tags:
+          - hide_output
+        remove_input_tags:
+          - hide_input
+
 markdown_extensions:
   - pymdownx.highlight
   - pymdownx.superfences
@@ -48,7 +65,10 @@ nav:
   - Home: index.md
   - Getting Started:
     - Installation: getting-started/installation.md
+  - Interactive Notebooks: jupyter-integration.md
   - Examples:
     - MMI Splitter: examples/mmi-splitter.md
+    - Interactive Demo: examples/simple_demo.ipynb
+    - Interactive MMI Tutorial: examples/MMI_powersplitter.ipynb
     - Basic Dipole: examples/dipole.md
     - Ring Resonator: examples/ring-resonator.md
