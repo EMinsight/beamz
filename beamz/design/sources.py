@@ -8,16 +8,28 @@ class GaussianSource():
     """A Gaussian current distribution in space.
     
     Args:
-        position: Center of the Gaussian source (x, y).
+        position: Center of the Gaussian source (x, y) or (x, y, z).
         width: Standard deviation of the Gaussian distribution (spatial width).
         signal: Time-dependent signal.
     """
     def __init__(self, position=(0,0), width=1.0*µm, signal=0):
-        self.position = position
+        self.position = self._ensure_3d_position(position)
         self.width = width
         self.signal = signal
     
+    def _ensure_3d_position(self, position):
+        """Convert 2D position to 3D with z=0 if needed."""
+        if len(position) == 2: return (position[0], position[1], 0)
+        elif len(position) == 3: return position
+        else: raise ValueError(f"Position must be 2D (x,y) or 3D (x,y,z), got {len(position)} dimensions")
+    
+    @property
+    def position_2d(self):
+        """Return 2D projection (x, y) for backwards compatibility."""
+        return (self.position[0], self.position[1])
+    
     def add_to_plot(self, ax, facecolor="crimson", edgecolor="crimson", alpha=1, linestyle="-"):
+        # Use 2D projection for plotting
         ax.plot(self.position[0], self.position[1], 'o', color=facecolor, label='Gaussian Source')
 
 # TODO: Add mode solver options to integrate the analytical mode solver in mode.py. Future: Add FDFD mode solver and Tidy3D mode solver.
@@ -27,11 +39,11 @@ class ModeSource():
     
     Args:
         design: Design object containing the structures
-        start: Starting point of the source line (x,y)
-        end: End point of the source line (x,y)
+        start: Starting point of the source line (x,y) or (x,y,z)
+        end: End point of the source line (x,y) or (x,y,z)
         wavelength: Source wavelength
         signal: Time-dependent signal
-        direction: Direction of propagation ("+x", "-x", "+y", "-y")
+        direction: Direction of propagation ("+x", "-x", "+y", "-y", "+z", "-z")
         npml: Number of PML layers to use at boundaries
         num_modes: Number of modes to calculate
         grid_resolution: Points per wavelength for grid resolution (higher = finer)
@@ -39,8 +51,8 @@ class ModeSource():
     """
     def __init__(self, design, start, end, wavelength=1.55*µm, signal=0, direction="+x", 
                  npml=20, num_modes=2, grid_resolution=2000, mode_solver="num_eigen"):
-        self.start = start
-        self.end = end
+        self.start = self._ensure_3d_position(start)
+        self.end = self._ensure_3d_position(end)
         self.wavelength = wavelength
         self.design = design
         self.signal = signal
@@ -64,8 +76,8 @@ class ModeSource():
                 
                 # Sample x coordinates along the cross-section
                 num_points = eps_1d.size
-                x0, y0 = self.start
-                x1, y1 = self.end
+                x0, y0 = self.start[0], self.start[1]  # Use 3D-safe indexing
+                x1, y1 = self.end[0], self.end[1]      # Use 3D-safe indexing
                 x = np.linspace(0, np.hypot(x1 - x0, y1 - y0), num_points)
                 
                 # Find the maximum index (core) and minimum index (cladding)
@@ -113,35 +125,51 @@ class ModeSource():
         for mode_number in range(self.mode_vectors.shape[1]):
             self.mode_profiles.append(self.get_xy_mode_line(self.mode_vectors, mode_number))
             
+    def _ensure_3d_position(self, position):
+        """Convert 2D position to 3D with z=0 if needed."""
+        if len(position) == 2: return (position[0], position[1], 0)
+        elif len(position) == 3: return position
+        else: raise ValueError(f"Position must be 2D (x,y) or 3D (x,y,z), got {len(position)} dimensions")
+    
     @property
     def position(self):
         """Return the midpoint between start and end points."""
+        return ((self.start[0] + self.end[0]) / 2, 
+                (self.start[1] + self.end[1]) / 2, 
+                (self.start[2] + self.end[2]) / 2)
+    
+    @property
+    def position_2d(self):
+        """Return 2D projection of the midpoint for backwards compatibility."""
         return ((self.start[0] + self.end[0]) / 2, (self.start[1] + self.end[1]) / 2)
 
     def get_eps_1d(self):
         """Calculate the 1D permittivity profile by stepping along the line from start to end point."""
-        x0, y0 = self.start
-        x1, y1 = self.end
+        x0, y0, z0 = self.start[0], self.start[1], self.start[2]
+        x1, y1, z1 = self.end[0], self.end[1], self.end[2]
         num_points = int(np.hypot(x1 - x0, y1 - y0) / self.dL)  # Use the class dL value
-        x, y = np.linspace(x0, x1, num_points), np.linspace(y0, y1, num_points)
+        x = np.linspace(x0, x1, num_points)
+        y = np.linspace(y0, y1, num_points)
+        z = np.linspace(z0, z1, num_points)
         eps_1d = np.zeros(num_points)
-        for i, (x_i, y_i) in enumerate(zip(x, y)):
-            eps_1d[i], _, _ = self.design.get_material_value(x_i, y_i)
+        for i, (x_i, y_i, z_i) in enumerate(zip(x, y, z)):
+            eps_1d[i], _, _ = self.design.get_material_value(x_i, y_i, z_i)
         return eps_1d
     
     def get_xy_mode_line(self, vecs, mode_number):
         """Get the mode profile for a specific mode along the line."""
-        x0, y0 = self.start
-        x1, y1 = self.end
+        x0, y0, z0 = self.start[0], self.start[1], self.start[2]
+        x1, y1, z1 = self.end[0], self.end[1], self.end[2]
         num_points = vecs.shape[0]  # Number of points along the line
         x = np.linspace(x0, x1, num_points)
         y = np.linspace(y0, y1, num_points)
+        z = np.linspace(z0, z1, num_points)
         # Create mode profile for the specified mode
         mode_profile = []
         for j in range(num_points):  # For each point
             # Use the complex field value to preserve phase information
             amplitude = vecs[j, mode_number]  # Keep complex value with phase
-            mode_profile.append([amplitude, x[j], y[j]])
+            mode_profile.append([amplitude, x[j], y[j], z[j]])
         return mode_profile
 
     def show(self):
@@ -203,24 +231,37 @@ class ModeSource():
         if facecolor is None: facecolor = "crimson"
         if alpha is None: alpha = 1
         if linestyle is None: linestyle = '-'
-        # Draw the source line
-        ax.plot((self.start[0], self.end[0]), (self.start[1], self.end[1]), '-', lw=4, color=facecolor, label='Mode Source', zorder=10)
-        ax.plot((self.start[0], self.end[0]), (self.start[1], self.end[1]), '-', lw=1, color=edgecolor, zorder=10)
+        # Draw the source line using 2D projection
+        start_2d = (self.start[0], self.start[1])
+        end_2d = (self.end[0], self.end[1])
+        ax.plot((start_2d[0], end_2d[0]), (start_2d[1], end_2d[1]), '-', lw=4, color=facecolor, label='Mode Source', zorder=10)
+        ax.plot((start_2d[0], end_2d[0]), (start_2d[1], end_2d[1]), '-', lw=1, color=edgecolor, zorder=10)
         # Calculate arrow position and direction
-        mid_x = (self.start[0] + self.end[0]) / 2
-        mid_y = (self.start[1] + self.end[1]) / 2
-        # Get the line length for scaling
-        line_length = np.hypot(self.end[0] - self.start[0], self.end[1] - self.start[1])
+        mid_x = (start_2d[0] + end_2d[0]) / 2
+        mid_y = (start_2d[1] + end_2d[1]) / 2
+        # Get the line length for scaling (2D projection)
+        line_length = np.hypot(end_2d[0] - start_2d[0], end_2d[1] - start_2d[1])
         # Determine arrow direction based on self.direction parameter
         dx, dy = 0, 0
         if self.direction == "+x": dx, dy = 1, 0
         elif self.direction == "-x": dx, dy = -1, 0
         elif self.direction == "+y": dx, dy = 0, 1
         elif self.direction == "-y": dx, dy = 0, -1
+        elif self.direction == "+z" or self.direction == "-z":
+            # For z-direction, show an arrow along the 2D projection if available,
+            # otherwise show a small perpendicular arrow
+            if line_length > 0:
+                # Use line direction for z-propagation indication
+                line_dx = (end_2d[0] - start_2d[0]) / line_length
+                line_dy = (end_2d[1] - start_2d[1]) / line_length
+                dx, dy = line_dx, line_dy
+            else:
+                # Default to x-direction if no 2D projection
+                dx, dy = 1, 0
         # Scale the arrow - adaptive sizing based on line length
         # Use minimum size for very short lines
         min_arrow_length = 0.8 * self.wavelength  # Increased minimum size
-        arrow_length = max(line_length * 0.2, min_arrow_length)
+        arrow_length = max(line_length * 0.2, min_arrow_length) if line_length > 0 else min_arrow_length
         # Use normalized direction vector
         magnitude = np.sqrt(dx**2 + dy**2)
         if magnitude > 0:  # Avoid division by zero
