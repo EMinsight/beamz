@@ -9,6 +9,7 @@ from beamz.design.sources import ModeSource, GaussianSource
 from beamz.design.monitors import Monitor
 from beamz.helpers import display_header, display_status, tree_view, console, get_si_scale_and_label
 import colorsys
+import gdspy
 
 class Design:
     def __init__(self, width=1, height=1, depth=None, material=None, color=None, border_color="black", auto_pml=True, pml_size=None):
@@ -23,8 +24,39 @@ class Design:
         self.border_color = border_color
         self.time = 0
         self.is_3d = False if depth is None else True
+        self.layers: dict[int, list[Polygon]] = {}
         if auto_pml: self.init_boundaries(pml_size)
         display_status(f"Created design with size: {self.width:.2e} x {self.height:.2e} m")
+
+    def import_gds(gds_file: str):
+        """Import a GDS file and return polygon and layer data."""
+        gds_lib = gdspy.GdsLibrary(infile=gds_file)
+        design = Design()  # Create GDSDesign instance
+        cells = gds_lib.cells  # Get all cells from the library
+        total_polygons_imported = 0
+        for _cell_name, cell in cells.items():
+            # Get polygons by spec, which returns a dict: {(layer, datatype): [poly1_points, poly2_points,...]}
+            # polyN_points is a numpy array of vertices, e.g., [[x1, y1], [x2, y2], ...]
+            gdspy_polygons_by_spec = cell.get_polygons(by_spec=True)
+            for (layer_num, _datatype), list_of_polygon_points in gdspy_polygons_by_spec.items():
+                if layer_num not in design.layers:
+                    design.layers[layer_num] = []
+                for polygon_points in list_of_polygon_points:
+                    # Convert gdspy.Polygon points (numpy array) to list of tuples for beamz.Polygon
+                    vertices = [(point[0], point[1]) for point in polygon_points]
+                    beamz_polygon = Polygon(vertices=vertices)
+                    design.layers[layer_num].append(beamz_polygon)
+                    total_polygons_imported += 1
+        print(f"Imported {total_polygons_imported} polygons from '{gds_file}' into GDSDesign object.")
+        return design
+    
+    def export_gds(polygon, output_file):
+        """Export a polygon to a GDS file."""
+        lib = gdspy.GdsLibrary(unit=1, precision=1e-3)
+        cell = lib.new_cell("main")
+        cell.add(polygon)
+        lib.write_gds(output_file)
+        print(f"GDS file saved as '{output_file}'")
         
     def add(self, structure):
         """Core add function for adding structures on top of the design."""
