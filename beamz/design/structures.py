@@ -50,13 +50,60 @@ class Design:
         print(f"Imported {total_polygons_imported} polygons from '{gds_file}' into GDSDesign object.")
         return design
     
-    def export_gds(polygon, output_file):
-        """Export a polygon to a GDS file."""
-        lib = gdspy.GdsLibrary(unit=1, precision=1e-3)
+    def export_gds(self, output_file):
+        """Export a BEAMZ design (including only the structures, not sources or monitors) to a GDS file."""
+        # Create library with micron units (1e-6) and nanometer precision (1e-9)
+        lib = gdspy.GdsLibrary(unit=1e-6, precision=1e-9)
         cell = lib.new_cell("main")
-        cell.add(polygon)
+        # First, we unify the polygons given their material and if they touch
+        self.unify_polygons()
+        # Scale factor to convert from meters to microns
+        scale = 1e6  # 1 meter = 1e6 microns
+        # Then we iterate through the list of structures and export the structures as polygons,
+        # where each polygon is a new layer.
+        for layer_num, structure in enumerate(self.structures):
+            # Skip PML visualizations, sources, monitors
+            if hasattr(structure, 'is_pml') and structure.is_pml:
+                continue
+            if isinstance(structure, ModeSource) or isinstance(structure, GaussianSource) or isinstance(structure, Monitor):
+                continue
+            # Convert structure to polygon vertices
+            if isinstance(structure, Polygon):
+                vertices = structure.vertices
+                interiors = structure.interiors if hasattr(structure, 'interiors') else []
+            elif isinstance(structure, Rectangle):
+                x, y = structure.position
+                w, h = structure.width, structure.height
+                vertices = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
+                interiors = []
+            elif isinstance(structure, Circle):
+                vertices = structure.to_polygon().vertices
+                interiors = []
+            elif isinstance(structure, Ring):
+                vertices = structure.to_polygon().vertices
+                interiors = []
+            elif isinstance(structure, CircularBend):
+                vertices = structure.to_polygon().vertices
+                interiors = []
+            elif isinstance(structure, Taper):
+                vertices = structure.to_polygon().vertices
+                interiors = []
+            else: continue  # Skip unknown structures
+            # Scale vertices from meters to microns
+            if vertices: 
+                vertices = [(x * scale, y * scale) for x, y in vertices]
+                if interiors:
+                    interiors = [[(x * scale, y * scale) for x, y in path] for path in interiors]
+                # Create gdspy polygon and add to cell
+                if interiors:
+                    # For polygons with holes, we need to use gdspy.Polygon with holes parameter
+                    gdspy_poly = gdspy.Polygon(vertices, layer=layer_num, holes=interiors)
+                else:
+                    gdspy_poly = gdspy.Polygon(vertices, layer=layer_num)
+                cell.add(gdspy_poly)
+
         lib.write_gds(output_file)
-        print(f"GDS file saved as '{output_file}'")
+        print(f"GDS file saved as '{output_file}' (coordinates scaled to microns)")
         
     def add(self, structure):
         """Core add function for adding structures on top of the design."""
