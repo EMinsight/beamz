@@ -22,8 +22,8 @@ design = Design(width=max_width, height=max_height, depth=total_depth*1.2, mater
 
 # Add structures from each layer with proper materials and z-positions
 for layer_num, structures in gds_design.layers.items():
-    material = LAYER_MATERIALS.get(layer_num, Material(permittivity=1.0))
-    properties = LAYER_PROPERTIES.get(layer_num, {"depth": 0.5*µm, "z": 0.0})    # Add each structure from this layer
+    material = LAYER_MATERIALS.get(layer_num, Material(1))
+    properties = LAYER_PROPERTIES.get(layer_num, {"depth": 0.5*µm, "z": 0.0})
     for structure in structures:
         design += Polygon(vertices=structure.vertices, material=material, depth=properties["depth"], z=properties["z"])
 
