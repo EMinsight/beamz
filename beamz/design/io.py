@@ -7,11 +7,22 @@ from beamz.design.structures import Polygon
 from beamz.const import µm
 # TODO: Add support for gltf for 3D models!
 
+class GDSDesign:
+    """Represents a GDS design with multiple layers."""
+    def __init__(self):
+        """Initializes a GDSDesign object.
+
+        The `layers` attribute is an empty dictionary that will store layer numbers
+        (integers) as keys and lists of `beamz.design.structures.Polygon`
+        objects as values.
+        """
+        self.layers: dict[int, list[Polygon]] = {}
+
 def import_file(input_file):
     """Import a file with format detection based on file extension."""
     _, ext = os.path.splitext(input_file)
     ext = ext.lower()
-    if ext == '.gds': return import_gds_as_polygons(input_file)
+    if ext == '.gds': return import_gds(input_file) # Updated to call import_gds
     else: raise ValueError(f"Unsupported file extension: {ext}")
 
 def export_file(data, output_file):
@@ -36,35 +47,40 @@ def export_polygon_as_gds(polygon, output_file):
     lib.write_gds(output_file)
     print(f"GDS file saved as '{output_file}'")
 
-def import_gds_as_polygons(gds_file):
-    """Import a GDS file and return a list of beamz polygons."""
-    # First import the gds file as gdspy polygons
+def import_gds(gds_file: str) -> GDSDesign:
+    """Import a GDS file and return a GDSDesign object.
+
+    Args:
+        gds_file: Path to the GDS file.
+
+    Returns:
+        A GDSDesign object populated with polygons from the GDS file.
+    """
     gds_lib = gdspy.GdsLibrary(infile=gds_file)
-    cells = gds_lib.cells # get all cells from the library
-    gdspy_polygons = []
-    for cell_name, cell in cells.items():
-        for polygon in cell.get_polygons():
-            gdspy_polygons.append(gdspy.Polygon(polygon))
+    design = GDSDesign()  # Create GDSDesign instance
     
-    # Then convert the gdspy polygons to beamz polygons
-    beamz_polygons = []
-    for gdspy_polygon in gdspy_polygons:
-        # Extract vertices from gdspy polygon
-        vertices = []
-        if hasattr(gdspy_polygon, 'polygons'):
-            # Handle PolygonSet case
-            for poly in gdspy_polygon.polygons:
-                vertices.extend([(point[0], point[1]) for point in poly])
-        else:
-            # Handle single Polygon case
-            vertices = [(point[0], point[1]) for point in gdspy_polygon.points]
+    cells = gds_lib.cells  # Get all cells from the library
+    
+    total_polygons_imported = 0
+    
+    for _cell_name, cell in cells.items():
+        # Get polygons by spec, which returns a dict: {(layer, datatype): [poly1_points, poly2_points,...]}
+        # polyN_points is a numpy array of vertices, e.g., [[x1, y1], [x2, y2], ...]
+        gdspy_polygons_by_spec = cell.get_polygons(by_spec=True)
         
-        # Create beamz polygon with extracted vertices
-        beamz_polygon = Polygon(vertices=vertices)
-        beamz_polygons.append(beamz_polygon)
-    
-    print(f"Imported {len(beamz_polygons)} polygons from '{gds_file}'")
-    return beamz_polygons
+        for (layer_num, _datatype), list_of_polygon_points in gdspy_polygons_by_spec.items():
+            if layer_num not in design.layers:
+                design.layers[layer_num] = []
+            
+            for polygon_points in list_of_polygon_points:
+                # Convert gdspy.Polygon points (numpy array) to list of tuples for beamz.Polygon
+                vertices = [(point[0], point[1]) for point in polygon_points]
+                beamz_polygon = Polygon(vertices=vertices)
+                design.layers[layer_num].append(beamz_polygon)
+                total_polygons_imported += 1
+                
+    print(f"Imported {total_polygons_imported} polygons from '{gds_file}' into GDSDesign object.")
+    return design
 
 def export_bin_numpy_as_gds(image, output_file, scale=µm):
     """Convert a binary NumPy array to a GDS file.

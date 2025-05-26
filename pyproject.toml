@@ -4,13 +4,61 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "beamz"
-version = "0.1.0"
-description = "Beamz project"
-requires-python = ">=3.8"
-dependencies = [
-    "mkdocs>=1.5.0",
-    "mkdocs-material>=9.0.0",
+version = "0.1.5" # Match setup.py
+authors = [
+    { name = "Quentin Wach", email = "quentin.wach+beamz@gmail.com" },
 ]
+description = "EM package to create inverse / generative designs for your photonic devices with ease and efficiency."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "LICENSE" } # Assuming LICENSE file exists at the root
+keywords = ["electromagnetics", "photonics", "inverse design", "generative design", "simulation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+    "numpy>=1.24.4",
+    "matplotlib>=3.7.5",
+    "gdspy>=1.6.0",
+    "scipy>=1.13.0",
+    "rich>=13.9.4",
+    "shapely>=2.0.6",
+    # "mkdocs>=1.5.0", # These seem like dev/docs dependencies, not core
+    # "mkdocs-material>=9.0.0", # Moved to dev optional-dependencies
+]
+
+[project.urls]
+Homepage = "https://github.com/QuentinWach/beamz"
+Repository = "https://github.com/QuentinWach/beamz"
+# Bug Tracker, Documentation etc. can be added here
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=22.0.0",
+    "isort>=5.0.0",
+    "flake8>=4.0.0",
+    "myst-parser>=2.0.0",
+    "mkdocs>=1.5.0", # Moved from core dependencies
+    "mkdocs-material>=9.0.0", # Moved from core dependencies
+]
+gpu = [
+    "torch>=2.6.0",
+]
+test = [ # Adding a 'test' extra that includes pytest and pytest-cov for convenience
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
 
 [tool.black]
 line-length = 88
@@ -24,4 +72,4 @@ multi_line_output = 3
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v --cov=beamz --cov-report=term-missing" 
+addopts = "-v --cov=beamz --cov-report=term-missing"
