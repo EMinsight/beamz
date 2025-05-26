@@ -50,11 +50,11 @@ class Design:
                     design.layers[layer_num] = []
                 
                 for polygon_points in list_of_polygon_points:
-                    # Convert points from microns to meters and add z-coordinate
-                    vertices = [(point[0] * 1e-6, point[1] * 1e-6, 0.0) for point in polygon_points]
+                    # Convert points from microns to meters and ensure CCW ordering
+                    vertices_2d = [(point[0] * 1e-6, point[1] * 1e-6) for point in polygon_points]
                     # Create polygon with appropriate depth
                     beamz_polygon = Polygon(
-                        vertices=vertices,
+                        vertices=vertices_2d,  # Polygon class will handle 3D conversion and CCW ordering
                         depth=default_depth
                     )
                     design.layers[layer_num].append(beamz_polygon)
@@ -836,70 +836,70 @@ class Design:
         vertices_2d = structure._vertices_2d() if hasattr(structure, '_vertices_2d') else [(v[0], v[1]) for v in structure.vertices]
         n_vertices = len(vertices_2d)
         if n_vertices < 3: return None  # Need at least 3 vertices for a face
+        
         # Get the actual z position from the structure
         actual_z = z_offset
         if hasattr(structure, 'z') and structure.z is not None:
             actual_z = structure.z
         elif hasattr(structure, 'position') and len(structure.position) > 2:
             actual_z = structure.position[2]
+            
         # Handle polygons with holes (like Ring structures)
         interior_paths = getattr(structure, 'interiors', [])
         # For complex polygons with holes, use a different approach
         if interior_paths and len(interior_paths) > 0:
-            # Convert interior paths to 2D
-            interior_2d = []
-            for interior in interior_paths:
-                if interior:
-                    interior_2d.append([(v[0], v[1]) for v in interior])
-            return self._triangulate_polygon_with_holes(vertices_2d, interior_2d, depth, actual_z)
+            return self._triangulate_polygon_with_holes(vertices_2d, interior_paths, depth, actual_z)
     
         # For complex unified polygons, we need robust triangulation
         try:
-            bottom_triangles = self._robust_triangulation(vertices_2d)
+            triangles = self._robust_triangulation(vertices_2d)
         except Exception as e:
             print(f"Warning: Robust triangulation failed ({e}), using fallback")
-            bottom_triangles = self._fallback_triangulation(vertices_2d)
+            triangles = self._fallback_triangulation(vertices_2d)
         
-        if not bottom_triangles:
+        if not triangles:
             print("Warning: All triangulation methods failed, skipping structure")
             return None
         
         # Create 3D vertices by extruding the 2D shape
         vertices_3d = []
         # Bottom face vertices (z = actual_z)
-        for x, y in vertices_2d: vertices_3d.append([x, y, actual_z])
-        # Top face vertices (z = actual_z + depth)
-        for x, y in vertices_2d: vertices_3d.append([x, y, actual_z + depth])
+        for x, y in vertices_2d:
+            vertices_3d.append([x, y, actual_z])
+        # Top face vertices (z = actual_z + depth) - maintain exact same x,y coordinates
+        for x, y in vertices_2d:
+            vertices_3d.append([x, y, actual_z + depth])
+            
         # Extract coordinates
         x_coords = [v[0] for v in vertices_3d]
         y_coords = [v[1] for v in vertices_3d]
         z_coords = [v[2] for v in vertices_3d]
+        
         # Create triangular faces for the mesh
         faces_i, faces_j, faces_k = [], [], []
-        # Bottom face triangulation (CCW when viewed from above = normal pointing down)
-        for tri in bottom_triangles:
-            if len(tri) == 3 and all(0 <= idx < n_vertices for idx in tri):
-                faces_i.append(tri[0])
-                faces_j.append(tri[1]) 
-                faces_k.append(tri[2])
-        # Top face triangulation (CW when viewed from above = normal pointing up)
-        for tri in bottom_triangles:
-            if len(tri) == 3 and all(0 <= idx < n_vertices for idx in tri):
-                faces_i.append(tri[0] + n_vertices)
-                faces_j.append(tri[2] + n_vertices)  # Swap j,k for opposite winding
-                faces_k.append(tri[1] + n_vertices)
-        # Side faces (rectangles split into two triangles each)
+        
+        # Bottom face triangulation (CCW when viewed from below = normal pointing down)
+        for tri in triangles:
+            faces_i.append(tri[0])
+            faces_j.append(tri[2])  # Swap j,k for opposite winding
+            faces_k.append(tri[1])
+                
+        # Top face triangulation (CCW when viewed from above = normal pointing up)
+        for tri in triangles:
+            faces_i.append(tri[0] + n_vertices)
+            faces_j.append(tri[1] + n_vertices)
+            faces_k.append(tri[2] + n_vertices)
+                
+        # Side faces - create vertical faces between corresponding vertices
         for i in range(n_vertices):
             next_i = (i + 1) % n_vertices
-            # Each side face is a rectangle with 4 vertices:
-            # Bottom: i, next_i
-            # Top: i + n_vertices, next_i + n_vertices
-            # Triangle 1: bottom-left, bottom-right, top-left (CCW from outside)
+            # Each side face is two triangles forming a rectangle
+            # Triangle 1: bottom-left, bottom-right, top-right
             faces_i.append(i)
             faces_j.append(next_i)
-            faces_k.append(i + n_vertices)
-            # Triangle 2: bottom-right, top-right, top-left (CCW from outside)
-            faces_i.append(next_i)
+            faces_k.append(next_i + n_vertices)
+            # Triangle 2: bottom-left, top-right, top-left
+            faces_i.append(i)
             faces_j.append(next_i + n_vertices)
             faces_k.append(i + n_vertices)
         
@@ -914,48 +914,79 @@ class Design:
         if len(vertices_2d) == 3: return [(0, 1, 2)]
         if len(vertices_2d) == 4: return [(0, 1, 2), (0, 2, 3)]
         
-        # Try ear clipping algorithm for complex polygons
         try:
+            import scipy.spatial
+            # Convert vertices to numpy array
+            points = np.array(vertices_2d)
+            # Create Delaunay triangulation
+            tri = scipy.spatial.Delaunay(points)
+            # Filter triangles to only include those inside the polygon
+            valid_triangles = []
+            for triangle in tri.simplices:
+                # Calculate triangle centroid
+                centroid = np.mean(points[triangle], axis=0)
+                # Only include triangles whose centroids are inside the polygon
+                if self._point_in_polygon_2d(centroid[0], centroid[1], vertices_2d):
+                    # Ensure CCW orientation
+                    v1 = points[triangle[1]] - points[triangle[0]]
+                    v2 = points[triangle[2]] - points[triangle[0]]
+                    if np.cross(v1, v2) > 0:
+                        valid_triangles.append(tuple(triangle))
+                    else:
+                        valid_triangles.append((triangle[0], triangle[2], triangle[1]))
+            return valid_triangles
+        except ImportError:
+            print("scipy not available, using ear clipping")
             return self._ear_clipping_triangulation(vertices_2d)
-        except Exception as e:
-            print(f"Ear clipping failed: {e}")
-            # Fallback to constrained triangulation if available
-            try:
-                return self._constrained_triangulation(vertices_2d)
-            except Exception as e:
-                print(f"Constrained triangulation failed: {e}")
-                raise Exception("All robust triangulation methods failed")
     
     def _ear_clipping_triangulation(self, vertices):
         """Ear clipping algorithm for triangulating simple polygons."""
         if len(vertices) < 3: return []
+        
+        def is_ear(i, j, k, vertices, indices):
+            """Check if vertex j forms an ear with vertices i and k."""
+            # Get the three points
+            a = np.array(vertices[indices[i]])
+            b = np.array(vertices[indices[j]])
+            c = np.array(vertices[indices[k]])
             
-        # Create a list of vertex indices
+            # Check if the angle is convex
+            ab = b - a
+            cb = b - c
+            cross = np.cross(ab, cb)
+            if cross <= 0:  # Not convex
+                return False
+                
+            # Check if any other vertex is inside this triangle
+            triangle = [a, b, c]
+            for m in range(len(indices)):
+                if m not in [i, j, k]:
+                    p = np.array(vertices[indices[m]])
+                    if self._point_in_triangle(p, a, b, c):
+                        return False
+            return True
+        
+        # Initialize the indices list
         indices = list(range(len(vertices)))
         triangles = []
-        # Remove ears until only 3 vertices remain
+        
+        # Continue until we can't find any more ears
         while len(indices) > 3:
+            n = len(indices)
             ear_found = False
-            for i in range(len(indices)):
-                prev_idx = indices[i - 1]
-                curr_idx = indices[i]
-                next_idx = indices[(i + 1) % len(indices)]
-                
-                # Check if this is a valid ear
-                if self._is_ear(vertices, prev_idx, curr_idx, next_idx, indices):
-                    # Add triangle
-                    triangles.append((prev_idx, curr_idx, next_idx))
-                    # Remove the ear vertex
-                    indices.pop(i)
+            # Look for an ear
+            for j in range(n):
+                i = (j - 1) % n
+                k = (j + 1) % n
+                if is_ear(i, j, k, vertices, indices):
+                    # Add the ear triangle
+                    triangles.append((indices[i], indices[j], indices[k]))
+                    # Remove the ear tip
+                    indices.pop(j)
                     ear_found = True
                     break
-            
-            # Safety check to avoid infinite loops
             if not ear_found:
-                print("Warning: No ears found, falling back to fan triangulation")
-                # Fallback to simple fan triangulation
-                for i in range(1, len(indices) - 1):
-                    triangles.append((indices[0], indices[i], indices[i + 1]))
+                # If no ear is found, fall back to simple triangulation
                 break
         
         # Add the final triangle
@@ -963,50 +994,6 @@ class Design:
             triangles.append((indices[0], indices[1], indices[2]))
         
         return triangles
-    
-    def _is_ear(self, vertices, prev_idx, curr_idx, next_idx, remaining_indices):
-        """Check if a vertex forms a valid ear for ear clipping."""
-        # Get the three vertices
-        prev_pt = vertices[prev_idx]
-        curr_pt = vertices[curr_idx]
-        next_pt = vertices[next_idx]
-        # Check if the angle is convex (interior angle < 180 degrees)
-        if not self._is_convex_vertex(prev_pt, curr_pt, next_pt):
-            return False
-        # Check if any other vertex is inside this triangle
-        for idx in remaining_indices:
-            if idx not in [prev_idx, curr_idx, next_idx]:
-                if self._point_in_triangle(vertices[idx], prev_pt, curr_pt, next_pt):
-                    return False
-        
-        return True
-    
-    def _is_convex_vertex(self, prev_pt, curr_pt, next_pt):
-        """Check if a vertex is convex (interior angle < 180 degrees)."""
-        # Calculate cross product to determine if angle is convex
-        v1 = (prev_pt[0] - curr_pt[0], prev_pt[1] - curr_pt[1])
-        v2 = (next_pt[0] - curr_pt[0], next_pt[1] - curr_pt[1])
-        cross = v1[0] * v2[1] - v1[1] * v2[0]
-        return cross > 0  # Assuming CCW polygon orientation
-    
-    def _constrained_triangulation(self, vertices_2d):
-        """Constrained triangulation using scipy if available."""
-        try:
-            import scipy.spatial
-            # Use Delaunay triangulation with constraints
-            points = np.array(vertices_2d)
-            tri = scipy.spatial.Delaunay(points)
-            # Filter triangles to only include those inside the polygon
-            valid_triangles = []
-            for triangle in tri.simplices:
-                # Check if triangle centroid is inside the polygon
-                centroid = np.mean(points[triangle], axis=0)
-                if self._point_in_polygon_2d(centroid[0], centroid[1], vertices_2d):
-                    valid_triangles.append(tuple(triangle))
-            
-            return valid_triangles
-        except ImportError:
-            raise Exception("scipy not available for constrained triangulation")
     
     def _fallback_triangulation(self, vertices_2d):
         """Simple fallback triangulation methods."""
@@ -1351,27 +1338,71 @@ class Design:
 
 class Polygon:
     def __init__(self, vertices=None, material=None, color=None, optimize=False, interiors=None, depth=0, z=0):
-        self.vertices = self._ensure_3d_vertices(vertices if vertices is not None else []) # Exterior path
-        self.interiors = [self._ensure_3d_vertices(interior) for interior in (interiors if interiors is not None else [])] # List of interior paths
+        # First ensure vertices are properly formatted and ordered
+        self.vertices = self._process_vertices(vertices if vertices is not None else [], z)
+        self.interiors = [self._process_vertices(interior, z) for interior in (interiors if interiors is not None else [])]
         self.material = material
         self.optimize = optimize
         self.color = color if color is not None else self.get_random_color_consistent()
         self.depth = depth if depth is not None else 0
         self.z = z if z is not None else 0
     
+    def _process_vertices(self, vertices, z=0):
+        """Process vertices to ensure they are 3D and properly ordered counterclockwise."""
+        if not vertices:
+            return []
+            
+        # First ensure all vertices are 3D
+        vertices_3d = self._ensure_3d_vertices(vertices)
+        
+        # Project to 2D for CCW check
+        vertices_2d = [(v[0], v[1]) for v in vertices_3d]
+        
+        # Ensure counterclockwise ordering
+        if len(vertices_2d) >= 3:
+            vertices_2d = self._ensure_ccw_vertices(vertices_2d)
+            # Convert back to 3D maintaining original z-coordinates or using provided z
+            vertices_3d = [(x, y, vertices_3d[i][2] if len(vertices_3d[i]) > 2 else z) 
+                          for i, (x, y) in enumerate(vertices_2d)]
+        
+        return vertices_3d
+    
+    def _ensure_ccw_vertices(self, vertices_2d):
+        """Ensure vertices are ordered counterclockwise by computing signed area."""
+        if len(vertices_2d) < 3:
+            return vertices_2d
+            
+        # Calculate signed area
+        area = 0
+        for i in range(len(vertices_2d)):
+            j = (i + 1) % len(vertices_2d)
+            area += vertices_2d[i][0] * vertices_2d[j][1]
+            area -= vertices_2d[j][0] * vertices_2d[i][1]
+        
+        # If area is positive, vertices are already CCW
+        # If area is negative, reverse the vertices
+        if area < 0:
+            return vertices_2d[::-1]
+        return vertices_2d
+    
     def _ensure_3d_vertices(self, vertices):
         """Convert 2D vertices (x,y) to 3D vertices (x,y,z) with z=0 if not provided."""
-        if not vertices: return []
+        if not vertices:
+            return []
         result = []
         for v in vertices:
-            if len(v) == 2: result.append((v[0], v[1], 0.0))  # Add z=0 for 2D vertices
-            elif len(v) == 3: result.append(v)  # Keep 3D vertices as-is
-            else: raise ValueError(f"Vertex must have 2 or 3 coordinates, got {len(v)}")
+            if len(v) == 2:
+                result.append((v[0], v[1], 0.0))  # Add z=0 for 2D vertices
+            elif len(v) == 3:
+                result.append(v)  # Keep 3D vertices as-is
+            else:
+                raise ValueError(f"Vertex must have 2 or 3 coordinates, got {len(v)}")
         return result
     
     def _vertices_2d(self, vertices=None):
         """Get 2D projection of vertices for plotting (x,y only)."""
-        if vertices is None: vertices = self.vertices
+        if vertices is None:
+            vertices = self.vertices
         return [(v[0], v[1]) for v in vertices]
     
     def get_random_color_consistent(self, saturation=0.6, value=0.7):

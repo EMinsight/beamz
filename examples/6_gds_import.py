@@ -6,16 +6,14 @@ import numpy as np
 LAYER_MATERIALS = {
     0: Material(permittivity=11.67),    # Silicon
     1: Material(permittivity=2.085),      # Silicon Oxide
-    2: Material(permittivity=3.9),      # Silicon Nitride
+    2: Material(permittivity=3.9)       # Silicon Nitride
 }
-
 # Define layer properties
 LAYER_PROPERTIES = {
-    0: {"depth": 0.22*µm, "z": 0.0},           # Silicon layer at bottom
-    1: {"depth": 2.0*µm, "z": 0.22*µm},        # Oxide layer in middle
-    2: {"depth": 0.4*µm, "z": 2.22*µm},        # Nitride layer on top
+    1: {"depth": 0.22*µm, "z": 0.0},      # Silicon layer at bottom
+    0: {"depth": 2.0*µm, "z": 0.22*µm},   # Oxide layer in middle
+    2: {"depth": 0.4*µm, "z": 2.22*µm}    # Nitride layer on top
 }
-
 # Import a GDS file
 print("Importing GDS file...")
 gds_design = Design.import_gds("mmi.gds")
@@ -43,12 +41,15 @@ for layer_num, structures in gds_design.layers.items():
     properties = LAYER_PROPERTIES.get(layer_num, {"depth": 0.5*µm, "z": 0.0})
     
     print(f"Layer {layer_num}")
+    print(f"  - Material: {material.name if hasattr(material, 'name') else 'Unknown'}")
     print(f"  - Depth: {properties['depth']/µm:.2f} µm")
     print(f"  - Z-position: {properties['z']/µm:.2f} µm")
     print(f"  - Number of structures: {len(structures)}")
     
     # Add each structure from this layer
     for structure in structures:
+        # Create polygon with proper material and z-position
+        # Vertex ordering is now handled automatically by the Polygon class
         polygon = Polygon(
             vertices=structure.vertices,
             material=material,
