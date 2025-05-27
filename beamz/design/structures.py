@@ -629,6 +629,11 @@ class Design:
             if hasattr(structure, 'is_pml') and structure.is_pml:
                 continue
                 
+            # Handle Monitor objects specially
+            if isinstance(structure, Monitor):
+                self._add_monitor_to_3d_plot(fig, structure, scale, unit)
+                continue
+                
             # Get structure depth
             struct_depth = getattr(structure, 'depth', default_depth)
             struct_z = getattr(structure, 'z', 0)
@@ -826,6 +831,75 @@ class Design:
             ))
         
         fig.show()
+    
+    def _add_monitor_to_3d_plot(self, fig, monitor, scale, unit):
+        """Add a monitor plane to the 3D plot."""
+        try:
+            import plotly.graph_objects as go
+        except ImportError:
+            return  # Skip if plotly not available
+            
+        if not hasattr(monitor, 'vertices') or not monitor.vertices:
+            return  # Skip if no vertices
+            
+        # Get monitor vertices
+        vertices = monitor.vertices
+        if len(vertices) < 3:
+            return  # Need at least 3 vertices
+            
+        # Extract coordinates
+        x_coords = [v[0] for v in vertices]
+        y_coords = [v[1] for v in vertices]
+        z_coords = [v[2] for v in vertices]
+        
+        # Create a simple triangulation for the monitor plane (it's a rectangle)
+        if len(vertices) == 4:
+            # Rectangle: two triangles
+            faces_i = [0, 0]
+            faces_j = [1, 2]
+            faces_k = [2, 3]
+        else:
+            # For other shapes, use simple fan triangulation
+            faces_i, faces_j, faces_k = [], [], []
+            for i in range(1, len(vertices) - 1):
+                faces_i.append(0)
+                faces_j.append(i)
+                faces_k.append(i + 1)
+        
+        # Create hover text
+        hovertext = f"Monitor ({monitor.monitor_type})"
+        if hasattr(monitor, 'size'):
+            hovertext += f"<br>Size: {monitor.size[0]*scale:.2f} x {monitor.size[1]*scale:.2f} {unit}"
+        if hasattr(monitor, 'plane_normal'):
+            hovertext += f"<br>Normal: {monitor.plane_normal}"
+        if hasattr(monitor, 'plane_position'):
+            hovertext += f"<br>Position: {monitor.plane_position*scale:.2f} {unit}"
+        
+        # Add the monitor as a semi-transparent mesh
+        fig.add_trace(go.Mesh3d(
+            x=x_coords, y=y_coords, z=z_coords,
+            i=faces_i, j=faces_j, k=faces_k,
+            color='rgba(255,255,0,0.6)',  # Semi-transparent yellow
+            opacity=0.75,
+            name="Monitor",
+            hovertemplate=hovertext + "<extra></extra>",
+            # Prominent outline for visibility
+            contour=dict(
+                show=True,
+                color="black",
+                width=8  # Thick lines for monitor visibility
+            ),
+            # Flat shading for clean appearance
+            lighting=dict(
+                ambient=0.8,
+                diffuse=0.2,
+                fresnel=0.0,
+                specular=0.0,
+                roughness=1.0
+            ),
+            flatshading=True,
+            showlegend=True
+        ))
     
     def _structure_to_3d_mesh(self, structure, depth, z_offset=0):
         """Convert a 2D structure to 3D mesh data for plotly with robust triangulation for complex polygons."""

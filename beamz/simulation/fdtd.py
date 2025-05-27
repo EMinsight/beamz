@@ -428,7 +428,6 @@ class FDTD:
                                 # Skip points outside the 3D grid
                                 if (x < 0 or x >= self.nx or y < 0 or y >= self.ny or 
                                     z < 0 or z >= self.nz): continue
-                                    
                                 # Apply to center z-slice or specified z-coordinate
                                 z_target = min(z, self.Ez.shape[0] - 1) if z < self.Ez.shape[0] else self.Ez.shape[0] // 2
                             else:
@@ -441,12 +440,9 @@ class FDTD:
                                 # For backends that don't support complex numbers, we need to extract real part
                                 if isinstance(amplitude * modulation, complex):
                                     source_value = np.real(amplitude * modulation)
-                                else:
-                                    source_value = amplitude * modulation
-                            else:
-                                # Backend supports complex values or we're using default handling
-                                source_value = amplitude * modulation
-                                
+                                else: source_value = amplitude * modulation
+                            else: source_value = amplitude * modulation
+        
                             # Apply source to appropriate field component and location
                             if self.is_3d:
                                 self.Ez[z_target, y, x] += source_value

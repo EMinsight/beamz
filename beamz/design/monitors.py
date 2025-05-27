@@ -6,43 +6,15 @@ class Monitor():
     def __init__(self, design=None, start=(0,0), end=None, plane_normal=None, plane_position=0, 
                  size=None, record_fields=True, accumulate_power=True, live_update=False, 
                  record_interval=1, max_history_steps=None):
-        """
-        Initialize monitor for 2D or 3D simulations.
-        
-        Parameters:
-        -----------
-        design : Design object
-            The simulation design
-        start : tuple
-            Start point (x,y) for 2D line monitor or (x,y,z) for 3D
-        end : tuple, optional
-            End point for 2D line monitor. If None, creates 3D plane monitor
-        plane_normal : str, optional
-            Normal direction for 3D plane monitor ('x', 'y', or 'z')
-        plane_position : float
-            Position along normal axis for 3D plane monitor
-        size : tuple, optional
-            (width, height) for 3D plane monitor
-        record_fields : bool
-            Whether to record field values
-        accumulate_power : bool
-            Whether to accumulate power/energy
-        live_update : bool
-            Whether to enable live visualization updates
-        record_interval : int
-            Record fields every N time steps
-        max_history_steps : int, optional
-            Maximum number of time steps to store (for memory management)
-        """
-        
-        # Determine monitor type and dimensions
-        self.is_3d = (end is None) or (design and hasattr(design, 'is_3d') and design.is_3d)
         self.design = design
         self.record_fields = record_fields
         self.accumulate_power = accumulate_power
         self.live_update = live_update
         self.record_interval = record_interval
         self.max_history_steps = max_history_steps
+        
+        # Determine if this is a 3D monitor based on input parameters
+        self.is_3d = self._determine_3d_mode(start, end, design)
         
         # Initialize field storage
         if self.is_3d:
@@ -55,71 +27,147 @@ class Monitor():
         else:
             # 2D fields: Ez, Hx, Hy
             self.fields = {'Ez': [], 'Hx': [], 'Hy': [], 't': []}
-        
+
         # Power and energy storage
         self.power_accumulated = None
         self.energy_history = []
         self.power_history = []
         self.power_accumulation_count = 0
-        
         # Recording control
         self.step_count = 0
         self.last_record_step = -1
-        
         # Live visualization
         self.live_fig = None
         self.live_axes = None
         self.live_plots = {}
         self.update_interval = 10  # Update every N records
         
-        if self.is_3d:
-            self._init_3d_monitor(start, plane_normal, plane_position, size)
-        else:
+        if self.is_3d: 
+            self._init_3d_monitor(start, end, plane_normal, plane_position, size)
+        else: 
             self._init_2d_monitor(start, end)
+    
+    def _determine_3d_mode(self, start, end, design):
+        """Determine if this should be a 3D monitor based on inputs."""
+        # If end is provided and has 3 coordinates, it's 3D
+        if end is not None and len(end) == 3:
+            return True
+        # If start has 3 coordinates, it's 3D
+        if len(start) == 3:
+            return True
+        # If design is 3D, default to 3D monitor
+        if design and hasattr(design, 'is_3d') and design.is_3d:
+            return True
+        return False
     
     def _init_2d_monitor(self, start, end):
         """Initialize 2D line monitor."""
-        if end is None:
-            end = start  # Point monitor
-        
+        if end is None: end = start
         self.start = start
         self.end = end
         self.position = ((start[0] + end[0])/2, (start[1] + end[1])/2)
         self.monitor_type = "line"
         
-    def _init_3d_monitor(self, start, plane_normal, plane_position, size):
-        """Initialize 3D plane monitor."""
-        if len(start) == 2:
+    def _init_3d_monitor(self, start, end, plane_normal, plane_position, size):
+        """Initialize 3D plane monitor from two points or plane definition."""
+        # Ensure start is 3D
+        if len(start) == 2: 
             start = (start[0], start[1], 0.0)
-        
         self.start = start
-        self.plane_normal = plane_normal or 'z'  # Default to xy plane
-        self.plane_position = plane_position
+        
+        if end is not None:
+            # Monitor defined by two corner points - create a plane
+            if len(end) == 2:
+                end = (end[0], end[1], start[2])  # Same z as start
+            self.end = end
+            
+            # Calculate plane properties from the two points
+            self.size = (abs(end[0] - start[0]), abs(end[1] - start[1]))
+            self.plane_position = start[2]  # Use z-coordinate of start point
+            self.plane_normal = 'z'  # Default to xy plane
+            
+            # Ensure start is the bottom-left corner
+            self.start = (min(start[0], end[0]), min(start[1], end[1]), start[2])
+            
+        else:
+            # Monitor defined by plane normal and position (legacy mode)
+            self.end = None
+            self.plane_normal = plane_normal or 'z'  # Default to xy plane
+            self.plane_position = plane_position
+            
+            # Determine plane dimensions
+            if size is None:
+                # Use design dimensions if available
+                if self.design:
+                    if self.plane_normal == 'z':
+                        size = (self.design.width, self.design.height)
+                    elif self.plane_normal == 'y':
+                        size = (self.design.width, self.design.depth or self.design.width)
+                    else:  # x normal
+                        size = (self.design.height, self.design.depth or self.design.height)
+                else: 
+                    size = (1e-6, 1e-6)  # Default 1μm x 1μm
+            self.size = size
+            
         self.monitor_type = "plane"
-        
-        # Determine plane dimensions
-        if size is None:
-            # Use design dimensions if available
-            if self.design:
-                if self.plane_normal == 'z':
-                    size = (self.design.width, self.design.height)
-                elif self.plane_normal == 'y':
-                    size = (self.design.width, self.design.depth or self.design.width)
-                else:  # x normal
-                    size = (self.design.height, self.design.depth or self.design.height)
-            else:
-                size = (1e-6, 1e-6)  # Default 1μm x 1μm
-        
-        self.size = size
         self.position = self._get_plane_center()
+        
+        # Generate vertices for 3D visualization
+        self.vertices = self._generate_plane_vertices()
+    
+    def _generate_plane_vertices(self):
+        """Generate vertices for the monitor plane for 3D visualization."""
+        if self.plane_normal == 'z' or (hasattr(self, 'end') and self.end is not None):
+            # xy plane at fixed z
+            x_min, y_min = self.start[0], self.start[1]
+            x_max = x_min + self.size[0]
+            y_max = y_min + self.size[1]
+            z = self.plane_position
+            
+            vertices = [
+                (x_min, y_min, z),  # Bottom left
+                (x_max, y_min, z),  # Bottom right  
+                (x_max, y_max, z),  # Top right
+                (x_min, y_max, z)   # Top left
+            ]
+            
+        elif self.plane_normal == 'y':
+            # xz plane at fixed y
+            x_min, z_min = self.start[0], self.start[2]
+            x_max = x_min + self.size[0]
+            z_max = z_min + self.size[1]
+            y = self.plane_position
+            
+            vertices = [
+                (x_min, y, z_min),  # Bottom left
+                (x_max, y, z_min),  # Bottom right
+                (x_max, y, z_max),  # Top right
+                (x_min, y, z_max)   # Top left
+            ]
+            
+        else:  # x normal
+            # yz plane at fixed x
+            y_min, z_min = self.start[1], self.start[2]
+            y_max = y_min + self.size[0]
+            z_max = z_min + self.size[1]
+            x = self.plane_position
+            
+            vertices = [
+                (x, y_min, z_min),  # Bottom left
+                (x, y_max, z_min),  # Bottom right
+                (x, y_max, z_max),  # Top right
+                (x, y_min, z_max)   # Top left
+            ]
+            
+        return vertices
     
     def _get_plane_center(self):
         """Get center position of 3D plane monitor."""
-        if self.plane_normal == 'z':
+        if self.plane_normal == 'z' or (hasattr(self, 'end') and self.end is not None):
             return (self.start[0] + self.size[0]/2, self.start[1] + self.size[1]/2, self.plane_position)
         elif self.plane_normal == 'y':
             return (self.start[0] + self.size[0]/2, self.plane_position, self.start[2] + self.size[1]/2)
-        else:  # x normal
+        else:
             return (self.plane_position, self.start[1] + self.size[0]/2, self.start[2] + self.size[1]/2)
     
     def get_grid_points_2d(self, dx, dy):
@@ -146,51 +194,41 @@ class Monitor():
             # xy plane at fixed z
             z_idx = int(round(self.plane_position / dz))
             z_idx = max(0, min(z_idx, field_shape[2] - 1))
-            
             x_start = int(round(self.start[0] / dx))
             x_end = int(round((self.start[0] + self.size[0]) / dx))
             y_start = int(round(self.start[1] / dy))
             y_end = int(round((self.start[1] + self.size[1]) / dy))
-            
             x_start = max(0, min(x_start, field_shape[1] - 1))
             x_end = max(0, min(x_end, field_shape[1]))
             y_start = max(0, min(y_start, field_shape[0] - 1))
             y_end = max(0, min(y_end, field_shape[0]))
-            
             return slice(y_start, y_end), slice(x_start, x_end), z_idx
             
         elif self.plane_normal == 'y':
             # xz plane at fixed y
             y_idx = int(round(self.plane_position / dy))
             y_idx = max(0, min(y_idx, field_shape[0] - 1))
-            
             x_start = int(round(self.start[0] / dx))
             x_end = int(round((self.start[0] + self.size[0]) / dx))
             z_start = int(round(self.start[2] / dz))
             z_end = int(round((self.start[2] + self.size[1]) / dz))
-            
             x_start = max(0, min(x_start, field_shape[1] - 1))
             x_end = max(0, min(x_end, field_shape[1]))
             z_start = max(0, min(z_start, field_shape[2] - 1))
             z_end = max(0, min(z_end, field_shape[2]))
-            
             return y_idx, slice(x_start, x_end), slice(z_start, z_end)
-            
         else:  # x normal
             # yz plane at fixed x
             x_idx = int(round(self.plane_position / dx))
             x_idx = max(0, min(x_idx, field_shape[1] - 1))
-            
             y_start = int(round(self.start[1] / dy))
             y_end = int(round((self.start[1] + self.size[0]) / dy))
             z_start = int(round(self.start[2] / dz))
             z_end = int(round((self.start[2] + self.size[1]) / dz))
-            
             y_start = max(0, min(y_start, field_shape[0] - 1))
             y_end = max(0, min(y_end, field_shape[0]))
             z_start = max(0, min(z_start, field_shape[2] - 1))
             z_end = max(0, min(z_end, field_shape[2]))
-            
             return slice(y_start, y_end), x_idx, slice(z_start, z_end)
     
     def should_record(self, step):
@@ -234,11 +272,9 @@ class Monitor():
     def record_fields_3d(self, Ex, Ey, Ez, Hx, Hy, Hz, t, dx, dy, dz, step=0):
         """Record 3D field data from plane slice."""
         if not self.should_record(step): return
-        
         # Get the appropriate slice for this monitor
         field_shape = Ex.shape
         slice_indices = self.get_grid_slice_3d(dx, dy, dz, field_shape)
-        
         # Extract field data from the slice
         Ex_slice = Ex[slice_indices].copy()
         Ey_slice = Ey[slice_indices].copy()
@@ -246,7 +282,6 @@ class Monitor():
         Hx_slice = Hx[slice_indices].copy()
         Hy_slice = Hy[slice_indices].copy()
         Hz_slice = Hz[slice_indices].copy()
-        
         if self.record_fields:
             self.fields['Ex'].append(Ex_slice)
             self.fields['Ey'].append(Ey_slice)
@@ -279,20 +314,16 @@ class Monitor():
         Ez_array = np.array(Ez_values)
         Hx_array = np.array(Hx_values)
         Hy_array = np.array(Hy_values)
-        
         # Poynting vector S = E × H
         Sx = -Ez_array * Hy_array
         Sy = Ez_array * Hx_array
-        
         # Power magnitude
         power_mag = np.sqrt(Sx**2 + Sy**2)
         total_power = np.sum(power_mag)
-        
         if self.power_accumulated is None:
             self.power_accumulated = power_mag
         else:
             self.power_accumulated += power_mag
-        
         self.power_history.append(total_power)
         self.power_accumulation_count += 1
     
@@ -302,30 +333,22 @@ class Monitor():
         Sx = Ey * Hz - Ez * Hy
         Sy = Ez * Hx - Ex * Hz
         Sz = Ex * Hy - Ey * Hx
-        
         # Power magnitude
         power_mag = np.sqrt(Sx**2 + Sy**2 + Sz**2)
         total_power = np.sum(power_mag)
-        
-        if self.power_accumulated is None:
-            self.power_accumulated = power_mag.copy()
-        else:
-            self.power_accumulated += power_mag
-        
+        if self.power_accumulated is None: self.power_accumulated = power_mag.copy()
+        else: self.power_accumulated += power_mag
         self.power_history.append(total_power)
         self.power_accumulation_count += 1
     
     def _manage_memory(self):
         """Manage memory by limiting stored history."""
-        if self.max_history_steps is None:
-            return
-        
+        if self.max_history_steps is None: return
         for field_name in self.fields:
             if len(self.fields[field_name]) > self.max_history_steps:
                 # Remove oldest entries
                 excess = len(self.fields[field_name]) - self.max_history_steps
                 self.fields[field_name] = self.fields[field_name][excess:]
-        
         # Also limit power history
         if len(self.power_history) > self.max_history_steps:
             excess = len(self.power_history) - self.max_history_steps
@@ -333,30 +356,23 @@ class Monitor():
     
     def start_live_visualization(self, field_component='Ez'):
         """Start live field visualization."""
-        if not self.live_update:
-            self.live_update = True
-        
-        if self.is_3d:
-            self._setup_live_plot_3d(field_component)
-        else:
-            self._setup_live_plot_2d(field_component)
+        if not self.live_update: self.live_update = True
+        if self.is_3d: self._setup_live_plot_3d(field_component)
+        else: self._setup_live_plot_2d(field_component)
     
     def _setup_live_plot_2d(self, field_component):
         """Setup live plotting for 2D monitor."""
         self.live_fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-        
         # Field amplitude plot
         ax1.set_title(f'{field_component} along monitor line')
         ax1.set_xlabel('Position along line')
         ax1.set_ylabel(f'{field_component} amplitude')
         self.live_plots['field_line'] = ax1.plot([], [], 'b-')[0]
-        
         # Power history plot
         ax2.set_title('Power vs Time')
         ax2.set_xlabel('Time step')
         ax2.set_ylabel('Total power')
         self.live_plots['power_time'] = ax2.plot([], [], 'r-')[0]
-        
         plt.tight_layout()
         plt.ion()
         plt.show()
@@ -364,54 +380,44 @@ class Monitor():
     def _setup_live_plot_3d(self, field_component):
         """Setup live plotting for 3D monitor."""
         self.live_fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
-        
         # Field magnitude plot
         ax1.set_title(f'{field_component} magnitude on plane')
         self.live_plots['field_2d'] = ax1.imshow(np.zeros((10, 10)), cmap='RdBu', animated=True)
         ax1.set_xlabel('X')
         ax1.set_ylabel('Y')
-        
         # Power history
         ax2.set_title('Power vs Time')
         ax2.set_xlabel('Time step')
         ax2.set_ylabel('Total power')
         self.live_plots['power_time'] = ax2.plot([], [], 'r-')[0]
-        
         # Field profile along X
         ax3.set_title(f'{field_component} along X (center)')
         ax3.set_xlabel('X position')
         ax3.set_ylabel(f'{field_component} amplitude')
         self.live_plots['field_x'] = ax3.plot([], [], 'b-')[0]
-        
         # Field profile along Y
         ax4.set_title(f'{field_component} along Y (center)')
         ax4.set_xlabel('Y position')
         ax4.set_ylabel(f'{field_component} amplitude')
         self.live_plots['field_y'] = ax4.plot([], [], 'g-')[0]
-        
         plt.tight_layout()
         plt.ion()
         plt.show()
     
     def _update_live_plot_2d(self):
         """Update live plot for 2D monitor."""
-        if self.live_fig is None or not self.fields['t']:
-            return
-        
+        if self.live_fig is None or not self.fields['t']: return
         try:
             # Update field line plot
             latest_field = self.fields['Ez'][-1]
             x_pos = range(len(latest_field))
             self.live_plots['field_line'].set_data(x_pos, latest_field)
-            
             # Update power history
             self.live_plots['power_time'].set_data(range(len(self.power_history)), self.power_history)
-            
             # Rescale axes
             for ax in self.live_fig.axes:
                 ax.relim()
                 ax.autoscale_view()
-            
             self.live_fig.canvas.draw()
             self.live_fig.canvas.flush_events()
         except:
@@ -421,40 +427,30 @@ class Monitor():
         """Update live plot for 3D monitor."""
         if self.live_fig is None or not self.fields['t']:
             return
-        
         try:
             # Get latest field data
             latest_field = self.fields['Ez'][-1]  # Default to Ez
-            
             # Update 2D field plot
             self.live_plots['field_2d'].set_array(latest_field)
             self.live_plots['field_2d'].set_clim(vmin=np.min(latest_field), vmax=np.max(latest_field))
-            
             # Update power history
             self.live_plots['power_time'].set_data(range(len(self.power_history)), self.power_history)
-            
             # Update field profiles
             center_y = latest_field.shape[0] // 2
             center_x = latest_field.shape[1] // 2
-            
             self.live_plots['field_x'].set_data(range(latest_field.shape[1]), latest_field[center_y, :])
             self.live_plots['field_y'].set_data(range(latest_field.shape[0]), latest_field[:, center_x])
-            
             # Rescale axes
             for ax in self.live_fig.axes[1:]:  # Skip imshow axis
                 ax.relim()
                 ax.autoscale_view()
-            
             self.live_fig.canvas.draw()
             self.live_fig.canvas.flush_events()
-        except:
-            pass  # Ignore plotting errors
+        except: pass  # Ignore plotting errors
     
     def get_field_statistics(self):
         """Get statistical information about recorded fields."""
-        if not self.fields['t']:
-            return {}
-        
+        if not self.fields['t']: return {}
         stats = {
             'total_records': len(self.fields['t']),
             'time_span': self.fields['t'][-1] - self.fields['t'][0] if len(self.fields['t']) > 1 else 0,
@@ -463,7 +459,6 @@ class Monitor():
             'monitor_type': self.monitor_type,
             'is_3d': self.is_3d
         }
-        
         if self.is_3d:
             stats['plane_normal'] = self.plane_normal
             stats['plane_position'] = self.plane_position
@@ -471,7 +466,6 @@ class Monitor():
         else:
             stats['line_start'] = self.start
             stats['line_end'] = self.end
-        
         return stats
     
     def save_data(self, filename, format='npz'):
@@ -481,8 +475,7 @@ class Monitor():
                     fields=self.fields,
                     power_history=self.power_history,
                     monitor_info={'type': self.monitor_type, 'is_3d': self.is_3d})
-        else:
-            raise ValueError(f"Unsupported format: {format}")
+        else: raise ValueError(f"Unsupported format: {format}")
     
     def load_data(self, filename):
         """Load data from file."""
@@ -494,22 +487,44 @@ class Monitor():
         """Add monitor visualization to 2D plot."""
         if self.monitor_type == "line":
             ax.plot((self.start[0], self.end[0]), (self.start[1], self.end[1]), 
-                   '-', lw=4, color=facecolor, label='Monitor', alpha=alpha)
+                   lw=4, color=facecolor, label='Monitor', alpha=alpha)
             ax.plot((self.start[0], self.end[0]), (self.start[1], self.end[1]), 
-                   '-', lw=1, color=edgecolor, linestyle=linestyle)
+                   lw=1, color=edgecolor, linestyle=linestyle)
         else:
             # For 3D plane monitors, show projection on 2D plot
-            if self.plane_normal == 'z':
+            if self.plane_normal == 'z' or (hasattr(self, 'end') and self.end is not None):
                 # xy plane - show as rectangle
                 rect = MatplotlibRectangle(
                     (self.start[0], self.start[1]),
                     self.size[0], self.size[1],
                     fill=True, facecolor=facecolor, alpha=alpha*0.3,
-                    edgecolor=edgecolor, linestyle=linestyle, linewidth=2
-                )
+                    edgecolor=edgecolor, linestyle=linestyle, linewidth=2)
                 ax.add_patch(rect)
                 ax.text(self.position[0], self.position[1], 'Monitor\n(3D plane)',
                        ha='center', va='center', fontsize=8, color=edgecolor)
+    
+    def to_polygon(self):
+        """Convert monitor to a polygon for 3D visualization."""
+        if not hasattr(self, 'vertices') or not self.vertices:
+            return None
+            
+        # Import here to avoid circular imports
+        from beamz.design.structures import Polygon
+        
+        # Create a polygon with the monitor vertices
+        # Use a semi-transparent material for visualization
+        from beamz.design.materials import Material
+        monitor_material = Material(permittivity=1.0, permeability=1.0, conductivity=0.0)
+        
+        # Create polygon with monitor vertices
+        polygon = Polygon(
+            vertices=self.vertices,
+            material=monitor_material,
+            color='rgba(0,0,255,0.3)',  # Semi-transparent blue
+            depth=0.001  # Very thin for visualization
+        )
+        
+        return polygon
     
     def __str__(self):
         stats = self.get_field_statistics()
