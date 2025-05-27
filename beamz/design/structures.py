@@ -634,6 +634,16 @@ class Design:
                 self._add_monitor_to_3d_plot(fig, structure, scale, unit)
                 continue
                 
+            # Handle ModeSource objects specially
+            if isinstance(structure, ModeSource):
+                self._add_mode_source_to_3d_plot(fig, structure, scale, unit)
+                continue
+                
+            # Handle GaussianSource objects specially
+            if isinstance(structure, GaussianSource):
+                self._add_gaussian_source_to_3d_plot(fig, structure, scale, unit)
+                continue
+                
             # Get structure depth
             struct_depth = getattr(structure, 'depth', default_depth)
             struct_z = getattr(structure, 'z', 0)
@@ -898,6 +908,239 @@ class Design:
                 roughness=1.0
             ),
             flatshading=True,
+            showlegend=True
+        ))
+    
+    def _add_mode_source_to_3d_plot(self, fig, source, scale, unit):
+        """Add a mode source plane to the 3D plot."""
+        try:
+            import plotly.graph_objects as go
+        except ImportError:
+            return  # Skip if plotly not available
+            
+        # Use the new position-based approach if available
+        if hasattr(source, 'width') and hasattr(source, 'height') and hasattr(source, 'orientation'):
+            # New position-based approach
+            center = source.position
+            width = source.width
+            height = source.height if source.height > 0 else source.wavelength * 0.5  # Default height
+            orientation = getattr(source, 'orientation', 'yz')
+            
+            # Create vertices based on orientation
+            if orientation == "yz":
+                # Cross-section in yz plane
+                vertices = [
+                    (center[0], center[1] - width/2, center[2] - height/2),
+                    (center[0], center[1] + width/2, center[2] - height/2),
+                    (center[0], center[1] + width/2, center[2] + height/2),
+                    (center[0], center[1] - width/2, center[2] + height/2)
+                ]
+            elif orientation == "xz":
+                # Cross-section in xz plane
+                vertices = [
+                    (center[0] - width/2, center[1], center[2] - height/2),
+                    (center[0] + width/2, center[1], center[2] - height/2),
+                    (center[0] + width/2, center[1], center[2] + height/2),
+                    (center[0] - width/2, center[1], center[2] + height/2)
+                ]
+            else:  # orientation == "xy"
+                # Cross-section in xy plane
+                vertices = [
+                    (center[0] - width/2, center[1] - height/2, center[2]),
+                    (center[0] + width/2, center[1] - height/2, center[2]),
+                    (center[0] + width/2, center[1] + height/2, center[2]),
+                    (center[0] - width/2, center[1] + height/2, center[2])
+                ]
+        else:
+            # Legacy approach using start and end points
+            start = source.start
+            end = source.end
+            
+            # Calculate the line vector and its length
+            line_vec = np.array([end[0] - start[0], end[1] - start[1], end[2] - start[2]])
+            line_length = np.linalg.norm(line_vec)
+            
+            if line_length == 0:
+                # If start and end are the same, create a small square plane
+                center = start
+                # Create a small plane in the xy direction
+                plane_size = source.wavelength * 0.5  # Half wavelength size
+                vertices = [
+                    (center[0] - plane_size/2, center[1] - plane_size/2, center[2]),
+                    (center[0] + plane_size/2, center[1] - plane_size/2, center[2]),
+                    (center[0] + plane_size/2, center[1] + plane_size/2, center[2]),
+                    (center[0] - plane_size/2, center[1] + plane_size/2, center[2])
+                ]
+            else:
+                # Create a plane perpendicular to the line
+                line_unit = line_vec / line_length
+                
+                # Find two perpendicular vectors to create the plane
+                # Choose an arbitrary vector not parallel to line_unit
+                if abs(line_unit[2]) < 0.9:
+                    temp_vec = np.array([0, 0, 1])
+                else:
+                    temp_vec = np.array([1, 0, 0])
+                
+                # Create two orthogonal vectors in the plane
+                perp1 = np.cross(line_unit, temp_vec)
+                perp1 = perp1 / np.linalg.norm(perp1)
+                perp2 = np.cross(line_unit, perp1)
+                perp2 = perp2 / np.linalg.norm(perp2)
+                
+                # Size the plane based on the line length or wavelength
+                plane_size = max(line_length, source.wavelength * 0.5)
+                
+                # Create vertices for a rectangular plane
+                center = np.array([(start[0] + end[0])/2, (start[1] + end[1])/2, (start[2] + end[2])/2])
+                
+                vertices = [
+                    center - perp1 * plane_size/2 - perp2 * plane_size/2,
+                    center + perp1 * plane_size/2 - perp2 * plane_size/2,
+                    center + perp1 * plane_size/2 + perp2 * plane_size/2,
+                    center - perp1 * plane_size/2 + perp2 * plane_size/2
+                ]
+                
+                # Convert to tuples
+                vertices = [(v[0], v[1], v[2]) for v in vertices]
+        
+        # Extract coordinates
+        x_coords = [v[0] for v in vertices]
+        y_coords = [v[1] for v in vertices]
+        z_coords = [v[2] for v in vertices]
+        
+        # Create triangulation for the plane (rectangle = 2 triangles)
+        faces_i = [0, 0]
+        faces_j = [1, 2]
+        faces_k = [2, 3]
+        
+        # Create hover text
+        hovertext = f"ModeSource"
+        hovertext += f"<br>Wavelength: {source.wavelength*scale*1e6:.0f} nm"
+        hovertext += f"<br>Direction: {source.direction}"
+        hovertext += f"<br>Modes: {source.num_modes}"
+        if hasattr(source, 'effective_indices') and len(source.effective_indices) > 0:
+            hovertext += f"<br>n_eff: {source.effective_indices[0].real:.3f}"
+        
+        # Add the source as a semi-transparent mesh
+        fig.add_trace(go.Mesh3d(
+            x=x_coords, y=y_coords, z=z_coords,
+            i=faces_i, j=faces_j, k=faces_k,
+            color='rgba(220,20,60,0.6)',  # Semi-transparent crimson
+            opacity=0.75,
+            name="ModeSource",
+            hovertemplate=hovertext + "<extra></extra>",
+            # Prominent outline for visibility
+            contour=dict(
+                show=True,
+                color="darkred",
+                width=8  # Thick lines for source visibility
+            ),
+            # Flat shading for clean appearance
+            lighting=dict(
+                ambient=0.8,
+                diffuse=0.2,
+                fresnel=0.0,
+                specular=0.0,
+                roughness=1.0
+            ),
+            flatshading=True,
+            showlegend=True
+        ))
+        
+        # Add an arrow to show the propagation direction
+        self._add_direction_arrow_to_3d_plot(fig, source, vertices)
+    
+    def _add_direction_arrow_to_3d_plot(self, fig, source, plane_vertices):
+        """Add a direction arrow to show the propagation direction of the mode source."""
+        try:
+            import plotly.graph_objects as go
+        except ImportError:
+            return
+            
+        # Calculate the center of the plane
+        center = np.array([
+            sum(v[0] for v in plane_vertices) / len(plane_vertices),
+            sum(v[1] for v in plane_vertices) / len(plane_vertices),
+            sum(v[2] for v in plane_vertices) / len(plane_vertices)
+        ])
+        
+        # Determine arrow direction based on source.direction
+        arrow_length = source.wavelength * 0.8
+        
+        if source.direction == "+x":
+            arrow_end = center + np.array([arrow_length, 0, 0])
+        elif source.direction == "-x":
+            arrow_end = center + np.array([-arrow_length, 0, 0])
+        elif source.direction == "+y":
+            arrow_end = center + np.array([0, arrow_length, 0])
+        elif source.direction == "-y":
+            arrow_end = center + np.array([0, -arrow_length, 0])
+        elif source.direction == "+z":
+            arrow_end = center + np.array([0, 0, arrow_length])
+        elif source.direction == "-z":
+            arrow_end = center + np.array([0, 0, -arrow_length])
+        else:
+            # Default to +x direction
+            arrow_end = center + np.array([arrow_length, 0, 0])
+        
+        # Create arrow as a line with a cone at the end
+        fig.add_trace(go.Scatter3d(
+            x=[center[0], arrow_end[0]],
+            y=[center[1], arrow_end[1]],
+            z=[center[2], arrow_end[2]],
+            mode='lines',
+            line=dict(color='darkred', width=8),
+            name="Propagation Direction",
+            showlegend=False,
+            hoverinfo='skip'
+        ))
+        
+        # Add arrowhead as a cone
+        fig.add_trace(go.Cone(
+            x=[arrow_end[0]], y=[arrow_end[1]], z=[arrow_end[2]],
+            u=[arrow_end[0] - center[0]], v=[arrow_end[1] - center[1]], w=[arrow_end[2] - center[2]],
+            sizemode="absolute",
+            sizeref=arrow_length * 0.3,
+            colorscale=[[0, 'darkred'], [1, 'darkred']],
+            showscale=False,
+            showlegend=False,
+            hoverinfo='skip'
+        ))
+    
+    def _add_gaussian_source_to_3d_plot(self, fig, source, scale, unit):
+        """Add a Gaussian source as a sphere to the 3D plot."""
+        try:
+            import plotly.graph_objects as go
+        except ImportError:
+            return  # Skip if plotly not available
+            
+        # Create a sphere to represent the Gaussian source
+        position = source.position
+        radius = source.width * 0.5  # Use half the width as radius
+        
+        # Create sphere coordinates
+        phi = np.linspace(0, 2*np.pi, 20)
+        theta = np.linspace(0, np.pi, 20)
+        phi, theta = np.meshgrid(phi, theta)
+        
+        x = position[0] + radius * np.sin(theta) * np.cos(phi)
+        y = position[1] + radius * np.sin(theta) * np.sin(phi)
+        z = position[2] + radius * np.cos(theta)
+        
+        # Create hover text
+        hovertext = f"GaussianSource"
+        hovertext += f"<br>Position: ({position[0]*scale:.2f}, {position[1]*scale:.2f}, {position[2]*scale:.2f}) {unit}"
+        hovertext += f"<br>Width: {source.width*scale:.2f} {unit}"
+        
+        # Add the source as a semi-transparent sphere
+        fig.add_trace(go.Surface(
+            x=x, y=y, z=z,
+            colorscale=[[0, 'rgba(255,69,0,0.7)'], [1, 'rgba(255,69,0,0.7)']],  # Orange-red
+            opacity=0.7,
+            name="GaussianSource",
+            hovertemplate=hovertext + "<extra></extra>",
+            showscale=False,
             showlegend=True
         ))
     

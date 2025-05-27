@@ -24,7 +24,15 @@ design += Monitor(start=(0, 0, Z/2+Z/16), end=(X, Y, Z/2+Z/16), record_fields=Fa
 # Define the source
 time_steps = np.arange(0, TIME, DT)
 signal = ramped_cosine(time_steps, amplitude=1.0, frequency=LIGHT_SPEED/WL, phase=0, ramp_duration=WL*5/LIGHT_SPEED, t_max=TIME/2)
-source = ModeSource(design=design, start=(2*µm, Y/2-1.2*µm, Z/2+Z/16), end=(2*µm, Y/2+1.2*µm, Z/2+Z/16), wavelength=WL, signal=signal)
+source = ModeSource(design=design, position=(2*µm, Y/2, Z/2), 
+                    width=3*µm, height=3*µm, direction="+x", signal=signal)
 design += source
 design.show()
+
+# Run the simulation
+sim = FDTD(design=design, time=time_steps, mesh="regular", resolution=DX)
+sim.run(live=True, save_memory_mode=True, accumulate_power=True)
+sim.plot_power(db_colorbar=True)
+
+
 

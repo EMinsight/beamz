@@ -35,24 +35,70 @@ class GaussianSource():
 # TODO: Add mode solver options to integrate the analytical mode solver in mode.py. Future: Add FDFD mode solver and Tidy3D mode solver.
 # Make a comparison study!
 class ModeSource():
-    """Calculates and injects the mode profiles for a cross section given a start and end point.
+    """Calculates and injects the mode profiles for a cross section.
     
     Args:
         design: Design object containing the structures
-        start: Starting point of the source line (x,y) or (x,y,z)
-        end: End point of the source line (x,y) or (x,y,z)
+        position: Center position of the source (x,y) or (x,y,z)
+        width: Width of the source cross-section (perpendicular to propagation)
+        height: Height of the source cross-section (perpendicular to propagation, for 3D)
         wavelength: Source wavelength
         signal: Time-dependent signal
         direction: Direction of propagation ("+x", "-x", "+y", "-y", "+z", "-z")
+        orientation: Orientation of the cross-section ("xy", "xz", "yz") - auto-determined from direction if not specified
         npml: Number of PML layers to use at boundaries
         num_modes: Number of modes to calculate
         grid_resolution: Points per wavelength for grid resolution (higher = finer)
         mode_solver: Mode solver to use ("num_eigen" or "analytical")
+        
+        # Legacy support (deprecated):
+        start: Starting point of the source line (x,y) or (x,y,z) - use position instead
+        end: End point of the source line (x,y) or (x,y,z) - use position + width/height instead
     """
-    def __init__(self, design, start, end, wavelength=1.55*µm, signal=0, direction="+x", 
-                 npml=20, num_modes=2, grid_resolution=2000, mode_solver="num_eigen"):
-        self.start = self._ensure_3d_position(start)
-        self.end = self._ensure_3d_position(end)
+    def __init__(self, design, position=None, width=None, height=None, wavelength=1.55*µm, signal=0, direction="+x", 
+                 orientation=None, npml=20, num_modes=2, grid_resolution=2000, mode_solver="num_eigen",
+                 start=None, end=None):
+        # Handle legacy start/end parameters vs new position/width/height approach
+        if start is not None and end is not None:
+            # Legacy mode: use start and end points
+            self.start = self._ensure_3d_position(start)
+            self.end = self._ensure_3d_position(end)
+            # Calculate position, width, height from start/end for consistency
+            self._position = ((self.start[0] + self.end[0]) / 2, 
+                            (self.start[1] + self.end[1]) / 2, 
+                            (self.start[2] + self.end[2]) / 2)
+            # Calculate width and height from the line
+            line_vec = np.array([self.end[0] - self.start[0], 
+                               self.end[1] - self.start[1], 
+                               self.end[2] - self.start[2]])
+            self.width = np.linalg.norm(line_vec)
+            self.height = 0  # Line source has no height
+            print("Warning: Using deprecated start/end parameters. Use position, width, height instead.")
+        else:
+            # New mode: use position, width, height
+            if position is None:
+                raise ValueError("Either (start, end) or position must be specified")
+            
+            self._position = self._ensure_3d_position(position)
+            self.width = width if width is not None else wavelength  # Default width to wavelength
+            self.height = height if height is not None else 0  # Default to 2D (line source)
+            
+            # Determine orientation from direction if not specified
+            if orientation is None:
+                if direction in ["+x", "-x"]:
+                    orientation = "yz"  # Cross-section perpendicular to x
+                elif direction in ["+y", "-y"]:
+                    orientation = "xz"  # Cross-section perpendicular to y
+                elif direction in ["+z", "-z"]:
+                    orientation = "xy"  # Cross-section perpendicular to z
+                else:
+                    orientation = "yz"  # Default
+            
+            self.orientation = orientation
+            
+            # Calculate start and end points from position and dimensions
+            self.start, self.end = self._calculate_start_end_from_position()
+        
         self.wavelength = wavelength
         self.design = design
         self.signal = signal
@@ -127,16 +173,62 @@ class ModeSource():
             
     def _ensure_3d_position(self, position):
         """Convert 2D position to 3D with z=0 if needed."""
+        if position is None:
+            return None
         if len(position) == 2: return (position[0], position[1], 0)
         elif len(position) == 3: return position
         else: raise ValueError(f"Position must be 2D (x,y) or 3D (x,y,z), got {len(position)} dimensions")
     
+    def _calculate_start_end_from_position(self):
+        """Calculate start and end points from position, width, height, and orientation."""
+        x, y, z = self._position
+        
+        if self.orientation == "yz":
+            # Cross-section in yz plane (propagation in x direction)
+            if self.height == 0:
+                # 2D line source in y direction
+                start = (x, y - self.width/2, z)
+                end = (x, y + self.width/2, z)
+            else:
+                # 3D rectangular source in yz plane
+                # For mode calculation, we still need a line - use the center line in y direction
+                start = (x, y - self.width/2, z)
+                end = (x, y + self.width/2, z)
+        elif self.orientation == "xz":
+            # Cross-section in xz plane (propagation in y direction)
+            if self.height == 0:
+                # 2D line source in x direction
+                start = (x - self.width/2, y, z)
+                end = (x + self.width/2, y, z)
+            else:
+                # 3D rectangular source in xz plane
+                start = (x - self.width/2, y, z)
+                end = (x + self.width/2, y, z)
+        elif self.orientation == "xy":
+            # Cross-section in xy plane (propagation in z direction)
+            if self.height == 0:
+                # 2D line source in x direction (default)
+                start = (x - self.width/2, y, z)
+                end = (x + self.width/2, y, z)
+            else:
+                # 3D rectangular source in xy plane
+                start = (x - self.width/2, y, z)
+                end = (x + self.width/2, y, z)
+        else:
+            raise ValueError(f"Invalid orientation: {self.orientation}. Must be 'xy', 'xz', or 'yz'")
+        
+        return start, end
+    
     @property
     def position(self):
-        """Return the midpoint between start and end points."""
-        return ((self.start[0] + self.end[0]) / 2, 
-                (self.start[1] + self.end[1]) / 2, 
-                (self.start[2] + self.end[2]) / 2)
+        """Return the center position of the source."""
+        if hasattr(self, '_position'):
+            return self._position
+        else:
+            # Legacy mode: calculate from start and end points
+            return ((self.start[0] + self.end[0]) / 2, 
+                    (self.start[1] + self.end[1]) / 2, 
+                    (self.start[2] + self.end[2]) / 2)
     
     @property
     def position_2d(self):
