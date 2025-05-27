@@ -561,65 +561,114 @@ class FDTD:
                 
                 # Accumulate power if requested
                 if accumulate_power:
-                    # Calculate instantaneous power
-                    Ez_np = self.backend.to_numpy(self.Ez)
-                    Hx_np = self.backend.to_numpy(self.Hx)
-                    Hy_np = self.backend.to_numpy(self.Hy)
-                    
-                    # Check if any field is complex
-                    is_complex = np.iscomplexobj(Ez_np) or np.iscomplexobj(Hx_np) or np.iscomplexobj(Hy_np)
-                    
-                    # Handle complex Ez data
-                    if np.iscomplexobj(Ez_np):
-                        Ez_real = np.real(Ez_np)
-                        Ez_imag = np.imag(Ez_np)
-                    else:
-                        Ez_real = Ez_np
-                        Ez_imag = np.zeros_like(Ez_np)
-                    
-                    # Extend magnetic fields to match Ez dimensions
-                    # Create arrays with matching dtype to avoid warnings
-                    if is_complex:
-                        Hx_full = np.zeros_like(Ez_np, dtype=np.complex128)
-                        Hy_full = np.zeros_like(Ez_np, dtype=np.complex128)
-                    else:
-                        Hx_full = np.zeros_like(Ez_real)
-                        Hy_full = np.zeros_like(Ez_real)
+                    if self.is_3d:
+                        # 3D power calculation with proper field interpolation
+                        Ex_np = self.backend.to_numpy(self.Ex)
+                        Ey_np = self.backend.to_numpy(self.Ey)
+                        Ez_np = self.backend.to_numpy(self.Ez)
+                        Hx_np = self.backend.to_numpy(self.Hx)
+                        Hy_np = self.backend.to_numpy(self.Hy)
+                        Hz_np = self.backend.to_numpy(self.Hz)
                         
-                    # Properly handle filling the arrays
-                    if np.iscomplexobj(Hx_np):
-                        Hx_full[:, :-1] = Hx_np
-                    else:
-                        Hx_full[:, :-1] = Hx_np
+                        # For simplified power calculation, use the center region where all fields overlap
+                        # This avoids complex interpolation while still giving meaningful power distribution
+                        min_z = min(Ex_np.shape[0], Ey_np.shape[0], Ez_np.shape[0], Hx_np.shape[0], Hy_np.shape[0], Hz_np.shape[0])
+                        min_y = min(Ex_np.shape[1], Ey_np.shape[1], Ez_np.shape[1], Hx_np.shape[1], Hy_np.shape[1], Hz_np.shape[1])
+                        min_x = min(Ex_np.shape[2], Ey_np.shape[2], Ez_np.shape[2], Hx_np.shape[2], Hy_np.shape[2], Hz_np.shape[2])
                         
-                    if np.iscomplexobj(Hy_np):
-                        Hy_full[:-1, :] = Hy_np
-                    else:
-                        Hy_full[:-1, :] = Hy_np
-                    
-                    # For complex fields, extract real/imag parts for power calculation
-                    if is_complex:
-                        Hx_real = np.real(Hx_full)
-                        Hx_imag = np.imag(Hx_full)
-                        Hy_real = np.real(Hy_full)
-                        Hy_imag = np.imag(Hy_full)
+                        # Extract overlapping regions
+                        Ex_center = Ex_np[:min_z, :min_y, :min_x]
+                        Ey_center = Ey_np[:min_z, :min_y, :min_x]
+                        Ez_center = Ez_np[:min_z, :min_y, :min_x]
+                        Hx_center = Hx_np[:min_z, :min_y, :min_x]
+                        Hy_center = Hy_np[:min_z, :min_y, :min_x]
+                        Hz_center = Hz_np[:min_z, :min_y, :min_x]
                         
-                        # Calculate Poynting vector components for real and imaginary parts
-                        # Using complete formula for complex Poynting vector:
-                        # S = (1/2) Re[E × H*] where H* is complex conjugate of H
-                        Sx = -Ez_real * Hy_real - Ez_imag * Hy_imag
-                        Sy = Ez_real * Hx_real + Ez_imag * Hx_imag
+                        # Calculate Poynting vector S = E × H (take real part for power)
+                        Sx = np.real(Ey_center * np.conj(Hz_center) - Ez_center * np.conj(Hy_center))
+                        Sy = np.real(Ez_center * np.conj(Hx_center) - Ex_center * np.conj(Hz_center))
+                        Sz = np.real(Ex_center * np.conj(Hy_center) - Ey_center * np.conj(Hx_center))
+                        
+                        # Calculate power magnitude |S|
+                        power_mag = np.sqrt(Sx**2 + Sy**2 + Sz**2)
+                        
+                        # Initialize or accumulate power
+                        if self.power_accumulated is None:
+                            self.power_accumulated = power_mag.copy()
+                        else:
+                            # Ensure shapes match before adding (handle 2D vs 3D transitions)
+                            if self.power_accumulated.shape != power_mag.shape:
+                                self.power_accumulated = power_mag.copy()
+                                self.power_accumulation_count = 0
+                            self.power_accumulated += power_mag
+                        self.power_accumulation_count += 1
                     else:
-                        # Real-only fields, simple calculation
-                        Sx = -Ez_real * Hy_full
-                        Sy = Ez_real * Hx_full
-                    
-                    # Calculate power magnitude (|S|²)
-                    power_mag = Sx**2 + Sy**2
-                    
-                    # Accumulate power
-                    self.power_accumulated += power_mag
-                    self.power_accumulation_count += 1
+                        # 2D power calculation
+                        Ez_np = self.backend.to_numpy(self.Ez)
+                        Hx_np = self.backend.to_numpy(self.Hx)
+                        Hy_np = self.backend.to_numpy(self.Hy)
+                        
+                        # Check if any field is complex
+                        is_complex = np.iscomplexobj(Ez_np) or np.iscomplexobj(Hx_np) or np.iscomplexobj(Hy_np)
+                        
+                        # Handle complex Ez data
+                        if np.iscomplexobj(Ez_np):
+                            Ez_real = np.real(Ez_np)
+                            Ez_imag = np.imag(Ez_np)
+                        else:
+                            Ez_real = Ez_np
+                            Ez_imag = np.zeros_like(Ez_np)
+                        
+                        # Extend magnetic fields to match Ez dimensions
+                        # Create arrays with matching dtype to avoid warnings
+                        if is_complex:
+                            Hx_full = np.zeros_like(Ez_np, dtype=np.complex128)
+                            Hy_full = np.zeros_like(Ez_np, dtype=np.complex128)
+                        else:
+                            Hx_full = np.zeros_like(Ez_real)
+                            Hy_full = np.zeros_like(Ez_real)
+                            
+                        # Properly handle filling the arrays for 2D
+                        if np.iscomplexobj(Hx_np):
+                            Hx_full[:, :-1] = Hx_np
+                        else:
+                            Hx_full[:, :-1] = Hx_np
+                            
+                        if np.iscomplexobj(Hy_np):
+                            Hy_full[:-1, :] = Hy_np
+                        else:
+                            Hy_full[:-1, :] = Hy_np
+                        
+                        # For complex fields, extract real/imag parts for power calculation
+                        if is_complex:
+                            Hx_real = np.real(Hx_full)
+                            Hx_imag = np.imag(Hx_full)
+                            Hy_real = np.real(Hy_full)
+                            Hy_imag = np.imag(Hy_full)
+                            
+                            # Calculate Poynting vector components for real and imaginary parts
+                            # Using complete formula for complex Poynting vector:
+                            # S = (1/2) Re[E × H*] where H* is complex conjugate of H
+                            Sx = -Ez_real * Hy_real - Ez_imag * Hy_imag
+                            Sy = Ez_real * Hx_real + Ez_imag * Hx_imag
+                        else:
+                            # Real-only fields, simple calculation
+                            Sx = -Ez_real * Hy_full
+                            Sy = Ez_real * Hx_full
+                        
+                        # Calculate power magnitude (|S|²)
+                        power_mag = Sx**2 + Sy**2
+                        
+                        # Initialize or accumulate power
+                        if self.power_accumulated is None:
+                            self.power_accumulated = power_mag.copy()
+                        else:
+                            # Ensure shapes match before adding (handle 2D vs 3D transitions)
+                            if self.power_accumulated.shape != power_mag.shape:
+                                self.power_accumulated = power_mag.copy()
+                                self.power_accumulation_count = 0
+                            self.power_accumulated += power_mag
+                        self.power_accumulation_count += 1
                 
                 # Save results if requested and at the right frequency
                 if save and not save_memory_mode and (step % effective_save_freq == 0 or step == self.num_steps - 1):
@@ -669,23 +718,40 @@ class FDTD:
         
     def _record_monitor_data(self, step):
         """Record field data at monitor locations"""
+        # Skip if no monitors
+        if not self.design.monitors:
+            return
+            
         # Convert field data to numpy for monitors
-        Ez_np = self.backend.to_numpy(self.Ez)
-        Hx_np = self.backend.to_numpy(self.Hx)
-        Hy_np = self.backend.to_numpy(self.Hy)
-        
-        # Record data for each monitor
-        for monitor in self.design.monitors:
-            # Use the monitor's record_fields method
-            monitor.record_fields(
-                Ez=Ez_np,  # Ez is already complex if needed
-                Hx=Hx_np, 
-                Hy=Hy_np,
-                t=self.t,
-                dx=self.dx,
-                dy=self.dy,
-                save_memory=self.save_memory_mode,
-                accumulate_power=self.accumulate_power)
+        if self.is_3d:
+            # 3D simulation
+            Ex_np = self.backend.to_numpy(self.Ex)
+            Ey_np = self.backend.to_numpy(self.Ey)
+            Ez_np = self.backend.to_numpy(self.Ez)
+            Hx_np = self.backend.to_numpy(self.Hx)
+            Hy_np = self.backend.to_numpy(self.Hy)
+            Hz_np = self.backend.to_numpy(self.Hz)
+            
+            # Record data for each monitor
+            for monitor in self.design.monitors:
+                if hasattr(monitor, 'record_fields') and callable(monitor.record_fields):
+                    monitor.record_fields(
+                        Ex_np, Ey_np, Ez_np, Hx_np, Hy_np, Hz_np,
+                        self.t, self.dx, self.dy, self.dz, step=step
+                    )
+        else:
+            # 2D simulation
+            Ez_np = self.backend.to_numpy(self.Ez)
+            Hx_np = self.backend.to_numpy(self.Hx)
+            Hy_np = self.backend.to_numpy(self.Hy)
+            
+            # Record data for each monitor
+            for monitor in self.design.monitors:
+                if hasattr(monitor, 'record_fields') and callable(monitor.record_fields):
+                    monitor.record_fields(
+                        Ez_np, Hx_np, Hy_np,
+                        self.t, self.dx, self.dy, step=step
+                    )
 
     def save_animation(self, field: str = "Ez", axis_scale=[-1, 1], filename='fdtd_animation.mp4', fps=60, frame_skip=4, clean_visualization=False):
         """Save an animation of the simulation results as an mp4 file."""
