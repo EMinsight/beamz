@@ -1,17 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle as MatplotlibRectangle
-import time
 
-class Monitor():
-    """
-    Field monitor for FDTD simulations.
-    - 2D simulations: 1D line monitor
-    - 3D simulations: 2D plane monitor
-    
-    Supports live visualization, full history recording, and interval-based sampling.
-    """
-    
+class Monitor():    
     def __init__(self, design=None, start=(0,0), end=None, plane_normal=None, plane_position=0, 
                  size=None, record_fields=True, accumulate_power=True, live_update=False, 
                  record_interval=1, max_history_steps=None):
