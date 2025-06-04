@@ -6,7 +6,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 def get_backend(name="numpy", **kwargs):
-    """Selected the backend."""
+    """Select the backend."""
     name = name.lower()
         
     if name == "numpy":
@@ -23,4 +23,17 @@ def get_backend(name="numpy", **kwargs):
             from beamz.simulation.backends.numpy_backend import NumPyBackend
             return NumPyBackend(**kwargs)
     
+    if name == "jax":
+        try:
+            import jax
+            from beamz.simulation.backends.jax_backend import JAXBackend
+            return JAXBackend(**kwargs)
+        except ImportError as e:
+            logger.warning(f"JAX not available ({e}), falling back to NumPy backend")
+            from beamz.simulation.backends.numpy_backend import NumPyBackend
+            return NumPyBackend(**kwargs)
+    
     raise ValueError(f"Unknown backend: {name}")
+
+# Export available backends
+__all__ = ['get_backend']
