@@ -16,17 +16,13 @@ OFFSET = 1.05*µm # offset of the output waveguides from center of the MMI
 DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE, N_CLAD), dims=2, safety_factor=0.60) 
 
 # Initialize design region permittivity matrix for inverse design
-design_region_size = 10  # Higher resolution for better design
-design_reg_mat = np.ones((design_region_size, design_region_size)) * N_CLAD**2
+design_region_size = 20  # Higher resolution for better design
+design_reg_mat = np.ones((design_region_size, design_region_size)) * (N_CLAD**2 + N_CORE**2)/2
 # Add some random noise to the design region
 design_reg_mat += np.random.normal(0, 0.1, design_reg_mat.shape)
 # Create CustomMaterial for the design region
 design_bounds = ((X/2-S/2, X/2+S/2), (Y/2-S/2, Y/2+S/2))  # Design region bounds
-custom_material = CustomMaterial(
-    permittivity_grid=design_reg_mat,
-    bounds=design_bounds,
-    interpolation='linear'
-)
+custom_material = CustomMaterial(permittivity_grid=design_reg_mat, bounds=design_bounds, interpolation='cubic')
 
 # Design the MMI with input and output waveguides
 design = Design(width=X, height=Y, material=Material(N_CLAD**2), pml_size=WL)
@@ -38,7 +34,6 @@ design.show()
 
 grid = RegularGrid(design=design, resolution=DX)
 grid.show()
-
 
 # Define the source
 time_steps = np.arange(0, TIME, DT)
@@ -93,24 +88,19 @@ def ADAM_optimizer(field_overlap, design_reg_mat, alpha=0.001, beta1=0.9, beta2=
     """
     # Initialize Adam optimizer
     optimizer = optax.adam(learning_rate=alpha, b1=beta1, b2=beta2, eps=epsilon)
-    
     # Initialize optimizer state (this should be done once and passed between iterations)
     if not hasattr(ADAM_optimizer, 'opt_state'): ADAM_optimizer.opt_state = optimizer.init(design_reg_mat)
     # Use field_overlap as gradient (this represents sensitivity of objective to design changes)
     gradient = field_overlap
-    
     # Apply gradient clipping to avoid instability
     gradient = np.clip(gradient, -1.0, 1.0)
-    
     # Compute parameter updates using Adam
     updates, ADAM_optimizer.opt_state = optimizer.update(gradient, ADAM_optimizer.opt_state, design_reg_mat)
-    
     # Apply updates to design region
     updated_design_reg_mat = optax.apply_updates(design_reg_mat, updates)
-    
     # Apply bounds to keep permittivity in valid range
     updated_design_reg_mat = np.clip(updated_design_reg_mat, N_CLAD**2, N_CORE**2)
-    
+
     return updated_design_reg_mat, ADAM_optimizer.opt_state
 
 def run_optimization_loop(num_iterations=5):
@@ -181,7 +171,4 @@ def run_optimization_loop(num_iterations=5):
     return design_reg_mat, objective_history
 
 # Run the optimization (commented out for now)
-# optimized_design, history = run_optimization_loop(num_iterations=3)
-
-#field_history = forward_sim(design) # this is a tensor of shape (time_steps, 2)
-#field_overlap = backward_sim(design, field_history) # this is a tensor of shape (time_steps, 2)
+optimized_design, history = run_optimization_loop(num_iterations=3)

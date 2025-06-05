@@ -40,6 +40,15 @@ class BaseMeshGrid:
                 permittivity = material.get_permittivity(x, y, z)
                 permeability = material.get_permeability(x, y, z)
                 conductivity = material.get_conductivity(x, y, z)
+                
+                # Handle numpy arrays vs scalars
+                if hasattr(permittivity, 'item'):
+                    permittivity = permittivity.item()
+                if hasattr(permeability, 'item'):
+                    permeability = permeability.item()
+                if hasattr(conductivity, 'item'):
+                    conductivity = conductivity.item()
+                
                 return permittivity, permeability, conductivity
             except Exception as e:
                 print(f"Warning: CustomMaterial evaluation failed: {e}, using defaults")
@@ -156,8 +165,14 @@ class RegularGrid(BaseMeshGrid):
                 if not hasattr(structure, 'material') or structure.material is None:
                     progress.update(task, advance=1)
                     continue
-                # Cache material properties for performance
-                mat_perm, mat_permb, mat_cond = self._get_material_properties_safe(structure.material)
+                # Check if this is a CustomMaterial that needs spatial evaluation
+                is_custom_material = hasattr(structure.material, 'get_permittivity')
+                if is_custom_material:
+                    # For CustomMaterial, we'll evaluate at each spatial location during rasterization
+                    mat_perm, mat_permb, mat_cond = None, None, None
+                else:
+                    # Cache material properties for performance (traditional Material objects)
+                    mat_perm, mat_permb, mat_cond = self._get_material_properties_safe(structure.material)
                 try:
                     # Get bounding box of the structure
                     bbox = structure.get_bounding_box()
@@ -197,9 +212,19 @@ class RegularGrid(BaseMeshGrid):
                         inner_max_i = min(grid_height, int(np.floor((structure.position[1] + structure.height - 0.25 * cell_size) / cell_size)))
                         # Fast fill interior cells (fully covered, no need for sampling)
                         if inner_max_i > inner_min_i and inner_max_j > inner_min_j:
-                            permittivity[inner_min_i:inner_max_i, inner_min_j:inner_max_j] = mat_perm
-                            permeability[inner_min_i:inner_max_i, inner_min_j:inner_max_j] = mat_permb
-                            conductivity[inner_min_i:inner_max_i, inner_min_j:inner_max_j] = mat_cond
+                            if is_custom_material:
+                                # Evaluate CustomMaterial at each interior point
+                                for i in range(inner_min_i, inner_max_i):
+                                    for j in range(inner_min_j, inner_max_j):
+                                        x, y = x_centers[j], y_centers[i]
+                                        perm, permb, cond = self._get_material_properties_safe(structure.material, x, y)
+                                        permittivity[i, j] = perm
+                                        permeability[i, j] = permb
+                                        conductivity[i, j] = cond
+                            else:
+                                permittivity[inner_min_i:inner_max_i, inner_min_j:inner_max_j] = mat_perm
+                                permeability[inner_min_i:inner_max_i, inner_min_j:inner_max_j] = mat_permb
+                                conductivity[inner_min_i:inner_max_i, inner_min_j:inner_max_j] = mat_cond
                         # Calculate boundary region cells (those that need super-sampling)
                         # This is more efficient than checking each cell individually
                         boundary_mask = np.zeros((rect_max_i - rect_min_i, rect_max_j - rect_min_j), dtype=bool)
@@ -229,6 +254,10 @@ class RegularGrid(BaseMeshGrid):
                                 # Calculate blend factor
                                 blend_factor = samples_inside / num_samples
                                 # Update material properties
+                                if is_custom_material:
+                                    # Evaluate CustomMaterial at cell center for boundary blending
+                                    x, y = x_centers[j], y_centers[i]
+                                    mat_perm, mat_permb, mat_cond = self._get_material_properties_safe(structure.material, x, y)
                                 permittivity[i, j] = permittivity[i, j] * (1 - blend_factor) + mat_perm * blend_factor
                                 permeability[i, j] = permeability[i, j] * (1 - blend_factor) + mat_permb * blend_factor
                                 conductivity[i, j] = conductivity[i, j] * (1 - blend_factor) + mat_cond * blend_factor
