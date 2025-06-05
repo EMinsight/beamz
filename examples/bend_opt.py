@@ -80,11 +80,15 @@ def backward_sim(design, field_history):
         total_power += np.abs(power)
         
         # Calculate spatial gradient for adjoint method
-        if sim.current_step < len(field_history['Ez']):
+        # IMPORTANT: Adjoint simulation runs backward in time!
+        # Current backward step corresponds to (total_steps - current_step) in forward simulation
+        forward_step_index = len(field_history['Ez']) - sim.current_step - 1
+        
+        if 0 <= forward_step_index < len(field_history['Ez']):
             # Get current backward fields
             Ez_backward = sim.get_current_fields()['Ez']
-            # Get corresponding forward fields
-            Ez_forward = field_history['Ez'][sim.current_step]
+            # Get corresponding time-reversed forward fields
+            Ez_forward = field_history['Ez'][forward_step_index]
             
             # Extract design region from both fields
             Ez_back_design = Ez_backward[y_start_idx:y_end_idx, x_start_idx:x_end_idx]
@@ -97,14 +101,21 @@ def backward_sim(design, field_history):
                 Ez_back_design = zoom(Ez_back_design, (scale_y, scale_x), order=1)
                 Ez_forward_design = zoom(Ez_forward_design, (scale_y, scale_x), order=1)
             
-            # Compute gradient contribution (adjoint method)
-            # Gradient of objective w.r.t. permittivity = 2π/λ * ε₀ * ω * Im(E_forward* × E_backward)
-            gradient_contribution = np.real(Ez_forward_design * np.conj(Ez_back_design))
-            gradient_accumulator += gradient_contribution
+            # Correct adjoint gradient formula for maximizing transmission
+            # Gradient of objective w.r.t. permittivity = -ω²ε₀/2 * Re(E_forward · E_adjoint*)
+            # Since we want to MAXIMIZE transmission (minimize negative transmission),
+            # we need the NEGATIVE of this gradient
+            omega = 2 * np.pi * LIGHT_SPEED / WL
+            gradient_contribution = omega**2 * 8.854e-12 / 2 * np.real(Ez_forward_design * np.conj(Ez_back_design))
+            
+            # Since our objective is -power (we minimize negative power to maximize power),
+            # we want the negative gradient to maximize transmission
+            gradient_accumulator -= gradient_contribution
         
         if sim.current_step % 50 == 0:
             print(f"Step {sim.current_step}/{sim.num_steps}")
             print(f"Overlap: {overlap:.6f}")
+            print(f"Forward step index: {forward_step_index}")
     
     # Finalize simulation
     results = sim.finalize_simulation()
@@ -167,23 +178,32 @@ def run_optimization_loop(num_iterations=5):
         total_overlap, total_power, spatial_gradient = backward_sim(design, field_history)
         
         # The spatial_gradient now contains proper adjoint gradients for each pixel
-        # Apply some smoothing and normalization
+        # Process the gradient for optimization
         gradient_field = spatial_gradient.real  # Use real part for gradients
         
-        # Normalize gradient to prevent exploding/vanishing gradients
+        # Remove DC component to focus on spatial variations
+        gradient_field = gradient_field - np.mean(gradient_field)
+        
+        # Normalize gradient magnitude but preserve direction
         gradient_norm = np.linalg.norm(gradient_field)
         if gradient_norm > 0:
-            gradient_field = gradient_field / gradient_norm * 0.1  # Scale to reasonable magnitude
+            # Scale gradient to reasonable magnitude for optimization
+            gradient_field = gradient_field / gradient_norm * 0.05  # Reduced scaling
         
-        # Add small amount of regularization to encourage smooth designs
-        gradient_field = gaussian_filter(gradient_field, sigma=0.5)
+        # Apply light smoothing to encourage manufacturability (reduce sharp features)
+        gradient_field = gaussian_filter(gradient_field, sigma=0.8)  # Increased smoothing
+        
+        print(f"Gradient statistics:")
+        print(f"  Mean: {np.mean(gradient_field):.8f}")
+        print(f"  Std: {np.std(gradient_field):.8f}")
+        print(f"  Min: {gradient_field.min():.6f}, Max: {gradient_field.max():.6f}")
 
         # Update design using ADAM optimizer
         print("Updating design with ADAM optimizer...")
         design_reg_mat, opt_state = ADAM_optimizer(
             field_overlap=gradient_field,
             design_reg_mat=design_reg_mat,
-            alpha=0.1  # Reduced learning rate for stability with proper gradients
+            alpha=0.05  # Further reduced learning rate for stability
         )
 
         # Compute objective using transmitted power as the main metric
