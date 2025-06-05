@@ -7,7 +7,7 @@ class Monitor():
                  size=None, record_fields=True, accumulate_power=True, live_update=False, 
                  record_interval=1, max_history_steps=None):
         self.design = design
-        self.record_fields = record_fields
+        self.should_record_fields = record_fields
         self.accumulate_power = accumulate_power
         self.live_update = live_update
         self.record_interval = record_interval
@@ -55,7 +55,12 @@ class Monitor():
         # If start has 3 coordinates, it's 3D
         if len(start) == 3:
             return True
-        # If design is 3D, default to 3D monitor
+        # For 2D monitors with start/end (line monitors), stay in 2D mode
+        # even if the design supports 3D - this handles the common case where 
+        # users create line monitors in 2D simulations
+        if end is not None and len(start) == 2 and len(end) == 2:
+            return False
+        # If design is 3D and not explicitly using 2D start/end, default to 3D monitor
         if design and hasattr(design, 'is_3d') and design.is_3d:
             return True
         return False
@@ -237,24 +242,28 @@ class Monitor():
     
     def record_fields_2d(self, Ez, Hx, Hy, t, dx, dy, step=0):
         """Record 2D field data."""
-        if not self.should_record(step): return
+        if not self.should_record(step): 
+            return
         grid_points = self.get_grid_points_2d(dx, dy)
         Ez_values, Hx_values, Hy_values = [], [], []
         for x_idx, y_idx in grid_points:
             # Ez values
             if 0 <= y_idx < Ez.shape[0] and 0 <= x_idx < Ez.shape[1]:
-                Ez_values.append(float(Ez[y_idx, x_idx]))
+                val = Ez[y_idx, x_idx]
+                Ez_values.append(complex(val) if np.iscomplexobj(val) else float(val))
             else: Ez_values.append(0.0)
             # Hx values
             if 0 <= y_idx < Hx.shape[0] and 0 <= x_idx < Hx.shape[1]:
-                Hx_values.append(float(Hx[y_idx, x_idx]))
+                val = Hx[y_idx, x_idx]
+                Hx_values.append(complex(val) if np.iscomplexobj(val) else float(val))
             else: Hx_values.append(0.0)
             # Hy values
             if 0 <= y_idx < Hy.shape[0] and 0 <= x_idx < Hy.shape[1]:
-                Hy_values.append(float(Hy[y_idx, x_idx]))
+                val = Hy[y_idx, x_idx]
+                Hy_values.append(complex(val) if np.iscomplexobj(val) else float(val))
             else: Hy_values.append(0.0)
         
-        if self.record_fields:
+        if self.should_record_fields:
             self.fields['Ez'].append(Ez_values)
             self.fields['Hx'].append(Hx_values)
             self.fields['Hy'].append(Hy_values)
@@ -282,7 +291,7 @@ class Monitor():
         Hx_slice = Hx[slice_indices].copy()
         Hy_slice = Hy[slice_indices].copy()
         Hz_slice = Hz[slice_indices].copy()
-        if self.record_fields:
+        if self.should_record_fields:
             self.fields['Ex'].append(Ex_slice)
             self.fields['Ey'].append(Ey_slice)
             self.fields['Ez'].append(Ez_slice)
@@ -741,7 +750,7 @@ class Monitor():
                     design=self.design,  # Reference to same design is okay
                     start=self.start,
                     end=self.end,
-                    record_fields=self.record_fields,
+                    record_fields=self.should_record_fields,
                     accumulate_power=self.accumulate_power,
                     live_update=self.live_update,
                     record_interval=self.record_interval,
@@ -755,7 +764,7 @@ class Monitor():
                     plane_normal=self.plane_normal,
                     plane_position=self.plane_position,
                     size=self.size,
-                    record_fields=self.record_fields,
+                    record_fields=self.should_record_fields,
                     accumulate_power=self.accumulate_power,
                     live_update=self.live_update,
                     record_interval=self.record_interval,
@@ -767,7 +776,7 @@ class Monitor():
                 design=self.design,  # Reference to same design is okay
                 start=self.start,
                 end=self.end,
-                record_fields=self.record_fields,
+                record_fields=self.should_record_fields,
                 accumulate_power=self.accumulate_power,
                 live_update=self.live_update,
                 record_interval=self.record_interval,

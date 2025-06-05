@@ -845,6 +845,39 @@ class FDTD:
             overlap = np.sum(forward_field * backward_field)
             
         return overlap
+
+    def get_monitor_power(self, monitor_index=0):
+        """Get current power from a specific monitor.
+        
+        Args:
+            monitor_index: Index of monitor to get power from (default: 0)
+            
+        Returns:
+            Current power value from the monitor, or 0.0 if no data
+        """
+        if not self.design.monitors or monitor_index >= len(self.design.monitors):
+            return 0.0
+            
+        monitor = self.design.monitors[monitor_index]
+        
+        # Return latest power if available
+        if hasattr(monitor, 'power_history') and monitor.power_history:
+            return monitor.power_history[-1]
+        elif hasattr(monitor, 'power_accumulated') and monitor.power_accumulated is not None:
+            return float(np.sum(monitor.power_accumulated))
+        else:
+            return 0.0
+
+    def get_total_monitor_power(self):
+        """Get total power from all monitors.
+        
+        Returns:
+            Sum of power from all monitors
+        """
+        total_power = 0.0
+        for i in range(len(self.design.monitors)):
+            total_power += self.get_monitor_power(i)
+        return total_power
         
     def _record_monitor_data(self, step):
         """Record field data at monitor locations"""
@@ -878,10 +911,19 @@ class FDTD:
             # Record data for each monitor
             for monitor in self.design.monitors:
                 if hasattr(monitor, 'record_fields') and callable(monitor.record_fields):
+                    # Force monitor to use 2D mode for 2D simulations
+                    if hasattr(monitor, 'is_3d'):
+                        original_is_3d = monitor.is_3d
+                        monitor.is_3d = False
+                    
                     monitor.record_fields(
                         Ez_np, Hx_np, Hy_np,
                         self.t, self.dx, self.dy, step=step
                     )
+                    
+                    # Restore original is_3d setting
+                    if hasattr(monitor, 'is_3d'):
+                        monitor.is_3d = original_is_3d
 
     def save_animation(self, field: str = "Ez", axis_scale=[-1, 1], filename='fdtd_animation.mp4', fps=60, frame_skip=4, clean_visualization=False):
         """Save an animation of the simulation results as an mp4 file."""
