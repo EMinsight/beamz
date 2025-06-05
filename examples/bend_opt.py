@@ -42,17 +42,12 @@ signal = ramped_cosine(time_steps, amplitude=1.0, frequency=LIGHT_SPEED/WL, phas
 def forward_sim(design):
     # Create a copy of the design to make it easier to switch the source with the detector
     design_copy_forward = design.copy()
-    #grid = RegularGrid(design=design_copy_forward, resolution=DX)
-    #grid.show()
     design_copy_forward += ModeSource(design_copy_forward, start=(2*µm, Y/2-1.2*µm), end=(2*µm, Y/2+1.2*µm), wavelength=WL, signal=signal)
     design_copy_forward += Monitor(design_copy_forward, start=(2*µm, Y/2-1.2*µm), end=(2*µm, Y/2+1.2*µm))
     design_copy_forward.show()
-    #grid = RegularGrid(design=design_copy_forward, resolution=DX)
-    #grid.show()
-    # Run the simulation and show results
+    # Run the simulation and show results - IMPORTANT: save_memory_mode=False to keep field history
     sim = FDTD(design=design_copy_forward, time=time_steps, mesh="regular", resolution=DX)
-    field_history = sim.run(live=True, save_memory_mode=True, accumulate_power=True)
-    sim.plot_power(db_colorbar=True)
+    field_history = sim.run(live=False, save_memory_mode=False, accumulate_power=False, save=True)
     # return the entire forward sim field history
     return field_history
 
@@ -65,10 +60,28 @@ def backward_sim(design, field_history):
     design_copy_backward.show()
     # Run the simulation and show results
     sim = FDTD(design=design_copy_backward, time=time_steps, mesh="regular", resolution=DX)
-    field_overlap = sim.run(live=True, save_memory_mode=True, accumulate_power=True)
-    sim.plot_power(db_colorbar=True)
-    # return the field overlap history
-    return field_overlap
+    # Initialize backward simulation
+    sim.initialize_simulation(save=True, live=False, save_memory_mode=False)
+    # Initialize overlap accumulation
+    total_overlap = 0.0
+    overlap_history = []    
+    # Run backward simulation step by step and calculate overlap with forward fields
+    while sim.step():
+        # Calculate overlap with forward field history at each step
+        overlap = sim.calculate_field_overlap(field_history, field='Ez')
+        total_overlap += overlap
+        overlap_history.append(overlap)
+        
+        # Print progress occasionally
+        if sim.current_step % 50 == 0:
+            print(f"Step {sim.current_step}/{sim.num_steps}, Overlap: {overlap:.6f}")
+    
+    # Finalize simulation
+    results = sim.finalize_simulation()
+    
+    print(f"Backward simulation complete. Total overlap: {total_overlap:.6f}")
+    
+    return total_overlap, overlap_history
 
 def ADAM_optimizer(field_overlap, design_reg_mat, alpha=0.001, beta1=0.9, beta2=0.999, epsilon=1e-8):
     """
@@ -121,11 +134,16 @@ def run_optimization_loop(num_iterations=5):
         
         # Run backward simulation
         print("Running backward simulation...")
-        field_overlap = backward_sim(design, field_history)
+        total_overlap, overlap_history = backward_sim(design, field_history)
         
-        # Extract gradient information (simplified)
-        # In practice, you'd compute proper gradients from field overlaps
-        gradient_field = np.random.normal(0, 0.1, design_reg_mat.shape)  # Placeholder
+        # Convert overlap to gradient-like information
+        # For this example, we'll use the total overlap as a proxy for gradient magnitude
+        # In practice, you'd compute proper gradients from field overlaps using adjoint method
+        gradient_magnitude = np.real(total_overlap) / (design_region_size * design_region_size)
+        gradient_field = np.ones(design_reg_mat.shape) * gradient_magnitude
+        
+        # Add some spatial variation based on design region structure
+        gradient_field += np.random.normal(0, 0.05, design_reg_mat.shape)  # Add noise
         
         # Update design using ADAM optimizer
         print("Updating design with ADAM optimizer...")
@@ -138,11 +156,12 @@ def run_optimization_loop(num_iterations=5):
         # Update the CustomMaterial with new permittivity grid
         custom_material.update_grid('permittivity', design_reg_mat)
         
-        # Compute objective (power coupling - simplified)
-        objective = np.sum(np.abs(design_reg_mat - N_CLAD**2))  # Placeholder metric
+        # Compute objective using field overlap (power coupling efficiency)
+        objective = -np.real(total_overlap)  # Negative because we want to maximize overlap
         objective_history.append(objective)
         
-        print(f"Objective: {objective:.6f}")
+        print(f"Field overlap: {total_overlap:.6f}")
+        print(f"Objective (negative overlap): {objective:.6f}")
         print(f"Updated permittivity range: {design_reg_mat.min():.3f} to {design_reg_mat.max():.3f}")
         
         # Visualize progress every few iterations
