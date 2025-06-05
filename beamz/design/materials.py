@@ -71,6 +71,39 @@ class CustomMaterial:
         if conductivity_grid is not None and bounds is not None:
             self._create_grid_interpolator('conductivity')
     
+    @property
+    def permittivity(self):
+        """Return representative permittivity for display purposes."""
+        if self.permittivity_grid is not None:
+            import numpy as np
+            return f"grid({np.min(self.permittivity_grid):.3f}-{np.max(self.permittivity_grid):.3f})"
+        elif self.permittivity_func is not None:
+            return "function"
+        else:
+            return self.default_permittivity
+    
+    @property
+    def permeability(self):
+        """Return representative permeability for display purposes."""
+        if self.permeability_grid is not None:
+            import numpy as np
+            return f"grid({np.min(self.permeability_grid):.3f}-{np.max(self.permeability_grid):.3f})"
+        elif self.permeability_func is not None:
+            return "function"
+        else:
+            return self.default_permeability
+    
+    @property
+    def conductivity(self):
+        """Return representative conductivity for display purposes."""
+        if self.conductivity_grid is not None:
+            import numpy as np
+            return f"grid({np.min(self.conductivity_grid):.3f}-{np.max(self.conductivity_grid):.3f})"
+        elif self.conductivity_func is not None:
+            return "function"
+        else:
+            return self.default_conductivity
+    
     def _create_grid_interpolator(self, property_name):
         """Create scipy interpolator for grid-based material property."""
         try:
@@ -161,6 +194,27 @@ class CustomMaterial:
             self._create_grid_interpolator('conductivity')
         else:
             raise ValueError(f"Unknown property: {property_name}")
+    
+    def copy(self):
+        """Create a deep copy of the CustomMaterial."""
+        import numpy as np
+        
+        # Deep copy grids if they exist
+        perm_grid = self.permittivity_grid.copy() if self.permittivity_grid is not None else None
+        permeability_grid = self.permeability_grid.copy() if self.permeability_grid is not None else None
+        cond_grid = self.conductivity_grid.copy() if self.conductivity_grid is not None else None
+        
+        # Create new CustomMaterial with copied data
+        return CustomMaterial(
+            permittivity_func=self.permittivity_func,  # Functions can be shared
+            permeability_func=self.permeability_func,
+            conductivity_func=self.conductivity_func,
+            permittivity_grid=perm_grid,  # Deep copied grids
+            permeability_grid=permeability_grid,
+            conductivity_grid=cond_grid,
+            bounds=self.bounds,  # Bounds can be shared (tuples are immutable)
+            interpolation=self.interpolation
+        )
 
 
 # ================================

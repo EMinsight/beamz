@@ -213,7 +213,10 @@ class Design:
             if hasattr(structure, 'is_pml') and structure.is_pml:
                 non_polygon_structures.append(structure)
                 continue
-            if isinstance(structure, ModeSource) or isinstance(structure, GaussianSource) or isinstance(structure, Monitor):
+            # Import at function level to avoid circular imports
+            from beamz.design.sources import ModeSource, GaussianSource
+            from beamz.design.monitors import Monitor
+            if isinstance(structure, (ModeSource, GaussianSource, Monitor)):
                 non_polygon_structures.append(structure)
                 continue
             # Only process polygon-like structures with vertices
@@ -368,13 +371,52 @@ class Design:
                     if s[0] in structures_to_remove:
                         structures_to_remove.remove(s[0])
         
-        # Remove the structures that were unified
-        for structure in structures_to_remove:
-            if structure in self.structures:
-                self.structures.remove(structure)
-        # Add the unified structures, non-polygon structures, and preserved rings back
-        self.structures.extend(new_structures)
-        self.structures.extend(rings_to_preserve)
+        # Rebuild structures list preserving original z-order
+        # Create a mapping from material groups to their unified replacements
+        material_replacements = {}
+        
+        # Match unified structures to their material groups by material properties
+        for new_struct in new_structures:
+            if hasattr(new_struct, 'material') and new_struct.material:
+                new_material_key = (
+                    getattr(new_struct.material, 'permittivity', None),
+                    getattr(new_struct.material, 'permeability', None),
+                    getattr(new_struct.material, 'conductivity', None)
+                )
+                # Find the material group that this unified structure belongs to
+                for material_key, structure_group in material_groups.items():
+                    if len(structure_group) > 1 and material_key == new_material_key:
+                        if material_key not in material_replacements:
+                            material_replacements[material_key] = []
+                        material_replacements[material_key].append(new_struct)
+                        break
+        
+        # Rebuild the structures list in original order
+        rebuilt_structures = []
+        material_groups_used = set()
+        
+        for structure in self.structures:
+            if structure in structures_to_remove:
+                # Find which material group this structure belongs to
+                structure_material_key = None
+                if hasattr(structure, 'material') and structure.material:
+                    structure_material_key = (
+                        getattr(structure.material, 'permittivity', None),
+                        getattr(structure.material, 'permeability', None),
+                        getattr(structure.material, 'conductivity', None)
+                    )
+                
+                # Add the unified replacement(s) for this material group (only once)
+                if structure_material_key and structure_material_key not in material_groups_used:
+                    if structure_material_key in material_replacements:
+                        rebuilt_structures.extend(material_replacements[structure_material_key])
+                        material_groups_used.add(structure_material_key)
+            else:
+                # Keep non-unified structures (includes preserved rings and non-polygon structures)
+                rebuilt_structures.append(structure)
+        
+        # Replace the structures list
+        self.structures = rebuilt_structures
         
         # Final report
         display_status(f"Polygon unification complete: {len(structures_to_remove)} structures merged into {len(new_structures)} unified shapes, {len(rings_to_preserve)} isolated rings preserved", "success")
@@ -1645,8 +1687,60 @@ class Design:
 
     def copy(self):
         """Create a deep copy of the design."""
-        return Design(width=self.width, height=self.height, material=self.material, pml_size=self.pml_size, 
-                      structures=self.structures.copy(), sources=self.sources.copy(), monitors=self.monitors.copy())
+        # Get background material from the first structure (background rectangle)
+        background_material = None
+        if self.structures and hasattr(self.structures[0], 'material'):
+            background_material = self.structures[0].material
+        
+        # Create new design without auto_pml since we'll copy boundaries manually
+        new_design = Design(width=self.width, height=self.height, material=background_material, 
+                           auto_pml=False)
+        
+        # Clear the automatically created structures and rebuild with deep copies
+        new_design.structures = []
+        new_design.sources = []
+        new_design.monitors = []
+        new_design.boundaries = []
+        
+        # Deep copy all structures in the correct order
+        for structure in self.structures:
+            if hasattr(structure, 'copy'):
+                copied_structure = structure.copy()
+                
+                # Deep copy materials if they have a copy method (like CustomMaterial)
+                if hasattr(copied_structure, 'material') and copied_structure.material is not None:
+                    if hasattr(copied_structure.material, 'copy'):
+                        copied_structure.material = copied_structure.material.copy()
+                
+                # Update design reference for sources and monitors
+                if hasattr(copied_structure, 'design'):
+                    copied_structure.design = new_design
+                new_design.structures.append(copied_structure)
+                
+                # Also add to appropriate lists
+                if isinstance(copied_structure, (ModeSource, GaussianSource)):
+                    new_design.sources.append(copied_structure)
+                elif hasattr(structure, '__class__') and 'Monitor' in structure.__class__.__name__:
+                    new_design.monitors.append(copied_structure)
+            else:
+                # Fallback for structures without copy method
+                new_design.structures.append(structure)
+        
+        # Deep copy boundaries
+        for boundary in self.boundaries:
+            if hasattr(boundary, 'copy'):
+                new_design.boundaries.append(boundary.copy())
+            else:
+                new_design.boundaries.append(boundary)
+        
+        # Copy other attributes
+        new_design.is_3d = self.is_3d
+        new_design.depth = self.depth
+        new_design.border_color = self.border_color
+        new_design.time = self.time
+        new_design.layers = self.layers.copy() if hasattr(self, 'layers') else {}
+        
+        return new_design
 
 class Polygon:
     def __init__(self, vertices=None, material=None, color=None, optimize=False, interiors=None, depth=0, z=0):
@@ -2389,3 +2483,15 @@ class PML:
             conductivity *= frequency_factor
             
         return conductivity
+    
+    def copy(self):
+        """Create a deep copy of the PML boundary."""
+        return PML(
+            region_type=self.region_type,
+            position=self.position,
+            size=(self.width, self.height) if self.region_type == "rect" else self.radius,
+            orientation=self.orientation,
+            polynomial_order=self.polynomial_order,
+            sigma_factor=self.sigma_factor,
+            alpha_max=self.alpha_max
+        )

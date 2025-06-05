@@ -31,6 +31,14 @@ class GaussianSource():
     def add_to_plot(self, ax, facecolor="crimson", edgecolor="crimson", alpha=1, linestyle="-"):
         # Use 2D projection for plotting
         ax.plot(self.position[0], self.position[1], 'o', color=facecolor, label='Gaussian Source')
+    
+    def copy(self):
+        """Create a deep copy of the GaussianSource."""
+        return GaussianSource(
+            position=self.position,
+            width=self.width,
+            signal=self.signal
+        )
 
 # TODO: Add mode solver options to integrate the analytical mode solver in mode.py. Future: Add FDFD mode solver and Tidy3D mode solver.
 # Make a comparison study!
@@ -170,6 +178,39 @@ class ModeSource():
         self.mode_profiles = []
         for mode_number in range(self.mode_vectors.shape[1]):
             self.mode_profiles.append(self.get_xy_mode_line(self.mode_vectors, mode_number))
+    
+    def copy(self):
+        """Create a deep copy of the ModeSource."""
+        if hasattr(self, 'start') and hasattr(self, 'end'):
+            # Legacy mode
+            return ModeSource(
+                design=self.design,  # Reference to same design is okay
+                start=self.start,
+                end=self.end,
+                wavelength=self.wavelength,
+                signal=self.signal,
+                direction=self.direction,
+                npml=self.npml,
+                num_modes=self.num_modes,
+                grid_resolution=self.grid_resolution,
+                mode_solver=self.mode_solver
+            )
+        else:
+            # New mode
+            return ModeSource(
+                design=self.design,  # Reference to same design is okay
+                position=self._position,
+                width=self.width,
+                height=self.height,
+                wavelength=self.wavelength,
+                signal=self.signal,
+                direction=self.direction,
+                orientation=self.orientation,
+                npml=self.npml,
+                num_modes=self.num_modes,
+                grid_resolution=self.grid_resolution,
+                mode_solver=self.mode_solver
+            )
             
     def _ensure_3d_position(self, position):
         """Convert 2D position to 3D with z=0 if needed."""

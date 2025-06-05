@@ -7,28 +7,28 @@ import optax  # Adam optimizer library
 X = 13*µm # domain width
 Y = 13*µm # domain height
 WL = 1.55*µm # wavelength
-TIME = 40*WL/LIGHT_SPEED # total simulation duration
+TIME = 10*WL/LIGHT_SPEED  # Further reduced to 10 wavelengths for stability testing
 N_CORE = 2.04 # Si3N4
 N_CLAD = 1.444 # SiO2
 WG_W = 0.565*µm # width of the waveguide
 S = 5*µm
 OFFSET = 1.05*µm # offset of the output waveguides from center of the MMI
-DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE, N_CLAD), dims=2, safety_factor=0.60) 
+DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE, N_CLAD), dims=2, safety_factor=0.6, points_per_wavelength=13) 
 
 # Initialize design region permittivity matrix for inverse design
 design_region_size = 20  # Higher resolution for better design
-design_reg_mat = np.ones((design_region_size, design_region_size)) * (N_CLAD**2 + N_CORE**2)/2
-# Add some random noise to the design region
-design_reg_mat += np.random.normal(0, 0.1, design_reg_mat.shape)
-# Create CustomMaterial for the design region
+# Start with 50% clad, 50% core material with small perturbations
+base_value = (N_CLAD**2 + N_CORE**2) / 2  # Average of clad and core
+design_reg_mat = np.ones((design_region_size, design_region_size)) * base_value
+# Add smaller random perturbations to avoid instability
+design_reg_mat += np.random.normal(0, 0.1, design_reg_mat.shape)  # Reduced from 0.1 to 0.05
 design_bounds = ((X/2-S/2, X/2+S/2), (Y/2-S/2, Y/2+S/2))  # Design region bounds
-custom_material = CustomMaterial(permittivity_grid=design_reg_mat, bounds=design_bounds, interpolation='cubic')
+custom_material = CustomMaterial(permittivity_grid=design_reg_mat, bounds=design_bounds, interpolation='cubic')  # Use linear for stability
 
 # Design the MMI with input and output waveguides
 design = Design(width=X, height=Y, material=Material(N_CLAD**2), pml_size=WL)
 design += Rectangle(position=(0, Y/2-WG_W/2), width=X/2, height=WG_W, material=Material(N_CORE**2))
 design += Rectangle(position=(X/2-WG_W/2, Y/2-WG_W/2), width=WG_W, height=Y/2+WG_W/2, material=Material(N_CORE**2))
-# Use CustomMaterial for the design region
 design += Rectangle(position=(X/2-S/2, Y/2-S/2), width=S, height=S, material=custom_material)
 design.show()
 
@@ -42,13 +42,15 @@ signal = ramped_cosine(time_steps, amplitude=1.0, frequency=LIGHT_SPEED/WL, phas
 def forward_sim(design):
     # Create a copy of the design to make it easier to switch the source with the detector
     design_copy_forward = design.copy()
-    # Add a source
-    design += ModeSource(design=design_copy_forward, start=(2*µm, Y/2-1.2*µm), end=(2*µm, Y/2+1.2*µm), wavelength=WL, signal=signal)
-    # Add a monitor
-    design += Monitor(design=design, start=(2*µm, Y/2-1.2*µm), end=(2*µm, Y/2+1.2*µm), wavelength=WL)
-    design.show()
+    #grid = RegularGrid(design=design_copy_forward, resolution=DX)
+    #grid.show()
+    design_copy_forward += ModeSource(design_copy_forward, start=(2*µm, Y/2-1.2*µm), end=(2*µm, Y/2+1.2*µm), wavelength=WL, signal=signal)
+    design_copy_forward += Monitor(design_copy_forward, start=(2*µm, Y/2-1.2*µm), end=(2*µm, Y/2+1.2*µm))
+    design_copy_forward.show()
+    #grid = RegularGrid(design=design_copy_forward, resolution=DX)
+    #grid.show()
     # Run the simulation and show results
-    sim = FDTD(design=design, time=time_steps, mesh="regular", resolution=DX)
+    sim = FDTD(design=design_copy_forward, time=time_steps, mesh="regular", resolution=DX)
     field_history = sim.run(live=True, save_memory_mode=True, accumulate_power=True)
     sim.plot_power(db_colorbar=True)
     # return the entire forward sim field history
@@ -57,14 +59,12 @@ def forward_sim(design):
 def backward_sim(design, field_history):
     # Switch the source with the monitor. To do so, we create a new copy of the design first
     # Create a copy of the design to make it easier to switch the source with the detector
-    design_copy = design.copy()
-    # Add the source at new position
-    design += ModeSource(design=design, start=(X/2-1.2*µm, 11*µm), end=(X/2+1.2*µm, 11*µm), wavelength=WL, signal=signal, direction="-y")
-    # Add the monitor at the old position
-    design += Monitor(design=design, start=(2*µm, Y/2-1.2*µm), end=(2*µm, Y/2+1.2*µm), wavelength=WL)
-    design.show()
+    design_copy_backward = design.copy()
+    design_copy_backward += ModeSource(design_copy_backward, start=(X/2-1.2*µm, 11*µm), end=(X/2+1.2*µm, 11*µm), wavelength=WL, signal=signal, direction="-y")
+    design_copy_backward += Monitor(design_copy_backward, start=(2*µm, Y/2-1.2*µm), end=(2*µm, Y/2+1.2*µm))
+    design_copy_backward.show()
     # Run the simulation and show results
-    sim = FDTD(design=design, time=time_steps, mesh="regular", resolution=DX)
+    sim = FDTD(design=design_copy_backward, time=time_steps, mesh="regular", resolution=DX)
     field_overlap = sim.run(live=True, save_memory_mode=True, accumulate_power=True)
     sim.plot_power(db_colorbar=True)
     # return the field overlap history
@@ -98,8 +98,10 @@ def ADAM_optimizer(field_overlap, design_reg_mat, alpha=0.001, beta1=0.9, beta2=
     updates, ADAM_optimizer.opt_state = optimizer.update(gradient, ADAM_optimizer.opt_state, design_reg_mat)
     # Apply updates to design region
     updated_design_reg_mat = optax.apply_updates(design_reg_mat, updates)
-    # Apply bounds to keep permittivity in valid range
-    updated_design_reg_mat = np.clip(updated_design_reg_mat, N_CLAD**2, N_CORE**2)
+    # Apply bounds to keep permittivity in valid range - use same bounds as initialization
+    min_perm = N_CLAD**2 * 0.95
+    max_perm = N_CORE**2 * 1.05
+    updated_design_reg_mat = np.clip(updated_design_reg_mat, min_perm, max_perm)
 
     return updated_design_reg_mat, ADAM_optimizer.opt_state
 
@@ -107,10 +109,7 @@ def run_optimization_loop(num_iterations=5):
     """Run the complete optimization loop."""
     global design_reg_mat, custom_material, design
     
-    print(f"Starting optimization with {num_iterations} iterations...")
-    print(f"Initial design region shape: {design_reg_mat.shape}")
-    print(f"Initial permittivity range: {design_reg_mat.min():.3f} to {design_reg_mat.max():.3f}")
-    
+
     objective_history = []
     
     for iteration in range(num_iterations):
@@ -170,5 +169,7 @@ def run_optimization_loop(num_iterations=5):
     
     return design_reg_mat, objective_history
 
-# Run the optimization (commented out for now)
+
+
+# If basic test works, then try with sources/monitors
 optimized_design, history = run_optimization_loop(num_iterations=3)

@@ -730,3 +730,46 @@ class Monitor():
     def __str__(self):
         stats = self.get_field_statistics()
         return f"Monitor: {stats['monitor_type']} ({'3D' if stats['is_3d'] else '2D'}), {stats['total_records']} records"
+    
+    def copy(self):
+        """Create a deep copy of the Monitor."""
+        if self.is_3d:
+            # 3D monitor
+            if hasattr(self, 'end') and self.end is not None:
+                # Defined by start and end points
+                return Monitor(
+                    design=self.design,  # Reference to same design is okay
+                    start=self.start,
+                    end=self.end,
+                    record_fields=self.record_fields,
+                    accumulate_power=self.accumulate_power,
+                    live_update=self.live_update,
+                    record_interval=self.record_interval,
+                    max_history_steps=self.max_history_steps
+                )
+            else:
+                # Defined by plane normal and position
+                return Monitor(
+                    design=self.design,  # Reference to same design is okay
+                    start=self.start,
+                    plane_normal=self.plane_normal,
+                    plane_position=self.plane_position,
+                    size=self.size,
+                    record_fields=self.record_fields,
+                    accumulate_power=self.accumulate_power,
+                    live_update=self.live_update,
+                    record_interval=self.record_interval,
+                    max_history_steps=self.max_history_steps
+                )
+        else:
+            # 2D monitor
+            return Monitor(
+                design=self.design,  # Reference to same design is okay
+                start=self.start,
+                end=self.end,
+                record_fields=self.record_fields,
+                accumulate_power=self.accumulate_power,
+                live_update=self.live_update,
+                record_interval=self.record_interval,
+                max_history_steps=self.max_history_steps
+            )

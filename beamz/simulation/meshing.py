@@ -161,6 +161,12 @@ class RegularGrid(BaseMeshGrid):
                 if hasattr(structure, 'is_pml') and structure.is_pml:
                     progress.update(task, advance=1)
                     continue
+                # Skip sources and monitors (they don't have materials)
+                from beamz.design.sources import ModeSource, GaussianSource
+                from beamz.design.monitors import Monitor
+                if isinstance(structure, (ModeSource, GaussianSource, Monitor)):
+                    progress.update(task, advance=1)
+                    continue
                 # Skip structures without material
                 if not hasattr(structure, 'material') or structure.material is None:
                     progress.update(task, advance=1)
