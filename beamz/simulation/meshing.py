@@ -28,6 +28,35 @@ class BaseMeshGrid:
     def _get_material_at_point(self, x, y, z=0):
         """Get material properties at a specific point."""
         return self.design.get_material_value(x, y, z)
+    
+    def _get_material_properties_safe(self, material, x=0, y=0, z=0):
+        """Safely get material properties from either Material or CustomMaterial objects."""
+        if material is None:
+            return 1.0, 1.0, 0.0
+        
+        # Check if this is a CustomMaterial (has getter methods)
+        if hasattr(material, 'get_permittivity'):
+            try:
+                permittivity = material.get_permittivity(x, y, z)
+                permeability = material.get_permeability(x, y, z)
+                conductivity = material.get_conductivity(x, y, z)
+                return permittivity, permeability, conductivity
+            except Exception as e:
+                print(f"Warning: CustomMaterial evaluation failed: {e}, using defaults")
+                return getattr(material, 'default_permittivity', 1.0), \
+                       getattr(material, 'default_permeability', 1.0), \
+                       getattr(material, 'default_conductivity', 0.0)
+        
+        # Traditional Material object (direct attributes)
+        elif hasattr(material, 'permittivity'):
+            return (getattr(material, 'permittivity', 1.0),
+                   getattr(material, 'permeability', 1.0), 
+                   getattr(material, 'conductivity', 0.0))
+        
+        # Fallback for unknown material types
+        else:
+            print(f"Warning: Unknown material type {type(material)}, using vacuum properties")
+            return 1.0, 1.0, 0.0
 
 
 class RegularGrid(BaseMeshGrid):
@@ -104,10 +133,12 @@ class RegularGrid(BaseMeshGrid):
         if len(self.design.structures) > 0:
             background = self.design.structures[0]
             if hasattr(background, 'material') and background.material is not None:
+                # Get background material properties safely
+                bg_perm, bg_permb, bg_cond = self._get_material_properties_safe(background.material)
                 # Fast fill for background
-                permittivity.fill(background.material.permittivity)
-                permeability.fill(background.material.permeability)
-                conductivity.fill(background.material.conductivity)
+                permittivity.fill(bg_perm)
+                permeability.fill(bg_permb)
+                conductivity.fill(bg_cond)
         
         # Process remaining structures in reverse order (foreground objects last)
         # Note: we process in ORIGINAL order, not reversed, because we want background first
@@ -126,9 +157,7 @@ class RegularGrid(BaseMeshGrid):
                     progress.update(task, advance=1)
                     continue
                 # Cache material properties for performance
-                mat_perm = structure.material.permittivity
-                mat_permb = structure.material.permeability
-                mat_cond = structure.material.conductivity
+                mat_perm, mat_permb, mat_cond = self._get_material_properties_safe(structure.material)
                 try:
                     # Get bounding box of the structure
                     bbox = structure.get_bounding_box()
@@ -618,9 +647,7 @@ class RegularGrid3D(BaseMeshGrid):
                     continue
                 
                 # Cache material properties
-                mat_perm = structure.material.permittivity
-                mat_permb = structure.material.permeability
-                mat_cond = structure.material.conductivity
+                mat_perm, mat_permb, mat_cond = self._get_material_properties_safe(structure.material)
                 
                 try:
                     # Get 3D bounding box

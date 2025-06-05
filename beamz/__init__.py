@@ -9,7 +9,7 @@ from beamz.const import (
 )
 
 # Import design-related classes and functions
-from beamz.design.materials import Material, VarMaterial
+from beamz.design.materials import Material, CustomMaterial
 from beamz.design.structures import (
     Design, Rectangle, Circle, Ring, 
     CircularBend, Polygon, Taper
@@ -50,7 +50,7 @@ _exports = {
     
     # Materials
     'Material': Material,
-    'VarMaterial': VarMaterial,
+    'CustomMaterial': CustomMaterial,
     
     # Structures
     'Design': Design,

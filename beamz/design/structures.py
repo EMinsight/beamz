@@ -1539,40 +1539,30 @@ class Design:
         sigma_base = 0.0
         # Find the material values from the structures (outside PML calculation)
         for structure in reversed(self.structures):
-            if isinstance(structure, Rectangle):
+            if isinstance(structure, Polygon):
+                if structure.point_in_polygon(x, y, z):
+                    epsilon, mu, sigma_base = structure.material.get_sample()
+                    break
+            elif isinstance(structure, Rectangle):
                 if structure.is_pml:
                     # Skip visual PML structures - they're just for display
                     continue
                 if structure.point_in_polygon(x, y, z):
-                    epsilon = structure.material.permittivity
-                    mu = structure.material.permeability
-                    sigma_base = structure.material.conductivity
+                    epsilon, mu, sigma_base = structure.material.get_sample()
                     break
             elif isinstance(structure, Circle):
                 if np.hypot(x - structure.position[0], y - structure.position[1]) <= structure.radius:
-                    epsilon = structure.material.permittivity
-                    mu = structure.material.permeability
-                    sigma_base = structure.material.conductivity
+                    epsilon, mu, sigma_base = structure.material.get_sample()
                     break
             elif isinstance(structure, Ring):
                 distance = np.hypot(x - structure.position[0], y - structure.position[1])
                 if structure.inner_radius <= distance <= structure.outer_radius:
-                    epsilon = structure.material.permittivity
-                    mu = structure.material.permeability
-                    sigma_base = structure.material.conductivity
+                    epsilon, mu, sigma_base = structure.material.get_sample()
                     break
             elif isinstance(structure, CircularBend):
                 distance = np.hypot(x - structure.position[0], y - structure.position[1])
                 if structure.inner_radius <= distance <= structure.outer_radius:
-                    epsilon = structure.material.permittivity
-                    mu = structure.material.permeability
-                    sigma_base = structure.material.conductivity
-                    break
-            elif isinstance(structure, Polygon):
-                if structure.point_in_polygon(x, y, z):
-                    epsilon = structure.material.permittivity
-                    mu = structure.material.permeability
-                    sigma_base = structure.material.conductivity
+                    epsilon, mu, sigma_base = structure.material.get_sample()
                     break
         # Calculate PML conductivity based on the UNDERLYING material
         # This is crucial for proper absorption without reflection
@@ -1652,6 +1642,11 @@ class Design:
         """Display the design as a hierarchical tree"""
         design_data = self.get_tree_view()
         tree_view(design_data, "Design Structure")
+
+    def copy(self):
+        """Create a deep copy of the design."""
+        return Design(width=self.width, height=self.height, material=self.material, pml_size=self.pml_size, 
+                      structures=self.structures.copy(), sources=self.sources.copy(), monitors=self.monitors.copy())
 
 class Polygon:
     def __init__(self, vertices=None, material=None, color=None, optimize=False, interiors=None, depth=0, z=0):

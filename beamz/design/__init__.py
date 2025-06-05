@@ -2,7 +2,7 @@
 Design module for BEAMZ - Contains components for designing photonic structures.
 """
 
-from beamz.design.materials import Material, VarMaterial
+from beamz.design.materials import Material, CustomMaterial
 from beamz.design.structures import (
     Design, Rectangle, Circle, Ring,
     CircularBend, Polygon, Taper
@@ -13,7 +13,7 @@ from beamz.design.signals import ramped_cosine, plot_signal
 from beamz.design.mode import solve_modes, slab_mode_source
 
 __all__ = [
-    'Material', 'VarMaterial',
+    'Material', 'CustomMaterial',
     'Design', 'Rectangle', 'Circle', 'Ring',
     'CircularBend', 'Polygon', 'Taper',
     'ModeSource', 'GaussianSource',
