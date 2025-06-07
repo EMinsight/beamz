@@ -38,14 +38,12 @@ class FDTD:
             else:
                 self.mesh = RegularGrid(design=self.design, resolution=self.resolution)
                 display_status("Using 2D FDTD with TE-polarized Maxwell equations", "info")
-        else:
-            self.mesh = None
+        else: self.mesh = None
         
         # Set grid resolutions
         self.dx = self.mesh.dx if hasattr(self.mesh, 'dx') else self.mesh.resolution_xy
         self.dy = self.mesh.dy if hasattr(self.mesh, 'dy') else self.mesh.resolution_xy
-        if self.is_3d:
-            self.dz = self.mesh.dz if hasattr(self.mesh, 'dz') else self.mesh.resolution_z
+        if self.is_3d: self.dz = self.mesh.dz if hasattr(self.mesh, 'dz') else self.mesh.resolution_z
         
         # Get material properties
         self.epsilon_r = self.mesh.permittivity
@@ -57,14 +55,7 @@ class FDTD:
         self.backend = get_backend(name=backend, **backend_options)
         
         # Initialize fields based on dimensionality
-        if self.is_3d:
-            # 3D: Initialize all 6 field components (Ex, Ey, Ez, Hx, Hy, Hz)
-            self.nz, self.ny, self.nx = self.mesh.shape  # 3D shape: (depth, height, width)
-            self._init_3d_fields()
-        else:
-            # 2D: Initialize TE-polarized fields (Ez, Hx, Hy)
-            self.nx, self.ny = self.mesh.shape  # 2D shape: (height, width)
-            self._init_2d_fields()
+        self._init_fields()
         
         # Convert material properties to backend arrays
         self.epsilon_r = self.backend.from_numpy(self.epsilon_r)
@@ -80,10 +71,8 @@ class FDTD:
         self.sources = self.design.sources
         
         # Initialize the results based on dimensionality
-        if self.is_3d:
-            self.results = {"Ex": [], "Ey": [], "Ez": [], "Hx": [], "Hy": [], "Hz": [], "t": []}
-        else:
-            self.results = {"Ez": [], "Hx": [], "Hy": [], "t": []}
+        if self.is_3d: self.results = {"Ex": [], "Ey": [], "Ez": [], "Hx": [], "Hy": [], "Hz": [], "t": []}
+        else: self.results = {"Ez": [], "Hx": [], "Hy": [], "t": []}
             
         # Initialize animation attributes
         self.fig = None
@@ -101,53 +90,44 @@ class FDTD:
         # Initialize simulation start time
         self.start_time = None
 
-    def _init_2d_fields(self):
-        """Initialize 2D TE-polarized field arrays (Ez, Hx, Hy)."""
-        # Create complex fields in a backend-compatible way
-        try:
-            # Try with dtype parameter if supported
-            self.Ez = self.backend.zeros((self.nx, self.ny), dtype=np.complex128)
-        except TypeError:
-            # Fallback if dtype not supported - create real array and handle complex values in code
-            self.Ez = self.backend.zeros((self.nx, self.ny))
-            self.is_complex_backend = False
-        else:
-            self.is_complex_backend = True
-            
-        self.Hx = self.backend.zeros((self.nx, self.ny-1))
-        self.Hy = self.backend.zeros((self.nx-1, self.ny))
+    def _init_fields(self):
+        """Initialize field arrays based on dimensionality."""
+        if self.is_3d: 
+            try:
+                # Electric field components (centered at cell edges)
+                self.Ex = self.backend.zeros((self.nz, self.ny, self.nx-1), dtype=np.complex128)
+                self.Ey = self.backend.zeros((self.nz, self.ny-1, self.nx), dtype=np.complex128)
+                self.Ez = self.backend.zeros((self.nz-1, self.ny, self.nx), dtype=np.complex128)
+                # Magnetic field components (centered at cell faces)
+                self.Hx = self.backend.zeros((self.nz-1, self.ny-1, self.nx), dtype=np.complex128)
+                self.Hy = self.backend.zeros((self.nz-1, self.ny, self.nx-1), dtype=np.complex128)
+                self.Hz = self.backend.zeros((self.nz, self.ny-1, self.nx-1), dtype=np.complex128)
+            except TypeError:
+                # Fallback if dtype not supported
+                self.Ex = self.backend.zeros((self.nz, self.ny, self.nx-1))
+                self.Ey = self.backend.zeros((self.nz, self.ny-1, self.nx))
+                self.Ez = self.backend.zeros((self.nz-1, self.ny, self.nx))
+                self.Hx = self.backend.zeros((self.nz-1, self.ny-1, self.nx))
+                self.Hy = self.backend.zeros((self.nz-1, self.ny, self.nx-1))
+                self.Hz = self.backend.zeros((self.nz, self.ny-1, self.nx-1))
+                self.is_complex_backend = False
+            else: self.is_complex_backend = True
+        else: 
+            try:
+                # Try with dtype parameter if supported
+                self.Ez = self.backend.zeros((self.nx, self.ny), dtype=np.complex128)
+            except TypeError:
+                # Fallback if dtype not supported - create real array and handle complex values in code
+                self.Ez = self.backend.zeros((self.nx, self.ny))
+                self.is_complex_backend = False
+            else: self.is_complex_backend = True
+            self.Hx = self.backend.zeros((self.nx, self.ny-1))
+            self.Hy = self.backend.zeros((self.nx-1, self.ny))
 
-    def _init_3d_fields(self):
-        """Initialize 3D field arrays (Ex, Ey, Ez, Hx, Hy, Hz)."""
-        # Create complex fields in a backend-compatible way
-        try:
-            # Electric field components (centered at cell edges)
-            self.Ex = self.backend.zeros((self.nz, self.ny, self.nx-1), dtype=np.complex128)
-            self.Ey = self.backend.zeros((self.nz, self.ny-1, self.nx), dtype=np.complex128)
-            self.Ez = self.backend.zeros((self.nz-1, self.ny, self.nx), dtype=np.complex128)
-            
-            # Magnetic field components (centered at cell faces)
-            self.Hx = self.backend.zeros((self.nz-1, self.ny-1, self.nx), dtype=np.complex128)
-            self.Hy = self.backend.zeros((self.nz-1, self.ny, self.nx-1), dtype=np.complex128)
-            self.Hz = self.backend.zeros((self.nz, self.ny-1, self.nx-1), dtype=np.complex128)
-        except TypeError:
-            # Fallback if dtype not supported
-            self.Ex = self.backend.zeros((self.nz, self.ny, self.nx-1))
-            self.Ey = self.backend.zeros((self.nz, self.ny-1, self.nx))
-            self.Ez = self.backend.zeros((self.nz-1, self.ny, self.nx))
-            
-            self.Hx = self.backend.zeros((self.nz-1, self.ny-1, self.nx))
-            self.Hy = self.backend.zeros((self.nz-1, self.ny, self.nx-1))
-            self.Hz = self.backend.zeros((self.nz, self.ny-1, self.nx-1))
-            self.is_complex_backend = False
-        else:
-            self.is_complex_backend = True
 
     def simulate_step(self):
         """Perform one FDTD step with stability checks."""
-        if self.is_3d:
-            # 3D Maxwell equations update
-            self._update_3d_fields()
+        if self.is_3d: self._update_3d_fields()
         else:
             # 2D TE-polarized Maxwell equations update
             self.Hx, self.Hy = self.backend.update_h_fields(
@@ -158,159 +138,8 @@ class FDTD:
                 self.dx, self.dy, self.dt, EPS_0)
 
     def _update_3d_fields(self):
-        """Update all 6 field components for 3D Maxwell equations."""
-        # Note: This is a very simplified implementation for basic 3D functionality
-        # For production use, this should be replaced with proper 3D FDTD equations
-        
-        # For this simplified implementation, we'll just ensure fields remain finite
-        # and apply some basic damping to prevent instabilities
-        
-        # Simple damping factor to prevent field growth
-        damping = 0.99
-        
-        # Apply damping to all field components
-        self.Ex *= damping
-        self.Ey *= damping
-        self.Ez *= damping
-        self.Hx *= damping
-        self.Hy *= damping
-        self.Hz *= damping
-
-    def plot_field(self, field: str = "Ez", t: float = None, z_slice: int = None) -> None:
-        """Plot a field at a given time with proper scaling and units.
-        
-        Args:
-            field: Field component to plot ('Ez', 'Ex', 'Ey', 'Hx', 'Hy', 'Hz')
-            t: Time to plot (if None, uses current field)
-            z_slice: For 3D simulations, which z-slice to plot (if None, uses center)
-        """
-        if len(self.results['t']) == 0:
-            current_field = getattr(self, field)
-            current_t = self.t
-        else:
-            t_idx = np.argmin(np.abs(np.array(self.results['t']) - t))
-            current_field = self.results[field][t_idx]
-            current_t = self.results['t'][t_idx]
-            
-        # Convert to NumPy array if it's a backend array
-        if hasattr(current_field, 'device'):
-            current_field = self.backend.to_numpy(current_field)
-        
-        # Handle 3D fields by taking a 2D slice
-        if self.is_3d and len(current_field.shape) == 3:
-            if z_slice is None:
-                z_slice = current_field.shape[0] // 2  # Use center slice
-            current_field = current_field[z_slice, :, :]
-            slice_info = f" (z-slice {z_slice})"
-        else:
-            slice_info = ""
-            
-        # Handle complex data - we'll display the real part for visualization
-        if np.iscomplexobj(current_field):
-            current_field = np.real(current_field)
-            field_label = f'Re({field}){slice_info}'
-        else:
-            field_label = field + slice_info
-            
-        # Determine appropriate SI unit and scale for spatial dimensions
-        scale, unit = get_si_scale_and_label(max(self.design.width, self.design.height))
-        # Calculate figure size based on grid dimensions
-        grid_height, grid_width = current_field.shape
-        aspect_ratio = grid_width / grid_height
-        base_size = 6  # Base size for the smaller dimension
-        if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
-        else: figsize = (base_size, base_size / aspect_ratio)
-        # Create the figure with the added structure outlines
-        plt.figure(figsize=figsize)
-        plt.imshow(current_field, origin='lower', 
-                  extent=(0, self.design.width, 0, self.design.height),
-                  cmap='RdBu', aspect='equal', interpolation='bicubic')
-        plt.colorbar(label=f'{field_label} Field Amplitude')
-        plt.title(f'{field_label} Field at t = {current_t:.2e} s')
-        plt.xlabel(f'X ({unit})'); plt.ylabel(f'Y ({unit})')
-        plt.gca().xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-        plt.gca().yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-        for structure in self.design.structures:
-            # Use dashed lines for PML regions
-            if hasattr(structure, 'is_pml') and structure.is_pml:
-                structure.add_to_plot(plt.gca(), edgecolor="black", linestyle='--', facecolor='none', alpha=0.5)
-            else:
-                structure.add_to_plot(plt.gca(), facecolor="none", edgecolor="black", linestyle="-")
-        plt.tight_layout()
-        plt.show()
-
-    def animate_live(self, field_data=None, field="Ez", axis_scale=[-1,1], z_slice=None):
-        """Animate the field in real time using matplotlib animation.
-        
-        Args:
-            field_data: Field data to animate (if None, gets from current field)
-            field: Field component to animate
-            axis_scale: Color scale limits
-            z_slice: For 3D simulations, which z-slice to animate (if None, uses center)
-        """
-        if field_data is None: 
-            field_data = self.backend.to_numpy(getattr(self, field))
-        
-        # Handle 3D fields by taking a 2D slice
-        if self.is_3d and len(field_data.shape) == 3:
-            if z_slice is None:
-                z_slice = field_data.shape[0] // 2  # Use center slice
-            field_data = field_data[z_slice, :, :]
-            slice_info = f" (z-slice {z_slice})"
-        else:
-            slice_info = ""
-        
-        # Handle complex data - we'll display the real part for visualization
-        if np.iscomplexobj(field_data):
-            field_data = np.real(field_data)
-            
-        # If animation already exists, just update the data
-        if self.fig is not None and plt.fignum_exists(self.fig.number):
-            current_field = field_data
-            self.im.set_array(current_field)
-            self.ax.set_title(f't = {self.t:.2e} s{slice_info}')
-            self.fig.canvas.draw_idle()
-            self.fig.canvas.flush_events()
-            return
-
-        # Get current field data
-        current_field = field_data
-        # Calculate figure size based on grid dimensions
-        grid_height, grid_width = current_field.shape
-        aspect_ratio = grid_width / grid_height
-        base_size = 5  # Base size for the smaller dimension
-        if aspect_ratio > 1: figsize = (base_size * aspect_ratio * 1.2, base_size)
-        else: figsize = (base_size * 1.2, base_size / aspect_ratio)
-        # Create the figure and axis
-        self.fig, self.ax = plt.subplots(figsize=figsize)
-        # Create initial plot with proper scaling
-        self.im = self.ax.imshow(current_field, origin='lower',
-                                extent=(0, self.design.width, 0, self.design.height),
-                                cmap='RdBu', aspect='equal', interpolation='bicubic', vmin=axis_scale[0], vmax=axis_scale[1])
-        # Add colorbar
-        colorbar = plt.colorbar(self.im, orientation='vertical', aspect=30, extend='both')
-        colorbar.set_label(f'{field}{slice_info} Field Amplitude')
-        # Add design structure outlines
-        for structure in self.design.structures:
-            # Use dashed lines for PML regions
-            if hasattr(structure, 'is_pml') and structure.is_pml:
-                structure.add_to_plot(self.ax, edgecolor="black", linestyle='--', facecolor='none', alpha=0.5)
-            else:
-                structure.add_to_plot(self.ax, facecolor="none")
-        # Set axis labels with proper scaling
-        max_dim = max(self.design.width, self.design.height)
-        if max_dim >= 1e-3: scale, unit = 1e3, 'mm'
-        elif max_dim >= 1e-6: scale, unit = 1e6, 'µm'
-        elif max_dim >= 1e-9: scale, unit = 1e9, 'nm'
-        else: scale, unit = 1e12, 'pm'
-        # Add axis labels with proper scaling
-        plt.xlabel(f'X ({unit})')
-        plt.ylabel(f'Y ({unit})')
-        self.ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-        self.ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-        plt.tight_layout()
-        plt.show(block=False)
-        plt.pause(0.001)  # Small pause to ensure window is shown
+        """TODO: Update all 6 field components for 3D Maxwell equations."""
+        pass
 
     def initialize_simulation(self, save=True, live=True, axis_scale=[-1,1], save_animation=False, 
                              animation_filename='fdtd_animation.mp4', clean_visualization=True, 
@@ -770,120 +599,152 @@ class FDTD:
             for field in self._save_fields:
                 self.results[field].append(self.backend.to_numpy(self.backend.copy(getattr(self, field))))
 
+    def plot_field(self, field: str = "Ez", t: float = None, z_slice: int = None) -> None:
+        """Plot a field at a given time with proper scaling and units.
+        
+        Args:
+            field: Field component to plot ('Ez', 'Ex', 'Ey', 'Hx', 'Hy', 'Hz')
+            t: Time to plot (if None, uses current field)
+            z_slice: For 3D simulations, which z-slice to plot (if None, uses center)
+        """
+        if len(self.results['t']) == 0:
+            current_field = getattr(self, field)
+            current_t = self.t
+        else:
+            t_idx = np.argmin(np.abs(np.array(self.results['t']) - t))
+            current_field = self.results[field][t_idx]
+            current_t = self.results['t'][t_idx]
+            
+        # Convert to NumPy array if it's a backend array
+        if hasattr(current_field, 'device'):
+            current_field = self.backend.to_numpy(current_field)
+        
+        # Handle 3D fields by taking a 2D slice
+        if self.is_3d and len(current_field.shape) == 3:
+            if z_slice is None:
+                z_slice = current_field.shape[0] // 2  # Use center slice
+            current_field = current_field[z_slice, :, :]
+            slice_info = f" (z-slice {z_slice})"
+        else:
+            slice_info = ""
+            
+        # Handle complex data - we'll display the real part for visualization
+        if np.iscomplexobj(current_field):
+            current_field = np.real(current_field)
+            field_label = f'Re({field}){slice_info}'
+        else:
+            field_label = field + slice_info
+            
+        # Determine appropriate SI unit and scale for spatial dimensions
+        scale, unit = get_si_scale_and_label(max(self.design.width, self.design.height))
+        # Calculate figure size based on grid dimensions
+        grid_height, grid_width = current_field.shape
+        aspect_ratio = grid_width / grid_height
+        base_size = 6  # Base size for the smaller dimension
+        if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
+        else: figsize = (base_size, base_size / aspect_ratio)
+        # Create the figure with the added structure outlines
+        plt.figure(figsize=figsize)
+        plt.imshow(current_field, origin='lower', 
+                  extent=(0, self.design.width, 0, self.design.height),
+                  cmap='RdBu', aspect='equal', interpolation='bicubic')
+        plt.colorbar(label=f'{field_label} Field Amplitude')
+        plt.title(f'{field_label} Field at t = {current_t:.2e} s')
+        plt.xlabel(f'X ({unit})'); plt.ylabel(f'Y ({unit})')
+        plt.gca().xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+        plt.gca().yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+        for structure in self.design.structures:
+            # Use dashed lines for PML regions
+            if hasattr(structure, 'is_pml') and structure.is_pml:
+                structure.add_to_plot(plt.gca(), edgecolor="black", linestyle='--', facecolor='none', alpha=0.5)
+            else:
+                structure.add_to_plot(plt.gca(), facecolor="none", edgecolor="black", linestyle="-")
+        plt.tight_layout()
+        plt.show()
+
+    def animate_live(self, field_data=None, field="Ez", axis_scale=[-1,1], z_slice=None):
+        """Animate the field in real time using matplotlib animation.
+        
+        Args:
+            field_data: Field data to animate (if None, gets from current field)
+            field: Field component to animate
+            axis_scale: Color scale limits
+            z_slice: For 3D simulations, which z-slice to animate (if None, uses center)
+        """
+        if field_data is None: 
+            field_data = self.backend.to_numpy(getattr(self, field))
+        
+        # Handle 3D fields by taking a 2D slice
+        if self.is_3d and len(field_data.shape) == 3:
+            if z_slice is None:
+                z_slice = field_data.shape[0] // 2  # Use center slice
+            field_data = field_data[z_slice, :, :]
+            slice_info = f" (z-slice {z_slice})"
+        else:
+            slice_info = ""
+        
+        # Handle complex data - we'll display the real part for visualization
+        if np.iscomplexobj(field_data):
+            field_data = np.real(field_data)
+            
+        # If animation already exists, just update the data
+        if self.fig is not None and plt.fignum_exists(self.fig.number):
+            current_field = field_data
+            self.im.set_array(current_field)
+            self.ax.set_title(f't = {self.t:.2e} s{slice_info}')
+            self.fig.canvas.draw_idle()
+            self.fig.canvas.flush_events()
+            return
+
+        # Get current field data
+        current_field = field_data
+        # Calculate figure size based on grid dimensions
+        grid_height, grid_width = current_field.shape
+        aspect_ratio = grid_width / grid_height
+        base_size = 5  # Base size for the smaller dimension
+        if aspect_ratio > 1: figsize = (base_size * aspect_ratio * 1.2, base_size)
+        else: figsize = (base_size * 1.2, base_size / aspect_ratio)
+        # Create the figure and axis
+        self.fig, self.ax = plt.subplots(figsize=figsize)
+        # Create initial plot with proper scaling
+        self.im = self.ax.imshow(current_field, origin='lower',
+                                extent=(0, self.design.width, 0, self.design.height),
+                                cmap='RdBu', aspect='equal', interpolation='bicubic', vmin=axis_scale[0], vmax=axis_scale[1])
+        # Add colorbar
+        colorbar = plt.colorbar(self.im, orientation='vertical', aspect=30, extend='both')
+        colorbar.set_label(f'{field}{slice_info} Field Amplitude')
+        # Add design structure outlines
+        for structure in self.design.structures:
+            # Use dashed lines for PML regions
+            if hasattr(structure, 'is_pml') and structure.is_pml:
+                structure.add_to_plot(self.ax, edgecolor="black", linestyle='--', facecolor='none', alpha=0.5)
+            else:
+                structure.add_to_plot(self.ax, facecolor="none")
+        # Set axis labels with proper scaling
+        max_dim = max(self.design.width, self.design.height)
+        if max_dim >= 1e-3: scale, unit = 1e3, 'mm'
+        elif max_dim >= 1e-6: scale, unit = 1e6, 'µm'
+        elif max_dim >= 1e-9: scale, unit = 1e9, 'nm'
+        else: scale, unit = 1e12, 'pm'
+        # Add axis labels with proper scaling
+        plt.xlabel(f'X ({unit})')
+        plt.ylabel(f'Y ({unit})')
+        self.ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+        self.ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+        plt.tight_layout()
+        plt.show(block=False)
+        plt.pause(0.001)  # Small pause to ensure window is shown
+
     def _update_live_animation(self):
         """Update live animation if requested."""
         if self._live and (self.current_step % 1 == 0 or self.current_step == self.num_steps - 1):
             Ez_np = self.backend.to_numpy(self.Ez)
             self.animate_live(field_data=Ez_np, field="Ez", axis_scale=self._axis_scale)
 
-    def get_current_fields(self):
-        """Get the current field values as numpy arrays.
-        
-        Returns:
-            Dictionary containing current field arrays
-        """
-        if self.is_3d:
-            return {
-                'Ex': self.backend.to_numpy(self.Ex),
-                'Ey': self.backend.to_numpy(self.Ey), 
-                'Ez': self.backend.to_numpy(self.Ez),
-                'Hx': self.backend.to_numpy(self.Hx),
-                'Hy': self.backend.to_numpy(self.Hy),
-                'Hz': self.backend.to_numpy(self.Hz),
-                't': self.t,
-                'step': self.current_step
-            }
-        else:
-            return {
-                'Ez': self.backend.to_numpy(self.Ez),
-                'Hx': self.backend.to_numpy(self.Hx),
-                'Hy': self.backend.to_numpy(self.Hy),
-                't': self.t,
-                'step': self.current_step
-            }
-
-    def calculate_field_overlap(self, forward_fields, field='Ez'):
-        """Calculate overlap between current backward fields and forward field history.
-        
-        Args:
-            forward_fields: Forward simulation field history (results dict)
-            field: Field component to calculate overlap for
-            
-        Returns:
-            Complex overlap value at current time step
-        """
-        # Get current time step (backward simulation runs in reverse)
-        forward_step = len(forward_fields['t']) - 1 - self.current_step
-        
-        if forward_step < 0 or forward_step >= len(forward_fields[field]):
-            return 0.0
-            
-        # Get forward field at corresponding time
-        forward_field = forward_fields[field][forward_step]
-        
-        # Get current backward field
-        if field == 'Ez':
-            backward_field = self.backend.to_numpy(self.Ez)
-        elif field == 'Hx':
-            backward_field = self.backend.to_numpy(self.Hx)  
-        elif field == 'Hy':
-            backward_field = self.backend.to_numpy(self.Hy)
-        elif field == 'Ex' and self.is_3d:
-            backward_field = self.backend.to_numpy(self.Ex)
-        elif field == 'Ey' and self.is_3d:
-            backward_field = self.backend.to_numpy(self.Ey)
-        elif field == 'Hz' and self.is_3d:
-            backward_field = self.backend.to_numpy(self.Hz)
-        else:
-            raise ValueError(f"Unknown field: {field}")
-        
-        # Calculate overlap integral (inner product)
-        # For complex fields: overlap = ∫ forward* × backward dV
-        if np.iscomplexobj(forward_field) or np.iscomplexobj(backward_field):
-            overlap = np.sum(np.conj(forward_field) * backward_field)
-        else:
-            overlap = np.sum(forward_field * backward_field)
-            
-        return overlap
-
-    def get_monitor_power(self, monitor_index=0):
-        """Get current power from a specific monitor.
-        
-        Args:
-            monitor_index: Index of monitor to get power from (default: 0)
-            
-        Returns:
-            Current power value from the monitor, or 0.0 if no data
-        """
-        if not self.design.monitors or monitor_index >= len(self.design.monitors):
-            return 0.0
-            
-        monitor = self.design.monitors[monitor_index]
-        
-        # Return latest power if available
-        if hasattr(monitor, 'power_history') and monitor.power_history:
-            return monitor.power_history[-1]
-        elif hasattr(monitor, 'power_accumulated') and monitor.power_accumulated is not None:
-            return float(np.sum(monitor.power_accumulated))
-        else:
-            return 0.0
-
-    def get_total_monitor_power(self):
-        """Get total power from all monitors.
-        
-        Returns:
-            Sum of power from all monitors
-        """
-        total_power = 0.0
-        for i in range(len(self.design.monitors)):
-            total_power += self.get_monitor_power(i)
-        return total_power
-        
     def _record_monitor_data(self, step):
         """Record field data at monitor locations"""
         # Skip if no monitors
-        if not self.design.monitors:
-            return
+        if not self.design.monitors: return
             
         # Convert field data to numpy for monitors
         if self.is_3d:
@@ -894,20 +755,17 @@ class FDTD:
             Hx_np = self.backend.to_numpy(self.Hx)
             Hy_np = self.backend.to_numpy(self.Hy)
             Hz_np = self.backend.to_numpy(self.Hz)
-            
             # Record data for each monitor
             for monitor in self.design.monitors:
                 if hasattr(monitor, 'record_fields') and callable(monitor.record_fields):
                     monitor.record_fields(
                         Ex_np, Ey_np, Ez_np, Hx_np, Hy_np, Hz_np,
-                        self.t, self.dx, self.dy, self.dz, step=step
-                    )
+                        self.t, self.dx, self.dy, self.dz, step=step)
         else:
             # 2D simulation
             Ez_np = self.backend.to_numpy(self.Ez)
             Hx_np = self.backend.to_numpy(self.Hx)
             Hy_np = self.backend.to_numpy(self.Hy)
-            
             # Record data for each monitor
             for monitor in self.design.monitors:
                 if hasattr(monitor, 'record_fields') and callable(monitor.record_fields):
@@ -915,17 +773,15 @@ class FDTD:
                     if hasattr(monitor, 'is_3d'):
                         original_is_3d = monitor.is_3d
                         monitor.is_3d = False
-                    
                     monitor.record_fields(
                         Ez_np, Hx_np, Hy_np,
-                        self.t, self.dx, self.dy, step=step
-                    )
-                    
+                        self.t, self.dx, self.dy, step=step)
                     # Restore original is_3d setting
                     if hasattr(monitor, 'is_3d'):
                         monitor.is_3d = original_is_3d
 
-    def save_animation(self, field: str = "Ez", axis_scale=[-1, 1], filename='fdtd_animation.mp4', fps=60, frame_skip=4, clean_visualization=False):
+    def save_animation(self, field: str = "Ez", axis_scale=[-1, 1], filename='fdtd_animation.mp4', 
+                       fps=60, frame_skip=4, clean_visualization=False):
         """Save an animation of the simulation results as an mp4 file."""
         if len(self.results[field]) == 0:
             print("No field data to animate. Make sure to run the simulation with save=True.")
@@ -959,14 +815,10 @@ class FDTD:
             ax.get_xaxis().set_visible(False)
             ax.get_yaxis().set_visible(False)
         else:
-            # Create standard figure with normal padding
             fig, ax = plt.subplots(figsize=figsize)
-            # Get units for axis labels
             max_dim = max(self.design.width, self.design.height)
-            if max_dim >= 1e-3: scale, unit = 1e3, 'mm'
-            elif max_dim >= 1e-6: scale, unit = 1e6, 'µm'
-            elif max_dim >= 1e-9: scale, unit = 1e9, 'nm'
-            else: scale, unit = 1e12, 'pm'
+            scale, unit = get_si_scale_and_label(max_dim)
+
         # Create initial plot
         im = ax.imshow(self.results[field][0], origin='lower',
                       extent=(0, self.design.width, 0, self.design.height),
@@ -981,8 +833,7 @@ class FDTD:
             # Use dashed lines for PML regions
             if hasattr(structure, 'is_pml') and structure.is_pml:
                 structure.add_to_plot(ax, edgecolor="black", linestyle='--', facecolor='none', alpha=0.5)
-            else:
-                structure.add_to_plot(ax, facecolor="none", edgecolor="black")
+            else: structure.add_to_plot(ax, facecolor="none", edgecolor="black")
         # Configure standard plot elements if not using clean visualization
         if not clean_visualization:
             # Add axis labels with proper scaling
@@ -1045,10 +896,8 @@ class FDTD:
                 Ez = self.results['Ez'][t_idx]
                 Hx_raw = self.results['Hx'][t_idx]
                 Hy_raw = self.results['Hy'][t_idx]
-                
                 # Check if any field is complex
                 is_complex = np.iscomplexobj(Ez) or np.iscomplexobj(Hx_raw) or np.iscomplexobj(Hy_raw)
-                
                 # Handle complex Ez data
                 if np.iscomplexobj(Ez):
                     Ez_real = np.real(Ez)
@@ -1056,7 +905,6 @@ class FDTD:
                 else:
                     Ez_real = Ez
                     Ez_imag = np.zeros_like(Ez)
-                
                 # Extend magnetic fields to match Ez dimensions
                 if is_complex:
                     Hx = np.zeros_like(Ez, dtype=np.complex128)
@@ -1064,25 +912,21 @@ class FDTD:
                 else:
                     Hx = np.zeros_like(Ez_real)
                     Hy = np.zeros_like(Ez_real)
-                    
                 # Properly handle filling the arrays
                 if np.iscomplexobj(Hx_raw):
                     Hx[:, :-1] = Hx_raw
                 else:
                     Hx[:, :-1] = Hx_raw
-                    
                 if np.iscomplexobj(Hy_raw):
                     Hy[:-1, :] = Hy_raw
                 else:
                     Hy[:-1, :] = Hy_raw
-                
                 # For complex fields, use proper calculation
                 if is_complex:
                     Hx_real = np.real(Hx)
                     Hx_imag = np.imag(Hx)
                     Hy_real = np.real(Hy)
                     Hy_imag = np.imag(Hy)
-                    
                     # Calculate Poynting vector components for real and imaginary parts
                     # Using formula for complex Poynting vector: S = (1/2) Re[E × H*]
                     Sx = -Ez_real * Hy_real - Ez_imag * Hy_imag
@@ -1091,10 +935,8 @@ class FDTD:
                     # Real-only fields
                     Sx = -Ez_real * Hy
                     Sy = Ez_real * Hx
-                
                 # Calculate power magnitude (|S|²)
                 power_mag = Sx**2 + Sy**2
-                
                 # Accumulate power
                 power += power_mag
             # Average power over time steps
@@ -1102,12 +944,8 @@ class FDTD:
         else:
             print("No field data to calculate power. Make sure to run the simulation with save=True or accumulate_power=True.")
             return
-        # Determine appropriate SI unit and scale for spatial dimensions
-        max_dim = max(self.design.width, self.design.height)
-        if max_dim >= 1e-3: scale, unit = 1e3, 'mm'
-        elif max_dim >= 1e-6: scale, unit = 1e6, 'µm'
-        elif max_dim >= 1e-9: scale, unit = 1e9, 'nm'
-        else: scale, unit = 1e12, 'pm'
+        # Get SI scale and label
+        scale, unit = get_si_scale_and_label(max(self.design.width, self.design.height))
         # Configure plot size
         aspect_ratio = power.shape[1] / power.shape[0]
         base_size = 8  # Base size for the smaller dimension
@@ -1169,14 +1007,10 @@ class FDTD:
         """
         if time_steps is None: time_steps = self.num_steps
         if save_fields is None:
-            if self.is_3d:
-                save_fields = ['Ex', 'Ey', 'Ez', 'Hx', 'Hy', 'Hz']
-            else:
-                save_fields = ['Ez', 'Hx', 'Hy']
-        
+            if self.is_3d: save_fields = ['Ex', 'Ey', 'Ez', 'Hx', 'Hy', 'Hz']
+            else: save_fields = ['Ez', 'Hx', 'Hy']
         # Calculate size of arrays
         bytes_per_value = np.float64(0).nbytes  # Usually 8 bytes for float64
-        
         # Calculate individual field sizes based on dimensionality
         field_sizes = {}
         if self.is_3d:
@@ -1227,29 +1061,3 @@ class FDTD:
         # Display results
         display_status(f"Estimated memory usage: {total_size / mb:.2f} MB", "info")
         return result
-
-    def plot_monitors(self, field='Ez', figsize=(10, 6), power=False, log_scale=False, db_scale=False):
-        """Plot the data from all monitors.
-        
-        Args:
-            field: Field to plot ('Ez', 'Hx', or 'Hy')
-            figsize: Figure size tuple
-            power: If True, plot power instead of field
-            log_scale: If True, use logarithmic scale for power plots
-            db_scale: If True, use dB scale for power plots
-            
-        Returns:
-            List of (monitor, fig, ax) tuples
-        """
-        import matplotlib.pyplot as plt
-        # Check if we have monitors
-        if not self.design.monitors:
-            print("No monitors in the design.")
-            return []
-        # Create plots for each monitor
-        results = []
-        for monitor in self.design.monitors:
-            if power: fig, ax = monitor.plot_power(figsize=figsize, log_scale=log_scale, db_scale=db_scale)
-            else: fig, ax = monitor.plot_fields(field=field, figsize=figsize)
-            if fig is not None: results.append((monitor, fig, ax))
-        return results

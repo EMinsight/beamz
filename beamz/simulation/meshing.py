@@ -15,24 +15,12 @@ class BaseMeshGrid:
     
     def _validate_inputs(self):
         """Validate input parameters."""
-        if self.resolution <= 0:
-            raise ValueError("Resolution must be positive")
-        if self.design is None:
-            raise ValueError("Design cannot be None")
-    
-    def _estimate_dt(self):
-        """Estimate time step for PML calculations."""
-        c = 3e8  # Speed of light
-        return 0.5 * self.resolution / (c * np.sqrt(2))
-    
-    def _get_material_at_point(self, x, y, z=0):
-        """Get material properties at a specific point."""
-        return self.design.get_material_value(x, y, z)
-    
+        if self.resolution <= 0: raise ValueError("Resolution must be positive")
+        if self.design is None: raise ValueError("Design cannot be None")
+        
     def _get_material_properties_safe(self, material, x=0, y=0, z=0):
         """Safely get material properties from either Material or CustomMaterial objects."""
-        if material is None:
-            return 1.0, 1.0, 0.0
+        if material is None: return 1.0, 1.0, 0.0
         
         # Check if this is a CustomMaterial (has getter methods)
         if hasattr(material, 'get_permittivity'):
@@ -648,7 +636,8 @@ class RegularGrid3D(BaseMeshGrid):
         num_samples = len(dx)
         
         # Estimate dt for PML calculations
-        dt_estimate = self._estimate_dt()
+        c = 3e8  # Speed of light
+        dt_estimate = 0.5 * self.resolution / (c * np.sqrt(2))
         
         # Initialize material grids with vacuum properties
         permittivity = np.ones((grid_depth, grid_height, grid_width))
