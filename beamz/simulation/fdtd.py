@@ -45,6 +45,14 @@ class FDTD:
         self.dy = self.mesh.dy if hasattr(self.mesh, 'dy') else self.mesh.resolution_xy
         if self.is_3d: self.dz = self.mesh.dz if hasattr(self.mesh, 'dz') else self.mesh.resolution_z
         
+        # Set grid dimensions from mesh
+        if self.is_3d:
+            # For 3D mesh: shape is (nz, ny, nx)
+            self.nz, self.ny, self.nx = self.mesh.permittivity.shape
+        else:
+            # For 2D mesh: shape is (ny, nx)
+            self.ny, self.nx = self.mesh.permittivity.shape
+
         # Get material properties
         self.epsilon_r = self.mesh.permittivity
         self.mu_r = self.mesh.permeability
@@ -114,15 +122,15 @@ class FDTD:
             else: self.is_complex_backend = True
         else: 
             try:
-                # Try with dtype parameter if supported
-                self.Ez = self.backend.zeros((self.nx, self.ny), dtype=np.complex128)
+                # Try with dtype parameter if supported - use (ny, nx) format to match backend
+                self.Ez = self.backend.zeros((self.ny, self.nx), dtype=np.complex128)
             except TypeError:
                 # Fallback if dtype not supported - create real array and handle complex values in code
-                self.Ez = self.backend.zeros((self.nx, self.ny))
+                self.Ez = self.backend.zeros((self.ny, self.nx))
                 self.is_complex_backend = False
             else: self.is_complex_backend = True
-            self.Hx = self.backend.zeros((self.nx, self.ny-1))
-            self.Hy = self.backend.zeros((self.nx-1, self.ny))
+            self.Hx = self.backend.zeros((self.ny, self.nx-1))
+            self.Hy = self.backend.zeros((self.ny-1, self.nx))
 
 
     def simulate_step(self):
@@ -208,7 +216,7 @@ class FDTD:
         
         # Set up power accumulation if requested
         if accumulate_power:
-            self.power_accumulated = np.zeros((self.nx, self.ny))
+            self.power_accumulated = np.zeros((self.ny, self.nx))
             self.power_accumulation_count = 0
             
         # Determine optimal save frequency based on backend type
