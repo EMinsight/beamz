@@ -6,7 +6,7 @@ BEAMZ is an **electromagnetic simulation** package using the FDTD method. It fea
 </div>
 
 ```bash
-pip install beamz
+pip3 install beamz
 ```
 ![PyPI](https://img.shields.io/pypi/v/beamz?color=0077be)
 ![Pre](https://img.shields.io/badge/pre--release-c40944)
