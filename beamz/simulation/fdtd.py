@@ -52,7 +52,6 @@ class FDTD:
         else:
             # For 2D mesh: shape is (ny, nx)
             self.ny, self.nx = self.mesh.permittivity.shape
-
         # Get material properties
         self.epsilon_r = self.mesh.permittivity
         self.mu_r = self.mesh.permeability
