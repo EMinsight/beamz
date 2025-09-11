@@ -117,18 +117,18 @@ class FDTD:
                 self.Ex = self.backend.zeros((self.nz,     self.ny,     self.nx-1), dtype=np.complex128)
                 self.Ey = self.backend.zeros((self.nz,     self.ny-1,   self.nx    ), dtype=np.complex128)
                 self.Ez = self.backend.zeros((self.nz-1,   self.ny,     self.nx    ), dtype=np.complex128)
-                # Magnetic fields live on faces
-                # Match 2D kernel expectations per z-slice: Hx(ny, nx-1), Hy(ny-1, nx)
-                self.Hx = self.backend.zeros((self.nz-1,   self.ny,     self.nx-1  ), dtype=np.complex128)
-                self.Hy = self.backend.zeros((self.nz-1,   self.ny-1,   self.nx    ), dtype=np.complex128)
+                # Magnetic fields live on faces (Yee grid)
+                # Hx: (nz-1, ny-1, nx), Hy: (nz-1, ny, nx-1), Hz: (nz, ny-1, nx-1)
+                self.Hx = self.backend.zeros((self.nz-1,   self.ny-1,   self.nx    ), dtype=np.complex128)
+                self.Hy = self.backend.zeros((self.nz-1,   self.ny,     self.nx-1  ), dtype=np.complex128)
                 self.Hz = self.backend.zeros((self.nz,     self.ny-1,   self.nx-1  ), dtype=np.complex128)
             except TypeError:
                 # Fallback if dtype not supported
                 self.Ex = self.backend.zeros((self.nz,     self.ny,     self.nx-1))
                 self.Ey = self.backend.zeros((self.nz,     self.ny-1,   self.nx    ))
                 self.Ez = self.backend.zeros((self.nz-1,   self.ny,     self.nx    ))
-                self.Hx = self.backend.zeros((self.nz-1,   self.ny,     self.nx-1  ))
-                self.Hy = self.backend.zeros((self.nz-1,   self.ny-1,   self.nx    ))
+                self.Hx = self.backend.zeros((self.nz-1,   self.ny-1,   self.nx    ))
+                self.Hy = self.backend.zeros((self.nz-1,   self.ny,     self.nx-1  ))
                 self.Hz = self.backend.zeros((self.nz,     self.ny-1,   self.nx-1  ))
                 self.is_complex_backend = False
             else: self.is_complex_backend = True
@@ -167,46 +167,116 @@ class FDTD:
                 self.dx, self.dy, self.dt, EPS_0)
 
     def _update_3d_fields(self):
-        """Lightweight 3D update: evolve per-z 2D TE slices to enable visualization.
-        This ignores z-coupling (Ex, Ey, Hz remain unused) but produces meaningful Ez dynamics.
-        """
-        # Number of Ez slices along z is nz-1 due to Yee staggering
-        num_z_slices = self.Ez.shape[0]
-        for z_idx in range(num_z_slices):
-            # Select 2D material slices; clamp indices to available ranges
-            if self.epsilon_r.ndim == 3:
-                eps_2d = self.epsilon_r[min(z_idx, self.epsilon_r.shape[0]-1), :, :]
-            else:
-                eps_2d = self.epsilon_r
-            if self.sigma.ndim == 3:
-                sigma_2d = self.sigma[min(z_idx, self.sigma.shape[0]-1), :, :]
-            else:
-                sigma_2d = self.sigma
+        """Full 3D Yee update for all 6 field components with PML via sigma arrays."""
+        dt = self.dt; dx = self.dx; dy = self.dy; dz = self.dz
+        mu0 = MU_0; eps0 = EPS_0
 
-            # Update H fields for this slice using existing 2D backend kernels
-            Hx2d, Hy2d = self.backend.update_h_fields(
-                self.Hx[z_idx], self.Hy[z_idx], self.Ez[z_idx], sigma_2d,
-                self.dx, self.dy, self.dt, MU_0, EPS_0)
+        # Convenience references
+        Ex = self.Ex; Ey = self.Ey; Ez = self.Ez
+        Hx = self.Hx; Hy = self.Hy; Hz = self.Hz
+        eps_r = self.epsilon_r; sigma = self.sigma
 
-            # Gently mix neighboring z-slices to emulate weak z coupling (numerical diffusion)
-            if z_idx > 0:
-                Hx2d = 0.9*Hx2d + 0.1*self.Hx[z_idx-1]
-                Hy2d = 0.9*Hy2d + 0.1*self.Hy[z_idx-1]
-            if z_idx < num_z_slices-1:
-                Hx2d = 0.9*Hx2d + 0.1*self.Hx[z_idx+1]
-                Hy2d = 0.9*Hy2d + 0.1*self.Hy[z_idx+1]
-            self.Hx[z_idx], self.Hy[z_idx] = Hx2d, Hy2d
+        # --- Update H fields (n -> n+1/2) ---
+        # Magnetic conductivities at staggered positions
+        sigma_m_hx = (sigma[:-1, :-1, :] * mu0 / eps0) if sigma.ndim == 3 else sigma * 0
+        sigma_m_hy = (sigma[:-1, :, :-1] * mu0 / eps0) if sigma.ndim == 3 else sigma * 0
+        sigma_m_hz = (sigma[:, :-1, :-1] * mu0 / eps0) if sigma.ndim == 3 else sigma * 0
 
-            # Update E field for this slice
-            Ez2d = self.backend.update_e_field(
-                self.Ez[z_idx], self.Hx[z_idx], self.Hy[z_idx], sigma_2d, eps_2d,
-                self.dx, self.dy, self.dt, EPS_0)
-            # Couple Ez across z weakly to encourage propagation in 3D
-            if z_idx > 0:
-                Ez2d = 0.95*Ez2d + 0.05*self.Ez[z_idx-1]
-            if z_idx < num_z_slices-1:
-                Ez2d = 0.95*Ez2d + 0.05*self.Ez[z_idx+1]
-            self.Ez[z_idx] = Ez2d
+        # Curls of E at H locations
+        # Hx shape: (nz-1, ny-1, nx)
+        dEz_dy = (Ez[:, 1:, :] - Ez[:, :-1, :]) / dy          # (nz-1, ny-1, nx)
+        dEy_dz = (Ey[1:, :, :] - Ey[:-1, :, :]) / dz          # (nz-1, ny-1, nx)
+        curlE_x = dEz_dy - dEy_dz
+
+        # Hy shape: (nz-1, ny, nx-1)
+        dEx_dz = (Ex[1:, :, :] - Ex[:-1, :, :]) / dz          # (nz-1, ny, nx-1)
+        dEz_dx = (Ez[:, :, 1:] - Ez[:, :, :-1]) / dx          # (nz-1, ny, nx-1)
+        curlE_y = dEx_dz - dEz_dx
+
+        # Hz shape: (nz, ny-1, nx-1)
+        dEy_dx = (Ey[:, :, 1:] - Ey[:, :, :-1]) / dx          # (nz, ny-1, nx-1)
+        dEx_dy = (Ex[:, 1:, :] - Ex[:, :-1, :]) / dy          # (nz, ny-1, nx-1)
+        curlE_z = dEy_dx - dEx_dy
+
+        # Semi-implicit PML factors for H
+        denom_hx = 1.0 + sigma_m_hx * dt / (2.0 * mu0)
+        factor_hx = (1.0 - sigma_m_hx * dt / (2.0 * mu0)) / denom_hx
+        source_hx = (dt / mu0) / denom_hx
+
+        denom_hy = 1.0 + sigma_m_hy * dt / (2.0 * mu0)
+        factor_hy = (1.0 - sigma_m_hy * dt / (2.0 * mu0)) / denom_hy
+        source_hy = (dt / mu0) / denom_hy
+
+        denom_hz = 1.0 + sigma_m_hz * dt / (2.0 * mu0)
+        factor_hz = (1.0 - sigma_m_hz * dt / (2.0 * mu0)) / denom_hz
+        source_hz = (dt / mu0) / denom_hz
+
+        Hx[:] = factor_hx * Hx - source_hx * curlE_x
+        Hy[:] = factor_hy * Hy - source_hy * curlE_y
+        Hz[:] = factor_hz * Hz - source_hz * curlE_z
+
+        # --- Update E fields (n+1/2 -> n+1) ---
+        # Electric conductivities and permittivities at E locations (use interior slices)
+        # Ex interior: [1:-1, 1:-1, :]
+        if eps_r.ndim == 3:
+            eps_ex = eps_r[1:-1, 1:-1, :-1]
+            sig_ex = sigma[1:-1, 1:-1, :-1]
+        else:
+            eps_ex = eps_r
+            sig_ex = sigma
+
+        # Ey interior: [1:-1, :, 1:-1]
+        if eps_r.ndim == 3:
+            eps_ey = eps_r[1:-1, :-1, 1:-1]
+            sig_ey = sigma[1:-1, :-1, 1:-1]
+        else:
+            eps_ey = eps_r
+            sig_ey = sigma
+
+        # Ez interior: [:, 1:-1, 1:-1]
+        if eps_r.ndim == 3:
+            eps_ez = eps_r[:-1, 1:-1, 1:-1]
+            sig_ez = sigma[:-1, 1:-1, 1:-1]
+        else:
+            eps_ez = eps_r
+            sig_ez = sigma
+
+        # Curls of H at E locations (interior updates)
+        # Ex interior indices
+        dHz_dy_ex = (Hz[:, 1:, :] - Hz[:, :-1, :]) / dy              # (nz, ny-2, nx-1)
+        dHy_dz_ex = (Hy[1:, :, :] - Hy[:-1, :, :]) / dz              # (nz-2, ny, nx-1)
+        # Align to (nz-2, ny-2, nx-1)
+        curlH_x = dHz_dy_ex[1:-1, :, :] - dHy_dz_ex[:, 1:-1, :]
+
+        # Ey interior indices
+        dHx_dz_ey = (Hx[1:, :, :] - Hx[:-1, :, :]) / dz              # (nz-2, ny-1, nx)
+        dHz_dx_ey = (Hz[:, :, 1:] - Hz[:, :, :-1]) / dx              # (nz, ny-1, nx-1)
+        # Align to (nz-2, ny-1, nx-2)
+        curlH_y = dHx_dz_ey[:, :, 1:-1] - dHz_dx_ey[1:-1, :, :]
+
+        # Ez interior indices
+        dHy_dx_ez = (Hy[:, :, 1:] - Hy[:, :, :-1]) / dx              # (nz-1, ny, nx-2)
+        dHx_dy_ez = (Hx[:, 1:, :] - Hx[:, :-1, :]) / dy              # (nz-1, ny-2, nx)
+        # Align to (nz-1, ny-2, nx-2)
+        curlH_z = dHy_dx_ez[:, 1:-1, :] - dHx_dy_ez[:, :, 1:-1]
+
+        # Semi-implicit PML factors for E
+        denom_ex = 1.0 + sig_ex * dt / (2.0 * eps0 * eps_ex)
+        factor_ex = (1.0 - sig_ex * dt / (2.0 * eps0 * eps_ex)) / denom_ex
+        source_ex = (dt / (eps0 * eps_ex)) / denom_ex
+
+        denom_ey = 1.0 + sig_ey * dt / (2.0 * eps0 * eps_ey)
+        factor_ey = (1.0 - sig_ey * dt / (2.0 * eps0 * eps_ey)) / denom_ey
+        source_ey = (dt / (eps0 * eps_ey)) / denom_ey
+
+        denom_ez = 1.0 + sig_ez * dt / (2.0 * eps0 * eps_ez)
+        factor_ez = (1.0 - sig_ez * dt / (2.0 * eps0 * eps_ez)) / denom_ez
+        source_ez = (dt / (eps0 * eps_ez)) / denom_ez
+
+        # Apply updates to interior regions
+        Ex[1:-1, 1:-1, :] = factor_ex * Ex[1:-1, 1:-1, :] + source_ex * (curlH_x)
+        Ey[1:-1, :, 1:-1] = factor_ey * Ey[1:-1, :, 1:-1] + source_ey * (curlH_y)
+        Ez[:, 1:-1, 1:-1] = factor_ez * Ez[:, 1:-1, 1:-1] + source_ez * (curlH_z)
 
     def initialize_simulation(self, save=True, live=True, axis_scale=[-1,1], save_animation=False, 
                              animation_filename='fdtd_animation.mp4', clean_visualization=True, 
