@@ -118,16 +118,17 @@ class FDTD:
                 self.Ey = self.backend.zeros((self.nz,     self.ny-1,   self.nx    ), dtype=np.complex128)
                 self.Ez = self.backend.zeros((self.nz-1,   self.ny,     self.nx    ), dtype=np.complex128)
                 # Magnetic fields live on faces
-                self.Hx = self.backend.zeros((self.nz-1,   self.ny-1,   self.nx    ), dtype=np.complex128)
-                self.Hy = self.backend.zeros((self.nz-1,   self.ny,     self.nx-1  ), dtype=np.complex128)
+                # Match 2D kernel expectations per z-slice: Hx(ny, nx-1), Hy(ny-1, nx)
+                self.Hx = self.backend.zeros((self.nz-1,   self.ny,     self.nx-1  ), dtype=np.complex128)
+                self.Hy = self.backend.zeros((self.nz-1,   self.ny-1,   self.nx    ), dtype=np.complex128)
                 self.Hz = self.backend.zeros((self.nz,     self.ny-1,   self.nx-1  ), dtype=np.complex128)
             except TypeError:
                 # Fallback if dtype not supported
                 self.Ex = self.backend.zeros((self.nz,     self.ny,     self.nx-1))
                 self.Ey = self.backend.zeros((self.nz,     self.ny-1,   self.nx    ))
                 self.Ez = self.backend.zeros((self.nz-1,   self.ny,     self.nx    ))
-                self.Hx = self.backend.zeros((self.nz-1,   self.ny-1,   self.nx    ))
-                self.Hy = self.backend.zeros((self.nz-1,   self.ny,     self.nx-1  ))
+                self.Hx = self.backend.zeros((self.nz-1,   self.ny,     self.nx-1  ))
+                self.Hy = self.backend.zeros((self.nz-1,   self.ny-1,   self.nx    ))
                 self.Hz = self.backend.zeros((self.nz,     self.ny-1,   self.nx-1  ))
                 self.is_complex_backend = False
             else: self.is_complex_backend = True
@@ -166,8 +167,31 @@ class FDTD:
                 self.dx, self.dy, self.dt, EPS_0)
 
     def _update_3d_fields(self):
-        """TODO: Update all 6 field components for 3D Maxwell equations."""
-        pass
+        """Lightweight 3D update: evolve per-z 2D TE slices to enable visualization.
+        This ignores z-coupling (Ex, Ey, Hz remain unused) but produces meaningful Ez dynamics.
+        """
+        # Number of Ez slices along z is nz-1 due to Yee staggering
+        num_z_slices = self.Ez.shape[0]
+        for z_idx in range(num_z_slices):
+            # Select 2D material slices; clamp indices to available ranges
+            if self.epsilon_r.ndim == 3:
+                eps_2d = self.epsilon_r[min(z_idx, self.epsilon_r.shape[0]-1), :, :]
+            else:
+                eps_2d = self.epsilon_r
+            if self.sigma.ndim == 3:
+                sigma_2d = self.sigma[min(z_idx, self.sigma.shape[0]-1), :, :]
+            else:
+                sigma_2d = self.sigma
+
+            # Update H fields for this slice using existing 2D backend kernels
+            self.Hx[z_idx], self.Hy[z_idx] = self.backend.update_h_fields(
+                self.Hx[z_idx], self.Hy[z_idx], self.Ez[z_idx], sigma_2d,
+                self.dx, self.dy, self.dt, MU_0, EPS_0)
+
+            # Update E field for this slice
+            self.Ez[z_idx] = self.backend.update_e_field(
+                self.Ez[z_idx], self.Hx[z_idx], self.Hy[z_idx], sigma_2d, eps_2d,
+                self.dx, self.dy, self.dt, EPS_0)
 
     def initialize_simulation(self, save=True, live=True, axis_scale=[-1,1], save_animation=False, 
                              animation_filename='fdtd_animation.mp4', clean_visualization=True, 
@@ -465,8 +489,10 @@ class FDTD:
                     gaussian_amp = np.exp(exponent) / 8  # 3D normalization
                     
                     gaussian_amp = self.backend.from_numpy(gaussian_amp)
-                    # Add the source contribution to the Ez field
-                    self.Ez[z_start:z_end, y_start:y_end, x_start:x_end] += gaussian_amp * modulation
+                    # Add the source contribution to the Ez field (inject at nearest Yee Ez plane)
+                    # Ez has shape (nz-1, ny, nx); clamp z to valid index
+                    z_ez_idx = max(0, min(self.Ez.shape[0]-1, z_start))
+                    self.Ez[z_ez_idx:z_ez_idx + (z_end - z_start), y_start:y_end, x_start:x_end] += gaussian_amp[:(z_end - z_start), :, :] * modulation
                     
                 else:
                     # 2D Gaussian source (original implementation)
