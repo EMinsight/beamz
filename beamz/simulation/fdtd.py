@@ -184,14 +184,29 @@ class FDTD:
                 sigma_2d = self.sigma
 
             # Update H fields for this slice using existing 2D backend kernels
-            self.Hx[z_idx], self.Hy[z_idx] = self.backend.update_h_fields(
+            Hx2d, Hy2d = self.backend.update_h_fields(
                 self.Hx[z_idx], self.Hy[z_idx], self.Ez[z_idx], sigma_2d,
                 self.dx, self.dy, self.dt, MU_0, EPS_0)
 
+            # Gently mix neighboring z-slices to emulate weak z coupling (numerical diffusion)
+            if z_idx > 0:
+                Hx2d = 0.9*Hx2d + 0.1*self.Hx[z_idx-1]
+                Hy2d = 0.9*Hy2d + 0.1*self.Hy[z_idx-1]
+            if z_idx < num_z_slices-1:
+                Hx2d = 0.9*Hx2d + 0.1*self.Hx[z_idx+1]
+                Hy2d = 0.9*Hy2d + 0.1*self.Hy[z_idx+1]
+            self.Hx[z_idx], self.Hy[z_idx] = Hx2d, Hy2d
+
             # Update E field for this slice
-            self.Ez[z_idx] = self.backend.update_e_field(
+            Ez2d = self.backend.update_e_field(
                 self.Ez[z_idx], self.Hx[z_idx], self.Hy[z_idx], sigma_2d, eps_2d,
                 self.dx, self.dy, self.dt, EPS_0)
+            # Couple Ez across z weakly to encourage propagation in 3D
+            if z_idx > 0:
+                Ez2d = 0.95*Ez2d + 0.05*self.Ez[z_idx-1]
+            if z_idx < num_z_slices-1:
+                Ez2d = 0.95*Ez2d + 0.05*self.Ez[z_idx+1]
+            self.Ez[z_idx] = Ez2d
 
     def initialize_simulation(self, save=True, live=True, axis_scale=[-1,1], save_animation=False, 
                              animation_filename='fdtd_animation.mp4', clean_visualization=True, 
@@ -480,13 +495,13 @@ class FDTD:
                     dist_y_sq = (y_grid - center_y_grid)**2
                     dist_z_sq = (z_grid - center_z_grid)**2
                     
-                    # Calculate Gaussian amplitude for 3D
+                    # Calculate Gaussian amplitude for 3D (no artificial normalization to preserve amplitude)
                     epsilon = 1e-9
                     sigma_x_sq = width_x_grid**2 + epsilon
                     sigma_y_sq = width_y_grid**2 + epsilon
                     sigma_z_sq = width_z_grid**2 + epsilon
                     exponent = -(dist_x_sq / (2 * sigma_x_sq) + dist_y_sq / (2 * sigma_y_sq) + dist_z_sq / (2 * sigma_z_sq))
-                    gaussian_amp = np.exp(exponent) / 8  # 3D normalization
+                    gaussian_amp = np.exp(exponent)
                     
                     gaussian_amp = self.backend.from_numpy(gaussian_amp)
                     # Add the source contribution to the Ez field (inject at nearest Yee Ez plane)
