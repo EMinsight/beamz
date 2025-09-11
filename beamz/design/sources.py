@@ -176,8 +176,23 @@ class ModeSource():
             
         # Extract mode profiles for all modes
         self.mode_profiles = []
-        for mode_number in range(self.mode_vectors.shape[1]):
-            self.mode_profiles.append(self.get_xy_mode_line(self.mode_vectors, mode_number))
+        if self.height and self.height > 0:
+            # 3D rectangular cross-section: build a separable 2D mode profile in the cross-section plane
+            try:
+                profiles_3d = self._build_3d_rect_mode_profiles()
+                if profiles_3d:
+                    self.mode_profiles = profiles_3d
+                else:
+                    # Fallback to 1D line profile along width
+                    for mode_number in range(self.mode_vectors.shape[1]):
+                        self.mode_profiles.append(self.get_xy_mode_line(self.mode_vectors, mode_number))
+            except Exception as e:
+                print(f"Warning: 3D mode profile construction failed: {e}. Falling back to 1D line mode.")
+                for mode_number in range(self.mode_vectors.shape[1]):
+                    self.mode_profiles.append(self.get_xy_mode_line(self.mode_vectors, mode_number))
+        else:
+            for mode_number in range(self.mode_vectors.shape[1]):
+                self.mode_profiles.append(self.get_xy_mode_line(self.mode_vectors, mode_number))
     
     def copy(self):
         """Create a deep copy of the ModeSource."""
@@ -304,6 +319,61 @@ class ModeSource():
             amplitude = vecs[j, mode_number]  # Keep complex value with phase
             mode_profile.append([amplitude, x[j], y[j], z[j]])
         return mode_profile
+
+    def _build_3d_rect_mode_profiles(self):
+        """Construct a 2D separable mode profile on the cross-section plane for 3D injections.
+        For +x/-x propagation, use yz plane; for +y/-y use xz; for +z/-z use xy.
+        Uses two 1D slab mode solves along the two cross-section axes and creates an outer-product field.
+        """
+        # Determine cross-section axes
+        x0, y0, z0 = self.position
+        # Sampling resolution on the cross-section
+        dL = self.dL
+        num_y = max(8, int(round(self.width / dL)))
+        num_z = max(8, int(round(self.height / dL)))
+        # Define sampling ranges centered at position
+        y_min, y_max = y0 - self.width/2, y0 + self.width/2
+        z_min, z_max = z0 - self.height/2, z0 + self.height/2
+        ys = np.linspace(y_min, y_max, num_y)
+        zs = np.linspace(z_min, z_max, num_z)
+        # Infer core/cladding along y and z from design materials
+        eps_line_y = np.array([self.design.get_material_value(x0, y, z0)[0] for y in ys])
+        eps_line_z = np.array([self.design.get_material_value(x0, y0, z)[0] for z in zs])
+        n_core_y = np.sqrt(np.max(eps_line_y)); n_clad_y = np.sqrt(np.min(eps_line_y))
+        n_core_z = np.sqrt(np.max(eps_line_z)); n_clad_z = np.sqrt(np.min(eps_line_z))
+        # Estimate effective core widths by thresholding at 90% of peak eps
+        def estimate_width(coords, eps_line):
+            thr = 0.9 * np.max(eps_line)
+            idx = np.where(eps_line >= thr)[0]
+            if idx.size > 0:
+                return coords[idx[-1]] - coords[idx[0]]
+            return max(coords[-1]-coords[0], dL)
+        wy_eff = estimate_width(ys, eps_line_y)
+        wz_eff = estimate_width(zs, eps_line_z)
+        # Build 1D slab modes along y and z (fundamental)
+        try:
+            Ey_1d, _ = slab_mode_source(x=ys, w=wy_eff, n_WG=n_core_y, n0=n_clad_y, wavelength=self.wavelength, ind_m=0, x0=y0)
+        except Exception:
+            Ey_1d = np.ones_like(ys)
+        try:
+            Ez_1d, _ = slab_mode_source(x=zs, w=wz_eff, n_WG=n_core_z, n0=n_clad_z, wavelength=self.wavelength, ind_m=0, x0=z0)
+        except Exception:
+            Ez_1d = np.ones_like(zs)
+        # Normalize
+        Ey_1d = Ey_1d / np.max(np.abs(Ey_1d) + 1e-12)
+        Ez_1d = Ez_1d / np.max(np.abs(Ez_1d) + 1e-12)
+        # Outer product field on cross-section (choose TE-like Ez component)
+        field_yz = np.outer(np.abs(Ey_1d), np.abs(Ez_1d))
+        # Normalize amplitude
+        field_yz /= (np.max(field_yz) + 1e-12)
+        # Create list of [amplitude, x, y, z] samples across plane
+        mode_profile = []
+        for iy, y in enumerate(ys):
+            for iz, z in enumerate(zs):
+                amp = field_yz[iy, iz]
+                mode_profile.append([amp, x0, y, z])
+        # Only one mode profile used for injection
+        return [mode_profile]
 
     def show(self):
         """Show the mode profiles for a cross section given a 1D permittivity profile."""
