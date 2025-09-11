@@ -132,13 +132,22 @@ class FDTD:
             else: self.is_complex_backend = True
         else: 
             try:
+<<<<<<< HEAD
                 # Try with dtype parameter if supported - use (ny, nx) format to match backend
+=======
+                # Try with dtype parameter if supported
+                # Use (ny, nx) convention so first dim is y (rows), second is x (cols)
+>>>>>>> 85e09f1 (Okay. Tested the fix. NOW it should work...)
                 self.Ez = self.backend.zeros((self.ny, self.nx), dtype=np.complex128)
             except TypeError:
                 # Fallback if dtype not supported - create real array and handle complex values in code
                 self.Ez = self.backend.zeros((self.ny, self.nx))
                 self.is_complex_backend = False
             else: self.is_complex_backend = True
+<<<<<<< HEAD
+=======
+            # Staggered magnetic fields: Hx has same rows as Ez and one fewer column; Hy has one fewer row and same columns
+>>>>>>> 85e09f1 (Okay. Tested the fix. NOW it should work...)
             self.Hx = self.backend.zeros((self.ny, self.nx-1))
             self.Hy = self.backend.zeros((self.ny-1, self.nx))
 
