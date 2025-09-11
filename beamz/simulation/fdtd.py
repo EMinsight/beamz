@@ -45,7 +45,6 @@ class FDTD:
         self.dy = self.mesh.dy if hasattr(self.mesh, 'dy') else self.mesh.resolution_xy
         if self.is_3d: self.dz = self.mesh.dz if hasattr(self.mesh, 'dz') else self.mesh.resolution_z
         
-<<<<<<< HEAD
         # Set grid dimensions from mesh
         if self.is_3d:
             # For 3D mesh: shape is (nz, ny, nx)
@@ -53,16 +52,6 @@ class FDTD:
         else:
             # For 2D mesh: shape is (ny, nx)
             self.ny, self.nx = self.mesh.permittivity.shape
-=======
-        # Set grid dimensions
-        if self.is_3d:
-            # 3D mesh: shape is (nz, ny, nx)
-            self.nz, self.ny, self.nx = self.mesh.shape
-        else:
-            # 2D mesh: shape is (ny, nx)
-            self.ny, self.nx = self.mesh.shape
-        
->>>>>>> 7a0a779 (Fixed it for 2D mmi example as well.)
         # Get material properties
         self.epsilon_r = self.mesh.permittivity
         self.mu_r = self.mesh.permeability
@@ -134,22 +123,14 @@ class FDTD:
             else: self.is_complex_backend = True
         else: 
             try:
-<<<<<<< HEAD
                 # Try with dtype parameter if supported - use (ny, nx) format to match backend
-=======
-                # Try with dtype parameter if supported
-                # Use (ny, nx) convention so first dim is y (rows), second is x (cols)
->>>>>>> 85e09f1 (Okay. Tested the fix. NOW it should work...)
                 self.Ez = self.backend.zeros((self.ny, self.nx), dtype=np.complex128)
             except TypeError:
                 # Fallback if dtype not supported - create real array and handle complex values in code
                 self.Ez = self.backend.zeros((self.ny, self.nx))
                 self.is_complex_backend = False
             else: self.is_complex_backend = True
-<<<<<<< HEAD
-=======
             # Staggered magnetic fields: Hx has same rows as Ez and one fewer column; Hy has one fewer row and same columns
->>>>>>> 85e09f1 (Okay. Tested the fix. NOW it should work...)
             self.Hx = self.backend.zeros((self.ny, self.nx-1))
             self.Hy = self.backend.zeros((self.ny-1, self.nx))
 
