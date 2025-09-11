@@ -97,13 +97,13 @@ class JAXBackend(Backend):
             self.update_e_field_compiled = self._update_e_field_core
             self.update_fields_fused_compiled = self._update_fields_fused
 
-    def zeros(self, shape):
-        """Create an array of zeros with the given shape."""
-        return jnp.zeros(shape, dtype=self.dtype)
+    def zeros(self, shape, dtype=None):
+        """Create an array of zeros with the given shape and optional dtype."""
+        return jnp.zeros(shape, dtype=(dtype if dtype is not None else self.dtype))
         
-    def ones(self, shape):
-        """Create an array of ones with the given shape."""
-        return jnp.ones(shape, dtype=self.dtype)
+    def ones(self, shape, dtype=None):
+        """Create an array of ones with the given shape and optional dtype."""
+        return jnp.ones(shape, dtype=(dtype if dtype is not None else self.dtype))
         
     def copy(self, array):
         """Create a copy of the array."""

@@ -112,22 +112,23 @@ class FDTD:
         """Initialize field arrays based on dimensionality."""
         if self.is_3d: 
             try:
-                # Electric field components (centered at cell edges)
-                self.Ex = self.backend.zeros((self.nz, self.ny, self.nx-1), dtype=np.complex128)
-                self.Ey = self.backend.zeros((self.nz, self.ny-1, self.nx), dtype=np.complex128)
-                self.Ez = self.backend.zeros((self.nz-1, self.ny, self.nx), dtype=np.complex128)
-                # Magnetic field components (centered at cell faces)
-                self.Hx = self.backend.zeros((self.nz-1, self.ny-1, self.nx), dtype=np.complex128)
-                self.Hy = self.backend.zeros((self.nz-1, self.ny, self.nx-1), dtype=np.complex128)
-                self.Hz = self.backend.zeros((self.nz, self.ny-1, self.nx-1), dtype=np.complex128)
+                # Yee grid staggering in 3D (arrays ordered as [z, y, x])
+                # Electric fields live on edges
+                self.Ex = self.backend.zeros((self.nz,     self.ny,     self.nx-1), dtype=np.complex128)
+                self.Ey = self.backend.zeros((self.nz,     self.ny-1,   self.nx    ), dtype=np.complex128)
+                self.Ez = self.backend.zeros((self.nz-1,   self.ny,     self.nx    ), dtype=np.complex128)
+                # Magnetic fields live on faces
+                self.Hx = self.backend.zeros((self.nz-1,   self.ny-1,   self.nx    ), dtype=np.complex128)
+                self.Hy = self.backend.zeros((self.nz-1,   self.ny,     self.nx-1  ), dtype=np.complex128)
+                self.Hz = self.backend.zeros((self.nz,     self.ny-1,   self.nx-1  ), dtype=np.complex128)
             except TypeError:
                 # Fallback if dtype not supported
-                self.Ex = self.backend.zeros((self.nz, self.ny, self.nx-1))
-                self.Ey = self.backend.zeros((self.nz, self.ny-1, self.nx))
-                self.Ez = self.backend.zeros((self.nz-1, self.ny, self.nx))
-                self.Hx = self.backend.zeros((self.nz-1, self.ny-1, self.nx))
-                self.Hy = self.backend.zeros((self.nz-1, self.ny, self.nx-1))
-                self.Hz = self.backend.zeros((self.nz, self.ny-1, self.nx-1))
+                self.Ex = self.backend.zeros((self.nz,     self.ny,     self.nx-1))
+                self.Ey = self.backend.zeros((self.nz,     self.ny-1,   self.nx    ))
+                self.Ez = self.backend.zeros((self.nz-1,   self.ny,     self.nx    ))
+                self.Hx = self.backend.zeros((self.nz-1,   self.ny-1,   self.nx    ))
+                self.Hy = self.backend.zeros((self.nz-1,   self.ny,     self.nx-1  ))
+                self.Hz = self.backend.zeros((self.nz,     self.ny-1,   self.nx-1  ))
                 self.is_complex_backend = False
             else: self.is_complex_backend = True
         else: 
@@ -239,7 +240,7 @@ class FDTD:
             self.power_accumulation_count = 0
             
         # Determine optimal save frequency based on backend type
-        is_gpu_backend = hasattr(self.backend, 'device') and self.backend.device.type in ['cuda', 'mps']
+        is_gpu_backend = hasattr(self.backend, 'device') and getattr(self.backend, 'device', '') in ['cuda', 'mps', 'gpu']
         # For GPU backends, avoid excessive CPU-GPU transfers by batching the result saves
         if is_gpu_backend and save:
             save_freq = max(10, self.num_steps // 100)  # Save approximately every 1% of steps or min of 10 steps
@@ -620,11 +621,14 @@ class FDTD:
         """Save results for this time step if requested and at the right frequency."""
         if (self._save_results and not self.save_memory_mode and 
             (self.current_step % self._effective_save_freq == 0 or self.current_step == self.num_steps - 1)):
-            # Convert arrays to numpy for saving
+            # Convert arrays to numpy for saving (use magnitude for complex to increase visibility)
             self.results['t'].append(self.t)
-            # Save only the requested fields
             for field in self._save_fields:
-                self.results[field].append(self.backend.to_numpy(self.backend.copy(getattr(self, field))))
+                arr = getattr(self, field)
+                arr_np = self.backend.to_numpy(self.backend.copy(arr))
+                if np.iscomplexobj(arr_np):
+                    arr_np = np.abs(arr_np)
+                self.results[field].append(arr_np)
 
     def plot_field(self, field: str = "Ez", t: float = None, z_slice: int = None) -> None:
         """Plot a field at a given time with proper scaling and units.
@@ -764,9 +768,12 @@ class FDTD:
 
     def _update_live_animation(self):
         """Update live animation if requested."""
-        if self._live and (self.current_step % 1 == 0 or self.current_step == self.num_steps - 1):
-            Ez_np = self.backend.to_numpy(self.Ez)
-            self.animate_live(field_data=Ez_np, field="Ez", axis_scale=self._axis_scale)
+        if self._live and (self.current_step % 2 == 0 or self.current_step == self.num_steps - 1):
+            # Prefer showing Ez magnitude for better visibility, normalize color scale
+            field = "Ez" if not self.is_3d else "Ez"
+            data = getattr(self, field)
+            Ez_np = self.backend.to_numpy(data)
+            self.animate_live(field_data=Ez_np, field=field, axis_scale=self._axis_scale)
 
     def _record_monitor_data(self, step):
         """Record field data at monitor locations"""
