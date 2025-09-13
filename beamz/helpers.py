@@ -73,7 +73,8 @@ def calc_optimal_fdtd_params(wavelength, n_max, dims=2, safety_factor=0.4, point
     # Calculate theoretical Courant limit (dt_max = dx / (c * sqrt(dims)))
     dt_max = resolution / (LIGHT_SPEED * np.sqrt(dims))
     # Apply material correction and safety factor
-    dt = safety_factor * dt_max * n_max
+    # Time step should be smaller in higher index materials (slower light speed)
+    dt = safety_factor * dt_max / n_max
     # Verify stability
     _, courant, limit = check_fdtd_stability(dt, resolution, 
                                             dy=resolution if dims >= 2 else None, 
@@ -81,7 +82,7 @@ def calc_optimal_fdtd_params(wavelength, n_max, dims=2, safety_factor=0.4, point
                                             n_max=n_max,
                                             safety_factor=1.0)  # Use 1.0 here to get theoretical limit
     # Double-check our calculation
-    assert courant <= safety_factor * limit, "Internal error: calculated time step exceeds stability limit"
+    assert courant <= limit, "Internal error: calculated time step exceeds stability limit"
     
     return resolution, dt
 

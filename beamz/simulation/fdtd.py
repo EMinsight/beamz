@@ -317,7 +317,7 @@ class FDTD:
         # Check stability using the helper function
         from beamz.helpers import check_fdtd_stability
         n_max = np.sqrt(np.max(self.epsilon_r))
-        is_stable, courant, safe_limit = check_fdtd_stability(dt=self.dt, dx=self.dx, dy=self.dy, n_max=n_max)
+        is_stable, courant, safe_limit = check_fdtd_stability(dt=self.dt, dx=self.dx, dy=self.dy, n_max=n_max, safety_factor=1.0)
         if not is_stable:
             display_status(f"Simulation may be unstable! Courant number = {courant:.3f} > {safe_limit:.3f}", "warning")
             display_status("Consider reducing dt or increasing dx/dy", "warning")
