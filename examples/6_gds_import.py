@@ -29,5 +29,3 @@ for layer_num, structures in gds_design.layers.items():
 
 # This will show the 3D visualization
 design.show()
-
-
