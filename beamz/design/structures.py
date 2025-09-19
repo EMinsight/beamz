@@ -285,18 +285,21 @@ class Design:
         # Third pass: unify polygons within each material group
         new_structures = []
         for material_key, structure_group in material_groups.items():
-            if len(structure_group) <= 1:
-                # Only one structure with this material, no merging needed
-                new_structures.extend([s[0] for s in structure_group])
-                for s in structure_group:
+            # Exclude preserved rings from union to avoid duplicate drawing (simplified + original)
+            filtered_group = [s for s in structure_group if s[0] not in rings_to_preserve]
+            if len(filtered_group) <= 1:
+                # Zero or one non-ring structure left to merge; keep originals (non-rings)
+                new_structures.extend([s[0] for s in filtered_group])
+                for s in filtered_group:
                     if s[0] in structures_to_remove:
                         structures_to_remove.remove(s[0])
+                # Rings are already preserved and excluded from removal above
                 continue
                 
             # Extract shapely polygons for merging
-            shapely_polygons = [p[1] for p in structure_group]
+            shapely_polygons = [p[1] for p in filtered_group]
             # Get the material from the first structure in the group
-            material = structure_group[0][0].material
+            material = filtered_group[0][0].material
             try:
                 # Unify the polygons
                 merged = unary_union(shapely_polygons)
@@ -309,7 +312,7 @@ class Design:
                     interior_coords_lists = [list(interior.coords[:-1]) for interior in simplified.interiors]
                     if exterior_coords and len(exterior_coords) >= 3:
                         # Add depth and z information from the first structure
-                        first_structure = structure_group[0][0]
+                        first_structure = filtered_group[0][0]
                         depth = getattr(first_structure, 'depth', 0)
                         z = getattr(first_structure, 'z', 0)
                         
@@ -335,7 +338,7 @@ class Design:
                         interior_coords_lists = [list(interior.coords[:-1]) for interior in simplified_geom.interiors]
                         if exterior_coords and len(exterior_coords) >= 3:
                             # Add depth and z information from the first structure
-                            first_structure = structure_group[0][0]
+                            first_structure = filtered_group[0][0]
                             depth = getattr(first_structure, 'depth', 0)
                             z = getattr(first_structure, 'z', 0)
                             new_poly = Polygon(vertices=exterior_coords, interiors=interior_coords_lists, 
@@ -581,13 +584,18 @@ class Design:
         base_size = 5
         if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
         else: figsize = (base_size, base_size / aspect_ratio)
-        # Do we want to show the individual structures or a unified shape?
-        if unify_structures: self.unify_polygons()
+        # Decide which structures to plot without mutating the original design
+        if unify_structures:
+            tmp_design = self.copy()
+            tmp_design.unify_polygons()
+            structures_to_plot = tmp_design.structures
+        else:
+            structures_to_plot = self.structures
         # Create a single figure for all structures
         fig, ax = plt.subplots(figsize=figsize)
         ax.set_aspect('equal')
         # Now plot each structure
-        for structure in self.structures:
+        for structure in structures_to_plot:
             # Use dashed lines for PML regions
             if hasattr(structure, 'is_pml') and structure.is_pml:
                 structure.add_to_plot(ax, edgecolor=self.border_color, linestyle='--', facecolor='none', alpha=0.5)
@@ -1746,7 +1754,8 @@ class Polygon:
     def __init__(self, vertices=None, material=None, color=None, optimize=False, interiors=None, depth=0, z=0):
         # First ensure vertices are properly formatted and ordered
         self.vertices = self._process_vertices(vertices if vertices is not None else [], z)
-        self.interiors = [self._process_vertices(interior, z) for interior in (interiors if interiors is not None else [])]
+        # Preserve interior path orientation (needed for proper hole rendering with nonzero rule)
+        self.interiors = [self._process_vertices_preserve_orientation(interior, z) for interior in (interiors if interiors is not None else [])]
         self.material = material
         self.optimize = optimize
         self.color = color if color is not None else self.get_random_color_consistent()
@@ -1772,6 +1781,14 @@ class Polygon:
                           for i, (x, y) in enumerate(vertices_2d)]
         
         return vertices_3d
+
+    def _process_vertices_preserve_orientation(self, vertices, z=0):
+        """Ensure 3D coordinates but preserve original vertex order (for holes)."""
+        if not vertices:
+            return []
+        vertices_3d = self._ensure_3d_vertices(vertices)
+        # Do not alter orientation; only ensure z coordinate presence
+        return [(v[0], v[1], v[2] if len(v) > 2 else z) for v in vertices_3d]
     
     def _ensure_ccw_vertices(self, vertices_2d):
         """Ensure vertices are ordered counterclockwise by computing signed area."""
@@ -1965,6 +1982,9 @@ class Polygon:
             return
             
         path = Path(np.array(all_path_coords), np.array(all_path_codes))
+        # Matplotlib uses the nonzero winding rule by default. Holes render correctly
+        # when interiors are oriented opposite to the exterior. We already ensure this
+        # for rings and similar shapes, so no explicit fillrule argument is needed.
         patch = PathPatch(path, facecolor=facecolor, alpha=alpha, edgecolor=edgecolor, linestyle=linestyle)
         ax.add_patch(patch)
 
