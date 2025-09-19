@@ -18,7 +18,7 @@ def get_si_scale_and_label(value):
     elif value >= 1e-9: return 1e9, 'nm'
     else: return 1e12, 'pm'
 
-def check_fdtd_stability(dt, dx, dy=None, dz=None, n_max=1.0, safety_factor=0.95):
+def check_fdtd_stability(dt, dx, dy=None, dz=None, n_max=1.0, safety_factor=1.0):
     """
     Check FDTD stability with the Courant-Friedrichs-Lewy (CFL) condition.
     
@@ -28,7 +28,8 @@ def check_fdtd_stability(dt, dx, dy=None, dz=None, n_max=1.0, safety_factor=0.95
         dy: Grid spacing in y direction (None for 1D)
         dz: Grid spacing in z direction (None for 1D/2D)
         n_max: Maximum refractive index in the simulation
-        safety_factor: Factor to apply to the theoretical limit (0-1)
+        safety_factor: Factor to apply to the theoretical Courant limit (0-1).
+                       Use 1.0 to evaluate against the theoretical limit 1/sqrt(dims).
         
     Returns:
         tuple: (is_stable, courant_number, max_allowed)
@@ -42,17 +43,16 @@ def check_fdtd_stability(dt, dx, dy=None, dz=None, n_max=1.0, safety_factor=0.95
     if dz is not None:
         dims = 3
         min_spacing = min(dx, dy, dz)
-    # Speed of light in the material
-    c_material = LIGHT_SPEED / n_max
-    # Calculate Courant number
-    courant = c_material * dt / min_spacing
+    # Courant number defined with vacuum speed (conservative and standard for Yee grid)
+    c0 = LIGHT_SPEED
+    courant = c0 * dt / min_spacing
     # Theoretical stability limit
     max_allowed = 1.0 / np.sqrt(dims)
     # Apply safety factor
     safe_limit = safety_factor * max_allowed
     return courant <= safe_limit, courant, safe_limit
 
-def calc_optimal_fdtd_params(wavelength, n_max, dims=2, safety_factor=0.4, points_per_wavelength=20):
+def calc_optimal_fdtd_params(wavelength, n_max, dims=2, safety_factor=0.95, points_per_wavelength=20):
     """
     Calculate optimal FDTD grid resolution and time step based on wavelength and material properties.
     
@@ -60,7 +60,8 @@ def calc_optimal_fdtd_params(wavelength, n_max, dims=2, safety_factor=0.4, point
         wavelength: Light wavelength in vacuum
         n_max: Maximum refractive index in the simulation
         dims: Dimensionality of simulation (1, 2, or 3)
-        safety_factor: Multiplier for Courant condition (0.5 recommended for stability)
+        safety_factor: Fraction of the theoretical Courant limit to target (0-1).
+                       0.95 operates close to the limit; reduce for additional margin.
         points_per_wavelength: Number of grid points per wavelength in the highest index material
         
     Returns:
@@ -72,8 +73,8 @@ def calc_optimal_fdtd_params(wavelength, n_max, dims=2, safety_factor=0.4, point
     resolution = lambda_material / points_per_wavelength
     # Calculate theoretical Courant limit (dt_max = dx / (c * sqrt(dims)))
     dt_max = resolution / (LIGHT_SPEED * np.sqrt(dims))
-    # Apply material correction and safety factor
-    dt = safety_factor * dt_max * n_max
+    # Apply safety factor (vacuum-based Courant condition)
+    dt = safety_factor * dt_max
     # Verify stability
     _, courant, limit = check_fdtd_stability(dt, resolution, 
                                             dy=resolution if dims >= 2 else None, 
@@ -81,7 +82,7 @@ def calc_optimal_fdtd_params(wavelength, n_max, dims=2, safety_factor=0.4, point
                                             n_max=n_max,
                                             safety_factor=1.0)  # Use 1.0 here to get theoretical limit
     # Double-check our calculation
-    assert courant <= safety_factor * limit, "Internal error: calculated time step exceeds stability limit"
+    assert courant <= limit + 1e-15, "Internal error: calculated time step exceeds stability limit"
     
     return resolution, dt
 
