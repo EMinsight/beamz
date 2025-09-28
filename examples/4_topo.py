@@ -54,18 +54,32 @@ for step in range(OPT_STEPS):
     # 1. Apply blur filter to enforce minimum feature size.
     # 2. Project densities toward binary structures for fabrication.
     # 3. Update design region materials with the projected density.
-    blurred = topo.blur_density(density, radius=WL/2)
+    blurred = topo.blur_density(density, radius=int(np.ceil(WL / DX)))
     projected = topo.project_density(blurred, beta=2.0, eta=0.5)
     topo.update_design_region_material(design_region, projected)
 
     # 4. Run forward FDTD simulation to evaluate the objective and store fields.
-    forward_fields, objective = sim.forward(sources=forward_source, monitors=monitor,
-        objective=lambda fields: np.sum(np.abs(fields['Ez'][-1])**2),live=True)
-    # 5. Run adjoint simulation to obtain sensitivity information 
-    # 6. And compute the field-overlap gradient using stored forward/adjoint fields.
-    adjoint_fields, overlap_gradient = sim.adjoint(sources=adjoint_source, forward_fields=forward_fields, live=True, 
-        save_adjoint_fields=False)
+    forward_fields, objective = sim.forward(
+        sources=[forward_source],
+        monitors=[monitor],
+        live=False,
+    )
+    objective = topo.compute_objective(forward_fields, monitor)
+
+    # 5 & 6. Run adjoint simulation and compute field-overlap gradient using stored forward fields.
+    adjoint_fields = sim.adjoint(
+        sources=[adjoint_source],
+        forward_fields=forward_fields,
+        monitors=[monitor],
+        live=False,
+    )
+    overlap_gradient = topo.compute_overlap_gradient(forward_fields, adjoint_fields, monitor=monitor)
 
     # 7. Update the density field using the optimizer step.
-    density, optimizer_state = topo.apply_optimizer_step(density, overlap_gradient,
-        optimizer_state, method="adam", learning_rate=LEARNING_RATE)
+    density, optimizer_state = topo.apply_optimizer_step(
+        density,
+        overlap_gradient,
+        optimizer_state,
+        method="adam",
+        learning_rate=LEARNING_RATE,
+    )
