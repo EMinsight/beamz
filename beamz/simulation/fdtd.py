@@ -1,21 +1,20 @@
 from typing import Dict, Optional
+import datetime
 import numpy as np
-from beamz.const import *
-from beamz.simulation.meshing import RegularGrid, RegularGrid3D, create_mesh
-from beamz.design.sources import ModeSource, GaussianSource
-from beamz.design.structures import *
+
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle as MatplotlibRectangle, Circle as MatplotlibCircle, PathPatch
 from matplotlib.path import Path
 from matplotlib.animation import FuncAnimation
+
+from beamz.const import *
+from beamz.simulation.meshing import RegularGrid, RegularGrid3D
+from beamz.design.sources import ModeSource, GaussianSource
+from beamz.design.structures import *
 from beamz.simulation.backends import get_backend
-from beamz.helpers import (
-    display_header, display_status, create_rich_progress, 
-    display_parameters, display_results, display_simulation_status, 
-    display_time_elapsed
-)
-import datetime
+from beamz.helpers import display_status, create_rich_progress, display_parameters, display_time_elapsed
 from beamz.helpers import get_si_scale_and_label
+
 
 class FDTD:
     """FDTD simulation class supporting both 2D and 3D electromagnetic simulations.
@@ -133,7 +132,6 @@ class FDTD:
             # Staggered magnetic fields: Hx has same rows as Ez and one fewer column; Hy has one fewer row and same columns
             self.Hx = self.backend.zeros((self.ny, self.nx-1))
             self.Hy = self.backend.zeros((self.ny-1, self.nx))
-
 
     def simulate_step(self):
         """Perform one FDTD step with stability checks."""
