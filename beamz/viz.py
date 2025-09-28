@@ -115,10 +115,8 @@ def determine_if_3d(design):
 
 def show_design(design, unify_structures=True):
     """Display the design visually using 2D matplotlib or 3D plotly."""
-    if determine_if_3d(design):
-        show_design_3d(design, unify_structures)
-    else:
-        show_design_2d(design, unify_structures)
+    if determine_if_3d(design): show_design_3d(design, unify_structures)
+    else: show_design_2d(design, unify_structures)
 
 
 def show_design_2d(design, unify_structures=True):
@@ -128,17 +126,14 @@ def show_design_2d(design, unify_structures=True):
     scale, unit = get_si_scale_and_label(max_dim)
     aspect_ratio = design.width / design.height
     base_size = 5
-    if aspect_ratio > 1:
-        figsize = (base_size * aspect_ratio, base_size)
-    else:
-        figsize = (base_size, base_size / aspect_ratio)
+    if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
+    else: figsize = (base_size, base_size / aspect_ratio)
 
     if unify_structures:
         tmp_design = design.copy()
         tmp_design.unify_polygons()
         structures_to_plot = tmp_design.structures
-    else:
-        structures_to_plot = design.structures
+    else: structures_to_plot = design.structures
 
     fig, ax = plt.subplots(figsize=figsize)
     ax.set_aspect('equal')

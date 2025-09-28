@@ -8,13 +8,13 @@ from beamz import viz as viz
 from beamz.const import µm, EPS_0, MU_0
 from beamz.design.sources import ModeSource, GaussianSource
 from beamz.design.monitors import Monitor
-from beamz.helpers import display_status, tree_view, get_si_scale_and_label
+from beamz.helpers import display_status
 import colorsys
 import gdspy
 
 class Design:
-    def __init__(self, width=5*µm, height=5*µm, depth=0, material=None, color=None, border_color="black", auto_pml=True,
-                        pml_size=None):
+    def __init__(self, width=5*µm, height=5*µm, depth=0, material=None, color=None, border_color="black", 
+                    auto_pml=True, pml_size=None):
         if material is None: material = Material(permittivity=1.0, permeability=1.0, conductivity=0.0)
         self.structures = [Rectangle(position=(0,0,0), width=width, height=height, depth=depth, material=material, color=color)]
         self.sources = []
@@ -28,8 +28,99 @@ class Design:
         self.is_3d = False if depth is None else True
         self.layers: dict[int, list[Polygon]] = {}
         self.is_3d = False if depth is None or depth == 0 else True
-        if auto_pml: self.init_boundaries(pml_size)
+        if auto_pml: self._init_boundaries(pml_size)
         display_status(f"Created design with size: {self.width:.2e} x {self.height:.2e} m")
+
+    def __str__(self):
+        return f"Design with {len(self.structures)} structures ({'3D' if self.is_3d else '2D'})"
+
+    def __iadd__(self, structure):
+        """Implement += operator for adding structures."""
+        self.add(structure)
+        return self
+
+    def _init_boundaries(self, pml_size=None):
+        """Add boundary conditions to the design area (using PML)."""
+        # Calculate PML size more intelligently if not specified
+        if pml_size is None:
+            # Find max permittivity in design for wavelength calculation
+            max_permittivity = 1.0
+            for structure in self.structures:
+                if hasattr(structure, 'material') and hasattr(structure.material, 'permittivity'):
+                    max_permittivity = max(max_permittivity, structure.material.permittivity)
+            # Estimate minimum wavelength
+            wavelength_estimate = 1.55e-6 / np.sqrt(max_permittivity)
+            # Make PML thicker to allow for more gradual absorption
+            min_size = 1.5 * wavelength_estimate  # Increased from 1.0
+            max_size = min(self.width, self.height) * 0.3  # Increased thickness for gradual absorption
+            pml_size = max(min_size, min(max_size, min(self.width, self.height) / 3))
+            display_status(f"Auto-selected PML size: {pml_size:.2e} m (~{pml_size/wavelength_estimate:.1f} wavelengths)", "info")
+        
+        # Create transparent material for PML outlines (for visualization only)
+        pml_material = Material(permittivity=1.0, permeability=1.0, conductivity=0.0)
+        
+        # Create unified PML regions with optimized parameters for gradual absorption
+        # Rectangular edge PMLs
+        self.boundaries.append(PML("rect", (0, 0), (pml_size, self.height), "left"))
+        self.boundaries.append(PML("rect", (self.width - pml_size, 0), (pml_size, self.height), "right"))
+        self.boundaries.append(PML("rect", (0, self.height - pml_size), (self.width, pml_size), "top"))
+        self.boundaries.append(PML("rect", (0, 0), (self.width, pml_size), "bottom"))
+        # Corner PMLs
+        self.boundaries.append(PML("corner", (0, 0), pml_size, "bottom-left"))
+        self.boundaries.append(PML("corner", (self.width, 0), pml_size, "bottom-right"))
+        self.boundaries.append(PML("corner", (0, self.height), pml_size, "top-left"))
+        self.boundaries.append(PML("corner", (self.width, self.height), pml_size, "top-right"))
+        
+        # Add visual representations of PML regions to the structures list (for display only)
+        # These are just visualization helpers and don't affect the actual simulation
+        left_pml = Rectangle(position=(0, 0), width=pml_size,
+                                height=self.height, material=pml_material, color='none', is_pml=True)
+        self.structures.append(left_pml)
+        # Right PML region
+        right_pml = Rectangle(position=(self.width - pml_size, 0), width=pml_size, height=self.height,
+                                material=pml_material, color='none', is_pml=True)
+        self.structures.append(right_pml)
+        # Bottom PML region
+        bottom_pml = Rectangle(position=(0, 0), width=self.width, height=pml_size,
+                                material=pml_material, color='none', is_pml=True)
+        self.structures.append(bottom_pml)
+        # Top PML region
+        top_pml = Rectangle(position=(0, self.height - pml_size),width=self.width, height=pml_size, material=pml_material,
+            color='none', is_pml=True)
+        self.structures.append(top_pml)
+
+    def _determine_if_3d(self):
+        """Determine if the design should be visualized in 3D (delegated to beamz.viz)."""
+        return viz.determine_if_3d(self)
+
+    def _simplify_polygon_for_3d(self, shapely_polygon, tolerance_factor=0.01):
+        """Simplify a Shapely polygon to reduce vertex count for better 3D triangulation."""
+        try:
+            # Calculate appropriate tolerance based on polygon size
+            bounds = shapely_polygon.bounds
+            size = max(bounds[2] - bounds[0], bounds[3] - bounds[1])  # max of width, height
+            tolerance = size * tolerance_factor
+            # Apply simplification
+            simplified = shapely_polygon.simplify(tolerance, preserve_topology=True)
+            # Check if simplification was successful and polygon is still valid
+            if simplified.is_valid and not simplified.is_empty:
+                # Check if we still have a reasonable number of vertices
+                if simplified.geom_type == 'Polygon':
+                    exterior_coords = len(list(simplified.exterior.coords))
+                    if 3 <= exterior_coords <= 100:  # Reasonable range for 3D visualization
+                        return simplified
+                    elif exterior_coords > 100:
+                        # Try more aggressive simplification
+                        more_simplified = shapely_polygon.simplify(tolerance * 2.0, preserve_topology=True)
+                        if more_simplified.is_valid and not more_simplified.is_empty:
+                            return more_simplified
+            
+            # If simplification failed or created invalid geometry, return original
+            return shapely_polygon
+            
+        except Exception as e:
+            print(f"Warning: Polygon simplification failed ({e}), using original")
+            return shapely_polygon
 
     def import_gds(gds_file: str, default_depth=1e-6):
         """Import a GDS file and return polygon and layer data.
@@ -74,30 +165,25 @@ class Design:
         # Create library with micron units (1e-6) and nanometer precision (1e-9)
         lib = gdspy.GdsLibrary(unit=1e-6, precision=1e-9)
         cell = lib.new_cell("main")
-        
         # First, we unify the polygons given their material and if they touch
         self.unify_polygons()
-        
         # Scale factor to convert from meters to microns
         scale = 1e6  # 1 meter = 1e6 microns
-        
+
         # Group structures by material properties
         material_groups = {}
         for structure in self.structures:
             # Skip PML visualizations, sources, monitors
             if hasattr(structure, 'is_pml') and structure.is_pml: continue
             if isinstance(structure, (ModeSource, GaussianSource, Monitor)): continue
-            
             # Create material key based on material properties
             material = getattr(structure, 'material', None)
             if material is None: continue
-                
             material_key = (
                 getattr(material, 'permittivity', 1.0),
                 getattr(material, 'permeability', 1.0),
                 getattr(material, 'conductivity', 0.0)
             )
-            
             if material_key not in material_groups: material_groups[material_key] = []
             material_groups[material_key].append(structure)
         
@@ -124,13 +210,11 @@ class Design:
                 # Project vertices to 2D and scale to microns
                 vertices_2d = [(x * scale, y * scale) for x, y, _ in vertices]
                 if not vertices_2d: continue
-                
                 # Scale and project interiors if they exist
                 interior_2d = []
                 if interiors: 
                     for interior in interiors:
                         interior_2d.append([(x * scale, y * scale) for x, y, _ in interior])
-                
                 try:
                     # Create gdspy polygon for this layer
                     if interior_2d: gdspy_poly = gdspy.Polygon(vertices_2d, layer=layer_num, holes=interior_2d)
@@ -170,11 +254,6 @@ class Design:
                 if len(vertex) > 2 and vertex[2] != 0:
                     self.is_3d = True
                     break
-
-    def __iadd__(self, structure):
-        """Implement += operator for adding structures."""
-        self.add(structure)
-        return self
     
     def unify_polygons(self):
         """If polygons are the same material and overlap spatially, unify them into a single, simplified polygon."""
@@ -416,35 +495,6 @@ class Design:
             into {len(new_structures)} unified shapes, {len(rings_to_preserve)} isolated rings preserved", "success")
         return True
     
-    def _simplify_polygon_for_3d(self, shapely_polygon, tolerance_factor=0.01):
-        """Simplify a Shapely polygon to reduce vertex count for better 3D triangulation."""
-        try:
-            # Calculate appropriate tolerance based on polygon size
-            bounds = shapely_polygon.bounds
-            size = max(bounds[2] - bounds[0], bounds[3] - bounds[1])  # max of width, height
-            tolerance = size * tolerance_factor
-            # Apply simplification
-            simplified = shapely_polygon.simplify(tolerance, preserve_topology=True)
-            # Check if simplification was successful and polygon is still valid
-            if simplified.is_valid and not simplified.is_empty:
-                # Check if we still have a reasonable number of vertices
-                if simplified.geom_type == 'Polygon':
-                    exterior_coords = len(list(simplified.exterior.coords))
-                    if 3 <= exterior_coords <= 100:  # Reasonable range for 3D visualization
-                        return simplified
-                    elif exterior_coords > 100:
-                        # Try more aggressive simplification
-                        more_simplified = shapely_polygon.simplify(tolerance * 2.0, preserve_topology=True)
-                        if more_simplified.is_valid and not more_simplified.is_empty:
-                            return more_simplified
-            
-            # If simplification failed or created invalid geometry, return original
-            return shapely_polygon
-            
-        except Exception as e:
-            print(f"Warning: Polygon simplification failed ({e}), using original")
-            return shapely_polygon
-
     def scatter(self, structure, n=1000, xyrange=(-5*µm, 5*µm), scale_range=(0.05, 1)):
         """Randomly distribute a given object over the design domain."""
         display_status(f"Scattering {n} instances of {structure.__class__.__name__}", "info")
@@ -456,75 +506,10 @@ class Design:
             self.add(new_structure)
         display_status(f"Completed scattering {n} structures", "success")
 
-    def init_boundaries(self, pml_size=None):
-        """Add boundary conditions to the design area (using PML)."""
-        # Calculate PML size more intelligently if not specified
-        if pml_size is None:
-            # Find max permittivity in design for wavelength calculation
-            max_permittivity = 1.0
-            for structure in self.structures:
-                if hasattr(structure, 'material') and hasattr(structure.material, 'permittivity'):
-                    max_permittivity = max(max_permittivity, structure.material.permittivity)
-            # Estimate minimum wavelength
-            wavelength_estimate = 1.55e-6 / np.sqrt(max_permittivity)
-            # Make PML thicker to allow for more gradual absorption
-            min_size = 1.5 * wavelength_estimate  # Increased from 1.0
-            max_size = min(self.width, self.height) * 0.3  # Increased thickness for gradual absorption
-            pml_size = max(min_size, min(max_size, min(self.width, self.height) / 3))
-            display_status(f"Auto-selected PML size: {pml_size:.2e} m (~{pml_size/wavelength_estimate:.1f} wavelengths)", "info")
-        
-        # Create transparent material for PML outlines (for visualization only)
-        pml_material = Material(permittivity=1.0, permeability=1.0, conductivity=0.0)
-        
-        # Create unified PML regions with optimized parameters for gradual absorption
-        # Rectangular edge PMLs
-        self.boundaries.append(PML("rect", (0, 0), (pml_size, self.height), "left"))
-        self.boundaries.append(PML("rect", (self.width - pml_size, 0), (pml_size, self.height), "right"))
-        self.boundaries.append(PML("rect", (0, self.height - pml_size), (self.width, pml_size), "top"))
-        self.boundaries.append(PML("rect", (0, 0), (self.width, pml_size), "bottom"))
-        # Corner PMLs
-        self.boundaries.append(PML("corner", (0, 0), pml_size, "bottom-left"))
-        self.boundaries.append(PML("corner", (self.width, 0), pml_size, "bottom-right"))
-        self.boundaries.append(PML("corner", (0, self.height), pml_size, "top-left"))
-        self.boundaries.append(PML("corner", (self.width, self.height), pml_size, "top-right"))
-        
-        # Add visual representations of PML regions to the structures list (for display only)
-        # These are just visualization helpers and don't affect the actual simulation
-        left_pml = Rectangle(position=(0, 0), width=pml_size,
-                                height=self.height, material=pml_material, color='none', is_pml=True)
-        self.structures.append(left_pml)
-        # Right PML region
-        right_pml = Rectangle(position=(self.width - pml_size, 0), width=pml_size, height=self.height,
-                                material=pml_material, color='none', is_pml=True)
-        self.structures.append(right_pml)
-        # Bottom PML region
-        bottom_pml = Rectangle(position=(0, 0), width=self.width, height=pml_size,
-                                material=pml_material, color='none', is_pml=True)
-        self.structures.append(bottom_pml)
-        # Top PML region
-        top_pml = Rectangle(position=(0, self.height - pml_size),width=self.width, height=pml_size, material=pml_material,
-            color='none', is_pml=True)
-        self.structures.append(top_pml)
-
     def show(self, unify_structures=True):
         """Display the design visually using 2D matplotlib or 3D plotly (delegated to beamz.viz)."""
         return viz.show_design(self, unify_structures)
     
-    def _determine_if_3d(self):
-        """Determine if the design should be visualized in 3D (delegated to beamz.viz)."""
-        return viz.determine_if_3d(self)
-    
-    def show_2d(self, unify_structures=True):
-        """Display the design using 2D matplotlib (delegated to beamz.viz)."""
-        return viz.show_design_2d(self, unify_structures)
-    
-    def show_3d(self, unify_structures=True, max_vertices_for_unification=50):
-        """Display the design using 3D plotly (delegated to beamz.viz)."""
-        return viz.show_design_3d(self, unify_structures, max_vertices_for_unification)
-
-    def __str__(self):
-        return f"Design with {len(self.structures)} structures ({'3D' if self.is_3d else '2D'})"
-
     def get_material_value(self, x, y, z=0, dx=None, dt=None):
         """Return the material value at a given (x, y, z) coordinate, prioritizing the topmost structure."""
         # First get material values from underlying structures
@@ -570,13 +555,6 @@ class Design:
         
         # Return with the permittivity of the underlying structure plus PML conductivity
         return [epsilon, mu, sigma_base + pml_conductivity]
-
-    def _point_in_polygon(self, x, y, vertices):
-        """Check if a point is inside a polygon using the ray-casting algorithm.
-        This method is kept for backwards compatibility but now uses the Polygon.point_in_polygon method."""
-        # Create a temporary polygon to use the new point_in_polygon method
-        temp_polygon = Polygon(vertices=vertices)
-        return temp_polygon.point_in_polygon(x, y)
 
     def copy(self):
         """Create a deep copy of the design."""
@@ -631,13 +609,13 @@ class Design:
 
 
 
-
 class Polygon:
     def __init__(self, vertices=None, material=None, color=None, optimize=False, interiors=None, depth=0, z=0):
         # First ensure vertices are properly formatted and ordered
         self.vertices = self._process_vertices(vertices if vertices is not None else [], z)
         # Preserve interior path orientation (needed for proper hole rendering with nonzero rule)
-        self.interiors = [self._process_vertices_preserve_orientation(interior, z) for interior in (interiors if interiors is not None else [])]
+        self.interiors = [self._process_vertices_preserve_orientation(interior, z)
+                            for interior in (interiors if interiors is not None else [])]
         self.material = material
         self.optimize = optimize
         self.color = color if color is not None else self.get_random_color_consistent()
@@ -675,8 +653,7 @@ class Polygon:
             j = (i + 1) % len(vertices_2d)
             area += vertices_2d[i][0] * vertices_2d[j][1]
             area -= vertices_2d[j][0] * vertices_2d[i][1]
-        # If area is positive, vertices are already CCW
-        # If area is negative, reverse the vertices
+        # If area is positive, vertices are already CCW, else: reverse the vertices
         if area < 0: return vertices_2d[::-1]
         return vertices_2d
     
