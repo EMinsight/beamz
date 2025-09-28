@@ -776,11 +776,17 @@ class FDTD:
         plt.xlabel(f'X ({unit})'); plt.ylabel(f'Y ({unit})')
         plt.gca().xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
         plt.gca().yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
-        for structure in self.design.structures:
-            # Use dashed lines for PML regions
+        # Overlay unified structure outlines (like design.show)
+        try:
+            tmp_design = self.design.copy()
+            tmp_design.unify_polygons()
+            overlay_structures = tmp_design.structures
+        except Exception:
+            overlay_structures = self.design.structures
+        for structure in overlay_structures:
             if hasattr(structure, 'is_pml') and structure.is_pml:
                 structure.add_to_plot(plt.gca(), edgecolor="black", linestyle='--', facecolor='none', alpha=0.5)
-            else:
+            elif hasattr(structure, 'vertices') and getattr(structure, 'vertices', None):
                 structure.add_to_plot(plt.gca(), facecolor="none", edgecolor="black", linestyle="-")
         plt.tight_layout()
         plt.show()
@@ -837,12 +843,18 @@ class FDTD:
         colorbar = plt.colorbar(self.im, orientation='vertical', aspect=30, extend='both')
         colorbar.set_label(f'{field}{slice_info} Field Amplitude')
         # Add design structure outlines
-        for structure in self.design.structures:
-            # Use dashed lines for PML regions
+        # Overlay unified structure outlines (like design.show)
+        try:
+            tmp_design = self.design.copy()
+            tmp_design.unify_polygons()
+            overlay_structures = tmp_design.structures
+        except Exception:
+            overlay_structures = self.design.structures
+        for structure in overlay_structures:
             if hasattr(structure, 'is_pml') and structure.is_pml:
                 structure.add_to_plot(self.ax, edgecolor="black", linestyle='--', facecolor='none', alpha=0.5)
-            else:
-                structure.add_to_plot(self.ax, facecolor="none")
+            elif hasattr(structure, 'vertices') and getattr(structure, 'vertices', None):
+                structure.add_to_plot(self.ax, facecolor="none", edgecolor="black", linestyle='-')
         # Set axis labels with proper scaling
         max_dim = max(self.design.width, self.design.height)
         if max_dim >= 1e-3: scale, unit = 1e3, 'mm'
@@ -955,11 +967,18 @@ class FDTD:
             colorbar = plt.colorbar(im, orientation='vertical', aspect=30, extend='both')
             colorbar.set_label(f'{field} Field Amplitude')
         # Add design structure outlines
-        for structure in self.design.structures:
-            # Use dashed lines for PML regions
+        # Overlay unified structure outlines (like design.show)
+        try:
+            tmp_design = self.design.copy()
+            tmp_design.unify_polygons()
+            overlay_structures = tmp_design.structures
+        except Exception:
+            overlay_structures = self.design.structures
+        for structure in overlay_structures:
             if hasattr(structure, 'is_pml') and structure.is_pml:
                 structure.add_to_plot(ax, edgecolor="black", linestyle='--', facecolor='none', alpha=0.5)
-            else: structure.add_to_plot(ax, facecolor="none", edgecolor="black")
+            elif hasattr(structure, 'vertices') and getattr(structure, 'vertices', None):
+                structure.add_to_plot(ax, facecolor="none", edgecolor="black", linestyle='-')
         # Configure standard plot elements if not using clean visualization
         if not clean_visualization:
             # Add axis labels with proper scaling
@@ -1105,12 +1124,18 @@ class FDTD:
             colorbar.set_label('Relative Power (dB)')
         else: colorbar.set_label('Power (a.u.)')
         # Add design structure outlines
-        for structure in self.design.structures:
-            # Use dashed lines for PML regions
+        # Overlay unified structure outlines (like design.show)
+        try:
+            tmp_design = self.design.copy()
+            tmp_design.unify_polygons()
+            overlay_structures = tmp_design.structures
+        except Exception:
+            overlay_structures = self.design.structures
+        for structure in overlay_structures:
             if hasattr(structure, 'is_pml') and structure.is_pml:
                 structure.add_to_plot(self.ax, edgecolor="white", linestyle='--', facecolor='none', alpha=0.5)
-            else:
-                structure.add_to_plot(self.ax, facecolor="none", edgecolor="white")
+            elif hasattr(structure, 'vertices') and getattr(structure, 'vertices', None):
+                structure.add_to_plot(self.ax, facecolor="none", edgecolor="white", linestyle='-')
         # Add axis labels with proper scaling
         plt.xlabel(f'X ({unit})')
         plt.ylabel(f'Y ({unit})')
