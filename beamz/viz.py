@@ -10,14 +10,10 @@ def draw_polygon(ax, polygon, facecolor=None, edgecolor="black", alpha=None, lin
     from matplotlib.path import Path
     from matplotlib.patches import PathPatch
 
-    if facecolor is None:
-        facecolor = getattr(polygon, 'color', None) or '#999999'
-    if alpha is None:
-        alpha = 1.0
-    if linestyle is None:
-        linestyle = '-'
-    if not getattr(polygon, 'vertices', None):
-        return
+    if facecolor is None: facecolor = getattr(polygon, 'color', None) or '#999999'
+    if alpha is None: alpha = 1.0
+    if linestyle is None: linestyle = '-'
+    if not getattr(polygon, 'vertices', None): return
 
     # Exterior path - project to 2D
     all_path_coords = []
@@ -348,6 +344,341 @@ def show_design_3d(design, unify_structures=True, max_vertices_for_unification=5
 
     fig.show()
 
+
+# =============================
+# FDTD visualization utilities
+# =============================
+
+def plot_fdtd_field(fdtd, field: str = "Ez", t: float = None, z_slice: int = None) -> None:
+    """Plot an FDTD field at a given time with proper scaling and units."""
+    import matplotlib.pyplot as plt
+
+    if len(fdtd.results['t']) == 0:
+        current_field = getattr(fdtd, field)
+        current_t = fdtd.t
+    else:
+        t_idx = int(np.argmin(np.abs(np.array(fdtd.results['t']) - t)))
+        current_field = fdtd.results[field][t_idx]
+        current_t = fdtd.results['t'][t_idx]
+
+    if hasattr(current_field, 'device'):
+        current_field = fdtd.backend.to_numpy(current_field)
+
+    if fdtd.is_3d and len(current_field.shape) == 3:
+        if z_slice is None:
+            z_slice = current_field.shape[0] // 2
+        current_field = current_field[z_slice, :, :]
+        slice_info = f" (z-slice {z_slice})"
+    else:
+        slice_info = ""
+
+    if np.iscomplexobj(current_field):
+        current_field = np.real(current_field)
+        field_label = f"Re({field}){slice_info}"
+    else:
+        field_label = field + slice_info
+
+    scale, unit = get_si_scale_and_label(max(fdtd.design.width, fdtd.design.height))
+    grid_height, grid_width = current_field.shape
+    aspect_ratio = grid_width / grid_height
+    base_size = 6
+    figsize = (base_size * aspect_ratio, base_size) if aspect_ratio > 1 else (base_size, base_size / aspect_ratio)
+
+    plt.figure(figsize=figsize)
+    plt.imshow(current_field, origin='lower', 
+               extent=(0, fdtd.design.width, 0, fdtd.design.height),
+               cmap='RdBu', aspect='equal', interpolation='bicubic')
+    plt.colorbar(label=f'{field_label} Field Amplitude')
+    plt.title(f'{field_label} Field at t = {current_t:.2e} s')
+    plt.xlabel(f'X ({unit})'); plt.ylabel(f'Y ({unit})')
+    plt.gca().xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+    plt.gca().yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+
+    try:
+        tmp_design = fdtd.design.copy()
+        tmp_design.unify_polygons()
+        overlay_structures = tmp_design.structures
+    except Exception:
+        overlay_structures = fdtd.design.structures
+    for structure in overlay_structures:
+        if hasattr(structure, 'is_pml') and structure.is_pml:
+            structure.add_to_plot(plt.gca(), edgecolor="black", linestyle='--', facecolor='none', alpha=0.5)
+        elif hasattr(structure, 'vertices') and getattr(structure, 'vertices', None):
+            structure.add_to_plot(plt.gca(), facecolor="none", edgecolor="black", linestyle="-")
+    for source in fdtd.design.sources:
+        if hasattr(source, 'add_to_plot'):
+            source.add_to_plot(plt.gca())
+    for monitor in fdtd.design.monitors:
+        if hasattr(monitor, 'add_to_plot'):
+            monitor.add_to_plot(plt.gca())
+    plt.tight_layout()
+    plt.show()
+
+
+def animate_fdtd_live(fdtd, field_data=None, field="Ez", axis_scale=[-1,1], z_slice=None):
+    """Animate FDTD field in real time using matplotlib animation."""
+    import matplotlib.pyplot as plt
+
+    if field_data is None:
+        field_data = fdtd.backend.to_numpy(getattr(fdtd, field))
+
+    if fdtd.is_3d and len(field_data.shape) == 3:
+        if z_slice is None:
+            z_slice = field_data.shape[0] // 2
+        field_data = field_data[z_slice, :, :]
+        slice_info = f" (z-slice {z_slice})"
+    else:
+        slice_info = ""
+
+    if np.iscomplexobj(field_data):
+        field_data = np.real(field_data)
+
+    if fdtd.fig is not None and plt.fignum_exists(fdtd.fig.number):
+        fdtd.im.set_array(field_data)
+        fdtd.ax.set_title(f't = {fdtd.t:.2e} s{slice_info}')
+        fdtd.fig.canvas.draw_idle()
+        fdtd.fig.canvas.flush_events()
+        return
+
+    current_field = field_data
+    grid_height, grid_width = current_field.shape
+    aspect_ratio = grid_width / grid_height
+    base_size = 5
+    figsize = (base_size * aspect_ratio * 1.2, base_size) if aspect_ratio > 1 else (base_size * 1.2, base_size / aspect_ratio)
+    fdtd.fig, fdtd.ax = plt.subplots(figsize=figsize)
+    fdtd.im = fdtd.ax.imshow(current_field, origin='lower',
+                             extent=(0, fdtd.design.width, 0, fdtd.design.height),
+                             cmap='RdBu', aspect='equal', interpolation='bicubic', vmin=axis_scale[0], vmax=axis_scale[1])
+    colorbar = plt.colorbar(fdtd.im, orientation='vertical', aspect=30, extend='both')
+    colorbar.set_label(f'{field}{slice_info} Field Amplitude')
+
+    try:
+        tmp_design = fdtd.design.copy()
+        tmp_design.unify_polygons()
+        overlay_structures = tmp_design.structures
+    except Exception:
+        overlay_structures = fdtd.design.structures
+    for structure in overlay_structures:
+        if hasattr(structure, 'is_pml') and structure.is_pml:
+            structure.add_to_plot(fdtd.ax, edgecolor="black", linestyle='--', facecolor='none', alpha=0.5)
+        elif hasattr(structure, 'vertices') and getattr(structure, 'vertices', None):
+            structure.add_to_plot(fdtd.ax, facecolor="none", edgecolor="black", linestyle='-')
+    for source in fdtd.design.sources:
+        if hasattr(source, 'add_to_plot'):
+            source.add_to_plot(fdtd.ax)
+    for monitor in fdtd.design.monitors:
+        if hasattr(monitor, 'add_to_plot'):
+            monitor.add_to_plot(fdtd.ax)
+
+    max_dim = max(fdtd.design.width, fdtd.design.height)
+    if max_dim >= 1e-3: scale, unit = 1e3, 'mm'
+    elif max_dim >= 1e-6: scale, unit = 1e6, 'µm'
+    elif max_dim >= 1e-9: scale, unit = 1e9, 'nm'
+    else: scale, unit = 1e12, 'pm'
+    plt.xlabel(f'X ({unit})')
+    plt.ylabel(f'Y ({unit})')
+    fdtd.ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+    fdtd.ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+    plt.tight_layout()
+    plt.show(block=False)
+    plt.pause(0.001)
+
+
+def save_fdtd_animation(fdtd, field: str = "Ez", axis_scale=[-1, 1], filename='fdtd_animation.mp4', 
+                        fps=60, frame_skip=4, clean_visualization=False):
+    """Save an animation of FDTD results as an mp4 file."""
+    import matplotlib.pyplot as plt
+    from matplotlib.animation import FuncAnimation
+
+    if len(fdtd.results[field]) == 0:
+        print("No field data to animate. Make sure to run the simulation with save=True.")
+        return
+    total_frames = len(fdtd.results[field])
+    frame_indices = range(0, total_frames, frame_skip)
+    grid_height, grid_width = fdtd.results[field][0].shape
+    aspect_ratio = grid_width / grid_height
+    base_size = 5
+    figsize = (base_size * aspect_ratio * 1.2, base_size) if aspect_ratio > 1 else (base_size * 1.2, base_size / aspect_ratio)
+
+    if clean_visualization:
+        if aspect_ratio > 1: figsize = (base_size * aspect_ratio, base_size)
+        else: figsize = (base_size, base_size / aspect_ratio)
+        fig = plt.figure(figsize=figsize, frameon=False)
+        ax = fig.add_axes([0, 0, 1, 1])
+        ax.set_axis_off()
+        plt.subplots_adjust(left=0, right=1, top=1, bottom=0, wspace=0, hspace=0)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['bottom'].set_visible(False)
+        ax.spines['left'].set_visible(False)
+        ax.get_xaxis().set_visible(False)
+        ax.get_yaxis().set_visible(False)
+    else:
+        fig, ax = plt.subplots(figsize=figsize)
+        max_dim = max(fdtd.design.width, fdtd.design.height)
+        scale, unit = get_si_scale_and_label(max_dim)
+
+    im = ax.imshow(fdtd.results[field][0], origin='lower',
+                   extent=(0, fdtd.design.width, 0, fdtd.design.height),
+                   cmap='RdBu', aspect='equal', interpolation='bicubic', 
+                   vmin=axis_scale[0], vmax=axis_scale[1])
+    if not clean_visualization:
+        colorbar = plt.colorbar(im, orientation='vertical', aspect=30, extend='both')
+        colorbar.set_label(f'{field} Field Amplitude')
+
+    try:
+        tmp_design = fdtd.design.copy()
+        tmp_design.unify_polygons()
+        overlay_structures = tmp_design.structures
+    except Exception:
+        overlay_structures = fdtd.design.structures
+    for structure in overlay_structures:
+        if hasattr(structure, 'is_pml') and structure.is_pml:
+            structure.add_to_plot(ax, edgecolor="black", linestyle='--', facecolor='none', alpha=0.5)
+        elif hasattr(structure, 'vertices') and getattr(structure, 'vertices', None):
+            structure.add_to_plot(ax, facecolor="none", edgecolor="black", linestyle='-')
+    for source in fdtd.design.sources:
+        if hasattr(source, 'add_to_plot'):
+            source.add_to_plot(ax)
+    for monitor in fdtd.design.monitors:
+        if hasattr(monitor, 'add_to_plot'):
+            monitor.add_to_plot(ax)
+
+    if not clean_visualization:
+        plt.xlabel(f'X ({unit})')
+        plt.ylabel(f'Y ({unit})')
+        ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+        ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+        title = ax.set_title(f't = {fdtd.results["t"][0]:.2e} s')
+    else:
+        title = None
+
+    def update(frame_idx):
+        frame = list(frame_indices)[frame_idx]
+        im.set_array(fdtd.results[field][frame])
+        if not clean_visualization:
+            title.set_text(f't = {fdtd.results["t"][frame]:.2e} s')
+            return [im, title]
+        return [im]
+
+    frames = len(list(frame_indices))
+    ani = FuncAnimation(fig, update, frames=frames, blit=True)
+    try:
+        from matplotlib.animation import FFMpegWriter
+        writer = FFMpegWriter(fps=fps)
+        if clean_visualization: ani.save(filename, writer=writer, dpi=300)
+        else: ani.save(filename, writer=writer, dpi=100)
+        print(f"Animation saved to {filename} (using {frames} of {total_frames} frames)")
+    except Exception as e:
+        print(f"Error saving animation: {e}")
+        print("Make sure FFmpeg is installed on your system.")
+    plt.close(fig)
+
+
+def plot_fdtd_power(fdtd, cmap: str = "hot", vmin: float = None, vmax: float = None, db_colorbar: bool = False):
+    """Plot time-integrated power distribution from FDTD fields."""
+    import matplotlib.pyplot as plt
+
+    if fdtd.power_accumulated is not None:
+        power = fdtd.power_accumulated
+        print("Using accumulated power data")
+    elif len(fdtd.results['Ez']) > 0 and len(fdtd.results['Hx']) > 0 and len(fdtd.results['Hy']) > 0:
+        print("Calculating power from saved field data")
+        power = np.zeros((fdtd.nx, fdtd.ny))
+        for t_idx in range(len(fdtd.results['t'])):
+            Ez = fdtd.results['Ez'][t_idx]
+            Hx_raw = fdtd.results['Hx'][t_idx]
+            Hy_raw = fdtd.results['Hy'][t_idx]
+            is_complex = np.iscomplexobj(Ez) or np.iscomplexobj(Hx_raw) or np.iscomplexobj(Hy_raw)
+            if np.iscomplexobj(Ez):
+                Ez_real = np.real(Ez); Ez_imag = np.imag(Ez)
+            else:
+                Ez_real = Ez; Ez_imag = np.zeros_like(Ez)
+            if is_complex:
+                Hx = np.zeros_like(Ez, dtype=np.complex128)
+                Hy = np.zeros_like(Ez, dtype=np.complex128)
+            else:
+                Hx = np.zeros_like(Ez_real)
+                Hy = np.zeros_like(Ez_real)
+            Hx[:, :-1] = Hx_raw
+            Hy[:-1, :] = Hy_raw
+            if is_complex:
+                Hx_real = np.real(Hx); Hx_imag = np.imag(Hx)
+                Hy_real = np.real(Hy); Hy_imag = np.imag(Hy)
+                Sx = -Ez_real * Hy_real - Ez_imag * Hy_imag
+                Sy = Ez_real * Hx_real + Ez_imag * Hx_imag
+            else:
+                Sx = -Ez_real * Hy
+                Sy = Ez_real * Hx
+            power_mag = Sx**2 + Sy**2
+            power += power_mag
+        power /= len(fdtd.results['t'])
+    else:
+        print("No field data to calculate power. Make sure to run the simulation with save=True or accumulate_power=True.")
+        return
+
+    scale, unit = get_si_scale_and_label(max(fdtd.design.width, fdtd.design.height))
+    aspect_ratio = power.shape[1] / power.shape[0]
+    base_size = 8
+    figsize = (base_size * aspect_ratio, base_size) if aspect_ratio > 1 else (base_size, base_size / aspect_ratio)
+
+    fdtd.fig, fdtd.ax = plt.subplots(figsize=figsize)
+    fdtd.im = fdtd.ax.imshow(power, origin='lower',
+                             extent=(0, fdtd.design.width, 0, fdtd.design.height),
+                             cmap=cmap, aspect='equal', interpolation='bicubic', vmin=vmin, vmax=vmax)
+    colorbar = plt.colorbar(fdtd.im, orientation='vertical', aspect=30, extend='both')
+    if db_colorbar:
+        max_power = np.max(power)
+        def db_formatter(x, pos):
+            if x <= 0: return "-∞ dB"
+            ratio = max(x / max_power, 1e-10)
+            db_val = 10 * np.log10(ratio)
+            return f"{db_val:.1f} dB"
+        colorbar.formatter = plt.FuncFormatter(db_formatter)
+        colorbar.update_ticks()
+        colorbar.set_label('Relative Power (dB)')
+    else:
+        colorbar.set_label('Power (a.u.)')
+
+    try:
+        tmp_design = fdtd.design.copy()
+        tmp_design.unify_polygons()
+        overlay_structures = tmp_design.structures
+    except Exception:
+        overlay_structures = fdtd.design.structures
+    for structure in overlay_structures:
+        if hasattr(structure, 'is_pml') and structure.is_pml:
+            structure.add_to_plot(fdtd.ax, edgecolor="white", linestyle='--', facecolor='none', alpha=0.5)
+        elif hasattr(structure, 'vertices') and getattr(structure, 'vertices', None):
+            structure.add_to_plot(fdtd.ax, facecolor="none", edgecolor="white", linestyle='-')
+    for source in fdtd.design.sources:
+        if hasattr(source, 'add_to_plot'):
+            source.add_to_plot(fdtd.ax)
+    for monitor in fdtd.design.monitors:
+        if hasattr(monitor, 'add_to_plot'):
+            monitor.add_to_plot(fdtd.ax, edgecolor="white")
+
+    plt.xlabel(f'X ({unit})')
+    plt.ylabel(f'Y ({unit})')
+    fdtd.ax.xaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+    fdtd.ax.yaxis.set_major_formatter(lambda x, pos: f'{x*scale:.1f}')
+    plt.title('Time-Averaged Power Distribution')
+    plt.tight_layout()
+    plt.show()
+
+
+def close_fdtd_figure(fdtd):
+    """Close and reset the current FDTD Matplotlib figure safely."""
+    import matplotlib.pyplot as plt
+    if fdtd is None:
+        return
+    if getattr(fdtd, 'fig', None) is not None:
+        try:
+            plt.close(fdtd.fig)
+        finally:
+            fdtd.fig = None
+            fdtd.ax = None
+            fdtd.im = None
 
 def _add_monitor_to_3d_plot(fig, monitor, scale, unit):
     try:
@@ -751,4 +1082,3 @@ def _triangulate_polygon_with_holes(exterior_vertices, interior_paths, depth, z_
             faces_i.append(inner_i + total_vertices); faces_j.append(inner_next + total_vertices); faces_k.append(inner_i)
             faces_i.append(inner_i); faces_j.append(inner_next + total_vertices); faces_k.append(inner_next)
     return {'vertices': (x_coords, y_coords, z_coords), 'faces': (faces_i, faces_j, faces_k)}
-
