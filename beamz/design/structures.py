@@ -505,10 +505,6 @@ class Design:
             new_structure.scale(random.uniform(scale_range[0], scale_range[1]))
             self.add(new_structure)
         display_status(f"Completed scattering {n} structures", "success")
-
-    def show(self, unify_structures=True):
-        """Display the design visually using 2D matplotlib or 3D plotly (delegated to beamz.viz)."""
-        return viz.show_design(self, unify_structures)
     
     def get_material_value(self, x, y, z=0, dx=None, dt=None):
         """Return the material value at a given (x, y, z) coordinate, prioritizing the topmost structure."""
@@ -555,6 +551,10 @@ class Design:
         
         # Return with the permittivity of the underlying structure plus PML conductivity
         return [epsilon, mu, sigma_base + pml_conductivity]
+
+    def show(self, unify_structures=True):
+        """Display the design visually using 2D matplotlib or 3D plotly (delegated to beamz.viz)."""
+        return viz.show_design(self, unify_structures)
 
     def copy(self):
         """Create a deep copy of the design."""
@@ -605,7 +605,6 @@ class Design:
         new_design.layers = self.layers.copy() if hasattr(self, 'layers') else {}
         
         return new_design
-
 
 
 
@@ -854,13 +853,12 @@ class Polygon:
         return True # In exterior and not in any hole
 
 class Rectangle(Polygon):
-    def __init__(self, position=(0,0,0), width=1, height=1, depth=1, material=None, color=None, is_pml=False, optimize=False, z=None):
+    def __init__(self, position=(0,0,0), width=1, height=1, depth=1, material=None, color=None, is_pml=False, 
+                    optimize=False, z=None):
         # Handle z parameter for backward compatibility
         if z is not None:
-            if len(position) == 2:
-                position = (position[0], position[1], z)
-            elif len(position) == 3:
-                position = (position[0], position[1], z)  # Override z from position
+            if len(position) == 2: position = (position[0], position[1], z)
+            elif len(position) == 3: position = (position[0], position[1], z)  # Override z from position
         # Handle 2D position input (x,y) by adding z=0
         if len(position) == 2: position = (position[0], position[1], 0.0)
         elif len(position) == 3: position = position
@@ -967,7 +965,8 @@ class Circle(Polygon):
                      depth=self.depth, z=self.z)
 
 class Ring(Polygon):
-    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, material=None, color=None, optimize=False, points=256, depth=0, z=None):
+    def __init__(self, position=(0,0), inner_radius=1, outer_radius=2, material=None, color=None,
+                    optimize=False, points=256, depth=0, z=None):
         # Handle z parameter for backward compatibility
         if z is not None:
             if len(position) == 2: position = (position[0], position[1], z)

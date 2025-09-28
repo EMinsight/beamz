@@ -788,6 +788,13 @@ class FDTD:
                 structure.add_to_plot(plt.gca(), edgecolor="black", linestyle='--', facecolor='none', alpha=0.5)
             elif hasattr(structure, 'vertices') and getattr(structure, 'vertices', None):
                 structure.add_to_plot(plt.gca(), facecolor="none", edgecolor="black", linestyle="-")
+        # Draw sources and monitors on top
+        for source in self.design.sources:
+            if hasattr(source, 'add_to_plot'):
+                source.add_to_plot(plt.gca())
+        for monitor in self.design.monitors:
+            if hasattr(monitor, 'add_to_plot'):
+                monitor.add_to_plot(plt.gca())
         plt.tight_layout()
         plt.show()
 
@@ -855,6 +862,13 @@ class FDTD:
                 structure.add_to_plot(self.ax, edgecolor="black", linestyle='--', facecolor='none', alpha=0.5)
             elif hasattr(structure, 'vertices') and getattr(structure, 'vertices', None):
                 structure.add_to_plot(self.ax, facecolor="none", edgecolor="black", linestyle='-')
+        # Draw sources and monitors on top
+        for source in self.design.sources:
+            if hasattr(source, 'add_to_plot'):
+                source.add_to_plot(self.ax)
+        for monitor in self.design.monitors:
+            if hasattr(monitor, 'add_to_plot'):
+                monitor.add_to_plot(self.ax)
         # Set axis labels with proper scaling
         max_dim = max(self.design.width, self.design.height)
         if max_dim >= 1e-3: scale, unit = 1e3, 'mm'
@@ -979,6 +993,13 @@ class FDTD:
                 structure.add_to_plot(ax, edgecolor="black", linestyle='--', facecolor='none', alpha=0.5)
             elif hasattr(structure, 'vertices') and getattr(structure, 'vertices', None):
                 structure.add_to_plot(ax, facecolor="none", edgecolor="black", linestyle='-')
+        # Draw sources and monitors on top
+        for source in self.design.sources:
+            if hasattr(source, 'add_to_plot'):
+                source.add_to_plot(ax)
+        for monitor in self.design.monitors:
+            if hasattr(monitor, 'add_to_plot'):
+                monitor.add_to_plot(ax)
         # Configure standard plot elements if not using clean visualization
         if not clean_visualization:
             # Add axis labels with proper scaling
@@ -1136,6 +1157,14 @@ class FDTD:
                 structure.add_to_plot(self.ax, edgecolor="white", linestyle='--', facecolor='none', alpha=0.5)
             elif hasattr(structure, 'vertices') and getattr(structure, 'vertices', None):
                 structure.add_to_plot(self.ax, facecolor="none", edgecolor="white", linestyle='-')
+        # Draw sources and monitors on top (white edges for contrast)
+        for source in self.design.sources:
+            if hasattr(source, 'add_to_plot'):
+                # Let source use its default styling (already high zorder/visible)
+                source.add_to_plot(self.ax)
+        for monitor in self.design.monitors:
+            if hasattr(monitor, 'add_to_plot'):
+                monitor.add_to_plot(self.ax, edgecolor="white")
         # Add axis labels with proper scaling
         plt.xlabel(f'X ({unit})')
         plt.ylabel(f'Y ({unit})')
