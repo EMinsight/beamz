@@ -9,8 +9,6 @@ pipeline is ready.
 
 from __future__ import annotations
 
-import typing as _t
-
 import numpy as _np
 
 DensityArray = _np.ndarray
@@ -82,6 +80,7 @@ def compute_overlap_gradient(forward_fields, adjoint_fields, *, monitor=None) ->
 def run_forward(sim, source, monitor, *, live: bool = False):
     """Run a forward simulation with optional live visualization."""
 
+    sim.sources = [source]
     sim.initialize_simulation(save=True, live=live)
     while sim.step():
         pass
@@ -99,6 +98,7 @@ def run_adjoint(
 ) -> DensityArray:
     """Placeholder adjoint run returning a zero gradient."""
 
+    sim.sources = [source]
     sim.initialize_simulation(save=True, live=live)
     while sim.step():
         pass

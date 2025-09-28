@@ -57,6 +57,8 @@ optimizer_state = None
 objective_history = []
 
 
+plt.ion()
+
 for step in range(OPT_STEPS):
     # 1. Apply blur filter to enforce minimum feature size.
     # 2. Project densities toward binary structures for fabrication.
@@ -73,24 +75,38 @@ for step in range(OPT_STEPS):
     overlap_gradient = topo.run_adjoint(density, sim, adjoint_source, results, monitor, live=True)
 
     # 7. Update the density field using the optimizer step.
-    density, optimizer_state = topo.apply_optimizer_step(density, overlap_gradient, optimizer_state, 
-        method="adam", learning_rate=LEARNING_RATE)
+    density, optimizer_state = topo.apply_optimizer_step(
+        density,
+        overlap_gradient,
+        optimizer_state,
+        method="adam",
+        learning_rate=LEARNING_RATE,
+    )
 
     # Report metrics (objective, gradient norms, etc.).
     print(f"Step {step+1}: objective={objective:.4e}")
+
     # Visualization updates
-    plt.figure("Density Evolution")
-    plt.clf()
-    plt.title(f"Density Field – Step {step+1}")
-    plt.imshow(density, cmap="viridis", origin="lower")
-    plt.colorbar(label="Density")
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    plt.suptitle(f"Topology Optimization Progress – Step {step+1}")
 
-    plt.figure("Objective Trend")
-    objective_history.append(objective)
-    plt.clf()
-    plt.title("Objective vs. Iteration")
-    plt.plot(objective_history, marker="o")
-    plt.xlabel("Iteration")
-    plt.ylabel("Objective")
+    im0 = axes[0].imshow(density, cmap="viridis", origin="lower")
+    axes[0].set_title("Density Field")
+    plt.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
 
+    im1 = axes[1].imshow(projected, cmap="viridis", origin="lower", vmin=0, vmax=1)
+    axes[1].set_title("Projected Density")
+    plt.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
+
+    im2 = axes[2].imshow(overlap_gradient, cmap="RdBu", origin="lower")
+    axes[2].set_title("Overlap Gradient")
+    plt.colorbar(im2, ax=axes[2], fraction=0.046, pad=0.04)
+
+    for ax in axes:
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    plt.tight_layout()
     plt.pause(0.01)
+
+plt.ioff()
