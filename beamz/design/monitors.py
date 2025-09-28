@@ -341,8 +341,10 @@ class Monitor():
         Hz_slice = slice_field(Hz)
 
         # Align to common overlapping region to account for Yee staggering
-        min_y = min(Ex_slice.shape[0], Ey_slice.shape[0], Ez_slice.shape[0], Hx_slice.shape[0], Hy_slice.shape[0], Hz_slice.shape[0])
-        min_x = min(Ex_slice.shape[1], Ey_slice.shape[1], Ez_slice.shape[1], Hx_slice.shape[1], Hy_slice.shape[1], Hz_slice.shape[1])
+        min_y = min(Ex_slice.shape[0], Ey_slice.shape[0], Ez_slice.shape[0],
+                    Hx_slice.shape[0], Hy_slice.shape[0], Hz_slice.shape[0])
+        min_x = min(Ex_slice.shape[1], Ey_slice.shape[1], Ez_slice.shape[1],
+                    Hx_slice.shape[1], Hy_slice.shape[1], Hz_slice.shape[1])
         Ex_slice = Ex_slice[:min_y, :min_x]
         Ey_slice = Ey_slice[:min_y, :min_x]
         Ez_slice = Ez_slice[:min_y, :min_x]
