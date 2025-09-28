@@ -23,7 +23,7 @@ class Polygon:
             vertices_3d = [(x, y, vertices_3d[i][2] if len(vertices_3d[i]) > 2 else z) 
                           for i, (x, y) in enumerate(vertices_2d)]
         return vertices_3d
-    
+
     def _process_vertices_preserve_orientation(self, vertices, z=0):
         if not vertices: return []
         vertices_3d = self._ensure_3d_vertices(vertices)
@@ -345,7 +345,7 @@ class Ring(Polygon):
         if alpha is None: alpha = 1
         if linestyle is None: linestyle = '-'
         return super().add_to_plot(ax, facecolor=facecolor, edgecolor=edgecolor, alpha=alpha, linestyle=linestyle)
-    
+
     def copy(self):
         return Ring(position=self.position, 
                     inner_radius=self.inner_radius, 
@@ -412,7 +412,7 @@ class CircularBend(Polygon):
         if linestyle is None: linestyle = '-'
         # Use parent polygon drawing
         return super().add_to_plot(ax, facecolor=facecolor, edgecolor=edgecolor, alpha=alpha, linestyle=linestyle)
-    
+        
     def copy(self):
         return CircularBend(self.position, self.inner_radius, self.outer_radius, 
                             self.angle, self.rotation, self.material, self.color, self.optimize, 
