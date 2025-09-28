@@ -578,66 +578,6 @@ class Design:
         temp_polygon = Polygon(vertices=vertices)
         return temp_polygon.point_in_polygon(x, y)
 
-    def get_tree_view(self):
-        """Return a structured view of the design as a tree"""
-        design_data = {
-            "Properties": {
-                "Width": self.width,
-                "Height": self.height,
-                "Depth": self.depth,
-                "Dimension": "3D" if self.is_3d else "2D"
-            },
-            "Structures": {},
-            "Sources": {},
-            "Monitors": {}
-        }
-        
-        # Add structure data
-        for idx, structure in enumerate(self.structures):
-            if isinstance(structure, ModeSource) or isinstance(structure, GaussianSource) or isinstance(structure, Monitor):
-                continue
-            struct_type = structure.__class__.__name__
-            if struct_type not in design_data["Structures"]:
-                design_data["Structures"][struct_type] = []
-            struct_info = {"position": getattr(structure, "position", None)}
-            if hasattr(structure, "material"):
-                mat = structure.material
-                struct_info["material"] = {
-                    "permittivity": getattr(mat, "permittivity", None),
-                    "permeability": getattr(mat, "permeability", None),
-                    "conductivity": getattr(mat, "conductivity", None)
-                }
-            design_data["Structures"][struct_type].append(struct_info)
-        
-        # Add source data
-        for idx, source in enumerate(self.sources):
-            source_type = source.__class__.__name__
-            if source_type not in design_data["Sources"]:
-                design_data["Sources"][source_type] = []
-            source_info = {
-                "position": source.position,
-                "wavelength": getattr(source, "wavelength", None)
-            }
-            design_data["Sources"][source_type].append(source_info)
-        
-        # Add monitor data
-        for idx, monitor in enumerate(self.monitors):
-            monitor_type = monitor.__class__.__name__
-            if monitor_type not in design_data["Monitors"]:
-                design_data["Monitors"][monitor_type] = []
-            monitor_info = {
-                "position": monitor.position,
-                "size": getattr(monitor, "size", None)
-            }
-            design_data["Monitors"][monitor_type].append(monitor_info)
-            
-        return design_data
-        
-    def display_tree(self):
-        """Display the design as a hierarchical tree"""
-        design_data = self.get_tree_view()
-        tree_view(design_data, "Design Structure")
-
     def copy(self):
         """Create a deep copy of the design."""
         # Get background material from the first structure (background rectangle)
@@ -687,6 +627,10 @@ class Design:
         new_design.layers = self.layers.copy() if hasattr(self, 'layers') else {}
         
         return new_design
+
+
+
+
 
 class Polygon:
     def __init__(self, vertices=None, material=None, color=None, optimize=False, interiors=None, depth=0, z=0):
@@ -865,50 +809,8 @@ class Polygon:
         return self
 
     def add_to_plot(self, ax, facecolor=None, edgecolor="black", alpha=None, linestyle=None):
-        """Add the polygon as a patch to the axis, handling holes correctly.
-        For 3D vertices, project to 2D (xy plane) for plotting."""
-        if facecolor is None: facecolor = self.color
-        if alpha is None: alpha = 1.0 # Default alpha to 1.0 for visibility
-        if linestyle is None: linestyle = '-'
-        if not self.vertices: return
-        # Path components: first is exterior, subsequent are interiors
-        all_path_coords = []
-        all_path_codes = []
-        # Exterior path - project 3D to 2D for plotting
-        vertices_2d = self._vertices_2d(self.vertices)
-        if len(vertices_2d) > 0:
-            # Add all vertices
-            all_path_coords.extend(vertices_2d)
-            # Add the first vertex again to close the path visually
-            all_path_coords.append(vertices_2d[0])
-            # Set codes: MOVETO for first vertex, LINETO for middle vertices, CLOSEPOLY for last
-            all_path_codes.append(Path.MOVETO)
-            if len(vertices_2d) > 1:
-                all_path_codes.extend([Path.LINETO] * (len(vertices_2d) - 1))
-            all_path_codes.append(Path.CLOSEPOLY)
-        # Interior paths - project 3D to 2D for plotting
-        for interior_v_list in self.interiors:
-            if interior_v_list and len(interior_v_list) > 0:
-                interior_2d = self._vertices_2d(interior_v_list)
-                # Add all interior vertices
-                all_path_coords.extend(interior_2d)
-                # Add the first vertex again to close the interior path
-                all_path_coords.append(interior_2d[0])
-                # Set codes: MOVETO for first vertex, LINETO for middle vertices, CLOSEPOLY for last
-                all_path_codes.append(Path.MOVETO)
-                if len(interior_2d) > 1:
-                    all_path_codes.extend([Path.LINETO] * (len(interior_2d) - 1))
-                all_path_codes.append(Path.CLOSEPOLY)
-        
-        if not all_path_coords or not all_path_codes: # Nothing to draw
-            return
-            
-        path = Path(np.array(all_path_coords), np.array(all_path_codes))
-        # Matplotlib uses the nonzero winding rule by default. Holes render correctly
-        # when interiors are oriented opposite to the exterior. We already ensure this
-        # for rings and similar shapes, so no explicit fillrule argument is needed.
-        patch = PathPatch(path, facecolor=facecolor, alpha=alpha, edgecolor=edgecolor, linestyle=linestyle)
-        ax.add_patch(patch)
+        """Delegate polygon drawing to beamz.viz.draw_polygon."""
+        return viz.draw_polygon(ax, self, facecolor=facecolor, edgecolor=edgecolor, alpha=alpha, linestyle=linestyle)
 
     def copy(self):
         # Ensure interiors are copied as lists of tuples/lists, not as references
@@ -1307,58 +1209,8 @@ class PML:
         else: self.radius = size
 
     def add_to_plot(self, ax, facecolor='none', edgecolor="black", alpha=0.5, linestyle='--'):
-        """Add the PML boundary to a plot with dashed lines."""
-        if self.region_type == "rect":
-            # Create a rectangle patch for rectangular PML regions
-            rect_patch = MatplotlibRectangle(
-                (self.position[0], self.position[1]),
-                self.width, self.height,
-                fill=False, 
-                edgecolor=edgecolor,
-                linestyle=linestyle,
-                alpha=alpha
-            )
-            ax.add_patch(rect_patch)
-        elif self.region_type == "corner":
-            # Use a rectangle for corner PML regions as well
-            # Position and size depend on orientation
-            if self.orientation == "bottom-left":
-                rect_patch = MatplotlibRectangle(
-                    (self.position[0] - self.radius, self.position[1] - self.radius),
-                    self.radius, self.radius,
-                    fill=False,
-                    edgecolor=edgecolor,
-                    linestyle=linestyle,
-                    alpha=alpha
-                )
-            elif self.orientation == "bottom-right":
-                rect_patch = MatplotlibRectangle(
-                    (self.position[0], self.position[1] - self.radius),
-                    self.radius, self.radius,
-                    fill=False,
-                    edgecolor=edgecolor,
-                    linestyle=linestyle,
-                    alpha=alpha
-                )
-            elif self.orientation == "top-right":
-                rect_patch = MatplotlibRectangle(
-                    (self.position[0], self.position[1]),
-                    self.radius, self.radius,
-                    fill=False,
-                    edgecolor=edgecolor,
-                    linestyle=linestyle,
-                    alpha=alpha
-                )
-            elif self.orientation == "top-left":
-                rect_patch = MatplotlibRectangle(
-                    (self.position[0] - self.radius, self.position[1]),
-                    self.radius, self.radius,
-                    fill=False,
-                    edgecolor=edgecolor,
-                    linestyle=linestyle,
-                    alpha=alpha
-                )
-            ax.add_patch(rect_patch)
+        """Delegate PML drawing to beamz.viz.draw_pml."""
+        return viz.draw_pml(ax, self, facecolor=facecolor, edgecolor=edgecolor, alpha=alpha, linestyle=linestyle)
 
     def get_profile(self, normalized_distance):
         """Calculate PML absorption profile using gradual grading."""

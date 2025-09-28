@@ -3,6 +3,97 @@ from beamz.helpers import display_status, get_si_scale_and_label
 
 # Optional plotting backends are imported inside functions to avoid hard deps
 
+def draw_polygon(ax, polygon, facecolor=None, edgecolor="black", alpha=None, linestyle=None):
+    """Draw a polygon (with possible holes) on a Matplotlib axis.
+    Projects 3D vertices to 2D for plotting.
+    """
+    from matplotlib.path import Path
+    from matplotlib.patches import PathPatch
+
+    if facecolor is None:
+        facecolor = getattr(polygon, 'color', None) or '#999999'
+    if alpha is None:
+        alpha = 1.0
+    if linestyle is None:
+        linestyle = '-'
+    if not getattr(polygon, 'vertices', None):
+        return
+
+    # Exterior path - project to 2D
+    all_path_coords = []
+    all_path_codes = []
+    vertices_2d = polygon._vertices_2d(polygon.vertices) if hasattr(polygon, '_vertices_2d') else [(v[0], v[1]) for v in polygon.vertices]
+    if len(vertices_2d) > 0:
+        all_path_coords.extend(vertices_2d)
+        all_path_coords.append(vertices_2d[0])
+        all_path_codes.append(Path.MOVETO)
+        if len(vertices_2d) > 1:
+            all_path_codes.extend([Path.LINETO] * (len(vertices_2d) - 1))
+        all_path_codes.append(Path.CLOSEPOLY)
+
+    # Interior paths (holes)
+    for interior_v_list in getattr(polygon, 'interiors', []) or []:
+        if interior_v_list and len(interior_v_list) > 0:
+            interior_2d = polygon._vertices_2d(interior_v_list) if hasattr(polygon, '_vertices_2d') else [(v[0], v[1]) for v in interior_v_list]
+            all_path_coords.extend(interior_2d)
+            all_path_coords.append(interior_2d[0])
+            all_path_codes.append(Path.MOVETO)
+            if len(interior_2d) > 1:
+                all_path_codes.extend([Path.LINETO] * (len(interior_2d) - 1))
+            all_path_codes.append(Path.CLOSEPOLY)
+
+    if not all_path_coords or not all_path_codes:
+        return
+
+    path = Path(np.array(all_path_coords), np.array(all_path_codes))
+    patch = PathPatch(path, facecolor=facecolor, alpha=alpha, edgecolor=edgecolor, linestyle=linestyle)
+    ax.add_patch(patch)
+
+
+def draw_pml(ax, pml, facecolor='none', edgecolor="black", alpha=0.5, linestyle='--'):
+    """Draw a PML boundary on a Matplotlib axis as dashed lines."""
+    from matplotlib.patches import Rectangle as MatplotlibRectangle
+
+    if getattr(pml, 'region_type', None) == "rect":
+        rect_patch = MatplotlibRectangle(
+            (pml.position[0], pml.position[1]),
+            pml.width, pml.height,
+            fill=False,
+            edgecolor=edgecolor,
+            linestyle=linestyle,
+            alpha=alpha
+        )
+        ax.add_patch(rect_patch)
+    elif getattr(pml, 'region_type', None) == "corner":
+        # Draw a rectangle representing the corner PML based on orientation
+        if pml.orientation == "bottom-left":
+            rect_patch = MatplotlibRectangle(
+                (pml.position[0] - pml.radius, pml.position[1] - pml.radius),
+                pml.radius, pml.radius,
+                fill=False, edgecolor=edgecolor, linestyle=linestyle, alpha=alpha
+            )
+        elif pml.orientation == "bottom-right":
+            rect_patch = MatplotlibRectangle(
+                (pml.position[0], pml.position[1] - pml.radius),
+                pml.radius, pml.radius,
+                fill=False, edgecolor=edgecolor, linestyle=linestyle, alpha=alpha
+            )
+        elif pml.orientation == "top-right":
+            rect_patch = MatplotlibRectangle(
+                (pml.position[0], pml.position[1]),
+                pml.radius, pml.radius,
+                fill=False, edgecolor=edgecolor, linestyle=linestyle, alpha=alpha
+            )
+        elif pml.orientation == "top-left":
+            rect_patch = MatplotlibRectangle(
+                (pml.position[0] - pml.radius, pml.position[1]),
+                pml.radius, pml.radius,
+                fill=False, edgecolor=edgecolor, linestyle=linestyle, alpha=alpha
+            )
+        else:
+            return
+        ax.add_patch(rect_patch)
+
 def determine_if_3d(design):
     """Determine if the design should be visualized in 3D based on structure properties."""
     if design.depth and design.depth > 0:

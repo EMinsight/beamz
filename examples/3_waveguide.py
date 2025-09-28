@@ -7,7 +7,7 @@ TIME = 90*WL/LIGHT_SPEED
 N_CORE = 2.04 # Si3N4
 N_CLAD = 1.444 # SiO2
 WG_WIDTH = 0.565*µm
-DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE, N_CLAD))
+DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE, N_CLAD), safety_factor=0.999, points_per_wavelength=10)
 
 # Create the design
 design = Design(width=18*µm, height=7*µm, material=Material(N_CLAD**2), pml_size=WL)

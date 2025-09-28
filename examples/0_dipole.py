@@ -5,7 +5,7 @@ WL = 0.6*µm # wavelength of the source
 TIME = 15*WL/LIGHT_SPEED # total simulation duration
 N_CLAD = 1; N_CORE = 2 # refractive indices of the core and cladding
 
-DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE, N_CLAD), dims=2, safety_factor=0.999)
+DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE, N_CLAD), dims=2, safety_factor=0.999, points_per_wavelength=10)
 
 # Check the actual Courant number achieved
 from beamz.helpers import check_fdtd_stability
