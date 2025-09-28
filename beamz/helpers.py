@@ -102,13 +102,7 @@ def display_header(title: str, subtitle: Optional[str] = None) -> None:
     console.print(Panel(f"[bold blue]{title}[/]", subtitle=subtitle, expand=False))
 
 def display_status(status: str, status_type: str = "info") -> None:
-    """
-    Display a status message with appropriate styling.
-    
-    Args:
-        status: The status message to display
-        status_type: One of "info", "success", "warning", "error"
-    """
+    """Display a status message with appropriate styling."""
     style_map = {
         "info": "blue",
         "success": "green",
@@ -129,42 +123,22 @@ def create_rich_progress() -> Progress:
     )
 
 def display_parameters(params: Dict[str, Any], title: str = "Parameters") -> None:
-    """
-    Display a dictionary of parameters in a clean, formatted table.
-    
-    Args:
-        params: Dictionary of parameter names and values
-        title: Title for the parameters table
-    """
+    """Display a dictionary of parameters in a clean, formatted table."""
     table = Table(title=title)
     table.add_column("Parameter", style="cyan")
     table.add_column("Value", style="green")
-    
-    for key, value in params.items():
-        table.add_row(str(key), str(value))
-    
+    for key, value in params.items(): table.add_row(str(key), str(value))
     console.print(table)
 
 def display_results(results: Dict[str, Any], title: str = "Results") -> None:
-    """
-    Display simulation or optimization results in a formatted table.
-    
-    Args:
-        results: Dictionary of result names and values
-        title: Title for the results table
-    """
+    """Display simulation or optimization results in a formatted table."""
     table = Table(title=title)
     table.add_column("Metric", style="cyan")
     table.add_column("Value", style="green")
-    
     for key, value in results.items():
-        # Format numeric values nicely
-        if isinstance(value, (int, float)):
-            value_str = f"{value:.6g}"
-        else:
-            value_str = str(value)
+        if isinstance(value, (int, float)): value_str = f"{value:.6g}"
+        else: value_str = str(value)
         table.add_row(str(key), value_str)
-    
     console.print(table)
 
 def display_simulation_status(progress: float, metrics: Dict[str, Any] = None) -> None:
@@ -186,89 +160,51 @@ def display_simulation_status(progress: float, metrics: Dict[str, Any] = None) -
         )
         console.print(metrics_panel)
 
-def display_optimization_progress(iteration: int, total: int, best_value: float, 
-                                 parameters: Dict[str, Any] = None) -> None:
-    """
-    Display optimization progress information.
-    
-    Args:
-        iteration: Current iteration number
-        total: Total number of iterations
-        best_value: Best objective value found so far
-        parameters: Current best parameters
-    """
+def display_optimization_progress(iteration: int, total: int, best_value: float, parameters: Dict[str, Any] = None) -> None:
+    """Display optimization progress information."""
     console.rule(f"[bold magenta]Optimization - Iteration {iteration}/{total}[/]")
     console.print(f"Best objective value: [bold green]{best_value:.6g}[/]")
-    
     if parameters:
         table = Table(title="Best Parameters")
         table.add_column("Parameter", style="cyan")
         table.add_column("Value", style="green")
-        
         for key, value in parameters.items():
-            if isinstance(value, float):
-                table.add_row(str(key), f"{value:.6g}")
-            else:
-                table.add_row(str(key), str(value))
-        
+            if isinstance(value, float): table.add_row(str(key), f"{value:.6g}")
+            else: table.add_row(str(key), str(value))
         console.print(table)
 
 def display_time_elapsed(start_time: datetime.datetime) -> None:
-    """
-    Display the time elapsed since the start time.
-    
-    Args:
-        start_time: The start datetime
-    """
+    """Display the time elapsed since the start time."""
     elapsed = datetime.datetime.now() - start_time
     hours, remainder = divmod(elapsed.total_seconds(), 3600)
     minutes, seconds = divmod(remainder, 60)
-    
     time_str = f"[bold]Time elapsed:[/] "
-    if hours > 0:
-        time_str += f"{int(hours)}h "
-    if minutes > 0 or hours > 0:
-        time_str += f"{int(minutes)}m "
+    if hours > 0: time_str += f"{int(hours)}h "
+    if minutes > 0 or hours > 0: time_str += f"{int(minutes)}m "
     time_str += f"{seconds:.1f}s"
-    
     console.print(time_str)
 
 def code_preview(code: str, language: str = "python") -> None:
-    """
-    Display formatted code with syntax highlighting.
-    
-    Args:
-        code: The code to display
-        language: The programming language for syntax highlighting
-    """
+    """Display formatted code with syntax highlighting."""
     syntax = Syntax(code, language, theme="monokai", line_numbers=True)
     console.print(syntax)
 
 def tree_view(data: Dict[str, Any], title: str = "Structure") -> None:
     """
-    Display nested data in a tree view.
-    
-    Args:
-        data: Nested dictionary to display as a tree
-        title: Title for the tree
-    """
+    Display nested data in a tree view."""
     tree = Tree(f"[bold]{title}[/]")
-    
     def _add_to_tree(tree_node, data_node):
         if isinstance(data_node, dict):
             for key, value in data_node.items():
                 if isinstance(value, (dict, list)):
                     branch = tree_node.add(f"[blue]{key}[/]")
                     _add_to_tree(branch, value)
-                else:
-                    tree_node.add(f"[blue]{key}:[/] {value}")
+                else: tree_node.add(f"[blue]{key}:[/] {value}")
         elif isinstance(data_node, list):
             for i, item in enumerate(data_node):
                 if isinstance(item, (dict, list)):
                     branch = tree_node.add(f"[green]{i}[/]")
                     _add_to_tree(branch, item)
-                else:
-                    tree_node.add(f"[green]{i}:[/] {item}")
-    
+                else: tree_node.add(f"[green]{i}:[/] {item}")
     _add_to_tree(tree, data)
     console.print(tree)
