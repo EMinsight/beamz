@@ -121,117 +121,7 @@ class Design:
         except Exception as e:
             print(f"Warning: Polygon simplification failed ({e}), using original")
             return shapely_polygon
-
-    def import_gds(gds_file: str, default_depth=1e-6):
-        """Import a GDS file and return polygon and layer data.
-        
-        Args:
-            gds_file (str): Path to the GDS file
-            default_depth (float): Default depth/thickness for imported structures in meters
-        """
-        gds_lib = gdspy.GdsLibrary(infile=gds_file)
-        design = Design()  # Create Design instance
-        cells = gds_lib.cells  # Get all cells from the library
-        total_polygons_imported = 0
-        
-        for _cell_name, cell in cells.items():
-            # Get polygons by spec, which returns a dict: {(layer, datatype): [poly1_points, poly2_points,...]}
-            gdspy_polygons_by_spec = cell.get_polygons(by_spec=True)
-            for (layer_num, _datatype), list_of_polygon_points in gdspy_polygons_by_spec.items():
-                if layer_num not in design.layers: design.layers[layer_num] = []
-                for polygon_points in list_of_polygon_points:
-                    # Convert points from microns to meters and ensure CCW ordering
-                    vertices_2d = [(point[0] * 1e-6, point[1] * 1e-6) for point in polygon_points]
-                    # Create polygon with appropriate depth
-                    beamz_polygon = Polygon(vertices=vertices_2d, depth=default_depth)
-                    design.layers[layer_num].append(beamz_polygon)
-                    design.structures.append(beamz_polygon)
-                    total_polygons_imported += 1
-        
-        # Set 3D flag if we have depth
-        if default_depth > 0:
-            design.is_3d = True
-            design.depth = default_depth
-            
-        print(f"Imported {total_polygons_imported} polygons from '{gds_file}' into Design object.")
-        if design.is_3d: print(f"3D design with depth: {design.depth:.2e} m")
-        return design
-    
-    def export_gds(self, output_file):
-        """Export a BEAMZ design (including only the structures, not sources or monitors) to a GDS file.
-        
-        For 3D designs, structures with the same material that touch (in 3D) will be placed in the same layer.
-        """
-        # Create library with micron units (1e-6) and nanometer precision (1e-9)
-        lib = gdspy.GdsLibrary(unit=1e-6, precision=1e-9)
-        cell = lib.new_cell("main")
-        # First, we unify the polygons given their material and if they touch
-        self.unify_polygons()
-        # Scale factor to convert from meters to microns
-        scale = 1e6  # 1 meter = 1e6 microns
-
-        # Group structures by material properties
-        material_groups = {}
-        for structure in self.structures:
-            # Skip PML visualizations, sources, monitors
-            if hasattr(structure, 'is_pml') and structure.is_pml: continue
-            if isinstance(structure, (ModeSource, GaussianSource, Monitor)): continue
-            # Create material key based on material properties
-            material = getattr(structure, 'material', None)
-            if material is None: continue
-            material_key = (
-                getattr(material, 'permittivity', 1.0),
-                getattr(material, 'permeability', 1.0),
-                getattr(material, 'conductivity', 0.0)
-            )
-            if material_key not in material_groups: material_groups[material_key] = []
-            material_groups[material_key].append(structure)
-        
-        # Export each material group as a separate layer
-        for layer_num, (material_key, structures) in enumerate(material_groups.items()):
-            for structure in structures:
-                # Get vertices based on structure type
-                if isinstance(structure, Polygon):
-                    vertices = structure.vertices
-                    interiors = structure.interiors if hasattr(structure, 'interiors') else []
-                elif isinstance(structure, Rectangle):
-                    x, y = structure.position[0:2]  # Take only x,y from position
-                    w, h = structure.width, structure.height
-                    vertices = [(x, y, 0), (x + w, y, 0), (x + w, y + h, 0), (x, y + h, 0)]
-                    interiors = []
-                elif isinstance(structure, (Circle, Ring, CircularBend, Taper)):
-                    if hasattr(structure, 'to_polygon'):
-                        poly = structure.to_polygon()
-                        vertices = poly.vertices
-                        interiors = getattr(poly, 'interiors', [])
-                    else: continue
-                else: continue
-                
-                # Project vertices to 2D and scale to microns
-                vertices_2d = [(x * scale, y * scale) for x, y, _ in vertices]
-                if not vertices_2d: continue
-                # Scale and project interiors if they exist
-                interior_2d = []
-                if interiors: 
-                    for interior in interiors:
-                        interior_2d.append([(x * scale, y * scale) for x, y, _ in interior])
-                try:
-                    # Create gdspy polygon for this layer
-                    if interior_2d: gdspy_poly = gdspy.Polygon(vertices_2d, layer=layer_num, holes=interior_2d)
-                    else: gdspy_poly = gdspy.Polygon(vertices_2d, layer=layer_num)
-                    cell.add(gdspy_poly)
-                except Exception as e:
-                    print(f"Warning: Failed to create GDS polygon: {e}")
-                    continue
-        
-        # Write the GDS file
-        lib.write_gds(output_file)
-        print(f"GDS file saved as '{output_file}' with {len(material_groups)} material-based layers")
-        # Print material information for each layer
-        for layer_num, (material_key, structures) in enumerate(material_groups.items()):
-            print(f"Layer {layer_num}: εᵣ={material_key[0]:.1f}, μᵣ={material_key[1]:.1f}, σ={material_key[2]:.2e} S/m")
-        display_status(f"Created design with size: {self.width:.2e} x {self.height:.2e} x {self.depth:.2e} m")
-    
+ 
     def add(self, structure):
         """Core add function for adding structures on top of the design."""
         if isinstance(structure, ModeSource):
@@ -254,6 +144,17 @@ class Design:
                 if len(vertex) > 2 and vertex[2] != 0:
                     self.is_3d = True
                     break
+
+    def scatter(self, structure, n=1000, xyrange=(-5*µm, 5*µm), scale_range=(0.05, 1)):
+        """Randomly distribute a given object over the design domain."""
+        display_status(f"Scattering {n} instances of {structure.__class__.__name__}", "info")
+        for _ in range(n):
+            new_structure = structure.copy()
+            new_structure.shift(random.uniform(xyrange[0], xyrange[1]), random.uniform(xyrange[0], xyrange[1]))
+            new_structure.rotate(random.uniform(0, 360))
+            new_structure.scale(random.uniform(scale_range[0], scale_range[1]))
+            self.add(new_structure)
+        display_status(f"Completed scattering {n} structures", "success")
     
     def unify_polygons(self):
         """If polygons are the same material and overlap spatially, unify them into a single, simplified polygon."""
@@ -495,17 +396,6 @@ class Design:
             into {len(new_structures)} unified shapes, {len(rings_to_preserve)} isolated rings preserved", "success")
         return True
     
-    def scatter(self, structure, n=1000, xyrange=(-5*µm, 5*µm), scale_range=(0.05, 1)):
-        """Randomly distribute a given object over the design domain."""
-        display_status(f"Scattering {n} instances of {structure.__class__.__name__}", "info")
-        for _ in range(n):
-            new_structure = structure.copy()
-            new_structure.shift(random.uniform(xyrange[0], xyrange[1]), random.uniform(xyrange[0], xyrange[1]))
-            new_structure.rotate(random.uniform(0, 360))
-            new_structure.scale(random.uniform(scale_range[0], scale_range[1]))
-            self.add(new_structure)
-        display_status(f"Completed scattering {n} structures", "success")
-    
     def get_material_value(self, x, y, z=0, dx=None, dt=None):
         """Return the material value at a given (x, y, z) coordinate, prioritizing the topmost structure."""
         # First get material values from underlying structures
@@ -552,6 +442,116 @@ class Design:
         # Return with the permittivity of the underlying structure plus PML conductivity
         return [epsilon, mu, sigma_base + pml_conductivity]
 
+    def import_gds(gds_file: str, default_depth=1e-6):
+        """Import a GDS file and return polygon and layer data.
+        
+        Args:
+            gds_file (str): Path to the GDS file
+            default_depth (float): Default depth/thickness for imported structures in meters
+        """
+        gds_lib = gdspy.GdsLibrary(infile=gds_file)
+        design = Design()  # Create Design instance
+        cells = gds_lib.cells  # Get all cells from the library
+        total_polygons_imported = 0
+        
+        for _cell_name, cell in cells.items():
+            # Get polygons by spec, which returns a dict: {(layer, datatype): [poly1_points, poly2_points,...]}
+            gdspy_polygons_by_spec = cell.get_polygons(by_spec=True)
+            for (layer_num, _datatype), list_of_polygon_points in gdspy_polygons_by_spec.items():
+                if layer_num not in design.layers: design.layers[layer_num] = []
+                for polygon_points in list_of_polygon_points:
+                    # Convert points from microns to meters and ensure CCW ordering
+                    vertices_2d = [(point[0] * 1e-6, point[1] * 1e-6) for point in polygon_points]
+                    # Create polygon with appropriate depth
+                    beamz_polygon = Polygon(vertices=vertices_2d, depth=default_depth)
+                    design.layers[layer_num].append(beamz_polygon)
+                    design.structures.append(beamz_polygon)
+                    total_polygons_imported += 1
+        
+        # Set 3D flag if we have depth
+        if default_depth > 0:
+            design.is_3d = True
+            design.depth = default_depth
+            
+        print(f"Imported {total_polygons_imported} polygons from '{gds_file}' into Design object.")
+        if design.is_3d: print(f"3D design with depth: {design.depth:.2e} m")
+        return design
+    
+    def export_gds(self, output_file):
+        """Export a BEAMZ design (including only the structures, not sources or monitors) to a GDS file.
+        
+        For 3D designs, structures with the same material that touch (in 3D) will be placed in the same layer.
+        """
+        # Create library with micron units (1e-6) and nanometer precision (1e-9)
+        lib = gdspy.GdsLibrary(unit=1e-6, precision=1e-9)
+        cell = lib.new_cell("main")
+        # First, we unify the polygons given their material and if they touch
+        self.unify_polygons()
+        # Scale factor to convert from meters to microns
+        scale = 1e6  # 1 meter = 1e6 microns
+
+        # Group structures by material properties
+        material_groups = {}
+        for structure in self.structures:
+            # Skip PML visualizations, sources, monitors
+            if hasattr(structure, 'is_pml') and structure.is_pml: continue
+            if isinstance(structure, (ModeSource, GaussianSource, Monitor)): continue
+            # Create material key based on material properties
+            material = getattr(structure, 'material', None)
+            if material is None: continue
+            material_key = (
+                getattr(material, 'permittivity', 1.0),
+                getattr(material, 'permeability', 1.0),
+                getattr(material, 'conductivity', 0.0)
+            )
+            if material_key not in material_groups: material_groups[material_key] = []
+            material_groups[material_key].append(structure)
+        
+        # Export each material group as a separate layer
+        for layer_num, (material_key, structures) in enumerate(material_groups.items()):
+            for structure in structures:
+                # Get vertices based on structure type
+                if isinstance(structure, Polygon):
+                    vertices = structure.vertices
+                    interiors = structure.interiors if hasattr(structure, 'interiors') else []
+                elif isinstance(structure, Rectangle):
+                    x, y = structure.position[0:2]  # Take only x,y from position
+                    w, h = structure.width, structure.height
+                    vertices = [(x, y, 0), (x + w, y, 0), (x + w, y + h, 0), (x, y + h, 0)]
+                    interiors = []
+                elif isinstance(structure, (Circle, Ring, CircularBend, Taper)):
+                    if hasattr(structure, 'to_polygon'):
+                        poly = structure.to_polygon()
+                        vertices = poly.vertices
+                        interiors = getattr(poly, 'interiors', [])
+                    else: continue
+                else: continue
+                
+                # Project vertices to 2D and scale to microns
+                vertices_2d = [(x * scale, y * scale) for x, y, _ in vertices]
+                if not vertices_2d: continue
+                # Scale and project interiors if they exist
+                interior_2d = []
+                if interiors: 
+                    for interior in interiors:
+                        interior_2d.append([(x * scale, y * scale) for x, y, _ in interior])
+                try:
+                    # Create gdspy polygon for this layer
+                    if interior_2d: gdspy_poly = gdspy.Polygon(vertices_2d, layer=layer_num, holes=interior_2d)
+                    else: gdspy_poly = gdspy.Polygon(vertices_2d, layer=layer_num)
+                    cell.add(gdspy_poly)
+                except Exception as e:
+                    print(f"Warning: Failed to create GDS polygon: {e}")
+                    continue
+        
+        # Write the GDS file
+        lib.write_gds(output_file)
+        print(f"GDS file saved as '{output_file}' with {len(material_groups)} material-based layers")
+        # Print material information for each layer
+        for layer_num, (material_key, structures) in enumerate(material_groups.items()):
+            print(f"Layer {layer_num}: εᵣ={material_key[0]:.1f}, μᵣ={material_key[1]:.1f}, σ={material_key[2]:.2e} S/m")
+        display_status(f"Created design with size: {self.width:.2e} x {self.height:.2e} x {self.depth:.2e} m")
+   
     def show(self, unify_structures=True):
         """Display the design visually using 2D matplotlib or 3D plotly (delegated to beamz.viz)."""
         return viz.show_design(self, unify_structures)
