@@ -4,7 +4,6 @@ from beamz.helpers import calc_optimal_fdtd_params
 from beamz.design.materials import CustomMaterial
 from beamz.optimization import topology as topo
 import matplotlib.pyplot as plt
-import matplotlib.pyplot as plt
 
 # General parameters
 W, H = 15*µm, 15*µm
@@ -23,10 +22,8 @@ design = Design(width=W, height=H, pml_size=2*µm)
 design += Rectangle(position=(0*µm, H/2-WG_W/2), width=3.5*µm, height=WG_W, material=Material(permittivity=N_CORE**2))
 design += Rectangle(position=(W/2-WG_W/2, H), width=WG_W, height=-3.5*µm, material=Material(permittivity=N_CORE**2))
 # Custom material with grid-based permittivity so we can update it during optimization
-design_material = CustomMaterial(
-    permittivity_grid=np.full((64, 64), N_CLAD**2),
-    bounds=((W/2-4*µm, W/2+4*µm), (H/2-4*µm, H/2+4*µm)),
-)
+design_material = CustomMaterial(permittivity_grid=np.full((64, 64), N_CLAD**2),
+                                    bounds=((W/2-4*µm, W/2+4*µm), (H/2-4*µm, H/2+4*µm)))
 design_region = Rectangle(position=(W/2-4*µm, H/2-4*µm), width=8*µm, height=8*µm, material=design_material)
 design += design_region
 
@@ -50,15 +47,13 @@ grid.show(field="permittivity")
 # Setup the FDTD simulation
 sim = FDTD(design=design, time=t, resolution=DX)
 
-
 # Initialize density field tied to the design region (actual implementation lives in topo).
 density = topo.initialize_density_from_region(design_region, resolution=DX)
 optimizer_state = None
 objective_history = []
 
-
+"""
 plt.ion()
-
 for step in range(OPT_STEPS):
     # 1. Apply blur filter to enforce minimum feature size.
     # 2. Project densities toward binary structures for fabrication.
@@ -75,13 +70,8 @@ for step in range(OPT_STEPS):
     overlap_gradient = topo.run_adjoint(density, sim, adjoint_source, results, monitor, live=True)
 
     # 7. Update the density field using the optimizer step.
-    density, optimizer_state = topo.apply_optimizer_step(
-        density,
-        overlap_gradient,
-        optimizer_state,
-        method="adam",
-        learning_rate=LEARNING_RATE,
-    )
+    density, optimizer_state = topo.apply_optimizer_step(density, overlap_gradient, optimizer_state, 
+                                                            method="adam", learning_rate=LEARNING_RATE)
 
     # Report metrics (objective, gradient norms, etc.).
     print(f"Step {step+1}: objective={objective:.4e}")
@@ -110,3 +100,4 @@ for step in range(OPT_STEPS):
     plt.pause(0.01)
 
 plt.ioff()
+"""
