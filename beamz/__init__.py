@@ -9,9 +9,10 @@ from beamz.const import (
 )
 
 # Import design-related classes and functions
+from beamz.design.core import Design
 from beamz.design.materials import Material, CustomMaterial
 from beamz.design.structures import (
-    Design, Rectangle, Circle, Ring, 
+    Rectangle, Circle, Ring, 
     CircularBend, Polygon, Taper
 )
 from beamz.design.sources import ModeSource, GaussianSource

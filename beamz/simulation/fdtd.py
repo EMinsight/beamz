@@ -4,7 +4,7 @@ import numpy as np
 
 from beamz.const import *
 from beamz.simulation.meshing import RegularGrid, RegularGrid3D
-from beamz.design.structures import *
+from beamz.design.core import *
 from beamz.simulation.backends import get_backend
 from beamz.helpers import display_status, create_rich_progress, display_parameters, display_time_elapsed
 from beamz import viz as viz
