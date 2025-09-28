@@ -32,7 +32,7 @@ def initialize_density_from_region(design_region, resolution: float) -> DensityA
     if material is not None:
         grid = getattr(material, "permittivity_grid", None)
         if grid is not None:
-            density[:] = _normalize_to_unit_interval(grid)
+            density = _resample_to_shape(grid, (ny, nx))
     return density
 
 
@@ -77,6 +77,42 @@ def compute_overlap_gradient(forward_fields, adjoint_fields, *, monitor=None) ->
     slices = tuple(slice(0, n) for n in min_shape)
     gradient = gradient[slices]
     return gradient
+
+
+def run_forward(sim, source, monitor, *, live: bool = False):
+    """Run a forward simulation with optional live visualization."""
+
+    sim.initialize_simulation(save=True, live=live)
+    while sim.step():
+        pass
+    return sim.finalize_simulation()
+
+
+def run_adjoint(
+    density,
+    sim,
+    source,
+    forward_results,
+    monitor=None,
+    *,
+    live: bool = False,
+) -> DensityArray:
+    """Placeholder adjoint run returning a zero gradient."""
+
+    sim.initialize_simulation(save=True, live=live)
+    while sim.step():
+        pass
+    sim.finalize_simulation()
+    return _np.zeros_like(density, dtype=float)
+
+
+def compute_objective(results, monitor=None) -> float:
+    """Simple objective: total Ez energy of the final field snapshot."""
+
+    ez = _extract_field(results, "Ez")
+    if ez is None:
+        return 0.0
+    return float(_np.sum(_np.abs(ez) ** 2))
 
 
 def apply_optimizer_step(
@@ -132,6 +168,24 @@ def _normalize_to_unit_interval(values: _np.ndarray) -> _np.ndarray:
     if _np.isclose(v_min, v_max):
         return _np.zeros_like(values)
     return (values - v_min) / (v_max - v_min)
+
+
+def _resample_to_shape(grid: _np.ndarray, shape: tuple[int, int]) -> _np.ndarray:
+    ny, nx = shape
+    y_src = _np.linspace(0.0, 1.0, grid.shape[0])
+    y_dst = _np.linspace(0.0, 1.0, ny)
+    x_src = _np.linspace(0.0, 1.0, grid.shape[1])
+    x_dst = _np.linspace(0.0, 1.0, nx)
+
+    temp = _np.zeros((ny, grid.shape[1]), dtype=float)
+    for col in range(grid.shape[1]):
+        temp[:, col] = _np.interp(y_dst, y_src, grid[:, col])
+
+    resampled = _np.zeros((ny, nx), dtype=float)
+    for row in range(ny):
+        resampled[row, :] = _np.interp(x_dst, x_src, temp[row, :])
+
+    return _normalize_to_unit_interval(resampled)
 
 
 def _background_eps() -> float:

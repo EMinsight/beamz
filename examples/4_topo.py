@@ -3,6 +3,8 @@ from beamz import *
 from beamz.helpers import calc_optimal_fdtd_params
 from beamz.design.materials import CustomMaterial
 from beamz.optimization import topology as topo
+import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 
 # General parameters
 W, H = 15*µm, 15*µm
@@ -20,7 +22,11 @@ DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE, N_CLAD), dims=2, safety_factor
 design = Design(width=W, height=H, pml_size=2*µm)
 design += Rectangle(position=(0*µm, H/2-WG_W/2), width=3.5*µm, height=WG_W, material=Material(permittivity=N_CORE**2))
 design += Rectangle(position=(W/2-WG_W/2, H), width=WG_W, height=-3.5*µm, material=Material(permittivity=N_CORE**2))
-design_material = CustomMaterial(permittivity_func=lambda x, y, z=None: np.random.uniform(N_CLAD**2, N_CORE**2))
+# Custom material with grid-based permittivity so we can update it during optimization
+design_material = CustomMaterial(
+    permittivity_grid=np.full((64, 64), N_CLAD**2),
+    bounds=((W/2-4*µm, W/2+4*µm), (H/2-4*µm, H/2+4*µm)),
+)
 design_region = Rectangle(position=(W/2-4*µm, H/2-4*µm), width=8*µm, height=8*µm, material=design_material)
 design += design_region
 
@@ -48,6 +54,7 @@ sim = FDTD(design=design, time=t, resolution=DX)
 # Initialize density field tied to the design region (actual implementation lives in topo).
 density = topo.initialize_density_from_region(design_region, resolution=DX)
 optimizer_state = None
+objective_history = []
 
 
 for step in range(OPT_STEPS):
@@ -59,27 +66,31 @@ for step in range(OPT_STEPS):
     topo.update_design_region_material(design_region, projected)
 
     # 4. Run forward FDTD simulation to evaluate the objective and store fields.
-    forward_fields, objective = sim.forward(
-        sources=[forward_source],
-        monitors=[monitor],
-        live=False,
-    )
-    objective = topo.compute_objective(forward_fields, monitor)
+    results = topo.run_forward(sim, forward_source, monitor, live=True)
+    objective = topo.compute_objective(results, monitor)
 
-    # 5 & 6. Run adjoint simulation and compute field-overlap gradient using stored forward fields.
-    adjoint_fields = sim.adjoint(
-        sources=[adjoint_source],
-        forward_fields=forward_fields,
-        monitors=[monitor],
-        live=False,
-    )
-    overlap_gradient = topo.compute_overlap_gradient(forward_fields, adjoint_fields, monitor=monitor)
+    # 5 & 6. Obtain gradient via adjoint (placeholder until native support exists).
+    overlap_gradient = topo.run_adjoint(density, sim, adjoint_source, results, monitor, live=True)
 
     # 7. Update the density field using the optimizer step.
-    density, optimizer_state = topo.apply_optimizer_step(
-        density,
-        overlap_gradient,
-        optimizer_state,
-        method="adam",
-        learning_rate=LEARNING_RATE,
-    )
+    density, optimizer_state = topo.apply_optimizer_step(density, overlap_gradient, optimizer_state, 
+        method="adam", learning_rate=LEARNING_RATE)
+
+    # Report metrics (objective, gradient norms, etc.).
+    print(f"Step {step+1}: objective={objective:.4e}")
+    # Visualization updates
+    plt.figure("Density Evolution")
+    plt.clf()
+    plt.title(f"Density Field – Step {step+1}")
+    plt.imshow(density, cmap="viridis", origin="lower")
+    plt.colorbar(label="Density")
+
+    plt.figure("Objective Trend")
+    objective_history.append(objective)
+    plt.clf()
+    plt.title("Objective vs. Iteration")
+    plt.plot(objective_history, marker="o")
+    plt.xlabel("Iteration")
+    plt.ylabel("Objective")
+
+    plt.pause(0.01)
