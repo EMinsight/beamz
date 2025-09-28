@@ -2,6 +2,7 @@ import numpy as np
 from beamz import *
 from beamz.helpers import calc_optimal_fdtd_params
 from beamz.design.materials import CustomMaterial
+from beamz.optimization import topology as topo
 
 # General parameters
 W, H = 15*µm, 15*µm
@@ -19,7 +20,7 @@ DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE, N_CLAD), dims=2, safety_factor
 design = Design(width=W, height=H, pml_size=2*µm)
 design += Rectangle(position=(0*µm, H/2-WG_W/2), width=3.5*µm, height=WG_W, material=Material(permittivity=N_CORE**2))
 design += Rectangle(position=(W/2-WG_W/2, H), width=WG_W, height=-3.5*µm, material=Material(permittivity=N_CORE**2))
-design_material = CustomMaterial(permittivity_func= lambda x, y, z=None: np.random.uniform(N_CLAD**2, N_CORE**2))
+design_material = CustomMaterial(permittivity_func=lambda x, y, z=None: np.random.uniform(N_CLAD**2, N_CORE**2))
 design_region = Rectangle(position=(W/2-4*µm, H/2-4*µm), width=8*µm, height=8*µm, material=design_material)
 design += design_region
 
@@ -40,31 +41,31 @@ design.show()
 grid = RegularGrid(design=design, resolution=DX)
 grid.show(field="permittivity")
 
-
-
-
+# Setup the FDTD simulation
 sim = FDTD(design=design, time=t, resolution=DX)
 
 
-# Objective function
-def obj_func(fields): return np.sum(np.abs(fields['Ez'][-1])**2)
-objective_history = []
-
-def Adagrad_optimizer(design_region, overlap_field, learning_rate):
-    design_region = design_region + learning_rate * overlap_field
-    return design_region
-
-
+# Initialize density field tied to the design region (actual implementation lives in topo).
+density = topo.initialize_density_from_region(design_region, resolution=DX)
+optimizer_state = None
 
 
 for step in range(OPT_STEPS):
-    # Project the design region to a blurred binary mask
+    # 1. Apply blur filter to enforce minimum feature size.
+    # 2. Project densities toward binary structures for fabrication.
+    # 3. Update design region materials with the projected density.
+    blurred = topo.blur_density(density, radius=WL/2)
+    projected = topo.project_density(blurred, beta=2.0, eta=0.5)
+    topo.update_design_region_material(design_region, projected)
 
-    # Run forward simulation, measure the objective value & save the fields for every time-step in a list
-    forward_fields, objective = sim.forward(sources=forward_source, monitors=monitor, objective=obj_func, live=True)
-    objective_history.append(objective)
+    # 4. Run forward FDTD simulation to evaluate the objective and store fields.
+    forward_fields, objective = sim.forward(sources=forward_source, monitors=monitor,
+        objective=lambda fields: np.sum(np.abs(fields['Ez'][-1])**2),live=True)
+    # 5. Run adjoint simulation to obtain sensitivity information 
+    # 6. And compute the field-overlap gradient using stored forward/adjoint fields.
+    adjoint_fields, overlap_gradient = sim.adjoint(sources=adjoint_source, forward_fields=forward_fields, live=True, 
+        save_adjoint_fields=False)
 
-    # Run adjoint simulation while calculating the average overlap of the adjoint field with the reversed forward fields
-    overlap = sim.adjoint(sources=adjoint_source, forward_fields=forward_fields, live=True)
-
-    # Update the design region without the binary mask using the overlap field x scaler factor from the optimizer
+    # 7. Update the density field using the optimizer step.
+    density, optimizer_state = topo.apply_optimizer_step(density, overlap_gradient,
+        optimizer_state, method="adam", learning_rate=LEARNING_RATE)
