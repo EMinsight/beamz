@@ -3,7 +3,7 @@ import datetime
 import numpy as np
 
 from beamz.const import *
-from beamz.simulation.meshing import RegularGrid, RegularGrid3D
+from beamz.simulation.meshing import BaseMeshGrid, RegularGrid, RegularGrid3D
 from beamz.design.core import *
 from beamz.simulation.backends import get_backend
 from beamz.helpers import display_status, create_rich_progress, display_parameters, display_time_elapsed
@@ -19,20 +19,62 @@ class FDTD:
     - 3D: Full Maxwell equations (Ex, Ey, Ez, Hx, Hy, Hz fields)
     """
     def __init__(self, design, time, mesh: str = "regular", resolution: float = 0.02*µm, backend="numpy", backend_options=None):
+        provided_mesh = None
+        using_provided_mesh = False
+
+        if isinstance(design, BaseMeshGrid):
+            provided_mesh = design
+            using_provided_mesh = True
+            mesh_design = getattr(provided_mesh, "design", None)
+            if mesh_design is None:
+                raise ValueError("Provided mesh must expose its originating design via the `design` attribute.")
+            design = mesh_design
+
         # Initialize the design and detect dimensionality
         self.design = design
-        self.resolution = resolution
         self.is_3d = design.is_3d and design.depth > 0
-        
-        # Initialize appropriate mesh based on dimensionality
-        if mesh == "regular":
+
+        mesh_obj = None
+        if provided_mesh is not None:
+            mesh_obj = provided_mesh
+        elif isinstance(mesh, BaseMeshGrid):
+            mesh_obj = mesh
+            using_provided_mesh = True
+        elif mesh == "regular":
             if self.is_3d:
-                self.mesh = RegularGrid3D(design=self.design, resolution_xy=self.resolution)
-                display_status("Using 3D FDTD with full Maxwell equations", "info")
+                mesh_obj = RegularGrid3D(design=self.design, resolution_xy=resolution)
             else:
-                self.mesh = RegularGrid(design=self.design, resolution=self.resolution)
-                display_status("Using 2D FDTD with TE-polarized Maxwell equations", "info")
-        else: self.mesh = None
+                mesh_obj = RegularGrid(design=self.design, resolution=resolution)
+        else:
+            raise ValueError(f"Unsupported mesh specification: {mesh!r}")
+
+        if mesh_obj is None:
+            raise ValueError("Failed to initialize FDTD mesh.")
+
+        if hasattr(mesh_obj, "design") and mesh_obj.design is not None and mesh_obj.design is not self.design:
+            raise ValueError("Provided mesh was generated from a different design instance.")
+
+        if self.is_3d and not isinstance(mesh_obj, RegularGrid3D):
+            raise ValueError("3D designs require a RegularGrid3D mesh.")
+        if not self.is_3d and not isinstance(mesh_obj, RegularGrid):
+            raise ValueError("2D designs require a RegularGrid mesh.")
+
+        self.mesh = mesh_obj
+
+        if hasattr(self.mesh, "resolution"):
+            self.resolution = self.mesh.resolution
+        elif hasattr(self.mesh, "resolution_xy"):
+            self.resolution = self.mesh.resolution_xy
+        else:
+            self.resolution = resolution
+
+        if using_provided_mesh:
+            display_status("Using provided rasterized mesh", "info")
+
+        if self.is_3d:
+            display_status("Using 3D FDTD with full Maxwell equations", "info")
+        else:
+            display_status("Using 2D FDTD with TE-polarized Maxwell equations", "info")
         
         # Set grid resolutions
         self.dx = self.mesh.dx if hasattr(self.mesh, 'dx') else self.mesh.resolution_xy
