@@ -20,7 +20,8 @@ class FDTD:
     - 2D: TE-polarized (Ez, Hx, Hy fields)
     - 3D: Full Maxwell equations (Ex, Ey, Ez, Hx, Hy, Hz fields)
     """
-    def __init__(self, design, time, mesh: str = "regular", resolution: float = 0.02*µm, backend="numpy", backend_options=None, devices=None):
+    def __init__(self, design, time, mesh: str = "regular", resolution: float = 0.02*µm, backend="numpy", 
+                        backend_options=None, devices=None):
         provided_mesh = None
         using_provided_mesh = False
 
