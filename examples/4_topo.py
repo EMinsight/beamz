@@ -25,27 +25,14 @@ signal = ramped_cosine(t=t, amplitude=1.0, frequency=LIGHT_SPEED/WL, t_max=TIME,
 grid = RegularGrid(design=design, resolution=DX)
 
 # Define the objective function
-def objective_function(normalize: bool = True) -> float:
-    """Return negative transmitted power aggregated from the monitor.
-
-    Args:
-        monitor: Monitor instance after the forward simulation.
-        normalize: If True, divide by number of records to keep scale consistent.
-
-    Returns:
-        Objective value (higher power → lower objective because we minimize).
-    """
-
-    if monitor.power_history:
-        total_power = sum(monitor.power_history)
+def objective_function(monitor: Monitor, normalize: bool = True) -> float:
+    """Return negative transmitted power aggregated from the monitor."""
+    total_power = 0.0
+    if monitor.power_history: total_power = sum(monitor.power_history)
     else:
-        total_power = 0.0
         if monitor.accumulate_power and monitor.power_accumulated is not None:
             total_power = float(np.sum(monitor.power_accumulated))
-
-    if normalize and monitor.power_history:
-        total_power /= len(monitor.power_history)
-
+    if normalize and monitor.power_history: total_power /= len(monitor.power_history)
     return -float(total_power)
 
 # Define the optimizer
@@ -56,7 +43,7 @@ for opt_step in range(OPT_STEPS):
     forward, objective_value = FDTD(design=grid, devices=[
         ModeSource(design=design, position=(2.5*µm, H/2), width=WG_W*4, wavelength=WL, signal=signal, direction="+x"),
         Monitor(design=design, start=(W/2-WG_W*2, H-2.5*µm), end=(W/2+WG_W*2, H-2.5*µm), objective_function=objective_function)
-    ], time=t)
+    ], time=t) # TODO: Integrate the objective function into the FDTD simulation
     forward_fields = forward.run(live=True, axis_scale=[-1, 1], save_memory_mode=True) # TODO: only save the Ez field!!!
     # Run the adjoint FDTD simulation step-by-step and accumulate the overlap field
     adjoint = FDTD(design=grid, devices=[ModeSource(design=design, position=(W/2, H-2.5*µm), width=WG_W*4, wavelength=WL,
