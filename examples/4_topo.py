@@ -1,8 +1,5 @@
 import numpy as np
 from beamz import *
-from beamz.helpers import calc_optimal_fdtd_params
-from beamz.design.materials import CustomMaterial
-from beamz.optimization import topology as topo
 
 # General parameters for the simulation
 W, H = 15*µm, 15*µm
@@ -45,7 +42,10 @@ for opt_step in range(OPT_STEPS):
     overlap_gradient = np.zeros_like(forward_fields["Ez"]) # TODO: Initialize with the correct shape!!!
     for step in t:
         adjoint_field = adjoint.step() # Simulate one step of the adjoint FDTD simulation
-        overlap_gradient += topo.compute_overlap_gradient(forward_fields, adjoint_field) / len(t) # Accumulate overlap gradient
+        overlap_gradient += compute_overlap_gradient(forward_fields, adjoint_field) / len(t) # Accumulate overlap gradient
         forward_fields.pop() # Delete the forward field that was just used to free up memory
     # Update the grid permittivity with the overlap gradient
     grid.permittivity = grid.permittivity + LR * overlap_gradient # TODO: Update with the optimizer
+
+
+
