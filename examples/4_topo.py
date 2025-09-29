@@ -23,31 +23,26 @@ design += Rectangle(position=(0*µm, H/2-WG_W/2), width=3.5*µm, height=WG_W, ma
 design += Rectangle(position=(W/2-WG_W/2, H), width=WG_W, height=-3.5*µm, material=Material(permittivity=N_CORE**2))
 # Custom material with grid-based permittivity so we can update it during optimization
 design_material = CustomMaterial(permittivity_func= lambda x, y, z=None: np.random.uniform(N_CLAD**2, N_CORE**2))
-design_region = Rectangle(position=(W/2-4*µm, H/2-4*µm), width=8*µm, height=8*µm, material=design_material)
-design += design_region
-
-# Source & Monitor
-t = np.linspace(0, TIME, int(TIME/DT))
-signal = ramped_cosine(t=t, amplitude=1.0, frequency=LIGHT_SPEED/WL, t_max=TIME, ramp_duration=WL*10/LIGHT_SPEED, phase=0)
-design += ModeSource(design=design, position=(2.5*µm, H/2), width=WG_W*4, wavelength=WL, signal=signal, direction="+x")
-
-# Output monitor placed across the vertical waveguide core (improves adjoint coupling)
-monitor = Monitor(design=design, start=(W/2-WG_W*2, H-2.5*µm), end=(W/2+WG_W*2, H-2.5*µm))
-design += monitor
+design += Rectangle(position=(W/2-4*µm, H/2-4*µm), width=8*µm, height=8*µm, material=design_material)
 design.show()
 
 # Rasterize the design
 grid = RegularGrid(design=design, resolution=DX)
 grid.show(field="permittivity")
 
-# Run the simulation
-sim = FDTD(design=grid, time=t, mesh="regular", resolution=DX)
+# Run the simulation with added devices
+t = np.linspace(0, TIME, int(TIME/DT))
+signal = ramped_cosine(t=t, amplitude=1.0, frequency=LIGHT_SPEED/WL, t_max=TIME, ramp_duration=WL*10/LIGHT_SPEED, phase=0)
+sim = FDTD(design=grid, devices=[
+            Monitor(design=design, start=(W/2-WG_W*2, H-2.5*µm), end=(W/2+WG_W*2, H-2.5*µm)),
+            ModeSource(design=design, position=(2.5*µm, H/2), width=WG_W*4, wavelength=WL, signal=signal, direction="+x")
+            ], time=t, mesh="regular", resolution=DX)
 sim.run(live=True, axis_scale=[-1, 1], save_memory_mode=True, accumulate_power=True)
 sim.plot_power(db_colorbar=True)
 
 
 
-design += ModeSource(design=design, position=(W/2, H-2.5*µm), width=WG_W*4, wavelength=WL, signal=signal, direction="-y")
+#design += ModeSource(design=design, position=(W/2, H-2.5*µm), width=WG_W*4, wavelength=WL, signal=signal, direction="-y")
 
 
 

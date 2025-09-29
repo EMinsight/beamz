@@ -5,6 +5,8 @@ import numpy as np
 from beamz.const import *
 from beamz.simulation.meshing import BaseMeshGrid, RegularGrid, RegularGrid3D
 from beamz.design.core import *
+from beamz.devices.sources import ModeSource, GaussianSource
+from beamz.devices.monitors import Monitor
 from beamz.simulation.backends import get_backend
 from beamz.helpers import display_status, create_rich_progress, display_parameters, display_time_elapsed
 from beamz import viz as viz
@@ -18,7 +20,7 @@ class FDTD:
     - 2D: TE-polarized (Ez, Hx, Hy fields)
     - 3D: Full Maxwell equations (Ex, Ey, Ez, Hx, Hy, Hz fields)
     """
-    def __init__(self, design, time, mesh: str = "regular", resolution: float = 0.02*µm, backend="numpy", backend_options=None):
+    def __init__(self, design, time, mesh: str = "regular", resolution: float = 0.02*µm, backend="numpy", backend_options=None, devices=None):
         provided_mesh = None
         using_provided_mesh = False
 
@@ -108,7 +110,22 @@ class FDTD:
         self.num_steps = len(self.time)
         
         # Initialize the sources
-        self.sources = self.design.sources
+        if devices is None:
+            devices = []
+        self.sources = list(self.design.sources)
+        self.monitors = list(self.design.monitors)
+
+        for device in devices:
+            if isinstance(device, (ModeSource, GaussianSource)):
+                if device.design is None:
+                    device.design = self.design
+                self.sources.append(device)
+            elif isinstance(device, Monitor):
+                if device.design is None:
+                    device.design = self.design
+                self.monitors.append(device)
+            else:
+                raise TypeError(f"Unsupported device type: {type(device)}")
         
         # Initialize the results based on dimensionality
         if self.is_3d: self.results = {"Ex": [], "Ey": [], "Ez": [], "Hx": [], "Hy": [], "Hz": [], "t": []}

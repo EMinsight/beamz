@@ -196,7 +196,7 @@ def save_step_results(fdtd) -> None:
 
 def record_monitor_data(fdtd, step: int) -> None:
     """Record field data at monitor locations for current step."""
-    if not fdtd.design.monitors:
+    if not fdtd.monitors:
         return
     if fdtd.is_3d:
         Ex_np = fdtd.backend.to_numpy(fdtd.Ex)
@@ -205,14 +205,14 @@ def record_monitor_data(fdtd, step: int) -> None:
         Hx_np = fdtd.backend.to_numpy(fdtd.Hx)
         Hy_np = fdtd.backend.to_numpy(fdtd.Hy)
         Hz_np = fdtd.backend.to_numpy(fdtd.Hz)
-        for monitor in fdtd.design.monitors:
+        for monitor in fdtd.monitors:
             if hasattr(monitor, 'record_fields') and callable(monitor.record_fields):
                 monitor.record_fields(Ex_np, Ey_np, Ez_np, Hx_np, Hy_np, Hz_np, fdtd.t, fdtd.dx, fdtd.dy, fdtd.dz, step=step)
     else:
         Ez_np = fdtd.backend.to_numpy(fdtd.Ez)
         Hx_np = fdtd.backend.to_numpy(fdtd.Hx)
         Hy_np = fdtd.backend.to_numpy(fdtd.Hy)
-        for monitor in fdtd.design.monitors:
+        for monitor in fdtd.monitors:
             if hasattr(monitor, 'record_fields') and callable(monitor.record_fields):
                 if hasattr(monitor, 'is_3d'):
                     original_is_3d = monitor.is_3d
