@@ -22,8 +22,7 @@ design = Design(width=W, height=H, pml_size=2*µm)
 design += Rectangle(position=(0*µm, H/2-WG_W/2), width=3.5*µm, height=WG_W, material=Material(permittivity=N_CORE**2))
 design += Rectangle(position=(W/2-WG_W/2, H), width=WG_W, height=-3.5*µm, material=Material(permittivity=N_CORE**2))
 # Custom material with grid-based permittivity so we can update it during optimization
-design_material = CustomMaterial(permittivity_grid=np.full((64, 64), N_CLAD**2),
-                                    bounds=((W/2-4*µm, W/2+4*µm), (H/2-4*µm, H/2+4*µm)))
+design_material = CustomMaterial(permittivity_func= lambda x, y, z=None: np.random.uniform(N_CLAD**2, N_CORE**2))
 design_region = Rectangle(position=(W/2-4*µm, H/2-4*µm), width=8*µm, height=8*µm, material=design_material)
 design += design_region
 
@@ -36,7 +35,7 @@ adjoint_source = ModeSource(design=design, position=(W/2, H-2.5*µm), width=WG_W
 design += forward_source
 design += adjoint_source
 # Output monitor placed across the vertical waveguide core (improves adjoint coupling)
-monitor = Monitor(design=design, start=(9.5*µm, 15.0*µm), end=(10.5*µm, 15.0*µm))
+monitor = Monitor(design=design, start=(W/2-WG_W*2, H-2.5*µm), end=(W/2+WG_W*2, H-2.5*µm))
 design += monitor
 design.show()
 
@@ -46,6 +45,7 @@ grid.show(field="permittivity")
 
 # Setup the FDTD simulation
 sim = FDTD(design=design, time=t, resolution=DX)
+
 
 # Initialize density field tied to the design region (actual implementation lives in topo).
 density = topo.initialize_density_from_region(design_region, resolution=DX)
