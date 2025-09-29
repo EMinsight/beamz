@@ -43,14 +43,25 @@ design.show()
 grid = RegularGrid(design=design, resolution=DX)
 grid.show(field="permittivity")
 
-# Setup the FDTD simulation
-sim = FDTD(design=design, time=t, resolution=DX)
+
+# Use the shape of the design_region as a mask
+mask = design_region.make_mask()
+
+# Apply a blur filter to the permittivity inside the design_region
 
 
-# Initialize density field tied to the design region (actual implementation lives in topo).
-density = topo.initialize_density_from_region(design_region, resolution=DX)
-optimizer_state = None
-objective_history = []
+# Apply a projection filter to the permittivity inside the design_region
+
+
+# Run the forward FDTD simulation
+
+
+# Run the adjoint FDTD simulation step-by-step and accumulate the overlap field
+
+
+
+
+
 
 """
 plt.ion()
