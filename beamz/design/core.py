@@ -7,8 +7,8 @@ from beamz.const import µm
 from beamz.helpers import display_status
 
 from beamz.design.materials import Material
-from beamz.design.sources import ModeSource, GaussianSource
-from beamz.design.monitors import Monitor
+from beamz.devices.sources import ModeSource, GaussianSource
+from beamz.devices.monitors import Monitor
 from beamz.design.structures import Polygon, Rectangle, Circle, Ring, CircularBend, Taper
 from beamz.design.pml import PML
 
@@ -178,8 +178,8 @@ class Design:
                 non_polygon_structures.append(structure)
                 continue
             # Import at function level to avoid circular imports
-            from beamz.design.sources import ModeSource, GaussianSource
-            from beamz.design.monitors import Monitor
+            from beamz.devices.sources import ModeSource, GaussianSource
+            from beamz.devices.monitors import Monitor
             if isinstance(structure, (ModeSource, GaussianSource, Monitor)):
                 non_polygon_structures.append(structure)
                 continue

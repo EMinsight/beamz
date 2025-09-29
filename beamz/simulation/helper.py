@@ -1,5 +1,5 @@
 import numpy as np
-from beamz.design.sources import ModeSource, GaussianSource
+from beamz.devices.sources import ModeSource, GaussianSource
 
 
 def apply_sources(fdtd) -> None:

@@ -29,11 +29,8 @@ design += design_region
 # Source & Monitor
 t = np.linspace(0, TIME, int(TIME/DT))
 signal = ramped_cosine(t=t, amplitude=1.0, frequency=LIGHT_SPEED/WL, t_max=TIME, ramp_duration=WL*10/LIGHT_SPEED, phase=0)
-forward_source = ModeSource(design=design, position=(2.5*µm, H/2), width=WG_W*4, wavelength=WL, signal=signal, direction="+x")
-adjoint_source = ModeSource(design=design, position=(W/2, H-2.5*µm), width=WG_W*4, wavelength=WL,
-                               signal=signal, direction="-y")
-design += forward_source
-design += adjoint_source
+design += ModeSource(design=design, position=(2.5*µm, H/2), width=WG_W*4, wavelength=WL, signal=signal, direction="+x")
+
 # Output monitor placed across the vertical waveguide core (improves adjoint coupling)
 monitor = Monitor(design=design, start=(W/2-WG_W*2, H-2.5*µm), end=(W/2+WG_W*2, H-2.5*µm))
 design += monitor
@@ -43,9 +40,19 @@ design.show()
 grid = RegularGrid(design=design, resolution=DX)
 grid.show(field="permittivity")
 
+# Run the simulation
+sim = FDTD(design=grid, time=t, mesh="regular", resolution=DX)
+sim.run(live=True, axis_scale=[-1, 1], save_memory_mode=True, accumulate_power=True)
+sim.plot_power(db_colorbar=True)
+
+
+
+design += ModeSource(design=design, position=(W/2, H-2.5*µm), width=WG_W*4, wavelength=WL, signal=signal, direction="-y")
+
+
 
 # Use the shape of the design_region as a mask
-mask = design_region.make_mask()
+
 
 # Apply a blur filter to the permittivity inside the design_region
 
@@ -57,8 +64,6 @@ mask = design_region.make_mask()
 
 
 # Run the adjoint FDTD simulation step-by-step and accumulate the overlap field
-
-
 
 
 

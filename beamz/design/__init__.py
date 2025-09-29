@@ -8,10 +8,10 @@ from beamz.design.structures import (
     Rectangle, Circle, Ring, CircularBend, Polygon, Taper
 )
 from beamz.design.pml import PML
-from beamz.design.sources import ModeSource, GaussianSource
-from beamz.design.monitors import Monitor
-from beamz.design.signals import ramped_cosine, plot_signal
-from beamz.design.mode import solve_modes, slab_mode_source
+from beamz.devices.sources import ModeSource, GaussianSource
+from beamz.devices.monitors import Monitor
+from beamz.devices.signals import ramped_cosine, plot_signal
+from beamz.devices.mode import solve_modes, slab_mode_source
 
 __all__ = [
     'Material', 'CustomMaterial',
