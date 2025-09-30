@@ -25,6 +25,9 @@ from beamz.simulation.meshing import RegularGrid
 from beamz.simulation.fdtd import FDTD
 from beamz.simulation.backends import get_backend
 
+from beamz.optimization.optimizers import Optimizer
+from beamz.optimization.topology import compute_overlap_gradient
+
 # Import optimization-related classes
 # (Currently empty, to be filled as the module grows)
 
@@ -81,6 +84,10 @@ _exports = {
     'RegularGrid': RegularGrid,
     'FDTD': FDTD,
     'get_backend': get_backend,
+
+    # Optimization
+    'Optimizer': Optimizer,
+    'compute_overlap_gradient': compute_overlap_gradient,
     
     # UI helpers
     'display_header': display_header,

@@ -26,7 +26,6 @@ grid = RegularGrid(design=design, resolution=DX)
 
 # Define the objective function
 def objective_function(monitor: Monitor, normalize: bool = True) -> float:
-    """Return negative transmitted power aggregated from the monitor."""
     total_power = 0.0
     if monitor.power_history: total_power = sum(monitor.power_history)
     else:
@@ -37,24 +36,35 @@ def objective_function(monitor: Monitor, normalize: bool = True) -> float:
 
 # Define the optimizer
 optimizer = Optimizer(method="adam", learning_rate=LR)
+objective_history = []
 for opt_step in range(OPT_STEPS):
     # TODO: Where do we apply the blur and the filter???
     # Run the forward FDTD simulation
-    forward, objective_value = FDTD(design=grid, devices=[
+    forward = FDTD(design=grid, devices=[
         ModeSource(design=design, position=(2.5*µm, H/2), width=WG_W*4, wavelength=WL, signal=signal, direction="+x"),
         Monitor(design=design, start=(W/2-WG_W*2, H-2.5*µm), end=(W/2+WG_W*2, H-2.5*µm), objective_function=objective_function)
     ], time=t) # TODO: Integrate the objective function into the FDTD simulation
-    forward_fields = forward.run(live=True, axis_scale=[-1, 1], save_memory_mode=True) # TODO: only save the Ez field!!!
+    forward_fields, objective_value = forward.run(live=True, axis_scale=[-1, 1], save_memory_mode=True) # TODO: only save the Ez field!!!
+    objective_history.append(objective_value)
     # Run the adjoint FDTD simulation step-by-step and accumulate the overlap field
-    adjoint = FDTD(design=grid, devices=[ModeSource(design=design, position=(W/2, H-2.5*µm), width=WG_W*4, wavelength=WL,
-        signal=signal, direction="-y")], time=t)
+    adjoint = FDTD(design=grid, devices=[ModeSource(design=design, position=(W/2, H-2.5*µm),
+                    width=WG_W*4, wavelength=WL,signal=signal, direction="-y")], time=t)
     overlap_gradient = np.zeros_like(forward_fields["Ez"]) # TODO: Initialize with the correct shape!!!
     for step in t:
         adjoint_field = adjoint.step() # Simulate one step of the adjoint FDTD simulation
         overlap_gradient += compute_overlap_gradient(forward_fields, adjoint_field) / len(t) # Accumulate overlap gradient
         forward_fields.pop() # Delete the forward field that was just used to free up memory
     # Update the grid permittivity with the overlap gradient
-    grid.permittivity = grid.permittivity + LR * overlap_gradient # TODO: Update with the optimizer
+    grid.permittivity += optimizer.step(overlap_gradient) # TODO: Consider the objective value in the gradient update
 
+# Run final simulation
+final = FDTD(design=grid, devices=[
+    ModeSource(design=design, position=(2.5*µm, H/2), width=WG_W*4, wavelength=WL, signal=signal, direction="+x"),
+    Monitor(design=design, start=(W/2-WG_W*2, H-2.5*µm), end=(W/2+WG_W*2, H-2.5*µm), objective_function=objective_function)
+], time=t)
+final_fields, objective_value = final.run(live=True, axis_scale=[-1, 1], save_memory_mode=True)
+objective_history.append(objective_value)
 
+# Show the final design
 
+# Convert and save the design as GDS

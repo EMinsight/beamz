@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import numpy as _np
 
+from .optimizers import Optimizer as _Optimizer
+
 DensityArray = _np.ndarray
 
 
@@ -122,33 +124,23 @@ def apply_optimizer_step(
     *,
     method: str = "adam",
     learning_rate: float = 1e-2,
-    beta1: float = 0.9,
-    beta2: float = 0.999,
-    epsilon: float = 1e-8,
+    **kwargs,
 ) -> tuple[DensityArray, dict | None]:
-    """Update the density using a simple Adam optimizer."""
+    """Update density using the generic :class:`Optimizer` helper."""
 
     if gradient.shape != density.shape:
         raise ValueError("Gradient and density must share shape.")
 
     if optimizer_state is None:
-        optimizer_state = {"m": _np.zeros_like(density), "v": _np.zeros_like(density), "t": 0}
+        optimizer = _Optimizer(method=method, learning_rate=learning_rate, options=kwargs)
+    else:
+        optimizer = optimizer_state["optimizer"]
 
-    m = optimizer_state["m"]
-    v = optimizer_state["v"]
-    optimizer_state["t"] += 1
-    t = optimizer_state["t"]
-
-    m[:] = beta1 * m + (1 - beta1) * gradient
-    v[:] = beta2 * v + (1 - beta2) * (gradient ** 2)
-
-    m_hat = m / (1 - beta1 ** t)
-    v_hat = v / (1 - beta2 ** t)
-
-    density_updated = density + learning_rate * m_hat / (_np.sqrt(v_hat) + epsilon)
+    update = optimizer.step(gradient)
+    density_updated = density + update
     density_clamped = _np.clip(density_updated, 0.0, 1.0)
 
-    return density_clamped, optimizer_state
+    return density_clamped, {"optimizer": optimizer}
 
 
 def update_design_region_material(design_region, density: DensityArray) -> None:
