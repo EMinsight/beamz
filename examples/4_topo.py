@@ -1,6 +1,5 @@
 import os
 import sys
-
 import copy
 
 import numpy as np
@@ -55,9 +54,10 @@ def make_density_mask(structure, grid):
                 mask[iy, ix] = True
     return mask
 
-
+  
 def box_blur(density, radius_cells, mask=None):
     """Apply a simple box blur to ``density`` and respect ``mask`` if provided."""
+
 
     radius = int(max(0, round(radius_cells)))
     if radius < 1:
@@ -66,6 +66,7 @@ def box_blur(density, radius_cells, mask=None):
     size = 2 * radius + 1
     padded = np.pad(density, radius, mode="edge")
     window = sliding_window_view(padded, (size, size))
+
     if mask is None:
         return window.mean(axis=(-2, -1))
 
@@ -92,7 +93,6 @@ def smooth_projection(density, beta=2.0, eta=0.5):
 
 def filtered_density(density, mask, blur_radius, beta, eta):
     """Apply blur and projection filters inside the masked region."""
-
     blurred = box_blur(density, blur_radius, mask=mask)
     projected = smooth_projection(blurred, beta=beta, eta=eta)
     filtered = np.where(mask, projected, density)
@@ -122,6 +122,7 @@ def preview_permittivity(permittivity_grid, dx, dy, title, filename=None):
     plt.show()
 
 
+
 def plot_field_map(field, dx, dy, title, filename=None, cmap="RdBu", use_abs=True, colorbar_label="Amplitude"):
     """Plot a 2D field map with the given ``title`` and optional ``filename``."""
 
@@ -137,7 +138,6 @@ def plot_field_map(field, dx, dy, title, filename=None, cmap="RdBu", use_abs=Tru
         plt.savefig(filename, dpi=200, bbox_inches="tight")
     plt.show()
 
-
 def extract_objective(results):
     """Return the first objective value stored in the simulation results."""
 
@@ -146,6 +146,7 @@ def extract_objective(results):
         return 0.0
     first_key = next(iter(objectives))
     return float(objectives[first_key])
+
 
 
 def build_forward_devices(accumulate_power: bool = True):
@@ -273,6 +274,7 @@ design_region.material = design_material
 
 # Mask and density initialization for topology updates
 mask = make_density_mask(design_region, grid)
+
 rng = np.random.default_rng(seed=42)
 design_density = np.zeros_like(base_permittivity)
 initial_permittivity = rng.uniform(EPS_CLAD, EPS_CORE, size=np.count_nonzero(mask))
@@ -295,6 +297,7 @@ def update_design_from_density(
         beta=beta,
         eta=eta,
     )
+
     permittivity_grid = density_to_permittivity(base_permittivity, filtered, mask, EPS_CLAD, EPS_CORE)
     design_material.update_grid("permittivity", permittivity_grid)
     grid.permittivity = permittivity_grid
@@ -316,6 +319,7 @@ objective_history = []
 for opt_step in range(1, OPT_STEPS + 1):
     print(f"\n--- Optimization step {opt_step}/{OPT_STEPS} ---")
 
+
     filtered_density_values, permittivity_grid = update_design_from_density(
         design_density, label_prefix="Iteration", preview=True, step=opt_step
     )
@@ -328,6 +332,7 @@ for opt_step in range(1, OPT_STEPS + 1):
     forward_fields = list(forward_results.get("Ez", []))
     num_forward_steps = len(forward_fields)
     forward_snapshot = forward_fields[-1].copy() if forward_fields else None
+
 
     adjoint = FDTD(
         design=grid,
@@ -352,8 +357,10 @@ for opt_step in range(1, OPT_STEPS + 1):
         fields_to_cache=None,
     )
 
+
     overlap_gradient = np.zeros_like(design_density, dtype=np.float64)
     adjoint_snapshot = None
+
 
     for step_index in range(adjoint.num_steps):
         if not forward_fields:
@@ -362,9 +369,11 @@ for opt_step in range(1, OPT_STEPS + 1):
             break
         adjoint_field = adjoint.backend.to_numpy(adjoint.Ez)
         forward_field = np.asarray(forward_fields.pop())
+
         if adjoint_snapshot is None:
             adjoint_snapshot = adjoint_field.copy()
         overlap_gradient += np.real(adjoint_field * np.conj(forward_field))
+
 
     adjoint.finalize_simulation()
     forward_fields.clear()
@@ -497,11 +506,13 @@ preview_permittivity(
 )
 
 plt.figure(figsize=(6, 4))
+
 transmission_history = -np.asarray(objective_history)
 plt.plot(transmission_history, marker="o")
 plt.xlabel("Optimization step")
 plt.ylabel("Transmission (a.u.)")
 plt.title("Transmission history")
+
 plt.grid(True)
 plt.tight_layout()
 objective_history_filename = "objective_history.png"
