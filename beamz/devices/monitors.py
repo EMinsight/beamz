@@ -1,17 +1,24 @@
+from typing import Callable, Optional
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle as MatplotlibRectangle
 
-class Monitor():    
-    def __init__(self, design=None, start=(0,0), end=None, plane_normal=None, plane_position=0, 
-                 size=None, record_fields=True, accumulate_power=True, live_update=False, 
-                 record_interval=1, max_history_steps=None):
+class Monitor():
+    def __init__(self, design=None, start=(0,0), end=None, plane_normal=None, plane_position=0,
+                 size=None, record_fields=True, accumulate_power=True, live_update=False,
+                 record_interval=1, max_history_steps=None,
+                 objective_function: Optional[Callable[["Monitor"], float]] = None,
+                 name: Optional[str] = None):
         self.design = design
         self.should_record_fields = record_fields
         self.accumulate_power = accumulate_power
         self.live_update = live_update
         self.record_interval = record_interval
         self.max_history_steps = max_history_steps
+        self.objective_function = objective_function
+        self.objective_value: Optional[float] = None
+        self.name = name
         
         # Determine if this is a 3D monitor based on input parameters
         self.is_3d = self._determine_3d_mode(start, end, design)
@@ -44,8 +51,26 @@ class Monitor():
         
         if self.is_3d: 
             self._init_3d_monitor(start, end, plane_normal, plane_position, size)
-        else: 
+        else:
             self._init_2d_monitor(start, end)
+
+    def evaluate_objective(self) -> Optional[float]:
+        """Evaluate the objective function associated with this monitor, if any."""
+        if self.objective_function is None:
+            return None
+        try:
+            value = self.objective_function(self)
+        except Exception as exc:
+            print(f"Warning: monitor objective evaluation failed: {exc}")
+            return None
+        if value is None:
+            return None
+        try:
+            self.objective_value = float(value)
+        except (TypeError, ValueError):
+            print(f"Warning: monitor objective returned non-numeric value: {value}")
+            return None
+        return self.objective_value
     
     def _determine_3d_mode(self, start, end, design):
         """Determine if this should be a 3D monitor based on inputs."""
