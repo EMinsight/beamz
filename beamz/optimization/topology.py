@@ -1,19 +1,118 @@
-"""Topology optimization helper placeholders for BEAMZ.
+"""Topology optimization helpers for BEAMZ.
 
-This module contains the high-level hooks that the application layer calls
-while keeping the actual implementation details encapsulated.  Each helper
-currently raises ``NotImplementedError`` because the adjoint workflow is not
-implemented yet.  Replace the bodies with working code when the optimization
-pipeline is ready.
+The public API in this module intentionally focuses on small, easily testable
+building blocks that examples can assemble into a full adjoint workflow.  The
+functions have been implemented with numpy only dependencies so that they can
+be validated in unit tests without running heavy FDTD simulations.
 """
 
 from __future__ import annotations
 
+from typing import Callable, Optional, Tuple
+
 import numpy as _np
+from numpy.lib.stride_tricks import sliding_window_view as _sliding_window_view
 
 from .optimizers import Optimizer as _Optimizer
 
 DensityArray = _np.ndarray
+MaskArray = _np.ndarray
+
+
+def _validate_shapes(density: DensityArray, gradient: DensityArray, mask: MaskArray) -> None:
+    """Raise ``ValueError`` if ``density``, ``gradient`` and ``mask`` disagree."""
+
+    if density.shape != gradient.shape:
+        raise ValueError("Gradient and density must share shape.")
+    if mask.shape != density.shape:
+        raise ValueError("Mask must share the same shape as density.")
+
+
+def _masked_box_blur(values: DensityArray, mask: MaskArray, radius: int) -> DensityArray:
+    """Apply a simple masked box blur with edge padding."""
+
+    radius = int(max(0, round(radius)))
+    if radius < 1:
+        return values
+
+    padded_values = _np.pad(values, radius, mode="edge")
+    padded_mask = _np.pad(mask.astype(float), radius, mode="constant", constant_values=0.0)
+    window_shape = (2 * radius + 1, 2 * radius + 1)
+
+    values_view = _sliding_window_view(padded_values, window_shape)
+    mask_view = _sliding_window_view(padded_mask, window_shape)
+
+    weighted_sum = (values_view * mask_view).sum(axis=(-2, -1))
+    weights = mask_view.sum(axis=(-2, -1))
+    weights = _np.where(weights == 0.0, 1.0, weights)
+    return weighted_sum / weights
+
+
+def apply_density_update(
+    density: DensityArray,
+    gradient: DensityArray,
+    mask: MaskArray,
+    *,
+    learning_rate: float,
+    blur_radius: int = 0,
+    blur_fn: Optional[Callable[[DensityArray, MaskArray], DensityArray]] = None,
+) -> Tuple[DensityArray, DensityArray, DensityArray, float, float]:
+    """Update ``density`` using ``gradient`` constrained to ``mask``.
+
+    Parameters
+    ----------
+    density:
+        The design density array to update (values in ``[0, 1]``).  The input is
+        not modified in-place.
+    gradient:
+        Raw gradient array (typically the overlap integral).  Only values inside
+        ``mask`` are considered.
+    mask:
+        Boolean array highlighting the design region.
+    learning_rate:
+        Scalar step size applied to the smoothed gradient.
+    blur_radius:
+        Optional radius (in cells) for a masked box blur.  Ignored if ``blur_fn``
+        is provided.
+    blur_fn:
+        Optional callable taking ``(values, mask)`` and returning a filtered
+        array.  When provided it overrides the built-in masked box blur.
+
+    Returns
+    -------
+    tuple
+        ``(new_density, applied_gradient, density_delta, change_norm, max_update)``
+        where ``density_delta`` contains the actual change applied inside
+        ``mask``.
+    """
+
+    _validate_shapes(density, gradient, mask)
+
+    masked_gradient = _np.where(mask, gradient, 0.0).astype(float, copy=False)
+
+    if blur_fn is not None:
+        smoothed = blur_fn(masked_gradient, mask)
+    elif blur_radius > 0:
+        smoothed = _masked_box_blur(masked_gradient, mask, blur_radius)
+    else:
+        smoothed = masked_gradient
+
+    smoothed = _np.where(mask, smoothed, 0.0)
+
+    updated_density = _np.clip(density + learning_rate * smoothed, 0.0, 1.0)
+    updated_density = _np.where(mask, updated_density, density)
+
+    density_delta = updated_density - density
+    density_delta = _np.where(mask, density_delta, 0.0)
+
+    if _np.any(mask):
+        change_norm = float(_np.linalg.norm(density_delta[mask]))
+        max_update = float(_np.max(_np.abs(density_delta[mask])))
+    else:
+        change_norm = 0.0
+        max_update = 0.0
+
+    return updated_density, smoothed, density_delta, change_norm, max_update
 
 
 def initialize_density_from_region(design_region, resolution: float) -> DensityArray:

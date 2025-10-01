@@ -6,7 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from numpy.lib.stride_tricks import sliding_window_view
 from beamz import *
-from beamz.optimization import Optimizer
+from beamz.optimization.topology import apply_density_update
 
 # General parameters for the simulation
 W, H = 15 * µm, 15 * µm
@@ -281,8 +281,6 @@ def update_design_from_density(density_values, label_prefix="iteration", preview
             f"{label_prefix} {step}: permittivity", highlight_mask=mask, vmin=EPS_CLAD, vmax=EPS_CORE, show=False)
     return filtered, permittivity_grid
 
-# Define the optimizer
-optimizer = Optimizer(method="adam", learning_rate=LR)
 objective_history = []
 for opt_step in range(1, OPT_STEPS + 1):
     print(f"\n--- Optimization step {opt_step}/{OPT_STEPS} ---")
@@ -322,20 +320,35 @@ for opt_step in range(1, OPT_STEPS + 1):
     grad_norm = np.max(np.abs(overlap_gradient)) or 1.0
     normalized_gradient = overlap_gradient / grad_norm
 
-    density_gradient = np.where(mask, -normalized_gradient, 0.0)
-    density_gradient = box_blur(density_gradient, 1, mask=mask)
-    density_gradient = np.where(mask, density_gradient, 0.0)
-
-    update_step = optimizer.step(density_gradient)
-    update_step[~mask] = 0.0
-
-    print(
-        f"Gradient max: {np.max(np.abs(density_gradient)):.3e}, "
-        f"update max: {np.max(np.abs(update_step)):.3e}"
+    (
+        design_density,
+        applied_gradient,
+        density_delta,
+        density_change_norm,
+        max_density_update,
+    ) = apply_density_update(
+        design_density,
+        normalized_gradient,
+        mask,
+        learning_rate=LR,
+        blur_radius=1,
     )
 
-    design_density = np.clip(design_density + update_step, 0.0, 1.0)
     design_density[~mask] = 0.0
+
+    if np.any(mask):
+        grad_max = float(np.max(np.abs(applied_gradient[mask])))
+    else:
+        grad_max = 0.0
+
+    print(
+        f"Gradient max: {grad_max:.3e}, "
+        f"density ΔL2: {density_change_norm:.3e}, "
+        f"max density Δ: {max_density_update:.3e}"
+    )
+
+    if density_change_norm == 0.0:
+        print("Warning: density update produced no change inside the design mask.")
 
     masked_density = design_density[mask]
     if masked_density.size:
@@ -386,7 +399,7 @@ for opt_step in range(1, OPT_STEPS + 1):
 
     objective_history.append(current_objective)
     print(
-        "Updated design density using Adam optimizer. "
+        "Updated design density using gradient descent. "
         f"Stored objective {current_objective:.6e} (transmission {-current_objective:.6e})."
     )
 
@@ -396,7 +409,7 @@ for opt_step in range(1, OPT_STEPS + 1):
     if adjoint_snapshot is not None:
         plot_field_map(adjoint_snapshot, getattr(grid, "dx", DX), getattr(grid, "dy", DX),
             f"Adjoint |Ez|, step {opt_step}", filename=f"adjoint_field_step{opt_step}.png", show=False)
-    plot_field_map(normalized_gradient, getattr(grid, "dx", DX), getattr(grid, "dy", DX),
+    plot_field_map(applied_gradient, getattr(grid, "dx", DX), getattr(grid, "dy", DX),
         f"Overlap gradient, step {opt_step}", filename=f"overlap_gradient_step{opt_step}.png",
         cmap="magma", use_abs=False, colorbar_label="Gradient (a.u.)", show=False)
 
