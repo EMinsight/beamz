@@ -259,6 +259,7 @@ def update_design_from_density(density_values, label_prefix="iteration", preview
 
     permittivity_grid = density_to_permittivity(base_permittivity, filtered, mask, EPS_CLAD, EPS_CORE)
 
+
     if hasattr(grid, "permittivity"):
         if grid.permittivity.shape == permittivity_grid.shape:
             np.copyto(grid.permittivity, permittivity_grid)
