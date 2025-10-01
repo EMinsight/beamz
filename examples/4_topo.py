@@ -109,13 +109,190 @@ def density_to_permittivity(base_permittivity, density, mask, eps_min, eps_max):
     return permittivity
 
 
-def preview_permittivity(permittivity_grid, dx, dy, title, filename=None, show=True):
+def preview_permittivity(
+    permittivity_grid,
+    dx,
+    dy,
+    title,
+    filename=None,
+    *,
+    show=True,
+    cmap="magma",
+    vmin=None,
+    vmax=None,
+    highlight_mask=None,
+):
     """Visualize the permittivity grid for debugging/inspection."""
 
     extent = (0, permittivity_grid.shape[1] * dx, 0, permittivity_grid.shape[0] * dy)
     plt.figure(figsize=(6, 5))
-    plt.imshow(permittivity_grid, origin="lower", extent=extent, cmap="magma")
-    plt.colorbar(label=r"$\epsilon_r$")
+    im = plt.imshow(
+        permittivity_grid,
+        origin="lower",
+        extent=extent,
+        cmap=cmap,
+        vmin=vmin,
+        vmax=vmax,
+    )
+    plt.colorbar(im, label=r"$\epsilon_r$")
+    plt.xlabel("x (m)")
+    plt.ylabel("y (m)")
+    plt.title(title)
+    if highlight_mask is not None:
+        plt.contour(
+            np.where(highlight_mask, 1.0, 0.0),
+            levels=[0.5],
+            colors=["cyan"],
+            linewidths=0.8,
+            extent=extent,
+            origin="lower",
+        )
+    if filename:
+        plt.savefig(filename, dpi=200, bbox_inches="tight")
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+
+def plot_density_map(
+    density,
+    dx,
+    dy,
+    title,
+    filename=None,
+    *,
+    show=True,
+    cmap="viridis",
+    vmin=0.0,
+    vmax=1.0,
+    highlight_mask=None,
+):
+    """Plot an optimization density grid (0-1) with optional highlighting."""
+
+    extent = (0, density.shape[1] * dx, 0, density.shape[0] * dy)
+    plt.figure(figsize=(6, 5))
+    im = plt.imshow(
+        density,
+        origin="lower",
+        extent=extent,
+        cmap=cmap,
+        vmin=vmin,
+        vmax=vmax,
+    )
+    plt.colorbar(im, label="Density")
+    plt.xlabel("x (m)")
+    plt.ylabel("y (m)")
+    plt.title(title)
+    if highlight_mask is not None:
+        plt.contour(
+            highlight_mask.astype(float),
+            levels=[0.5],
+            colors=["cyan"],
+            linewidths=0.8,
+            extent=extent,
+            origin="lower",
+        )
+    if filename:
+        plt.savefig(filename, dpi=200, bbox_inches="tight")
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+
+def plot_permittivity_delta(
+    permittivity_grid,
+    reference_grid,
+    dx,
+    dy,
+    title,
+    filename=None,
+    *,
+    show=True,
+    highlight_mask=None,
+):
+    """Plot the difference between current and reference permittivity."""
+
+    delta = permittivity_grid - reference_grid
+    vmax = np.max(np.abs(delta)) or 1.0
+    extent = (0, permittivity_grid.shape[1] * dx, 0, permittivity_grid.shape[0] * dy)
+
+    plt.figure(figsize=(6, 5))
+    im = plt.imshow(
+        delta,
+        origin="lower",
+        extent=extent,
+        cmap="RdBu_r",
+        vmin=-vmax,
+        vmax=vmax,
+    )
+    plt.colorbar(im, label=r"$\Delta \epsilon_r$")
+    plt.xlabel("x (m)")
+    plt.ylabel("y (m)")
+    plt.title(title)
+    if highlight_mask is not None:
+        plt.contour(
+            np.where(highlight_mask, 1.0, 0.0),
+            levels=[0.5],
+            colors=["cyan"],
+            linewidths=0.8,
+            extent=extent,
+            origin="lower",
+        )
+    if filename:
+        plt.savefig(filename, dpi=200, bbox_inches="tight")
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+
+def preview_permittivity_zoom(
+    permittivity_grid,
+    mask,
+    dx,
+    dy,
+    title,
+    filename=None,
+    *,
+    show=True,
+    cmap="magma",
+    vmin=None,
+    vmax=None,
+):
+    """Plot the permittivity within the masked design region."""
+
+    indices = np.argwhere(mask)
+    if indices.size == 0:
+        return
+
+    margin = 2
+    min_y, min_x = indices.min(axis=0)
+    max_y, max_x = indices.max(axis=0)
+    min_y = max(min_y - margin, 0)
+    max_y = min(max_y + margin, permittivity_grid.shape[0] - 1)
+    min_x = max(min_x - margin, 0)
+    max_x = min(max_x + margin, permittivity_grid.shape[1] - 1)
+
+    subset = permittivity_grid[min_y : max_y + 1, min_x : max_x + 1]
+    extent = (
+        min_x * dx,
+        (max_x + 1) * dx,
+        min_y * dy,
+        (max_y + 1) * dy,
+    )
+
+    plt.figure(figsize=(5, 4))
+    im = plt.imshow(
+        subset,
+        origin="lower",
+        extent=extent,
+        cmap=cmap,
+        vmin=vmin,
+        vmax=vmax,
+    )
+    plt.colorbar(im, label=r"$\epsilon_r$")
     plt.xlabel("x (m)")
     plt.ylabel("y (m)")
     plt.title(title)
@@ -315,6 +492,9 @@ def update_design_from_density(
             getattr(grid, "dx", DX),
             getattr(grid, "dy", DX),
             f"{label_prefix} {step}: permittivity",
+            highlight_mask=mask,
+            vmin=EPS_CLAD,
+            vmax=EPS_CORE,
         )
     return filtered, permittivity_grid
 
@@ -413,7 +593,7 @@ for opt_step in range(1, OPT_STEPS + 1):
             f"mean {masked_density.mean():.3e}"
         )
 
-    _, updated_permittivity_grid = update_design_from_density(
+    filtered_density_post, updated_permittivity_grid = update_design_from_density(
         design_density,
         label_prefix="Post-update",
         preview=False,
@@ -428,8 +608,66 @@ for opt_step in range(1, OPT_STEPS + 1):
         f"Post-update permittivity, step {opt_step}",
         filename=updated_filename,
         show=False,
+        highlight_mask=mask,
+        vmin=EPS_CLAD,
+        vmax=EPS_CORE,
     )
     print(f"Saved updated design permittivity to {updated_filename}")
+
+    density_snapshot_filename = f"design_density_step{opt_step}.png"
+    plot_density_map(
+        design_density,
+        getattr(grid, "dx", DX),
+        getattr(grid, "dy", DX),
+        f"Design density, step {opt_step}",
+        filename=density_snapshot_filename,
+        show=False,
+        highlight_mask=mask,
+    )
+    print(f"Saved design density map to {density_snapshot_filename}")
+
+    filtered_snapshot_filename = f"filtered_density_step{opt_step}.png"
+    plot_density_map(
+        filtered_density_post,
+        getattr(grid, "dx", DX),
+        getattr(grid, "dy", DX),
+        f"Filtered density, step {opt_step}",
+        filename=filtered_snapshot_filename,
+        show=False,
+        highlight_mask=mask,
+    )
+    print(f"Saved filtered density map to {filtered_snapshot_filename}")
+
+    zoom_filename = f"permittivity_zoom_step{opt_step}.png"
+    preview_permittivity_zoom(
+        updated_permittivity_grid,
+        mask,
+        getattr(grid, "dx", DX),
+        getattr(grid, "dy", DX),
+        f"Design region permittivity, step {opt_step}",
+        filename=zoom_filename,
+        show=False,
+        vmin=EPS_CLAD,
+        vmax=EPS_CORE,
+    )
+    print(f"Saved zoomed permittivity to {zoom_filename}")
+
+    delta_filename = f"permittivity_delta_step{opt_step}.png"
+    plot_permittivity_delta(
+        updated_permittivity_grid,
+        base_permittivity,
+        getattr(grid, "dx", DX),
+        getattr(grid, "dy", DX),
+        f"Permittivity delta, step {opt_step}",
+        filename=delta_filename,
+        show=False,
+        highlight_mask=mask,
+    )
+    print(f"Saved permittivity delta map to {delta_filename}")
+
+    np.save(f"design_density_step{opt_step}.npy", design_density)
+    np.save(f"filtered_density_step{opt_step}.npy", filtered_density_post)
+    np.save(f"permittivity_step{opt_step}.npy", updated_permittivity_grid)
 
     objective_history.append(current_objective)
     print(
