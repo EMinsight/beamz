@@ -184,15 +184,43 @@ def accumulate_power(fdtd) -> None:
 
 def save_step_results(fdtd) -> None:
     """Save results for this time step if requested and at the right frequency."""
-    if (fdtd._save_results and not fdtd.save_memory_mode and 
-        (fdtd.current_step % fdtd._effective_save_freq == 0 or fdtd.current_step == fdtd.num_steps - 1)):
-        fdtd.results['t'].append(fdtd.t)
-        for field in fdtd._save_fields:
-            arr = getattr(fdtd, field)
-            arr_np = fdtd.backend.to_numpy(fdtd.backend.copy(arr))
-            if np.iscomplexobj(arr_np):
-                arr_np = np.abs(arr_np)
-            fdtd.results[field].append(arr_np)
+    should_save_full = (
+        fdtd._save_results
+        and not fdtd.save_memory_mode
+        and (fdtd.current_step % fdtd._effective_save_freq == 0 or fdtd.current_step == fdtd.num_steps - 1)
+    )
+    cache_frequency = getattr(fdtd, "_cache_frequency", fdtd._effective_save_freq)
+    should_cache = (
+        fdtd._save_results
+        and fdtd._cache_fields
+        and (
+            fdtd.current_step % cache_frequency == 0
+            or fdtd.current_step == fdtd.num_steps - 1
+        )
+    )
+    if not should_save_full and not should_cache:
+        return
+
+    if 't' not in fdtd.results:
+        fdtd.results['t'] = []
+    fdtd.results['t'].append(fdtd.t)
+
+    fields_to_store = []
+    if should_save_full:
+        fields_to_store.extend(fdtd._save_fields)
+    if should_cache:
+        for field in fdtd._cache_fields:
+            if field not in fields_to_store:
+                fields_to_store.append(field)
+
+    for field in fields_to_store:
+        arr = getattr(fdtd, field)
+        arr_np = fdtd.backend.to_numpy(fdtd.backend.copy(arr))
+        if np.iscomplexobj(arr_np) and (field not in fdtd._cache_fields):
+            arr_np = np.abs(arr_np)
+        if field not in fdtd.results:
+            fdtd.results[field] = []
+        fdtd.results[field].append(arr_np)
 
 def record_monitor_data(fdtd, step: int) -> None:
     """Record field data at monitor locations for current step."""

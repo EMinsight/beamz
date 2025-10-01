@@ -1,17 +1,24 @@
+from typing import Callable, Optional
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle as MatplotlibRectangle
 
-class Monitor():    
-    def __init__(self, design=None, start=(0,0), end=None, plane_normal=None, plane_position=0, 
-                 size=None, record_fields=True, accumulate_power=True, live_update=False, 
-                 record_interval=1, max_history_steps=None):
+class Monitor():
+    def __init__(self, design=None, start=(0,0), end=None, plane_normal=None, plane_position=0,
+                 size=None, record_fields=True, accumulate_power=True, live_update=False,
+                 record_interval=1, max_history_steps=None,
+                 objective_function: Optional[Callable[["Monitor"], float]] = None,
+                 name: Optional[str] = None):
         self.design = design
         self.should_record_fields = record_fields
         self.accumulate_power = accumulate_power
         self.live_update = live_update
         self.record_interval = record_interval
         self.max_history_steps = max_history_steps
+        self.objective_function = objective_function
+        self.objective_value: Optional[float] = None
+        self.name = name
         
         # Determine if this is a 3D monitor based on input parameters
         self.is_3d = self._determine_3d_mode(start, end, design)
@@ -32,6 +39,7 @@ class Monitor():
         self.power_accumulated = None
         self.energy_history = []
         self.power_history = []
+        self.power_timestamps = []
         self.power_accumulation_count = 0
         # Recording control
         self.step_count = 0
@@ -44,8 +52,26 @@ class Monitor():
         
         if self.is_3d: 
             self._init_3d_monitor(start, end, plane_normal, plane_position, size)
-        else: 
+        else:
             self._init_2d_monitor(start, end)
+
+    def evaluate_objective(self) -> Optional[float]:
+        """Evaluate the objective function associated with this monitor, if any."""
+        if self.objective_function is None:
+            return None
+        try:
+            value = self.objective_function(self)
+        except Exception as exc:
+            print(f"Warning: monitor objective evaluation failed: {exc}")
+            return None
+        if value is None:
+            return None
+        try:
+            self.objective_value = float(value)
+        except (TypeError, ValueError):
+            print(f"Warning: monitor objective returned non-numeric value: {value}")
+            return None
+        return self.objective_value
     
     def _determine_3d_mode(self, start, end, design):
         """Determine if this should be a 3D monitor based on inputs."""
@@ -280,7 +306,7 @@ class Monitor():
             self.fields['t'].append(t)
         
         if self.accumulate_power:
-            self._calculate_power_2d(Ez_values, Hx_values, Hy_values)
+            self._calculate_power_2d(Ez_values, Hx_values, Hy_values, t)
         
         self.last_record_step = step
         self._manage_memory()
@@ -361,7 +387,7 @@ class Monitor():
             self.fields['t'].append(t)
         
         if self.accumulate_power:
-            self._calculate_power_3d(Ex_slice, Ey_slice, Ez_slice, Hx_slice, Hy_slice, Hz_slice)
+            self._calculate_power_3d(Ex_slice, Ey_slice, Ez_slice, Hx_slice, Hy_slice, Hz_slice, t)
         
         self.last_record_step = step
         self._manage_memory()
@@ -378,7 +404,7 @@ class Monitor():
             # 2D: Ez, Hx, Hy, t, dx, dy, step
             self.record_fields_2d(*args, **kwargs)
     
-    def _calculate_power_2d(self, Ez_values, Hx_values, Hy_values):
+    def _calculate_power_2d(self, Ez_values, Hx_values, Hy_values, t):
         """Calculate Poynting vector and power for 2D fields."""
         Ez_array = np.array(Ez_values)
         Hx_array = np.array(Hx_values)
@@ -394,9 +420,10 @@ class Monitor():
         else:
             self.power_accumulated += power_mag
         self.power_history.append(total_power)
+        self.power_timestamps.append(float(t))
         self.power_accumulation_count += 1
-    
-    def _calculate_power_3d(self, Ex, Ey, Ez, Hx, Hy, Hz):
+
+    def _calculate_power_3d(self, Ex, Ey, Ez, Hx, Hy, Hz, t):
         """Calculate Poynting vector and power for 3D fields."""
         # Poynting vector S = E × H
         Sx = Ey * Hz - Ez * Hy
@@ -408,6 +435,7 @@ class Monitor():
         if self.power_accumulated is None: self.power_accumulated = power_mag.copy()
         else: self.power_accumulated += power_mag
         self.power_history.append(total_power)
+        self.power_timestamps.append(float(t))
         self.power_accumulation_count += 1
     
     def _manage_memory(self):
@@ -422,6 +450,7 @@ class Monitor():
         if len(self.power_history) > self.max_history_steps:
             excess = len(self.power_history) - self.max_history_steps
             self.power_history = self.power_history[excess:]
+            self.power_timestamps = self.power_timestamps[excess:]
     
     def start_live_visualization(self, field_component='Ez'):
         """Start live field visualization."""
@@ -540,10 +569,13 @@ class Monitor():
     def save_data(self, filename, format='npz'):
         """Save recorded data to file."""
         if format == 'npz':
-            np.savez(filename, 
-                    fields=self.fields,
-                    power_history=self.power_history,
-                    monitor_info={'type': self.monitor_type, 'is_3d': self.is_3d})
+            np.savez(
+                filename,
+                fields=self.fields,
+                power_history=self.power_history,
+                power_timestamps=self.power_timestamps,
+                monitor_info={'type': self.monitor_type, 'is_3d': self.is_3d}
+            )
         else: raise ValueError(f"Unsupported format: {format}")
     
     def load_data(self, filename):
@@ -551,6 +583,10 @@ class Monitor():
         data = np.load(filename, allow_pickle=True)
         self.fields = data['fields'].item()
         self.power_history = list(data['power_history'])
+        if 'power_timestamps' in data:
+            self.power_timestamps = list(data['power_timestamps'])
+        else:
+            self.power_timestamps = list(range(len(self.power_history)))
     
     def add_to_plot(self, ax, facecolor="navy", edgecolor="navy", alpha=1, linestyle="-"):
         """Add monitor visualization to 2D plot."""
