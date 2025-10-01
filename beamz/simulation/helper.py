@@ -189,11 +189,17 @@ def save_step_results(fdtd) -> None:
         and not fdtd.save_memory_mode
         and (fdtd.current_step % fdtd._effective_save_freq == 0 or fdtd.current_step == fdtd.num_steps - 1)
     )
+
+    cache_frequency = getattr(fdtd, "_cache_frequency", fdtd._effective_save_freq)
     should_cache = (
         fdtd._save_results
         and fdtd._cache_fields
-        and (fdtd.current_step % fdtd._effective_save_freq == 0 or fdtd.current_step == fdtd.num_steps - 1)
+        and (
+            fdtd.current_step % cache_frequency == 0
+            or fdtd.current_step == fdtd.num_steps - 1
+        )
     )
+    
     if not should_save_full and not should_cache:
         return
 

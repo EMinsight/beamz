@@ -334,6 +334,8 @@ class FDTD:
             else:
                 save_fields = ['Ez', 'Hx', 'Hy']
         self._cache_fields = list(fields_to_cache) if fields_to_cache else []
+        self._cache_frequency = 1 if self._cache_fields else None
+
 
         # Record start time
         self.start_time = datetime.datetime.now()
@@ -396,6 +398,8 @@ class FDTD:
             
         # Apply additional decimation based on user setting
         self._effective_save_freq = save_freq * decimate_save
+        if self._cache_frequency is None:
+            self._cache_frequency = self._effective_save_freq
         
         # If in save_memory_mode, clear any existing results to start fresh
         if save_memory_mode and not self._cache_fields:

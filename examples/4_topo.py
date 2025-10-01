@@ -1,5 +1,6 @@
 import os
 import sys
+import copy
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -53,9 +54,10 @@ def make_density_mask(structure, grid):
                 mask[iy, ix] = True
     return mask
 
+  
+def box_blur(density, radius_cells, mask=None):
+    """Apply a simple box blur to ``density`` and respect ``mask`` if provided."""
 
-def box_blur(density, radius_cells):
-    """Apply a simple box blur to ``density`` using an integer ``radius_cells``."""
 
     radius = int(max(0, round(radius_cells)))
     if radius < 1:
@@ -64,7 +66,16 @@ def box_blur(density, radius_cells):
     size = 2 * radius + 1
     padded = np.pad(density, radius, mode="edge")
     window = sliding_window_view(padded, (size, size))
-    return window.mean(axis=(-2, -1))
+
+    if mask is None:
+        return window.mean(axis=(-2, -1))
+
+    padded_mask = np.pad(mask.astype(float), radius, mode="constant", constant_values=0.0)
+    mask_window = sliding_window_view(padded_mask, (size, size))
+    weighted_sum = (window * mask_window).sum(axis=(-2, -1))
+    weights = mask_window.sum(axis=(-2, -1))
+    weights = np.where(weights == 0.0, 1.0, weights)
+    return weighted_sum / weights
 
 
 def smooth_projection(density, beta=2.0, eta=0.5):
@@ -82,11 +93,9 @@ def smooth_projection(density, beta=2.0, eta=0.5):
 
 def filtered_density(density, mask, blur_radius, beta, eta):
     """Apply blur and projection filters inside the masked region."""
-
-    filtered = density.copy()
-    filtered_mask = box_blur(filtered, blur_radius)
-    filtered_mask = smooth_projection(filtered_mask, beta=beta, eta=eta)
-    filtered = np.where(mask, filtered_mask, filtered)
+    blurred = box_blur(density, blur_radius, mask=mask)
+    projected = smooth_projection(blurred, beta=beta, eta=eta)
+    filtered = np.where(mask, projected, density)
     return np.clip(filtered, 0.0, 1.0)
 
 
@@ -113,6 +122,22 @@ def preview_permittivity(permittivity_grid, dx, dy, title, filename=None):
     plt.show()
 
 
+
+def plot_field_map(field, dx, dy, title, filename=None, cmap="RdBu", use_abs=True, colorbar_label="Amplitude"):
+    """Plot a 2D field map with the given ``title`` and optional ``filename``."""
+
+    data = np.abs(field) if use_abs else field
+    extent = (0, data.shape[1] * dx, 0, data.shape[0] * dy)
+    plt.figure(figsize=(6, 5))
+    im = plt.imshow(data, origin="lower", extent=extent, cmap=cmap)
+    plt.colorbar(im, label=colorbar_label)
+    plt.xlabel("x (m)")
+    plt.ylabel("y (m)")
+    plt.title(title)
+    if filename:
+        plt.savefig(filename, dpi=200, bbox_inches="tight")
+    plt.show()
+
 def extract_objective(results):
     """Return the first objective value stored in the simulation results."""
 
@@ -123,21 +148,82 @@ def extract_objective(results):
     return float(objectives[first_key])
 
 
-def monitor_objective(monitor: Monitor, normalize: bool = True) -> float:
-    """Objective that maximizes transmitted power at the monitor plane."""
 
-    total_power = 0.0
-    if monitor.power_history:
-        history = np.asarray(monitor.power_history)
-        total_power = float(np.sum(np.abs(history)))
-        if normalize:
-            total_power /= len(history)
-    elif monitor.power_accumulated is not None and monitor.power_accumulation_count > 0:
-        accumulated = np.asarray(monitor.power_accumulated)
-        total_power = float(np.sum(np.abs(accumulated)))
-        if normalize:
-            total_power /= monitor.power_accumulation_count
-    return -total_power
+def build_forward_devices(accumulate_power: bool = True):
+    """Create source and monitor devices for forward simulations."""
+
+    return [
+        ModeSource(
+            design=design,
+            position=(2.5 * µm, H / 2),
+            width=WG_W * 4,
+            wavelength=WL,
+            signal=signal,
+            direction="+x",
+        ),
+        Monitor(
+            design=design,
+            start=(W / 2 - WG_W * 2, H - 2.5 * µm),
+            end=(W / 2 + WG_W * 2, H - 2.5 * µm),
+            objective_function=monitor_objective,
+            accumulate_power=accumulate_power,
+            name="output_monitor",
+        ),
+    ]
+
+
+def run_forward_simulation(cache_fields: bool = True):
+    """Run a forward simulation with optional field caching for adjoint reuse."""
+
+    devices = build_forward_devices(accumulate_power=True)
+    forward = FDTD(
+        design=grid,
+        devices=devices,
+        time=t,
+    )
+    run_kwargs = dict(
+        live=False,
+        axis_scale=[-1, 1],
+        save_memory_mode=True,
+        accumulate_power=True,
+    )
+    if cache_fields:
+        run_kwargs.update(
+            save_fields=["Ez"],
+            fields_to_cache=["Ez"],
+        )
+    else:
+        run_kwargs.update(
+            save_fields=None,
+            fields_to_cache=None,
+        )
+    return forward.run(**run_kwargs)
+
+
+def monitor_objective(monitor: Monitor) -> float:
+    """Objective that minimizes negative transmitted power using time averaging."""
+
+    if not monitor.power_history or not monitor.power_timestamps:
+        return 0.0
+
+    times = np.asarray(monitor.power_timestamps, dtype=float)
+    powers = np.asarray(monitor.power_history)
+    if np.iscomplexobj(powers):
+        powers = np.abs(powers)
+    powers = powers.astype(float, copy=False)
+    if times.size < 2:
+        mean_power = float(np.mean(powers))
+    else:
+        order = np.argsort(times)
+        times = times[order]
+        powers = powers[order]
+        duration = times[-1] - times[0]
+        if duration <= 0.0:
+            mean_power = float(np.mean(powers))
+        else:
+            integrated = np.trapezoid(powers, times)
+            mean_power = float(integrated / duration)
+    return -mean_power
 
 
 # Design with a custom inhomogeneous material which we will update during optimization
@@ -188,12 +274,30 @@ design_region.material = design_material
 
 # Mask and density initialization for topology updates
 mask = make_density_mask(design_region, grid)
-density = np.zeros_like(base_permittivity)
-density[mask] = np.random.uniform(0.0, 1.0, size=np.count_nonzero(mask))
+
+rng = np.random.default_rng(seed=42)
+design_density = np.zeros_like(base_permittivity)
+initial_permittivity = rng.uniform(EPS_CLAD, EPS_CORE, size=np.count_nonzero(mask))
+design_density[mask] = (initial_permittivity - EPS_CLAD) / (EPS_CORE - EPS_CLAD)
 
 
-def update_design_from_density(density_values, label_prefix="iteration", preview=False, step=0):
-    filtered = filtered_density(density_values, mask, blur_radius=WL / DX, beta=3.0, eta=0.5)
+def update_design_from_density(
+    density_values,
+    label_prefix="iteration",
+    preview=False,
+    step=0,
+    blur_radius_cells=2,
+    beta=4.0,
+    eta=0.5,
+):
+    filtered = filtered_density(
+        density_values,
+        mask,
+        blur_radius=blur_radius_cells,
+        beta=beta,
+        eta=eta,
+    )
+
     permittivity_grid = density_to_permittivity(base_permittivity, filtered, mask, EPS_CLAD, EPS_CORE)
     design_material.update_grid("permittivity", permittivity_grid)
     grid.permittivity = permittivity_grid
@@ -215,48 +319,20 @@ objective_history = []
 for opt_step in range(1, OPT_STEPS + 1):
     print(f"\n--- Optimization step {opt_step}/{OPT_STEPS} ---")
 
-    density, permittivity_grid = update_design_from_density(
-        density, label_prefix="Iteration", preview=True, step=opt_step
+
+    filtered_density_values, permittivity_grid = update_design_from_density(
+        design_density, label_prefix="Iteration", preview=True, step=opt_step
     )
 
-    forward = FDTD(
-        design=grid,
-        devices=[
-            ModeSource(
-                design=design,
-                position=(2.5 * µm, H / 2),
-                width=WG_W * 4,
-                wavelength=WL,
-                signal=signal,
-                direction="+x",
-            ),
-            Monitor(
-                design=design,
-                start=(W / 2 - WG_W * 2, H - 2.5 * µm),
-                end=(W / 2 + WG_W * 2, H - 2.5 * µm),
-                objective_function=monitor_objective,
-                accumulate_power=True,
-                name="output_monitor",
-            ),
-        ],
-        time=t,
-    )
+    forward_results = run_forward_simulation(cache_fields=True)
+    current_objective = extract_objective(forward_results)
+    print(f"Objective value (negative transmission): {current_objective:.6e}")
+    print(f"Transmission estimate: {-current_objective:.6e}")
 
-    forward_results = forward.run(
-        live=False,
-        axis_scale=[-1, 1],
-        save_memory_mode=True,
-        accumulate_power=True,
-        save_fields=["Ez"],
-        fields_to_cache=["Ez"],
-    )
-
-    objective_value = extract_objective(forward_results)
-    objective_history.append(objective_value)
-    print(f"Objective value: {objective_value:.6e}")
-
-    forward_fields = forward_results.get("Ez", [])
+    forward_fields = list(forward_results.get("Ez", []))
     num_forward_steps = len(forward_fields)
+    forward_snapshot = forward_fields[-1].copy() if forward_fields else None
+
 
     adjoint = FDTD(
         design=grid,
@@ -281,8 +357,10 @@ for opt_step in range(1, OPT_STEPS + 1):
         fields_to_cache=None,
     )
 
-    overlap_gradient = np.zeros_like(density, dtype=np.float64)
-    dt = adjoint.dt
+
+    overlap_gradient = np.zeros_like(design_density, dtype=np.float64)
+    adjoint_snapshot = None
+
 
     for step_index in range(adjoint.num_steps):
         if not forward_fields:
@@ -291,61 +369,130 @@ for opt_step in range(1, OPT_STEPS + 1):
             break
         adjoint_field = adjoint.backend.to_numpy(adjoint.Ez)
         forward_field = np.asarray(forward_fields.pop())
-        overlap_gradient += np.real(adjoint_field * np.conj(forward_field)) * dt
+
+        if adjoint_snapshot is None:
+            adjoint_snapshot = adjoint_field.copy()
+        overlap_gradient += np.real(adjoint_field * np.conj(forward_field))
+
 
     adjoint.finalize_simulation()
     forward_fields.clear()
 
-    if num_forward_steps > 0:
-        overlap_gradient /= num_forward_steps
-
     overlap_gradient *= mask
     grad_norm = np.max(np.abs(overlap_gradient)) or 1.0
-    overlap_gradient /= grad_norm
+    normalized_gradient = overlap_gradient / grad_norm
 
-    update = optimizer.step(overlap_gradient * objective_value)
-    density = np.where(mask, np.clip(density + update, 0.0, 1.0), density)
-    density[~mask] = 0.0
+    density_gradient = np.where(mask, -normalized_gradient, 0.0)
+    density_gradient = box_blur(density_gradient, 1, mask=mask)
+    density_gradient = np.where(mask, density_gradient, 0.0)
+    update_pos = optimizer.step(density_gradient)
+    print(
+        f"Gradient max: {np.max(np.abs(density_gradient)):.3e}, "
+        f"update max: {np.max(np.abs(update_pos)):.3e}"
+    )
+
+    design_density_prev = design_density.copy()
+    optimizer_state_prev = copy.deepcopy(optimizer._state)
+
+    candidate_density_pos = np.clip(design_density_prev + update_pos, 0.0, 1.0)
+    candidate_density_pos[~mask] = 0.0
+
+    # Evaluate positive update
+    update_design_from_density(
+        candidate_density_pos, label_prefix="Trial", preview=False, step=f"{opt_step}+"
+    )
+    candidate_results = run_forward_simulation(cache_fields=False)
+    candidate_objective = extract_objective(candidate_results)
+
+    accepted = False
+    accepted_direction = "+"
+    accepted_objective = current_objective
+    accepted_density = design_density_prev
+
+    if candidate_objective < current_objective:
+        accepted = True
+        accepted_direction = "+"
+        accepted_objective = candidate_objective
+        accepted_density = candidate_density_pos
+    else:
+        # Restore previous design before testing opposite direction
+        update_design_from_density(
+            design_density_prev, label_prefix="Restore", preview=False, step=f"{opt_step} revert+"
+        )
+        optimizer._state = copy.deepcopy(optimizer_state_prev)
+        update_neg = optimizer.step(-density_gradient)
+        candidate_density_neg = np.clip(design_density_prev + update_neg, 0.0, 1.0)
+        candidate_density_neg[~mask] = 0.0
+        update_design_from_density(
+            candidate_density_neg, label_prefix="Trial", preview=False, step=f"{opt_step}-"
+        )
+        candidate_results_neg = run_forward_simulation(cache_fields=False)
+        candidate_objective_neg = extract_objective(candidate_results_neg)
+        if candidate_objective_neg < current_objective:
+            accepted = True
+            accepted_direction = "-"
+            accepted_objective = candidate_objective_neg
+            accepted_density = candidate_density_neg
+        else:
+            update_design_from_density(
+                design_density_prev, label_prefix="Restore", preview=False, step=f"{opt_step} revert"
+            )
+            optimizer._state = optimizer_state_prev
+            print("No improvement detected; retaining previous density map.")
+
+    if accepted:
+        design_density = accepted_density
+        design_density = np.clip(design_density, 0.0, 1.0)
+        design_density[~mask] = 0.0
+        objective_history.append(accepted_objective)
+        print(
+            f"Accepted update (direction {accepted_direction}) with objective {accepted_objective:.6e}"
+        )
+        print(f"Transmission estimate: {-accepted_objective:.6e}")
+    else:
+        design_density = design_density_prev
+        objective_history.append(current_objective)
+        print(f"Objective remained at {current_objective:.6e}")
+        print(f"Transmission estimate: {-current_objective:.6e}")
+
+    if forward_snapshot is not None:
+        plot_field_map(
+            forward_snapshot,
+            getattr(grid, "dx", DX),
+            getattr(grid, "dy", DX),
+            f"Forward |Ez|, step {opt_step}",
+            filename=f"forward_field_step{opt_step}.png",
+        )
+    if adjoint_snapshot is not None:
+        plot_field_map(
+            adjoint_snapshot,
+            getattr(grid, "dx", DX),
+            getattr(grid, "dy", DX),
+            f"Adjoint |Ez|, step {opt_step}",
+            filename=f"adjoint_field_step{opt_step}.png",
+        )
+    plot_field_map(
+        normalized_gradient,
+        getattr(grid, "dx", DX),
+        getattr(grid, "dy", DX),
+        f"Overlap gradient, step {opt_step}",
+            filename=f"overlap_gradient_step{opt_step}.png",
+        cmap="magma",
+        use_abs=False,
+        colorbar_label="Gradient (a.u.)",
+    )
 
 
 # Final design evaluation
-density, permittivity_grid = update_design_from_density(
-    density, label_prefix="Final", preview=True, step="final"
+final_density, permittivity_grid = update_design_from_density(
+    design_density, label_prefix="Final", preview=True, step="final"
 )
 
-final_sim = FDTD(
-    design=grid,
-    devices=[
-        ModeSource(
-            design=design,
-            position=(2.5 * µm, H / 2),
-            width=WG_W * 4,
-            wavelength=WL,
-            signal=signal,
-            direction="+x",
-        ),
-        Monitor(
-            design=design,
-            start=(W / 2 - WG_W * 2, H - 2.5 * µm),
-            end=(W / 2 + WG_W * 2, H - 2.5 * µm),
-            objective_function=monitor_objective,
-            accumulate_power=True,
-            name="output_monitor",
-        ),
-    ],
-    time=t,
-)
-
-final_results = final_sim.run(
-    live=False,
-    axis_scale=[-1, 1],
-    save_memory_mode=True,
-    accumulate_power=True,
-    save_fields=["Ez"],
-)
+final_results = run_forward_simulation(cache_fields=True)
 
 final_objective = extract_objective(final_results)
 print(f"Final objective value: {final_objective:.6e}")
+print(f"Final transmission estimate: {-final_objective:.6e}")
 
 
 # Save diagnostic images
@@ -359,10 +506,13 @@ preview_permittivity(
 )
 
 plt.figure(figsize=(6, 4))
-plt.plot(objective_history, marker="o")
+
+transmission_history = -np.asarray(objective_history)
+plt.plot(transmission_history, marker="o")
 plt.xlabel("Optimization step")
-plt.ylabel("Objective value")
-plt.title("Objective history")
+plt.ylabel("Transmission (a.u.)")
+plt.title("Transmission history")
+
 plt.grid(True)
 plt.tight_layout()
 objective_history_filename = "objective_history.png"

@@ -39,6 +39,7 @@ class Monitor():
         self.power_accumulated = None
         self.energy_history = []
         self.power_history = []
+        self.power_timestamps = []
         self.power_accumulation_count = 0
         # Recording control
         self.step_count = 0
@@ -305,7 +306,7 @@ class Monitor():
             self.fields['t'].append(t)
         
         if self.accumulate_power:
-            self._calculate_power_2d(Ez_values, Hx_values, Hy_values)
+            self._calculate_power_2d(Ez_values, Hx_values, Hy_values, t)
         
         self.last_record_step = step
         self._manage_memory()
@@ -386,7 +387,7 @@ class Monitor():
             self.fields['t'].append(t)
         
         if self.accumulate_power:
-            self._calculate_power_3d(Ex_slice, Ey_slice, Ez_slice, Hx_slice, Hy_slice, Hz_slice)
+            self._calculate_power_3d(Ex_slice, Ey_slice, Ez_slice, Hx_slice, Hy_slice, Hz_slice, t)
         
         self.last_record_step = step
         self._manage_memory()
@@ -403,7 +404,7 @@ class Monitor():
             # 2D: Ez, Hx, Hy, t, dx, dy, step
             self.record_fields_2d(*args, **kwargs)
     
-    def _calculate_power_2d(self, Ez_values, Hx_values, Hy_values):
+    def _calculate_power_2d(self, Ez_values, Hx_values, Hy_values, t):
         """Calculate Poynting vector and power for 2D fields."""
         Ez_array = np.array(Ez_values)
         Hx_array = np.array(Hx_values)
@@ -419,9 +420,10 @@ class Monitor():
         else:
             self.power_accumulated += power_mag
         self.power_history.append(total_power)
+        self.power_timestamps.append(float(t))
         self.power_accumulation_count += 1
-    
-    def _calculate_power_3d(self, Ex, Ey, Ez, Hx, Hy, Hz):
+
+    def _calculate_power_3d(self, Ex, Ey, Ez, Hx, Hy, Hz, t):
         """Calculate Poynting vector and power for 3D fields."""
         # Poynting vector S = E × H
         Sx = Ey * Hz - Ez * Hy
@@ -433,6 +435,7 @@ class Monitor():
         if self.power_accumulated is None: self.power_accumulated = power_mag.copy()
         else: self.power_accumulated += power_mag
         self.power_history.append(total_power)
+        self.power_timestamps.append(float(t))
         self.power_accumulation_count += 1
     
     def _manage_memory(self):
@@ -447,6 +450,7 @@ class Monitor():
         if len(self.power_history) > self.max_history_steps:
             excess = len(self.power_history) - self.max_history_steps
             self.power_history = self.power_history[excess:]
+            self.power_timestamps = self.power_timestamps[excess:]
     
     def start_live_visualization(self, field_component='Ez'):
         """Start live field visualization."""
@@ -565,10 +569,13 @@ class Monitor():
     def save_data(self, filename, format='npz'):
         """Save recorded data to file."""
         if format == 'npz':
-            np.savez(filename, 
-                    fields=self.fields,
-                    power_history=self.power_history,
-                    monitor_info={'type': self.monitor_type, 'is_3d': self.is_3d})
+            np.savez(
+                filename,
+                fields=self.fields,
+                power_history=self.power_history,
+                power_timestamps=self.power_timestamps,
+                monitor_info={'type': self.monitor_type, 'is_3d': self.is_3d}
+            )
         else: raise ValueError(f"Unsupported format: {format}")
     
     def load_data(self, filename):
@@ -576,6 +583,10 @@ class Monitor():
         data = np.load(filename, allow_pickle=True)
         self.fields = data['fields'].item()
         self.power_history = list(data['power_history'])
+        if 'power_timestamps' in data:
+            self.power_timestamps = list(data['power_timestamps'])
+        else:
+            self.power_timestamps = list(range(len(self.power_history)))
     
     def add_to_plot(self, ax, facecolor="navy", edgecolor="navy", alpha=1, linestyle="-"):
         """Add monitor visualization to 2D plot."""
