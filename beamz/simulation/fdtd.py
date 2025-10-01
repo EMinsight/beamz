@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Dict, Optional, Sequence
 import datetime
 import numpy as np
 
@@ -309,12 +309,12 @@ class FDTD:
         Ey[1:-1, :, 1:-1] = factor_ey * Ey[1:-1, :, 1:-1] + source_ey * (curlH_y)
         Ez[:, 1:-1, 1:-1] = factor_ez * Ez[:, 1:-1, 1:-1] + source_ez * (curlH_z)
 
-    def initialize_simulation(self, save=True, live=True, axis_scale=[-1,1], save_animation=False, 
-                             animation_filename='fdtd_animation.mp4', clean_visualization=True, 
+    def initialize_simulation(self, save=True, live=True, axis_scale=[-1,1], save_animation=False,
+                             animation_filename='fdtd_animation.mp4', clean_visualization=True,
                              save_fields=None, decimate_save=1, accumulate_power=False,
-                             save_memory_mode=False):
+                             save_memory_mode=False, fields_to_cache: Optional[Sequence[str]] = None):
         """Initialize the simulation before running steps.
-        
+
         Args:
             save: Whether to save field data at each step.
             live: Whether to show live animation of the simulation.
@@ -325,6 +325,7 @@ class FDTD:
             decimate_save: Save only every nth time step (1 = save all, 10 = save every 10th step)
             accumulate_power: Instead of saving all fields, accumulate power and save that
             save_memory_mode: If True, avoid storing all field data and only keep monitors/power
+            fields_to_cache: Fields that should always be cached (complex values preserved)
         """
         # Set default save_fields based on dimensionality
         if save_fields is None:
@@ -332,7 +333,9 @@ class FDTD:
                 save_fields = ['Ex', 'Ey', 'Ez', 'Hx', 'Hy', 'Hz']
             else:
                 save_fields = ['Ez', 'Hx', 'Hy']
-        
+        self._cache_fields = list(fields_to_cache) if fields_to_cache else []
+        self._cache_frequency = 1 if self._cache_fields else None
+
         # Record start time
         self.start_time = datetime.datetime.now()
         # Initialize simulation state
@@ -344,11 +347,15 @@ class FDTD:
         self._decimate_save = decimate_save
         self._live = live
         self._axis_scale = axis_scale
-        
+
+        # Reset stored results for a new run
+        for key in list(self.results.keys()):
+            self.results[key] = []
+
         # Save mode flags as class attributes for monitor access
         self.save_memory_mode = save_memory_mode
         self.accumulate_power = accumulate_power
-        
+
         # Display simulation header and parameters
         sim_params = {
             "Domain size": f"{self.design.width:.2e} x {self.design.height:.2e} m",
@@ -390,11 +397,14 @@ class FDTD:
             
         # Apply additional decimation based on user setting
         self._effective_save_freq = save_freq * decimate_save
+        if self._cache_frequency is None:
+            self._cache_frequency = self._effective_save_freq
         
         # If in save_memory_mode, clear any existing results to start fresh
-        if save_memory_mode: 
+        if save_memory_mode and not self._cache_fields:
             for field in self.results:
-                if field != 't': self.results[field] = []
+                if field != 't':
+                    self.results[field] = []
             display_status("Memory-saving mode active: Only storing monitor data and/or power accumulation", "info")
 
     def step(self) -> bool:
@@ -429,14 +439,29 @@ class FDTD:
         # Display memory usage estimate
         memory_usage = self.estimate_memory_usage(time_steps=self.num_steps, save_fields=self._save_fields)
         display_status(f"Estimated memory usage: {memory_usage['Full simulation']['Total memory (MB)']:.2f} MB", "info")
+        objective_results: Dict[str, float] = {}
+        for idx, monitor in enumerate(self.monitors):
+            if hasattr(monitor, 'evaluate_objective'):
+                value = monitor.evaluate_objective()
+            else:
+                value = None
+            if value is None:
+                continue
+            key = getattr(monitor, 'name', None) or f"monitor_{idx}"
+            objective_results[key] = value
+        if objective_results:
+            self.results['objectives'] = objective_results
+        else:
+            self.results.pop('objectives', None)
+        self.last_objectives = objective_results
         return self.results
 
-    def run(self, steps: Optional[int] = None, save=True, live=True, axis_scale=[-1,1], save_animation=False, 
-            animation_filename='fdtd_animation.mp4', clean_visualization=True, 
+    def run(self, steps: Optional[int] = None, save=True, live=True, axis_scale=[-1,1], save_animation=False,
+            animation_filename='fdtd_animation.mp4', clean_visualization=True,
             save_fields=None, decimate_save=1, accumulate_power=False,
-            save_memory_mode=False) -> Dict:
+            save_memory_mode=False, fields_to_cache: Optional[Sequence[str]] = None) -> Dict:
         """Run the complete simulation using the new step-by-step approach.
-        
+
         Args:
             steps: Number of steps to run. If None, run until the end of the time array.
             save: Whether to save field data at each step.
@@ -448,18 +473,20 @@ class FDTD:
             decimate_save: Save only every nth time step (1 = save all, 10 = save every 10th step)
             accumulate_power: Instead of saving all fields, accumulate power and save that
             save_memory_mode: If True, avoid storing all field data and only keep monitors/power
-        
+            fields_to_cache: Fields that should always be cached even when memory saving
+
         Returns:
             Dictionary containing the simulation results.
         """
         # Initialize the simulation
-        self.initialize_simulation(save=save, live=live, axis_scale=axis_scale, 
-                                  save_animation=save_animation, 
+        self.initialize_simulation(save=save, live=live, axis_scale=axis_scale,
+                                  save_animation=save_animation,
                                   animation_filename=animation_filename,
                                   clean_visualization=clean_visualization,
                                   save_fields=save_fields, decimate_save=decimate_save,
-                                  accumulate_power=accumulate_power, 
-                                  save_memory_mode=save_memory_mode)
+                                  accumulate_power=accumulate_power,
+                                  save_memory_mode=save_memory_mode,
+                                  fields_to_cache=fields_to_cache)
         
         # Run the simulation with progress tracking
         with create_rich_progress() as progress:
