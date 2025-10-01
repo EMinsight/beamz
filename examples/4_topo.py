@@ -1,5 +1,6 @@
 import os
 import sys
+
 import copy
 
 import numpy as np
@@ -54,7 +55,7 @@ def make_density_mask(structure, grid):
                 mask[iy, ix] = True
     return mask
 
-  
+
 def box_blur(density, radius_cells, mask=None):
     """Apply a simple box blur to ``density`` and respect ``mask`` if provided."""
 
@@ -93,6 +94,7 @@ def smooth_projection(density, beta=2.0, eta=0.5):
 
 def filtered_density(density, mask, blur_radius, beta, eta):
     """Apply blur and projection filters inside the masked region."""
+
     blurred = box_blur(density, blur_radius, mask=mask)
     projected = smooth_projection(blurred, beta=beta, eta=eta)
     filtered = np.where(mask, projected, density)
@@ -138,6 +140,7 @@ def plot_field_map(field, dx, dy, title, filename=None, cmap="RdBu", use_abs=Tru
         plt.savefig(filename, dpi=200, bbox_inches="tight")
     plt.show()
 
+
 def extract_objective(results):
     """Return the first objective value stored in the simulation results."""
 
@@ -146,7 +149,6 @@ def extract_objective(results):
         return 0.0
     first_key = next(iter(objectives))
     return float(objectives[first_key])
-
 
 
 def build_forward_devices(accumulate_power: bool = True):
@@ -385,75 +387,23 @@ for opt_step in range(1, OPT_STEPS + 1):
     density_gradient = np.where(mask, -normalized_gradient, 0.0)
     density_gradient = box_blur(density_gradient, 1, mask=mask)
     density_gradient = np.where(mask, density_gradient, 0.0)
-    update_pos = optimizer.step(density_gradient)
+
+    update_step = optimizer.step(density_gradient)
+    update_step[~mask] = 0.0
+
     print(
         f"Gradient max: {np.max(np.abs(density_gradient)):.3e}, "
-        f"update max: {np.max(np.abs(update_pos)):.3e}"
+        f"update max: {np.max(np.abs(update_step)):.3e}"
     )
 
-    design_density_prev = design_density.copy()
-    optimizer_state_prev = copy.deepcopy(optimizer._state)
+    design_density = np.clip(design_density + update_step, 0.0, 1.0)
+    design_density[~mask] = 0.0
 
-    candidate_density_pos = np.clip(design_density_prev + update_pos, 0.0, 1.0)
-    candidate_density_pos[~mask] = 0.0
-
-    # Evaluate positive update
-    update_design_from_density(
-        candidate_density_pos, label_prefix="Trial", preview=False, step=f"{opt_step}+"
+    objective_history.append(current_objective)
+    print(
+        "Updated design density using Adam optimizer. "
+        f"Stored objective {current_objective:.6e} (transmission {-current_objective:.6e})."
     )
-    candidate_results = run_forward_simulation(cache_fields=False)
-    candidate_objective = extract_objective(candidate_results)
-
-    accepted = False
-    accepted_direction = "+"
-    accepted_objective = current_objective
-    accepted_density = design_density_prev
-
-    if candidate_objective < current_objective:
-        accepted = True
-        accepted_direction = "+"
-        accepted_objective = candidate_objective
-        accepted_density = candidate_density_pos
-    else:
-        # Restore previous design before testing opposite direction
-        update_design_from_density(
-            design_density_prev, label_prefix="Restore", preview=False, step=f"{opt_step} revert+"
-        )
-        optimizer._state = copy.deepcopy(optimizer_state_prev)
-        update_neg = optimizer.step(-density_gradient)
-        candidate_density_neg = np.clip(design_density_prev + update_neg, 0.0, 1.0)
-        candidate_density_neg[~mask] = 0.0
-        update_design_from_density(
-            candidate_density_neg, label_prefix="Trial", preview=False, step=f"{opt_step}-"
-        )
-        candidate_results_neg = run_forward_simulation(cache_fields=False)
-        candidate_objective_neg = extract_objective(candidate_results_neg)
-        if candidate_objective_neg < current_objective:
-            accepted = True
-            accepted_direction = "-"
-            accepted_objective = candidate_objective_neg
-            accepted_density = candidate_density_neg
-        else:
-            update_design_from_density(
-                design_density_prev, label_prefix="Restore", preview=False, step=f"{opt_step} revert"
-            )
-            optimizer._state = optimizer_state_prev
-            print("No improvement detected; retaining previous density map.")
-
-    if accepted:
-        design_density = accepted_density
-        design_density = np.clip(design_density, 0.0, 1.0)
-        design_density[~mask] = 0.0
-        objective_history.append(accepted_objective)
-        print(
-            f"Accepted update (direction {accepted_direction}) with objective {accepted_objective:.6e}"
-        )
-        print(f"Transmission estimate: {-accepted_objective:.6e}")
-    else:
-        design_density = design_density_prev
-        objective_history.append(current_objective)
-        print(f"Objective remained at {current_objective:.6e}")
-        print(f"Transmission estimate: {-current_objective:.6e}")
 
     if forward_snapshot is not None:
         plot_field_map(

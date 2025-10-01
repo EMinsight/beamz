@@ -199,7 +199,7 @@ def save_step_results(fdtd) -> None:
             or fdtd.current_step == fdtd.num_steps - 1
         )
     )
-    
+
     if not should_save_full and not should_cache:
         return
 
