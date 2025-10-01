@@ -336,6 +336,7 @@ class FDTD:
         self._cache_fields = list(fields_to_cache) if fields_to_cache else []
         self._cache_frequency = 1 if self._cache_fields else None
 
+
         # Record start time
         self.start_time = datetime.datetime.now()
         # Initialize simulation state
