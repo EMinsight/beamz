@@ -262,8 +262,15 @@ def update_design_from_density(density_values, label_prefix="iteration", preview
     filtered = filtered_density(density_values, mask, blur_radius=blur_radius_cells, beta=beta, eta=eta)
 
     permittivity_grid = density_to_permittivity(base_permittivity, filtered, mask, EPS_CLAD, EPS_CORE)
-    design_material.update_grid("permittivity", permittivity_grid)
-    grid.permittivity = permittivity_grid
+    design_material.update_grid("permittivity", permittivity_grid.copy())
+
+    if hasattr(grid, "permittivity"):
+        if grid.permittivity.shape == permittivity_grid.shape:
+            np.copyto(grid.permittivity, permittivity_grid)
+        else:
+            grid.permittivity = permittivity_grid.copy()
+    else:
+        grid.permittivity = permittivity_grid.copy()
     if preview:
         preview_permittivity(permittivity_grid, getattr(grid, "dx", DX), getattr(grid, "dy", DX),
             f"{label_prefix} {step}: permittivity", highlight_mask=mask, vmin=EPS_CLAD, vmax=EPS_CORE)
