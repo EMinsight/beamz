@@ -1,3 +1,7 @@
+import matplotlib
+
+matplotlib.use("Agg")
+
 import numpy as np
 import matplotlib.pyplot as plt
 from numpy.lib.stride_tricks import sliding_window_view
@@ -170,7 +174,8 @@ def preview_permittivity_zoom(permittivity_grid, mask, dx, dy, title, filename=N
     if show: plt.show()
     else: plt.close()
 
-def plot_field_map(field, dx, dy, title, filename=None, cmap="RdBu", use_abs=True, colorbar_label="Amplitude"):
+def plot_field_map(field, dx, dy, title, filename=None, cmap="RdBu", use_abs=True,
+    colorbar_label="Amplitude", show=True):
     """Plot a 2D field map with the given ``title`` and optional ``filename``."""
     data = np.abs(field) if use_abs else field
     extent = (0, data.shape[1] * dx, 0, data.shape[0] * dy)
@@ -180,8 +185,12 @@ def plot_field_map(field, dx, dy, title, filename=None, cmap="RdBu", use_abs=Tru
     plt.xlabel("x (m)")
     plt.ylabel("y (m)")
     plt.title(title)
-    if filename: plt.savefig(filename, dpi=200, bbox_inches="tight")
-    plt.show()
+    if filename:
+        plt.savefig(filename, dpi=200, bbox_inches="tight")
+    if show:
+        plt.show()
+    else:
+        plt.close()
 
 def extract_objective(results):
     """Return the first objective value stored in the simulation results."""
@@ -228,12 +237,13 @@ def monitor_objective(monitor: Monitor) -> float:
     return -mean_power
 
 
-# Design with a custom inhomogeneous material which we will update during optimization
+# Design with an inhomogeneous region that will be updated via the rasterized grid
 design = Design(width=W, height=H, pml_size=2 * µm)
 design += Rectangle(position=(0 * µm, H / 2 - WG_W / 2), width=3.5 * µm, height=WG_W, material=Material(permittivity=EPS_CORE))
 design += Rectangle(position=(W / 2 - WG_W / 2, H), width=WG_W, height=-3.5 * µm, material=Material(permittivity=EPS_CORE))
 # Inverse design region
-design_region = Rectangle(position=(W / 2 - 4 * µm, H / 2 - 4 * µm), width=8 * µm, height=8 * µm)
+design_region = Rectangle(position=(W / 2 - 4 * µm, H / 2 - 4 * µm), width=8 * µm, height=8 * µm,
+    material=Material(permittivity=EPS_CLAD))
 design += design_region
 
 # Define the signal
@@ -243,11 +253,6 @@ signal = ramped_cosine(t=t, amplitude=1.0, frequency=LIGHT_SPEED / WL, t_max=TIM
 # Rasterize the initial design
 grid = RegularGrid(design=design, resolution=DX)
 base_permittivity = grid.permittivity.copy()
-
-# Initialize design material with a grid definition matching the FDTD mesh
-initial_material_grid = base_permittivity.copy()
-design_material = CustomMaterial(permittivity_grid=initial_material_grid, bounds=((0, W), (0, H)))
-design_region.material = design_material
 
 # Mask and density initialization for topology updates
 mask = make_density_mask(design_region, grid)
@@ -262,11 +267,18 @@ def update_design_from_density(density_values, label_prefix="iteration", preview
     filtered = filtered_density(density_values, mask, blur_radius=blur_radius_cells, beta=beta, eta=eta)
 
     permittivity_grid = density_to_permittivity(base_permittivity, filtered, mask, EPS_CLAD, EPS_CORE)
-    design_material.update_grid("permittivity", permittivity_grid)
-    grid.permittivity = permittivity_grid
+
+    if hasattr(grid, "permittivity"):
+        if grid.permittivity.shape == permittivity_grid.shape:
+            np.copyto(grid.permittivity, permittivity_grid)
+        else:
+            grid.permittivity = permittivity_grid.copy()
+    else:
+        grid.permittivity = permittivity_grid.copy()
+
     if preview:
         preview_permittivity(permittivity_grid, getattr(grid, "dx", DX), getattr(grid, "dy", DX),
-            f"{label_prefix} {step}: permittivity", highlight_mask=mask, vmin=EPS_CLAD, vmax=EPS_CORE)
+            f"{label_prefix} {step}: permittivity", highlight_mask=mask, vmin=EPS_CLAD, vmax=EPS_CORE, show=False)
     return filtered, permittivity_grid
 
 # Define the optimizer
@@ -277,6 +289,7 @@ for opt_step in range(1, OPT_STEPS + 1):
 
     filtered_density_values, permittivity_grid = update_design_from_density(
         design_density, label_prefix="Iteration", preview=True, step=opt_step)
+    baseline_permittivity = permittivity_grid.copy()
 
     forward_results = run_forward_simulation(cache_fields=True)
     current_objective = extract_objective(forward_results)
@@ -335,6 +348,12 @@ for opt_step in range(1, OPT_STEPS + 1):
     filtered_density_post, updated_permittivity_grid = update_design_from_density(design_density,
         label_prefix="Post-update", preview=False, step=opt_step)
 
+    delta_masked = (updated_permittivity_grid - baseline_permittivity)[mask]
+    change_norm = np.linalg.norm(delta_masked)
+    print(f"Permittivity grid update norm inside mask: {change_norm:.6e}")
+    if change_norm == 0.0:
+        print("Warning: No change detected in design region permittivity after update.")
+
     updated_filename = f"updated_permittivity_step{opt_step}.png"
     preview_permittivity(updated_permittivity_grid, getattr(grid, "dx", DX), getattr(grid, "dy", DX),
         f"Post-update permittivity, step {opt_step}", filename=updated_filename, show=False, highlight_mask=mask,
@@ -373,13 +392,13 @@ for opt_step in range(1, OPT_STEPS + 1):
 
     if forward_snapshot is not None:
         plot_field_map(forward_snapshot, getattr(grid, "dx", DX), getattr(grid, "dy", DX),
-            f"Forward |Ez|, step {opt_step}", filename=f"forward_field_step{opt_step}.png")
+            f"Forward |Ez|, step {opt_step}", filename=f"forward_field_step{opt_step}.png", show=False)
     if adjoint_snapshot is not None:
         plot_field_map(adjoint_snapshot, getattr(grid, "dx", DX), getattr(grid, "dy", DX),
-            f"Adjoint |Ez|, step {opt_step}", filename=f"adjoint_field_step{opt_step}.png")
+            f"Adjoint |Ez|, step {opt_step}", filename=f"adjoint_field_step{opt_step}.png", show=False)
     plot_field_map(normalized_gradient, getattr(grid, "dx", DX), getattr(grid, "dy", DX),
         f"Overlap gradient, step {opt_step}", filename=f"overlap_gradient_step{opt_step}.png",
-        cmap="magma", use_abs=False, colorbar_label="Gradient (a.u.)")
+        cmap="magma", use_abs=False, colorbar_label="Gradient (a.u.)", show=False)
 
 
 # Final design evaluation
@@ -392,7 +411,7 @@ print(f"Final transmission estimate: {-final_objective:.6e}")
 # Save diagnostic images
 permittivity_filename = "final_design_permittivity.png"
 preview_permittivity(permittivity_grid, getattr(grid, "dx", DX), getattr(grid, "dy", DX),
-    "Final permittivity distribution", filename=permittivity_filename)
+    "Final permittivity distribution", filename=permittivity_filename, show=False)
 
 plt.figure(figsize=(6, 4))
 
@@ -406,7 +425,7 @@ plt.grid(True)
 plt.tight_layout()
 objective_history_filename = "objective_history.png"
 plt.savefig(objective_history_filename, dpi=200)
-plt.show()
+plt.close()
 
 print(f"Saved final permittivity map to {permittivity_filename}")
 print(f"Saved objective history to {objective_history_filename}")
