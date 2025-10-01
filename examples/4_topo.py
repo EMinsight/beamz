@@ -109,7 +109,7 @@ def density_to_permittivity(base_permittivity, density, mask, eps_min, eps_max):
     return permittivity
 
 
-def preview_permittivity(permittivity_grid, dx, dy, title, filename=None):
+def preview_permittivity(permittivity_grid, dx, dy, title, filename=None, show=True):
     """Visualize the permittivity grid for debugging/inspection."""
 
     extent = (0, permittivity_grid.shape[1] * dx, 0, permittivity_grid.shape[0] * dy)
@@ -121,7 +121,10 @@ def preview_permittivity(permittivity_grid, dx, dy, title, filename=None):
     plt.title(title)
     if filename:
         plt.savefig(filename, dpi=200, bbox_inches="tight")
-    plt.show()
+    if show:
+        plt.show()
+    else:
+        plt.close()
 
 
 
@@ -223,7 +226,10 @@ def monitor_objective(monitor: Monitor) -> float:
         if duration <= 0.0:
             mean_power = float(np.mean(powers))
         else:
-            integrated = np.trapezoid(powers, times)
+            if hasattr(np, "trapezoid"):
+                integrated = np.trapezoid(powers, times)
+            else:
+                integrated = np.trapz(powers, times)
             mean_power = float(integrated / duration)
     return -mean_power
 
@@ -398,6 +404,32 @@ for opt_step in range(1, OPT_STEPS + 1):
 
     design_density = np.clip(design_density + update_step, 0.0, 1.0)
     design_density[~mask] = 0.0
+
+    masked_density = design_density[mask]
+    if masked_density.size:
+        print(
+            "Design density stats after update: "
+            f"min {masked_density.min():.3e}, max {masked_density.max():.3e}, "
+            f"mean {masked_density.mean():.3e}"
+        )
+
+    _, updated_permittivity_grid = update_design_from_density(
+        design_density,
+        label_prefix="Post-update",
+        preview=False,
+        step=opt_step,
+    )
+
+    updated_filename = f"updated_permittivity_step{opt_step}.png"
+    preview_permittivity(
+        updated_permittivity_grid,
+        getattr(grid, "dx", DX),
+        getattr(grid, "dy", DX),
+        f"Post-update permittivity, step {opt_step}",
+        filename=updated_filename,
+        show=False,
+    )
+    print(f"Saved updated design permittivity to {updated_filename}")
 
     objective_history.append(current_objective)
     print(
