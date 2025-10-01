@@ -228,12 +228,13 @@ def monitor_objective(monitor: Monitor) -> float:
     return -mean_power
 
 
-# Design with a custom inhomogeneous material which we will update during optimization
+# Design with an inhomogeneous region that will be updated via the rasterized grid
 design = Design(width=W, height=H, pml_size=2 * µm)
 design += Rectangle(position=(0 * µm, H / 2 - WG_W / 2), width=3.5 * µm, height=WG_W, material=Material(permittivity=EPS_CORE))
 design += Rectangle(position=(W / 2 - WG_W / 2, H), width=WG_W, height=-3.5 * µm, material=Material(permittivity=EPS_CORE))
 # Inverse design region
-design_region = Rectangle(position=(W / 2 - 4 * µm, H / 2 - 4 * µm), width=8 * µm, height=8 * µm)
+design_region = Rectangle(position=(W / 2 - 4 * µm, H / 2 - 4 * µm), width=8 * µm, height=8 * µm,
+    material=Material(permittivity=EPS_CLAD))
 design += design_region
 
 # Define the signal
@@ -243,11 +244,6 @@ signal = ramped_cosine(t=t, amplitude=1.0, frequency=LIGHT_SPEED / WL, t_max=TIM
 # Rasterize the initial design
 grid = RegularGrid(design=design, resolution=DX)
 base_permittivity = grid.permittivity.copy()
-
-# Initialize design material with a grid definition matching the FDTD mesh
-initial_material_grid = base_permittivity.copy()
-design_material = CustomMaterial(permittivity_grid=initial_material_grid, bounds=((0, W), (0, H)))
-design_region.material = design_material
 
 # Mask and density initialization for topology updates
 mask = make_density_mask(design_region, grid)
@@ -262,8 +258,25 @@ def update_design_from_density(density_values, label_prefix="iteration", preview
     filtered = filtered_density(density_values, mask, blur_radius=blur_radius_cells, beta=beta, eta=eta)
 
     permittivity_grid = density_to_permittivity(base_permittivity, filtered, mask, EPS_CLAD, EPS_CORE)
-    design_material.update_grid("permittivity", permittivity_grid)
-    grid.permittivity = permittivity_grid
+
+    if hasattr(grid, "permittivity"):
+        if grid.permittivity.shape == permittivity_grid.shape:
+            np.copyto(grid.permittivity, permittivity_grid)
+        else:
+            grid.permittivity = permittivity_grid.copy()
+    else:
+        grid.permittivity = permittivity_grid.copy()
+
+    previous_grid = update_design_from_density.__dict__.get("_previous_grid")
+    if previous_grid is not None:
+        delta = permittivity_grid - previous_grid
+        delta_masked = delta[mask]
+        change_norm = np.linalg.norm(delta_masked)
+        print(f"Permittivity grid update norm inside mask: {change_norm:.6e}")
+        if change_norm == 0.0:
+            print("Warning: No change detected in design region permittivity after update.")
+    update_design_from_density._previous_grid = permittivity_grid.copy()
+
     if preview:
         preview_permittivity(permittivity_grid, getattr(grid, "dx", DX), getattr(grid, "dy", DX),
             f"{label_prefix} {step}: permittivity", highlight_mask=mask, vmin=EPS_CLAD, vmax=EPS_CORE)
