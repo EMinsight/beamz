@@ -4,7 +4,6 @@ from numpy.lib.stride_tricks import sliding_window_view
 
 plt.switch_backend("Agg")
 from beamz import *
-from beamz.optimization.topology import project_density
 from beamz.optimization.optimizers import Optimizer
 from beamz.devices.mode import slab_mode_source
 
@@ -20,10 +19,13 @@ TIME = 25*WL/LIGHT_SPEED
 t = np.arange(0, TIME, DT)
 
 FILTER_RADIUS = 0.15*µm
-PROJECTION_BETA = 8.0
+PROJECTION_BETA_START = 2.0
+PROJECTION_BETA_END = 20.0
 PROJECTION_ETA = 0.5
 TRANSMISSION_WEIGHT = 0.5
 MODE_WEIGHT = 0.5
+FINAL_PROJECTION_BETA = 32.0
+FINAL_PROJECTION_THRESHOLD = 0.5
 
 # Create the design
 signal = ramped_cosine(t=t,amplitude=1.0, frequency=LIGHT_SPEED/WL, t_max=TIME, ramp_duration=5*WL/LIGHT_SPEED, phase=0)
@@ -93,13 +95,48 @@ def masked_box_blur_backprop(grad_output, mask, weights, radius):
     return grad_input
 
 
-def apply_density_filters(values):
+def projection_beta_schedule(step: int) -> float:
+    """Return the projection sharpness beta for the current optimization step."""
+
+    if STEPS <= 1:
+        return PROJECTION_BETA_END
+    frac = (step - 1) / float(STEPS - 1)
+    return PROJECTION_BETA_START + frac * (PROJECTION_BETA_END - PROJECTION_BETA_START)
+
+
+def smoothed_heaviside(value, beta, eta):
+    """Smoothed Heaviside projection yielding near-binary densities."""
+
+    beta = max(beta, 1e-6)
+    denominator = np.tanh(beta * eta) + np.tanh(beta * (1.0 - eta))
+    if abs(denominator) < 1e-9:
+        denominator = 1e-9 if denominator >= 0 else -1e-9
+    numerator = np.tanh(beta * eta) + np.tanh(beta * (value - eta))
+    projected = numerator / denominator
+    derivative = (beta * (1.0 - np.tanh(beta * (value - eta)) ** 2)) / denominator
+    return projected, derivative
+
+
+def apply_density_filters(values, beta):
     """Apply masked blur followed by projection to obtain physical densities."""
 
     blurred, weights = masked_box_blur(values, mask, filter_radius_cells)
-    projected = project_density(blurred, beta=PROJECTION_BETA, eta=PROJECTION_ETA)
+    projected, derivative = smoothed_heaviside(blurred, beta, PROJECTION_ETA)
     projected = np.where(mask, projected, 0.0)
-    return blurred, projected, weights
+    derivative = np.where(mask, derivative, 0.0)
+    return blurred, projected, weights, derivative
+
+
+def binarize_density(physical_density):
+    """Return a binary density map using a sharp projection."""
+
+    projected, _ = smoothed_heaviside(
+        physical_density,
+        beta=FINAL_PROJECTION_BETA,
+        eta=FINAL_PROJECTION_THRESHOLD,
+    )
+    binary = (projected >= 0.5).astype(float)
+    return np.where(mask, binary, 0.0)
 
 
 def build_output_monitor(design):
@@ -156,7 +193,7 @@ def build_output_monitor(design):
         power_score = float(np.trapz(np.abs(m.power_history), dx=DT)) if m.power_history else 0.0
         m.mode_score = mode_score
         m.power_score = power_score
-        return -(power_score * mode_score)
+        return -(TRANSMISSION_WEIGHT * power_score + MODE_WEIGHT * mode_score)
 
     monitor.objective_function = objective_fn
     monitor.target_samples = target_samples
@@ -212,8 +249,11 @@ optimizer = Optimizer(method="adam", learning_rate=LR)
 
 # Optimization loop
 for step in range(1,STEPS+1):
-    
-    blurred_density, physical_density, blur_weights = apply_density_filters(design_density)
+    current_beta = projection_beta_schedule(step)
+    blurred_density, physical_density, blur_weights, projection_derivative = apply_density_filters(
+        design_density,
+        current_beta,
+    )
 
     # Update the permittivity
     eps = base.copy()
@@ -260,8 +300,7 @@ for step in range(1,STEPS+1):
 
     # Apply blur and projection filtered update with Adam optimizer
     grad_density = grad * (EPS_CORE - EPS_CLAD)
-    proj_derivative = PROJECTION_BETA * physical_density * (1.0 - physical_density)
-    grad_after_projection = grad_density * proj_derivative
+    grad_after_projection = grad_density * projection_derivative
     grad_design = masked_box_blur_backprop(
         grad_after_projection,
         mask,
@@ -279,16 +318,21 @@ for step in range(1,STEPS+1):
     design_density[~mask] = 0.0  # Reset density outside the design region
     update_norm = float(np.linalg.norm(density_delta[mask])) if np.any(mask) else 0.0
     max_update = float(np.max(np.abs(density_delta[mask]))) if np.any(mask) else 0.0
-    blurred_density, physical_density, blur_weights = apply_density_filters(design_density)
-    density_fig, density_ax = plt.subplots(figsize=(6, 6))
-    density_im = density_ax.imshow(physical_density, origin="lower", extent=(0, design.width, 0, design.height), cmap="viridis", aspect="equal", vmin=0.0, vmax=1.0)
-    plt.colorbar(density_im, ax=density_ax, orientation="vertical", label="Density")
-    density_ax.set_title(f"Projected Density Step {step}")
-    density_ax.set_xlabel("x (m)")
-    density_ax.set_ylabel("y (m)")
-    density_path = f"density_step{step:03d}.png"
-    density_fig.savefig(density_path, dpi=200, bbox_inches="tight")
-    plt.close(density_fig)
+    blurred_density, physical_density, blur_weights, projection_derivative = apply_density_filters(
+        design_density,
+        current_beta,
+    )
+    permittivity_grid = base.copy()
+    permittivity_grid[mask] = EPS_CLAD + physical_density[mask] * (EPS_CORE - EPS_CLAD)
+    perm_fig, perm_ax = plt.subplots(figsize=(6, 6))
+    perm_im = perm_ax.imshow(permittivity_grid, origin="lower", extent=(0, design.width, 0, design.height), cmap="gray", aspect="equal")
+    plt.colorbar(perm_im, ax=perm_ax, orientation="vertical", label="Permittivity")
+    perm_ax.set_title(f"Permittivity Step {step}")
+    perm_ax.set_xlabel("x (m)")
+    perm_ax.set_ylabel("y (m)")
+    perm_path = f"permittivity_step{step:03d}.png"
+    perm_fig.savefig(perm_path, dpi=200, bbox_inches="tight")
+    plt.close(perm_fig)
     obj = float(next(iter(fres.get("objectives",{"out":0}).values())))
     combined_objective = -obj
     transmission = getattr(monitor, "power_score", 0.0)
@@ -307,11 +351,29 @@ for step in range(1,STEPS+1):
         f"mode {mode_score:.3f} | update norm {update_norm:.3e} | max density update {max_update:.3e}"
     )
 
-# Final transmission
-_, physical_density, _ = apply_density_filters(design_density)
+# Final transmission with binary projection
+_, physical_density, _, _ = apply_density_filters(design_density, PROJECTION_BETA_END)
+binary_density = binarize_density(physical_density)
 eps = base.copy()
-eps[mask] = EPS_CLAD+physical_density[mask]*(EPS_CORE-EPS_CLAD)
+eps[mask] = EPS_CLAD + binary_density[mask] * (EPS_CORE - EPS_CLAD)
 np.copyto(grid.permittivity, eps)
+final_density_fig, final_density_ax = plt.subplots(figsize=(6, 6))
+binary_im = final_density_ax.imshow(
+    binary_density,
+    origin="lower",
+    extent=(0, design.width, 0, design.height),
+    cmap="viridis",
+    aspect="equal",
+    vmin=0.0,
+    vmax=1.0,
+)
+plt.colorbar(binary_im, ax=final_density_ax, orientation="vertical", label="Binary Density")
+final_density_ax.set_title("Final Binary Density")
+final_density_ax.set_xlabel("x (m)")
+final_density_ax.set_ylabel("y (m)")
+final_density_fig.savefig("final_binary_density.png", dpi=200, bbox_inches="tight")
+plt.close(final_density_fig)
+
 final_source = build_forward_source(design, signal)
 final_monitor = build_output_monitor(design)
 final = FDTD(design=grid, devices=[final_source, final_monitor], time=t).run(
@@ -322,11 +384,6 @@ final = FDTD(design=grid, devices=[final_source, final_monitor], time=t).run(
     fields_to_cache=None,
 )
 final_obj = -float(next(iter(final.get("objectives", {"out": 0}).values())))
-print(
-    "final objective",
-    final_obj,
-    "power",
-    getattr(final_monitor, "power_score", 0.0),
-    "mode",
-    getattr(final_monitor, "mode_score", 0.0),
-)
+final_power = getattr(final_monitor, "power_score", 0.0)
+final_mode = getattr(final_monitor, "mode_score", 0.0)
+print("final objective", final_obj, "power", final_power, "mode", final_mode)
