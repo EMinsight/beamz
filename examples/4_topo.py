@@ -201,9 +201,26 @@ def extract_objective(results):
 
 def build_forward_devices(accumulate_power: bool = True):
     """Create source and monitor devices for forward simulations."""
-    return [ModeSource(design=design, position=(2.5 * µm, H / 2), width=WG_W * 4, wavelength=WL, signal=signal, direction="+x"),
-            Monitor(design=design, start=(W / 2 - WG_W * 2, H - 2.5 * µm), end=(W / 2 + WG_W * 2, H - 2.5 * µm),
-            objective_function=monitor_objective, accumulate_power=accumulate_power, name="output_monitor")]
+    # Prefer analytical solver to avoid sparse eigensolver crashes on some SciPy builds.
+    return [
+        ModeSource(
+            design=design,
+            position=(2.5 * µm, H / 2),
+            width=WG_W * 4,
+            wavelength=WL,
+            signal=signal,
+            direction="+x",
+            mode_solver="analytical",
+        ),
+        Monitor(
+            design=design,
+            start=(W / 2 - WG_W * 2, H - 2.5 * µm),
+            end=(W / 2 + WG_W * 2, H - 2.5 * µm),
+            objective_function=monitor_objective,
+            accumulate_power=accumulate_power,
+            name="output_monitor",
+        ),
+    ]
 
 def run_forward_simulation(cache_fields: bool = True):
     """Run a forward simulation with optional field caching for adjoint reuse."""
@@ -299,7 +316,7 @@ for opt_step in range(1, OPT_STEPS + 1):
     forward_snapshot = forward_fields[-1].copy() if forward_fields else None
 
     adjoint = FDTD(design=grid, devices=[ModeSource(design=design, position=(W / 2, H - 2.5 * µm), width=WG_W * 4,
-        wavelength=WL, signal=signal, direction="-y")], time=t)
+        wavelength=WL, signal=signal, direction="-y", mode_solver="analytical")], time=t)
 
     adjoint.initialize_simulation(save=False, live=False, accumulate_power=False, save_memory_mode=True, fields_to_cache=None)
     overlap_gradient = np.zeros_like(design_density, dtype=np.float64)
