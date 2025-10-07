@@ -34,20 +34,24 @@ def apply_sources(fdtd) -> None:
                 else:
                     source_value = amplitude * modulation
 
+                enforce_direction = getattr(source, "enforce_direction", True)
+
                 if fdtd.is_3d:
                     fdtd.Ez[z_target, y, x] += source_value
-                    if source.direction == "+x" and x > 0: fdtd.Ez[z_target, y, x-1] = 0
-                    elif source.direction == "-x" and x < fdtd.nx-1: fdtd.Ez[z_target, y, x+1] = 0
-                    elif source.direction == "+y" and y > 0: fdtd.Ez[z_target, y-1, x] = 0
-                    elif source.direction == "-y" and y < fdtd.ny-1: fdtd.Ez[z_target, y+1, x] = 0
-                    elif source.direction == "+z" and z_target > 0: fdtd.Ez[z_target-1, y, x] = 0
-                    elif source.direction == "-z" and z_target < fdtd.Ez.shape[0]-1: fdtd.Ez[z_target+1, y, x] = 0
+                    if enforce_direction:
+                        if source.direction == "+x" and x > 0: fdtd.Ez[z_target, y, x-1] = 0
+                        elif source.direction == "-x" and x < fdtd.nx-1: fdtd.Ez[z_target, y, x+1] = 0
+                        elif source.direction == "+y" and y > 0: fdtd.Ez[z_target, y-1, x] = 0
+                        elif source.direction == "-y" and y < fdtd.ny-1: fdtd.Ez[z_target, y+1, x] = 0
+                        elif source.direction == "+z" and z_target > 0: fdtd.Ez[z_target-1, y, x] = 0
+                        elif source.direction == "-z" and z_target < fdtd.Ez.shape[0]-1: fdtd.Ez[z_target+1, y, x] = 0
                 else:
                     fdtd.Ez[y, x] += source_value
-                    if source.direction == "+x" and x > 0: fdtd.Ez[y, x-1] = 0
-                    elif source.direction == "-x" and x < fdtd.nx-1: fdtd.Ez[y, x+1] = 0
-                    elif source.direction == "+y" and y > 0: fdtd.Ez[y-1, x] = 0
-                    elif source.direction == "-y" and y < fdtd.ny-1: fdtd.Ez[y+1, x] = 0
+                    if enforce_direction:
+                        if source.direction == "+x" and x > 0: fdtd.Ez[y, x-1] = 0
+                        elif source.direction == "-x" and x < fdtd.nx-1: fdtd.Ez[y, x+1] = 0
+                        elif source.direction == "+y" and y > 0: fdtd.Ez[y-1, x] = 0
+                        elif source.direction == "-y" and y < fdtd.ny-1: fdtd.Ez[y+1, x] = 0
 
         elif isinstance(source, GaussianSource):
             modulation = source.signal[fdtd.current_step]
