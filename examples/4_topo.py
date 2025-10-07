@@ -38,6 +38,7 @@ mask[(ys[:,None]>=miny)&(ys[:,None]<=maxy)&(xs[None,:]>=minx)&(xs[None,:]<=maxx)
 rng = np.random.default_rng(0)
 density = np.zeros_like(base)
 density[mask] = rng.random(np.count_nonzero(mask))
+objective_history = []
 
 # Optimization loop
 for step in range(1,STEPS+1):
@@ -99,7 +100,17 @@ for step in range(1,STEPS+1):
     density_fig.savefig(density_path, dpi=200, bbox_inches="tight")
     plt.close(density_fig)
     obj = float(next(iter(fres.get("objectives",{"out":0}).values())))
-    print(f"step {step}: transmission {-obj:.4e}")
+    transmission = -obj
+    objective_history.append(transmission)
+    history_fig, history_ax = plt.subplots(figsize=(6, 4))
+    history_ax.plot(range(1, len(objective_history)+1), objective_history, marker="o", linewidth=2)
+    history_ax.set_xlabel("Optimization Step")
+    history_ax.set_ylabel("Transmission")
+    history_ax.set_title("Objective History")
+    history_ax.grid(True, alpha=0.3)
+    history_fig.savefig("objective_history.png", dpi=200, bbox_inches="tight")
+    plt.close(history_fig)
+    print(f"step {step}: transmission {transmission:.4e}")
 
 # Final transmission
 eps = base.copy()
