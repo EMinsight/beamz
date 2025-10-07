@@ -121,9 +121,13 @@ def apply_density_filters(values, beta):
     """Apply masked blur followed by projection to obtain physical densities."""
 
     blurred, weights = masked_box_blur(values, mask, filter_radius_cells)
+    blurred = np.where(mask, blurred, 0.0)
+    blurred = np.clip(blurred, 0.0, 1.0)
     projected, derivative = smoothed_heaviside(blurred, beta, PROJECTION_ETA)
     projected = np.where(mask, projected, 0.0)
+    projected = np.clip(projected, 0.0, 1.0)
     derivative = np.where(mask, derivative, 0.0)
+    derivative = np.where((projected <= 0.0) | (projected >= 1.0), 0.0, derivative)
     return blurred, projected, weights, derivative
 
 
@@ -324,8 +328,17 @@ for step in range(1,STEPS+1):
     )
     permittivity_grid = base.copy()
     permittivity_grid[mask] = EPS_CLAD + physical_density[mask] * (EPS_CORE - EPS_CLAD)
+    permittivity_grid[mask] = np.clip(permittivity_grid[mask], EPS_CLAD, EPS_CORE)
     perm_fig, perm_ax = plt.subplots(figsize=(6, 6))
-    perm_im = perm_ax.imshow(permittivity_grid, origin="lower", extent=(0, design.width, 0, design.height), cmap="gray", aspect="equal")
+    perm_im = perm_ax.imshow(
+        permittivity_grid,
+        origin="lower",
+        extent=(0, design.width, 0, design.height),
+        cmap="gray",
+        aspect="equal",
+        vmin=EPS_CLAD,
+        vmax=EPS_CORE,
+    )
     plt.colorbar(perm_im, ax=perm_ax, orientation="vertical", label="Permittivity")
     perm_ax.set_title(f"Permittivity Step {step}")
     perm_ax.set_xlabel("x (m)")
