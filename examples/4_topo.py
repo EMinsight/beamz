@@ -14,7 +14,7 @@ WG_W = 0.5 * µm
 N_CORE, N_CLAD = 2.25, 1.444
 EPS_CORE, EPS_CLAD = N_CORE ** 2, N_CLAD ** 2
 WL = 1.55 * µm
-OPT_STEPS, LR = 4, 5e-1
+OPT_STEPS, LR = 100, 0.1
 TIME = 15 * WL / LIGHT_SPEED
 DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE, N_CLAD), dims=2, safety_factor=0.95, points_per_wavelength=10)
 EPS_RANGE = EPS_CORE - EPS_CLAD
@@ -263,6 +263,8 @@ design += Rectangle(position=(W / 2 - WG_W / 2, H), width=WG_W, height=-3.5 * µ
 design_region = Rectangle(position=(W / 2 - 4 * µm, H / 2 - 4 * µm), width=8 * µm, height=8 * µm,
     material=Material(permittivity=EPS_CLAD))
 design += design_region
+
+design.show()
 
 # Define the signal
 t = np.arange(0, TIME, DT)
