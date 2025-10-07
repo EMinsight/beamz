@@ -1,4 +1,7 @@
 import numpy as np
+import matplotlib.pyplot as plt
+
+plt.switch_backend("Agg")
 from beamz import *
 from beamz.optimization.topology import apply_density_update
 
@@ -50,17 +53,25 @@ for step in range(1,STEPS+1):
         objective_function = lambda m: -float(np.sum(np.abs(m.power_history))) if m.power_history else 0.0, name="out")
     forward = FDTD(design=grid, devices=[source, monitor], time=t)
     fres = forward.run(live=True, save_memory_mode=True, accumulate_power=True, save_fields=["Ez"], fields_to_cache=["Ez"])
+    forward.plot_power(db_colorbar=True)
+    forward_power_path = f"forward_power_step{step:03d}.png"
+    forward.fig.savefig(forward_power_path, dpi=200, bbox_inches="tight")
+    plt.close(forward.fig)
     ffields = list(fres.get("Ez",[]))
     
     # Adjoint simulation, computing the overlap gradient
     adj = FDTD(design=grid, devices=[ModeSource(design=design, position=(W/2,H-2.5*µm), width=WG_W*4,
         wavelength=WL, signal=signal, direction="-y")], time=t)
-    adj.initialize_simulation(save=False, live=True, accumulate_power=False, save_memory_mode=True, fields_to_cache=None)
+    adj.initialize_simulation(save=False, live=True, accumulate_power=True, save_memory_mode=True, fields_to_cache=None)
     grad = np.zeros_like(base)
     for _ in range(adj.num_steps):
         if not ffields or not adj.step(): break
         grad += np.real(adj.backend.to_numpy(adj.Ez)*np.conj(ffields.pop()))
     adj.finalize_simulation()
+    adj.plot_power(db_colorbar=True)
+    adj_power_path = f"adjoint_power_step{step:03d}.png"
+    adj.fig.savefig(adj_power_path, dpi=200, bbox_inches="tight")
+    plt.close(adj.fig)
 
     # Apply the density update
     density, _, _, _, _ = apply_density_update(density, grad/((np.abs(grad).max()) or 1.0), mask, learning_rate=LR, blur_radius=1)
