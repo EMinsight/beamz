@@ -13,7 +13,7 @@ EPS_CORE, EPS_CLAD = N_CORE**2, N_CLAD**2
 WL = 1.55*µm
 STEPS, LR = 30, 0.5
 DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE,N_CLAD), dims=2, safety_factor=0.99, points_per_wavelength=10)
-TIME = 15*WL/LIGHT_SPEED
+TIME = 25*WL/LIGHT_SPEED
 t = np.arange(0, TIME, DT)
 
 # Create the design
@@ -72,6 +72,19 @@ for step in range(1,STEPS+1):
     adj_power_path = f"adjoint_power_step{step:03d}.png"
     adj.fig.savefig(adj_power_path, dpi=200, bbox_inches="tight")
     plt.close(adj.fig)
+
+    grad_plot = np.zeros_like(grad)
+    grad_plot[mask] = grad[mask]
+    grad_scale = np.max(np.abs(grad_plot)) or 1.0
+    grad_fig, grad_ax = plt.subplots(figsize=(6, 6))
+    grad_im = grad_ax.imshow(grad_plot, origin="lower", extent=(0, design.width, 0, design.height), cmap="RdBu", aspect="equal", vmin=-grad_scale, vmax=grad_scale)
+    plt.colorbar(grad_im, ax=grad_ax, orientation="vertical", label="Adjoint Gradient")
+    grad_ax.set_title(f"Overlap Gradient Step {step}")
+    grad_ax.set_xlabel("x (m)")
+    grad_ax.set_ylabel("y (m)")
+    grad_path = f"overlap_gradient_step{step:03d}.png"
+    grad_fig.savefig(grad_path, dpi=200, bbox_inches="tight")
+    plt.close(grad_fig)
 
     # Apply the density update
     density, _, _, _, _ = apply_density_update(density, grad/((np.abs(grad).max()) or 1.0), mask, learning_rate=LR, blur_radius=1)
