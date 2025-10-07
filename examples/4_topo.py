@@ -14,7 +14,7 @@ WG_W = 0.5*µm
 N_CORE, N_CLAD = 2.25, 1.444
 EPS_CORE, EPS_CLAD = N_CORE**2, N_CLAD**2
 WL = 1.55*µm
-STEPS, LR = 30, 0.03
+STEPS, LR = 30, 0.07
 DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE,N_CLAD), dims=2, safety_factor=0.99, points_per_wavelength=10)
 TIME = 25*WL/LIGHT_SPEED
 t = np.arange(0, TIME, DT)
@@ -156,7 +156,7 @@ def build_output_monitor(design):
         power_score = float(np.trapz(np.abs(m.power_history), dx=DT)) if m.power_history else 0.0
         m.mode_score = mode_score
         m.power_score = power_score
-        return -(TRANSMISSION_WEIGHT * power_score + MODE_WEIGHT * mode_score)
+        return -(power_score * mode_score)
 
     monitor.objective_function = objective_fn
     monitor.target_samples = target_samples
