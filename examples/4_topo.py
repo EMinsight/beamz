@@ -8,10 +8,10 @@ WG_W = 0.5*µm
 N_CORE, N_CLAD = 2.25, 1.444
 EPS_CORE, EPS_CLAD = N_CORE**2, N_CLAD**2
 WL = 1.55*µm
-STEPS, LR = 8, 2e-2
-DX,DT = calc_optimal_fdtd_params(WL,max(N_CORE,N_CLAD), dims=2, safety_factor=0.95, points_per_wavelength=12)
+STEPS, LR = 30, 0.5
+DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE,N_CLAD), dims=2, safety_factor=0.99, points_per_wavelength=10)
 TIME = 15*WL/LIGHT_SPEED
-t = np.arange(0,TIME,DT)
+t = np.arange(0, TIME, DT)
 
 # Create the design
 signal = ramped_cosine(t=t,amplitude=1.0, frequency=LIGHT_SPEED/WL, t_max=TIME, ramp_duration=5*WL/LIGHT_SPEED, phase=0)
@@ -75,6 +75,6 @@ np.copyto(grid.permittivity, eps)
 source = ModeSource(design=design, position=(2.5*µm,H/2), width=WG_W*4, wavelength=WL, signal=signal, direction="+x")
 monitor = Monitor(design=design, start=(W/2-WG_W*2,H-2.5*µm), end=(W/2+WG_W*2,H-2.5*µm),
     objective_function = lambda m:-float(np.sum(np.abs(m.power_history))) if m.power_history else 0.0, name="out")
-final = FDTD(design=grid, devices=[source, monitor], time=t)
-final.run(live=True, save_memory_mode=True, accumulate_power=True, save_fields=["Ez"], fields_to_cache=None)
+final = FDTD(design=grid, devices=[source, monitor], time=t).run(live=True, save_memory_mode=True,
+    accumulate_power=True, save_fields=["Ez"], fields_to_cache=None)
 print("final transmission", -float(next(iter(final.get("objectives",{"out":0}).values()))))
