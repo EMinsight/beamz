@@ -1,9 +1,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from numpy.lib.stride_tricks import sliding_window_view
 
-plt.switch_backend("Agg")
+#plt.switch_backend("Agg")
 from beamz import *
-from beamz.optimization.topology import blur_density, project_density
+from beamz.optimization.topology import project_density
 from beamz.optimization.optimizers import Optimizer
 
 # Parameters
@@ -17,7 +18,7 @@ DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE,N_CLAD), dims=2, safety_factor=
 TIME = 25*WL/LIGHT_SPEED
 t = np.arange(0, TIME, DT)
 
-FILTER_RADIUS = 0.2*µm
+FILTER_RADIUS = 0.3*µm
 PROJECTION_BETA = 8.0
 PROJECTION_ETA = 0.5
 
@@ -43,23 +44,70 @@ xs, ys = (np.arange(mask.shape[1])+0.5)*dx, (np.arange(mask.shape[0])+0.5)*dy
 minx, miny, _, maxx, maxy, _ = region.get_bounding_box()
 mask[(ys[:,None]>=miny)&(ys[:,None]<=maxy)&(xs[None,:]>=minx)&(xs[None,:]<=maxx)] = True
 
-def apply_density_filters(values):
-    """Apply spatial blur then projection to enforce manufacturing filters."""
-    blurred = blur_density(np.where(mask, values, 0.0), filter_radius_cells)
+def masked_box_blur(values, mask, radius):
+    """Return masked box blur and the corresponding weight map."""
+
+    radius = int(max(0, radius))
+    masked_values = np.where(mask, values, 0.0)
+
+    if radius <= 0:
+        weights = np.where(mask, 1.0, 1.0)
+        return masked_values, weights
+
+    padded_values = np.pad(masked_values, radius, mode="edge")
+    padded_mask = np.pad(mask.astype(float), radius, mode="constant", constant_values=0.0)
+    window_shape = (2 * radius + 1, 2 * radius + 1)
+
+    values_view = sliding_window_view(padded_values, window_shape)
+    mask_view = sliding_window_view(padded_mask, window_shape)
+
+    weighted_sum = (values_view * mask_view).sum(axis=(-2, -1))
+    weights = mask_view.sum(axis=(-2, -1))
+    weights = np.where(weights == 0.0, 1.0, weights)
+
+    blurred = weighted_sum / weights
     blurred = np.where(mask, blurred, 0.0)
+    weights = np.where(mask, weights, 1.0)
+    return blurred, weights
+
+
+def masked_box_blur_backprop(grad_output, mask, weights, radius):
+    """Propagate gradients through a masked box blur."""
+
+    radius = int(max(0, radius))
+    grad_output = np.where(mask, grad_output, 0.0)
+    weights = np.where(weights == 0.0, 1.0, weights)
+    contributions = grad_output / weights
+
+    if radius <= 0:
+        return np.where(mask, contributions, 0.0)
+
+    padded = np.pad(contributions, radius, mode="constant", constant_values=0.0)
+    window_shape = (2 * radius + 1, 2 * radius + 1)
+    contrib_view = sliding_window_view(padded, window_shape)
+    grad_input = contrib_view.sum(axis=(-2, -1))
+    grad_input = np.where(mask, grad_input, 0.0)
+    return grad_input
+
+
+def apply_density_filters(values):
+    """Apply masked blur followed by projection to obtain physical densities."""
+
+    blurred, weights = masked_box_blur(values, mask, filter_radius_cells)
     projected = project_density(blurred, beta=PROJECTION_BETA, eta=PROJECTION_ETA)
     projected = np.where(mask, projected, 0.0)
-    return blurred, projected
+    return blurred, projected, weights
 rng = np.random.default_rng(0)
 design_density = np.zeros_like(base)
 design_density[mask] = rng.random(np.count_nonzero(mask))
 objective_history = []
 optimizer = Optimizer(method="adam", learning_rate=LR)
-_, physical_density = apply_density_filters(design_density)
 
 # Optimization loop
 for step in range(1,STEPS+1):
     
+    blurred_density, physical_density, blur_weights = apply_density_filters(design_density)
+
     # Update the permittivity
     eps = base.copy()
     eps[mask] = EPS_CLAD + physical_density[mask]*(EPS_CORE-EPS_CLAD)
@@ -107,11 +155,16 @@ for step in range(1,STEPS+1):
     # Apply blur and projection filtered update with Adam optimizer
     grad_density = grad * (EPS_CORE - EPS_CLAD)
     proj_derivative = PROJECTION_BETA * physical_density * (1.0 - physical_density)
-    grad_projected = grad_density * proj_derivative
-    grad_design = blur_density(grad_projected, filter_radius_cells)
+    grad_after_projection = grad_density * proj_derivative
+    grad_design = masked_box_blur_backprop(
+        grad_after_projection,
+        mask,
+        blur_weights,
+        filter_radius_cells,
+    )
     grad_design = np.where(mask, grad_design, 0.0)
     grad_norm = grad_design / ((np.abs(grad_design).max()) or 1.0)
-    adam_update = optimizer.step(grad_norm)
+    adam_update = optimizer.step(-grad_norm)
     adam_update = np.where(mask, adam_update, 0.0)
     new_design_density = design_density + adam_update
     new_design_density = np.clip(new_design_density, 0.0, 1.0)
@@ -120,7 +173,7 @@ for step in range(1,STEPS+1):
     design_density[~mask] = 0.0  # Reset density outside the design region
     update_norm = float(np.linalg.norm(density_delta[mask])) if np.any(mask) else 0.0
     max_update = float(np.max(np.abs(density_delta[mask]))) if np.any(mask) else 0.0
-    _, physical_density = apply_density_filters(design_density)
+    blurred_density, physical_density, blur_weights = apply_density_filters(design_density)
     density_fig, density_ax = plt.subplots(figsize=(6, 6))
     density_im = density_ax.imshow(physical_density, origin="lower", extent=(0, design.width, 0, design.height), cmap="viridis", aspect="equal", vmin=0.0, vmax=1.0)
     plt.colorbar(density_im, ax=density_ax, orientation="vertical", label="Density")
@@ -147,7 +200,7 @@ for step in range(1,STEPS+1):
     )
 
 # Final transmission
-_, physical_density = apply_density_filters(design_density)
+_, physical_density, _ = apply_density_filters(design_density)
 eps = base.copy()
 eps[mask] = EPS_CLAD+physical_density[mask]*(EPS_CORE-EPS_CLAD)
 np.copyto(grid.permittivity, eps)
