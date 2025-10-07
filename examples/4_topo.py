@@ -13,12 +13,12 @@ WG_W = 0.5*µm
 N_CORE, N_CLAD = 2.25, 1.444
 EPS_CORE, EPS_CLAD = N_CORE**2, N_CLAD**2
 WL = 1.55*µm
-STEPS, LR = 30, 0.07
-DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE,N_CLAD), dims=2, safety_factor=0.99, points_per_wavelength=10)
-TIME = 25*WL/LIGHT_SPEED
+STEPS, LR = 50, 0.1
+DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE,N_CLAD), dims=2, safety_factor=0.99, points_per_wavelength=9)
+TIME = 30*WL/LIGHT_SPEED
 t = np.arange(0, TIME, DT)
 
-FILTER_RADIUS = 0.15*µm
+FILTER_RADIUS = 0.1*µm
 PROJECTION_BETA_START = 2.0
 PROJECTION_BETA_END = 20.0
 PROJECTION_ETA = 0.5
@@ -28,7 +28,7 @@ FINAL_PROJECTION_BETA = 32.0
 FINAL_PROJECTION_THRESHOLD = 0.5
 
 # Create the design
-signal = ramped_cosine(t=t,amplitude=1.0, frequency=LIGHT_SPEED/WL, t_max=TIME, ramp_duration=5*WL/LIGHT_SPEED, phase=0)
+signal = ramped_cosine(t=t,amplitude=1.0, frequency=LIGHT_SPEED/WL, t_max=TIME, ramp_duration=6*WL/LIGHT_SPEED, phase=0)
 design = Design(width=W, height=H, pml_size=2*µm)
 design += Rectangle(position=(0*µm,H/2-WG_W/2), width=3.5*µm, height=WG_W, material=Material(permittivity=EPS_CORE))
 design += Rectangle(position=(W/2-WG_W/2,H), width=WG_W, height=-3.5*µm, material=Material(permittivity=EPS_CORE))
