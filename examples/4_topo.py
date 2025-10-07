@@ -14,9 +14,10 @@ WG_W = 0.5 * µm
 N_CORE, N_CLAD = 2.25, 1.444
 EPS_CORE, EPS_CLAD = N_CORE ** 2, N_CLAD ** 2
 WL = 1.55 * µm
-OPT_STEPS, LR = 4, 5e-3
+OPT_STEPS, LR = 4, 5e-1
 TIME = 15 * WL / LIGHT_SPEED
 DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE, N_CLAD), dims=2, safety_factor=0.95, points_per_wavelength=10)
+EPS_RANGE = EPS_CORE - EPS_CLAD
 
 def make_density_mask(structure, grid):
     """Create a boolean mask covering the cells that belong to ``structure``."""
@@ -299,6 +300,8 @@ def update_design_from_density(density_values, label_prefix="iteration", preview
     return filtered, permittivity_grid
 
 objective_history = []
+density_update_history = []
+permittivity_update_history = []
 for opt_step in range(1, OPT_STEPS + 1):
     print(f"\n--- Optimization step {opt_step}/{OPT_STEPS} ---")
 
@@ -355,6 +358,19 @@ for opt_step in range(1, OPT_STEPS + 1):
 
     if np.any(mask):
         grad_max = float(np.max(np.abs(applied_gradient[mask])))
+        density_delta_masked = density_delta[mask]
+        density_delta_abs = np.abs(density_delta_masked)
+        changed_density_cells = int(np.count_nonzero(density_delta_abs > 1e-9))
+        density_delta_mean = float(density_delta_abs.mean())
+        density_update_history.append(
+            {
+                "l2": density_change_norm,
+                "linf": float(density_delta_abs.max()),
+                "mean": density_delta_mean,
+                "changed": changed_density_cells,
+                "total": int(density_delta_masked.size),
+            }
+        )
     else:
         grad_max = 0.0
 
@@ -374,6 +390,11 @@ for opt_step in range(1, OPT_STEPS + 1):
             f"min {masked_density.min():.3e}, max {masked_density.max():.3e}, "
             f"mean {masked_density.mean():.3e}"
         )
+        print(
+            "Density update diagnostics: "
+            f"mean |Δ| {density_delta_mean:.3e}, "
+            f"changed cells (>1e-9): {changed_density_cells}/{density_delta_masked.size}"
+        )
 
     filtered_density_post, updated_permittivity_grid = update_design_from_density(design_density,
         label_prefix="Post-update", preview=False, step=opt_step)
@@ -383,6 +404,36 @@ for opt_step in range(1, OPT_STEPS + 1):
     print(f"Permittivity grid update norm inside mask: {change_norm:.6e}")
     if change_norm == 0.0:
         print("Warning: No change detected in design region permittivity after update.")
+    else:
+        delta_abs = np.abs(delta_masked)
+        perm_changed = int(np.count_nonzero(delta_abs > 1e-9))
+        perm_max = float(delta_abs.max()) if delta_abs.size else 0.0
+        perm_mean = float(delta_abs.mean()) if delta_abs.size else 0.0
+        perm_min_val = float(updated_permittivity_grid[mask].min()) if np.any(mask) else 0.0
+        perm_max_val = float(updated_permittivity_grid[mask].max()) if np.any(mask) else 0.0
+        permittivity_update_history.append(
+            {
+                "l2": float(change_norm),
+                "linf": perm_max,
+                "mean": perm_mean,
+                "changed": perm_changed,
+                "total": int(delta_masked.size),
+                "min": perm_min_val,
+                "max": perm_max_val,
+            }
+        )
+        print(
+            "Permittivity update diagnostics: "
+            f"max |Δε| {perm_max:.3e}, mean |Δε| {perm_mean:.3e}, "
+            f"changed cells (>1e-9): {perm_changed}/{delta_masked.size}"
+        )
+        delta_span = perm_max_val - perm_min_val
+        span_fraction = delta_span / EPS_RANGE if EPS_RANGE else float("nan")
+        print(
+            "Permittivity range now: "
+            f"[{perm_min_val:.3e}, {perm_max_val:.3e}] "
+            f"(span {delta_span:.3e}, {span_fraction:.3%} of allowed range)"
+        )
 
     updated_filename = f"updated_permittivity_step{opt_step}.png"
     preview_permittivity(updated_permittivity_grid, getattr(grid, "dx", DX), getattr(grid, "dy", DX),
@@ -430,6 +481,24 @@ for opt_step in range(1, OPT_STEPS + 1):
         f"Overlap gradient, step {opt_step}", filename=f"overlap_gradient_step{opt_step}.png",
         cmap="magma", use_abs=False, colorbar_label="Gradient (a.u.)", show=False)
 
+
+if density_update_history:
+    print("\nDensity update diagnostics summary:")
+    for idx, stats in enumerate(density_update_history, start=1):
+        print(
+            f"  Step {idx}: ΔL2 {stats['l2']:.3e}, max |Δ| {stats['linf']:.3e}, "
+            f"mean |Δ| {stats['mean']:.3e}, changed cells {stats['changed']}/{stats['total']}"
+        )
+
+if permittivity_update_history:
+    print("\nPermittivity update diagnostics summary:")
+    for idx, stats in enumerate(permittivity_update_history, start=1):
+        span_fraction = (stats['max'] - stats['min']) / EPS_RANGE if EPS_RANGE else float("nan")
+        print(
+            f"  Step {idx}: ΔL2 {stats['l2']:.3e}, max |Δε| {stats['linf']:.3e}, "
+            f"mean |Δε| {stats['mean']:.3e}, changed cells {stats['changed']}/{stats['total']}, "
+            f"range [{stats['min']:.3e}, {stats['max']:.3e}] (~{span_fraction:.3%} of allowed)"
+        )
 
 # Final design evaluation
 final_density, permittivity_grid = update_design_from_density(design_density, label_prefix="Final", preview=True, step="final")
