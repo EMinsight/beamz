@@ -89,6 +89,15 @@ for step in range(1,STEPS+1):
     # Apply the density update
     density, _, _, _, _ = apply_density_update(density, grad/((np.abs(grad).max()) or 1.0), mask, learning_rate=LR, blur_radius=1)
     density[~mask] = 0.0 # Reset density outside the design region
+    density_fig, density_ax = plt.subplots(figsize=(6, 6))
+    density_im = density_ax.imshow(density, origin="lower", extent=(0, design.width, 0, design.height), cmap="viridis", aspect="equal", vmin=0.0, vmax=1.0)
+    plt.colorbar(density_im, ax=density_ax, orientation="vertical", label="Density")
+    density_ax.set_title(f"Density Step {step}")
+    density_ax.set_xlabel("x (m)")
+    density_ax.set_ylabel("y (m)")
+    density_path = f"density_step{step:03d}.png"
+    density_fig.savefig(density_path, dpi=200, bbox_inches="tight")
+    plt.close(density_fig)
     obj = float(next(iter(fres.get("objectives",{"out":0}).values())))
     print(f"step {step}: transmission {-obj:.4e}")
 
