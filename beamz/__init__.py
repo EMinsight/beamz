@@ -15,15 +15,18 @@ from beamz.design.structures import (
     Rectangle, Circle, Ring, 
     CircularBend, Polygon, Taper
 )
-from beamz.design.sources import ModeSource, GaussianSource
-from beamz.design.monitors import Monitor
-from beamz.design.signals import ramped_cosine, plot_signal
-from beamz.design.mode import solve_modes, slab_mode_source
+from beamz.devices.sources import ModeSource, GaussianSource
+from beamz.devices.monitors import Monitor
+from beamz.devices.signals import ramped_cosine, plot_signal
+from beamz.devices.mode import solve_modes, slab_mode_source
 
 # Import simulation-related classes and functions
 from beamz.simulation.meshing import RegularGrid
 from beamz.simulation.fdtd import FDTD
 from beamz.simulation.backends import get_backend
+
+from beamz.optimization.optimizers import Optimizer
+from beamz.optimization.topology import compute_overlap_gradient
 
 # Import optimization-related classes
 # (Currently empty, to be filled as the module grows)
@@ -81,6 +84,10 @@ _exports = {
     'RegularGrid': RegularGrid,
     'FDTD': FDTD,
     'get_backend': get_backend,
+
+    # Optimization
+    'Optimizer': Optimizer,
+    'compute_overlap_gradient': compute_overlap_gradient,
     
     # UI helpers
     'display_header': display_header,

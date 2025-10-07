@@ -1,8 +1,6 @@
-"""
-Optimization module for BEAMZ - Contains adjoint optimization functionality.
-"""
+"""Adjoint-based optimization helpers for BEAMZ."""
 
-# Currently empty as the module is under development
-# Will be populated as optimization features are added
+from . import topology
+from .optimizers import Optimizer
 
-__all__ = [] 
+__all__ = ["topology", "Optimizer"]

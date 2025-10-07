@@ -70,3 +70,5 @@ site/
 project_ideas/
 MARKETING_2.md
 TODO.md
+*.png
+*.npy

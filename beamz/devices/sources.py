@@ -2,7 +2,7 @@ import numpy as np
 from beamz.const import LIGHT_SPEED, µm
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from beamz.design.mode import solve_modes
+from beamz.devices.mode import solve_modes
 
 class GaussianSource():
     """A Gaussian current distribution in space.
@@ -126,7 +126,7 @@ class ModeSource():
             # This assumes a simple rectangular waveguide structure
             # Extract core/cladding indices for analytical solver
             try:
-                from beamz.design.mode import slab_mode_source
+                from beamz.devices.mode import slab_mode_source
                 
                 # Sample x coordinates along the cross-section
                 num_points = eps_1d.size

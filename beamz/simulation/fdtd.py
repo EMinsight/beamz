@@ -1,10 +1,12 @@
-from typing import Dict, Optional
+from typing import Dict, Optional, Sequence
 import datetime
 import numpy as np
 
 from beamz.const import *
-from beamz.simulation.meshing import RegularGrid, RegularGrid3D
+from beamz.simulation.meshing import BaseMeshGrid, RegularGrid, RegularGrid3D
 from beamz.design.core import *
+from beamz.devices.sources import ModeSource, GaussianSource
+from beamz.devices.monitors import Monitor
 from beamz.simulation.backends import get_backend
 from beamz.helpers import display_status, create_rich_progress, display_parameters, display_time_elapsed
 from beamz import viz as viz
@@ -18,21 +20,64 @@ class FDTD:
     - 2D: TE-polarized (Ez, Hx, Hy fields)
     - 3D: Full Maxwell equations (Ex, Ey, Ez, Hx, Hy, Hz fields)
     """
-    def __init__(self, design, time, mesh: str = "regular", resolution: float = 0.02*µm, backend="numpy", backend_options=None):
+    def __init__(self, design, time, mesh: str = "regular", resolution: float = 0.02*µm, backend="numpy", 
+                        backend_options=None, devices=None):
+        provided_mesh = None
+        using_provided_mesh = False
+
+        if isinstance(design, BaseMeshGrid):
+            provided_mesh = design
+            using_provided_mesh = True
+            mesh_design = getattr(provided_mesh, "design", None)
+            if mesh_design is None:
+                raise ValueError("Provided mesh must expose its originating design via the `design` attribute.")
+            design = mesh_design
+
         # Initialize the design and detect dimensionality
         self.design = design
-        self.resolution = resolution
         self.is_3d = design.is_3d and design.depth > 0
-        
-        # Initialize appropriate mesh based on dimensionality
-        if mesh == "regular":
+
+        mesh_obj = None
+        if provided_mesh is not None:
+            mesh_obj = provided_mesh
+        elif isinstance(mesh, BaseMeshGrid):
+            mesh_obj = mesh
+            using_provided_mesh = True
+        elif mesh == "regular":
             if self.is_3d:
-                self.mesh = RegularGrid3D(design=self.design, resolution_xy=self.resolution)
-                display_status("Using 3D FDTD with full Maxwell equations", "info")
+                mesh_obj = RegularGrid3D(design=self.design, resolution_xy=resolution)
             else:
-                self.mesh = RegularGrid(design=self.design, resolution=self.resolution)
-                display_status("Using 2D FDTD with TE-polarized Maxwell equations", "info")
-        else: self.mesh = None
+                mesh_obj = RegularGrid(design=self.design, resolution=resolution)
+        else:
+            raise ValueError(f"Unsupported mesh specification: {mesh!r}")
+
+        if mesh_obj is None:
+            raise ValueError("Failed to initialize FDTD mesh.")
+
+        if hasattr(mesh_obj, "design") and mesh_obj.design is not None and mesh_obj.design is not self.design:
+            raise ValueError("Provided mesh was generated from a different design instance.")
+
+        if self.is_3d and not isinstance(mesh_obj, RegularGrid3D):
+            raise ValueError("3D designs require a RegularGrid3D mesh.")
+        if not self.is_3d and not isinstance(mesh_obj, RegularGrid):
+            raise ValueError("2D designs require a RegularGrid mesh.")
+
+        self.mesh = mesh_obj
+
+        if hasattr(self.mesh, "resolution"):
+            self.resolution = self.mesh.resolution
+        elif hasattr(self.mesh, "resolution_xy"):
+            self.resolution = self.mesh.resolution_xy
+        else:
+            self.resolution = resolution
+
+        if using_provided_mesh:
+            display_status("Using provided rasterized mesh", "info")
+
+        if self.is_3d:
+            display_status("Using 3D FDTD with full Maxwell equations", "info")
+        else:
+            display_status("Using 2D FDTD with TE-polarized Maxwell equations", "info")
         
         # Set grid resolutions
         self.dx = self.mesh.dx if hasattr(self.mesh, 'dx') else self.mesh.resolution_xy
@@ -66,7 +111,22 @@ class FDTD:
         self.num_steps = len(self.time)
         
         # Initialize the sources
-        self.sources = self.design.sources
+        if devices is None:
+            devices = []
+        self.sources = list(self.design.sources)
+        self.monitors = list(self.design.monitors)
+
+        for device in devices:
+            if isinstance(device, (ModeSource, GaussianSource)):
+                if device.design is None:
+                    device.design = self.design
+                self.sources.append(device)
+            elif isinstance(device, Monitor):
+                if device.design is None:
+                    device.design = self.design
+                self.monitors.append(device)
+            else:
+                raise TypeError(f"Unsupported device type: {type(device)}")
         
         # Initialize the results based on dimensionality
         if self.is_3d: self.results = {"Ex": [], "Ey": [], "Ez": [], "Hx": [], "Hy": [], "Hz": [], "t": []}
@@ -249,12 +309,12 @@ class FDTD:
         Ey[1:-1, :, 1:-1] = factor_ey * Ey[1:-1, :, 1:-1] + source_ey * (curlH_y)
         Ez[:, 1:-1, 1:-1] = factor_ez * Ez[:, 1:-1, 1:-1] + source_ez * (curlH_z)
 
-    def initialize_simulation(self, save=True, live=True, axis_scale=[-1,1], save_animation=False, 
-                             animation_filename='fdtd_animation.mp4', clean_visualization=True, 
+    def initialize_simulation(self, save=True, live=True, axis_scale=[-1,1], save_animation=False,
+                             animation_filename='fdtd_animation.mp4', clean_visualization=True,
                              save_fields=None, decimate_save=1, accumulate_power=False,
-                             save_memory_mode=False):
+                             save_memory_mode=False, fields_to_cache: Optional[Sequence[str]] = None):
         """Initialize the simulation before running steps.
-        
+
         Args:
             save: Whether to save field data at each step.
             live: Whether to show live animation of the simulation.
@@ -265,6 +325,7 @@ class FDTD:
             decimate_save: Save only every nth time step (1 = save all, 10 = save every 10th step)
             accumulate_power: Instead of saving all fields, accumulate power and save that
             save_memory_mode: If True, avoid storing all field data and only keep monitors/power
+            fields_to_cache: Fields that should always be cached (complex values preserved)
         """
         # Set default save_fields based on dimensionality
         if save_fields is None:
@@ -272,7 +333,10 @@ class FDTD:
                 save_fields = ['Ex', 'Ey', 'Ez', 'Hx', 'Hy', 'Hz']
             else:
                 save_fields = ['Ez', 'Hx', 'Hy']
-        
+        self._cache_fields = list(fields_to_cache) if fields_to_cache else []
+        self._cache_frequency = 1 if self._cache_fields else None
+
+
         # Record start time
         self.start_time = datetime.datetime.now()
         # Initialize simulation state
@@ -284,11 +348,15 @@ class FDTD:
         self._decimate_save = decimate_save
         self._live = live
         self._axis_scale = axis_scale
-        
+
+        # Reset stored results for a new run
+        for key in list(self.results.keys()):
+            self.results[key] = []
+
         # Save mode flags as class attributes for monitor access
         self.save_memory_mode = save_memory_mode
         self.accumulate_power = accumulate_power
-        
+
         # Display simulation header and parameters
         sim_params = {
             "Domain size": f"{self.design.width:.2e} x {self.design.height:.2e} m",
@@ -330,11 +398,14 @@ class FDTD:
             
         # Apply additional decimation based on user setting
         self._effective_save_freq = save_freq * decimate_save
+        if self._cache_frequency is None:
+            self._cache_frequency = self._effective_save_freq
         
         # If in save_memory_mode, clear any existing results to start fresh
-        if save_memory_mode: 
+        if save_memory_mode and not self._cache_fields:
             for field in self.results:
-                if field != 't': self.results[field] = []
+                if field != 't':
+                    self.results[field] = []
             display_status("Memory-saving mode active: Only storing monitor data and/or power accumulation", "info")
 
     def step(self) -> bool:
@@ -369,14 +440,29 @@ class FDTD:
         # Display memory usage estimate
         memory_usage = self.estimate_memory_usage(time_steps=self.num_steps, save_fields=self._save_fields)
         display_status(f"Estimated memory usage: {memory_usage['Full simulation']['Total memory (MB)']:.2f} MB", "info")
+        objective_results: Dict[str, float] = {}
+        for idx, monitor in enumerate(self.monitors):
+            if hasattr(monitor, 'evaluate_objective'):
+                value = monitor.evaluate_objective()
+            else:
+                value = None
+            if value is None:
+                continue
+            key = getattr(monitor, 'name', None) or f"monitor_{idx}"
+            objective_results[key] = value
+        if objective_results:
+            self.results['objectives'] = objective_results
+        else:
+            self.results.pop('objectives', None)
+        self.last_objectives = objective_results
         return self.results
 
-    def run(self, steps: Optional[int] = None, save=True, live=True, axis_scale=[-1,1], save_animation=False, 
-            animation_filename='fdtd_animation.mp4', clean_visualization=True, 
+    def run(self, steps: Optional[int] = None, save=True, live=True, axis_scale=[-1,1], save_animation=False,
+            animation_filename='fdtd_animation.mp4', clean_visualization=True,
             save_fields=None, decimate_save=1, accumulate_power=False,
-            save_memory_mode=False) -> Dict:
+            save_memory_mode=False, fields_to_cache: Optional[Sequence[str]] = None) -> Dict:
         """Run the complete simulation using the new step-by-step approach.
-        
+
         Args:
             steps: Number of steps to run. If None, run until the end of the time array.
             save: Whether to save field data at each step.
@@ -388,18 +474,20 @@ class FDTD:
             decimate_save: Save only every nth time step (1 = save all, 10 = save every 10th step)
             accumulate_power: Instead of saving all fields, accumulate power and save that
             save_memory_mode: If True, avoid storing all field data and only keep monitors/power
-        
+            fields_to_cache: Fields that should always be cached even when memory saving
+
         Returns:
             Dictionary containing the simulation results.
         """
         # Initialize the simulation
-        self.initialize_simulation(save=save, live=live, axis_scale=axis_scale, 
-                                  save_animation=save_animation, 
+        self.initialize_simulation(save=save, live=live, axis_scale=axis_scale,
+                                  save_animation=save_animation,
                                   animation_filename=animation_filename,
                                   clean_visualization=clean_visualization,
                                   save_fields=save_fields, decimate_save=decimate_save,
-                                  accumulate_power=accumulate_power, 
-                                  save_memory_mode=save_memory_mode)
+                                  accumulate_power=accumulate_power,
+                                  save_memory_mode=save_memory_mode,
+                                  fields_to_cache=fields_to_cache)
         
         # Run the simulation with progress tracking
         with create_rich_progress() as progress:

@@ -150,8 +150,8 @@ class RegularGrid(BaseMeshGrid):
                     progress.update(task, advance=1)
                     continue
                 # Skip sources and monitors (they don't have materials)
-                from beamz.design.sources import ModeSource, GaussianSource
-                from beamz.design.monitors import Monitor
+                from beamz.devices.sources import ModeSource, GaussianSource
+                from beamz.devices.monitors import Monitor
                 if isinstance(structure, (ModeSource, GaussianSource, Monitor)):
                     progress.update(task, advance=1)
                     continue

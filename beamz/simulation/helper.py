@@ -1,5 +1,5 @@
 import numpy as np
-from beamz.design.sources import ModeSource, GaussianSource
+from beamz.devices.sources import ModeSource, GaussianSource
 
 
 def apply_sources(fdtd) -> None:
@@ -34,20 +34,24 @@ def apply_sources(fdtd) -> None:
                 else:
                     source_value = amplitude * modulation
 
+                enforce_direction = getattr(source, "enforce_direction", True)
+
                 if fdtd.is_3d:
                     fdtd.Ez[z_target, y, x] += source_value
-                    if source.direction == "+x" and x > 0: fdtd.Ez[z_target, y, x-1] = 0
-                    elif source.direction == "-x" and x < fdtd.nx-1: fdtd.Ez[z_target, y, x+1] = 0
-                    elif source.direction == "+y" and y > 0: fdtd.Ez[z_target, y-1, x] = 0
-                    elif source.direction == "-y" and y < fdtd.ny-1: fdtd.Ez[z_target, y+1, x] = 0
-                    elif source.direction == "+z" and z_target > 0: fdtd.Ez[z_target-1, y, x] = 0
-                    elif source.direction == "-z" and z_target < fdtd.Ez.shape[0]-1: fdtd.Ez[z_target+1, y, x] = 0
+                    if enforce_direction:
+                        if source.direction == "+x" and x > 0: fdtd.Ez[z_target, y, x-1] = 0
+                        elif source.direction == "-x" and x < fdtd.nx-1: fdtd.Ez[z_target, y, x+1] = 0
+                        elif source.direction == "+y" and y > 0: fdtd.Ez[z_target, y-1, x] = 0
+                        elif source.direction == "-y" and y < fdtd.ny-1: fdtd.Ez[z_target, y+1, x] = 0
+                        elif source.direction == "+z" and z_target > 0: fdtd.Ez[z_target-1, y, x] = 0
+                        elif source.direction == "-z" and z_target < fdtd.Ez.shape[0]-1: fdtd.Ez[z_target+1, y, x] = 0
                 else:
                     fdtd.Ez[y, x] += source_value
-                    if source.direction == "+x" and x > 0: fdtd.Ez[y, x-1] = 0
-                    elif source.direction == "-x" and x < fdtd.nx-1: fdtd.Ez[y, x+1] = 0
-                    elif source.direction == "+y" and y > 0: fdtd.Ez[y-1, x] = 0
-                    elif source.direction == "-y" and y < fdtd.ny-1: fdtd.Ez[y+1, x] = 0
+                    if enforce_direction:
+                        if source.direction == "+x" and x > 0: fdtd.Ez[y, x-1] = 0
+                        elif source.direction == "-x" and x < fdtd.nx-1: fdtd.Ez[y, x+1] = 0
+                        elif source.direction == "+y" and y > 0: fdtd.Ez[y-1, x] = 0
+                        elif source.direction == "-y" and y < fdtd.ny-1: fdtd.Ez[y+1, x] = 0
 
         elif isinstance(source, GaussianSource):
             modulation = source.signal[fdtd.current_step]
@@ -184,19 +188,49 @@ def accumulate_power(fdtd) -> None:
 
 def save_step_results(fdtd) -> None:
     """Save results for this time step if requested and at the right frequency."""
-    if (fdtd._save_results and not fdtd.save_memory_mode and 
-        (fdtd.current_step % fdtd._effective_save_freq == 0 or fdtd.current_step == fdtd.num_steps - 1)):
-        fdtd.results['t'].append(fdtd.t)
-        for field in fdtd._save_fields:
-            arr = getattr(fdtd, field)
-            arr_np = fdtd.backend.to_numpy(fdtd.backend.copy(arr))
-            if np.iscomplexobj(arr_np):
-                arr_np = np.abs(arr_np)
-            fdtd.results[field].append(arr_np)
+    should_save_full = (
+        fdtd._save_results
+        and not fdtd.save_memory_mode
+        and (fdtd.current_step % fdtd._effective_save_freq == 0 or fdtd.current_step == fdtd.num_steps - 1)
+    )
+
+    cache_frequency = getattr(fdtd, "_cache_frequency", fdtd._effective_save_freq)
+    should_cache = (
+        fdtd._save_results
+        and fdtd._cache_fields
+        and (
+            fdtd.current_step % cache_frequency == 0
+            or fdtd.current_step == fdtd.num_steps - 1
+        )
+    )
+
+    if not should_save_full and not should_cache:
+        return
+
+    if 't' not in fdtd.results:
+        fdtd.results['t'] = []
+    fdtd.results['t'].append(fdtd.t)
+
+    fields_to_store = []
+    if should_save_full:
+        fields_to_store.extend(fdtd._save_fields)
+    if should_cache:
+        for field in fdtd._cache_fields:
+            if field not in fields_to_store:
+                fields_to_store.append(field)
+
+    for field in fields_to_store:
+        arr = getattr(fdtd, field)
+        arr_np = fdtd.backend.to_numpy(fdtd.backend.copy(arr))
+        if np.iscomplexobj(arr_np) and (field not in fdtd._cache_fields):
+            arr_np = np.abs(arr_np)
+        if field not in fdtd.results:
+            fdtd.results[field] = []
+        fdtd.results[field].append(arr_np)
 
 def record_monitor_data(fdtd, step: int) -> None:
     """Record field data at monitor locations for current step."""
-    if not fdtd.design.monitors:
+    if not fdtd.monitors:
         return
     if fdtd.is_3d:
         Ex_np = fdtd.backend.to_numpy(fdtd.Ex)
@@ -205,14 +239,14 @@ def record_monitor_data(fdtd, step: int) -> None:
         Hx_np = fdtd.backend.to_numpy(fdtd.Hx)
         Hy_np = fdtd.backend.to_numpy(fdtd.Hy)
         Hz_np = fdtd.backend.to_numpy(fdtd.Hz)
-        for monitor in fdtd.design.monitors:
+        for monitor in fdtd.monitors:
             if hasattr(monitor, 'record_fields') and callable(monitor.record_fields):
                 monitor.record_fields(Ex_np, Ey_np, Ez_np, Hx_np, Hy_np, Hz_np, fdtd.t, fdtd.dx, fdtd.dy, fdtd.dz, step=step)
     else:
         Ez_np = fdtd.backend.to_numpy(fdtd.Ez)
         Hx_np = fdtd.backend.to_numpy(fdtd.Hx)
         Hy_np = fdtd.backend.to_numpy(fdtd.Hy)
-        for monitor in fdtd.design.monitors:
+        for monitor in fdtd.monitors:
             if hasattr(monitor, 'record_fields') and callable(monitor.record_fields):
                 if hasattr(monitor, 'is_3d'):
                     original_is_3d = monitor.is_3d

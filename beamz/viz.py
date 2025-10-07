@@ -194,8 +194,8 @@ def show_design_3d(design, unify_structures=True, max_vertices_for_unification=5
         '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'
     ]
 
-    from beamz.design.sources import ModeSource, GaussianSource
-    from beamz.design.monitors import Monitor
+    from beamz.devices.sources import ModeSource, GaussianSource
+    from beamz.devices.monitors import Monitor
 
     material_colors = {}
     color_index = 0
