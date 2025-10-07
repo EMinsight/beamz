@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 
 plt.switch_backend("Agg")
 from beamz import *
-from beamz.optimization.topology import apply_density_update
+from beamz.optimization.topology import blur_density, project_density
 from beamz.optimization.optimizers import Optimizer
 
 # Parameters
@@ -16,6 +16,10 @@ STEPS, LR = 30, 0.1
 DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE,N_CLAD), dims=2, safety_factor=0.99, points_per_wavelength=10)
 TIME = 25*WL/LIGHT_SPEED
 t = np.arange(0, TIME, DT)
+
+FILTER_RADIUS = 0.2*µm
+PROJECTION_BETA = 8.0
+PROJECTION_ETA = 0.5
 
 # Create the design
 signal = ramped_cosine(t=t,amplitude=1.0, frequency=LIGHT_SPEED/WL, t_max=TIME, ramp_duration=5*WL/LIGHT_SPEED, phase=0)
@@ -33,21 +37,32 @@ grid = RegularGrid(design=design, resolution=DX)
 base = grid.permittivity.copy()
 mask = np.zeros_like(base,bool)
 dx, dy = getattr(grid,"dx",DX), getattr(grid,"dy",DX)
+min_cell = float(min(dx, dy))
+filter_radius_cells = max(1, int(round(FILTER_RADIUS / min_cell)))
 xs, ys = (np.arange(mask.shape[1])+0.5)*dx, (np.arange(mask.shape[0])+0.5)*dy
 minx, miny, _, maxx, maxy, _ = region.get_bounding_box()
 mask[(ys[:,None]>=miny)&(ys[:,None]<=maxy)&(xs[None,:]>=minx)&(xs[None,:]<=maxx)] = True
+
+def apply_density_filters(values):
+    """Apply spatial blur then projection to enforce manufacturing filters."""
+    blurred = blur_density(np.where(mask, values, 0.0), filter_radius_cells)
+    blurred = np.where(mask, blurred, 0.0)
+    projected = project_density(blurred, beta=PROJECTION_BETA, eta=PROJECTION_ETA)
+    projected = np.where(mask, projected, 0.0)
+    return blurred, projected
 rng = np.random.default_rng(0)
-density = np.zeros_like(base)
-density[mask] = rng.random(np.count_nonzero(mask))
+design_density = np.zeros_like(base)
+design_density[mask] = rng.random(np.count_nonzero(mask))
 objective_history = []
 optimizer = Optimizer(method="adam", learning_rate=LR)
+_, physical_density = apply_density_filters(design_density)
 
 # Optimization loop
 for step in range(1,STEPS+1):
     
     # Update the permittivity
     eps = base.copy()
-    eps[mask] = EPS_CLAD + density[mask]*(EPS_CORE-EPS_CLAD)
+    eps[mask] = EPS_CLAD + physical_density[mask]*(EPS_CORE-EPS_CLAD)
     np.copyto(grid.permittivity, eps)
     
     # Forward simulation, saving the Ez fields and objective value for all time steps
@@ -89,28 +104,27 @@ for step in range(1,STEPS+1):
     grad_fig.savefig(grad_path, dpi=200, bbox_inches="tight")
     plt.close(grad_fig)
 
-    # Apply the density update with Adam optimizer
-    grad_norm = grad / ((np.abs(grad).max()) or 1.0)
-    _, smoothed_grad, _, _, _ = apply_density_update(
-        density,
-        grad_norm,
-        mask,
-        learning_rate=0.0,
-        blur_radius=1,
-    )
-    adam_update = optimizer.step(smoothed_grad)
-    new_density = density + adam_update
-    new_density = np.where(mask, new_density, density)
-    new_density = np.clip(new_density, 0.0, 1.0)
-    density_delta = new_density - density
-    density = new_density
-    density[~mask] = 0.0  # Reset density outside the design region
+    # Apply blur and projection filtered update with Adam optimizer
+    grad_density = grad * (EPS_CORE - EPS_CLAD)
+    proj_derivative = PROJECTION_BETA * physical_density * (1.0 - physical_density)
+    grad_projected = grad_density * proj_derivative
+    grad_design = blur_density(grad_projected, filter_radius_cells)
+    grad_design = np.where(mask, grad_design, 0.0)
+    grad_norm = grad_design / ((np.abs(grad_design).max()) or 1.0)
+    adam_update = optimizer.step(grad_norm)
+    adam_update = np.where(mask, adam_update, 0.0)
+    new_design_density = design_density + adam_update
+    new_design_density = np.clip(new_design_density, 0.0, 1.0)
+    density_delta = new_design_density - design_density
+    design_density = np.where(mask, new_design_density, design_density)
+    design_density[~mask] = 0.0  # Reset density outside the design region
     update_norm = float(np.linalg.norm(density_delta[mask])) if np.any(mask) else 0.0
     max_update = float(np.max(np.abs(density_delta[mask]))) if np.any(mask) else 0.0
+    _, physical_density = apply_density_filters(design_density)
     density_fig, density_ax = plt.subplots(figsize=(6, 6))
-    density_im = density_ax.imshow(density, origin="lower", extent=(0, design.width, 0, design.height), cmap="viridis", aspect="equal", vmin=0.0, vmax=1.0)
+    density_im = density_ax.imshow(physical_density, origin="lower", extent=(0, design.width, 0, design.height), cmap="viridis", aspect="equal", vmin=0.0, vmax=1.0)
     plt.colorbar(density_im, ax=density_ax, orientation="vertical", label="Density")
-    density_ax.set_title(f"Density Step {step}")
+    density_ax.set_title(f"Projected Density Step {step}")
     density_ax.set_xlabel("x (m)")
     density_ax.set_ylabel("y (m)")
     density_path = f"density_step{step:03d}.png"
@@ -133,8 +147,9 @@ for step in range(1,STEPS+1):
     )
 
 # Final transmission
+_, physical_density = apply_density_filters(design_density)
 eps = base.copy()
-eps[mask] = EPS_CLAD+density[mask]*(EPS_CORE-EPS_CLAD)
+eps[mask] = EPS_CLAD+physical_density[mask]*(EPS_CORE-EPS_CLAD)
 np.copyto(grid.permittivity, eps)
 source = ModeSource(design=design, position=(2.5*µm,H/2), width=WG_W*4, wavelength=WL, signal=signal, direction="+x")
 monitor = Monitor(design=design, start=(W/2-WG_W*2,H-2.5*µm), end=(W/2+WG_W*2,H-2.5*µm),
