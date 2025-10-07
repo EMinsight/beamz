@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 plt.switch_backend("Agg")
 from beamz import *
 from beamz.optimization.topology import apply_density_update
+from beamz.optimization.optimizers import Optimizer
 
 # Parameters
 W = H = 15*µm
@@ -11,7 +12,7 @@ WG_W = 0.5*µm
 N_CORE, N_CLAD = 2.25, 1.444
 EPS_CORE, EPS_CLAD = N_CORE**2, N_CLAD**2
 WL = 1.55*µm
-STEPS, LR = 30, 0.5
+STEPS, LR = 30, 0.1
 DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE,N_CLAD), dims=2, safety_factor=0.99, points_per_wavelength=10)
 TIME = 25*WL/LIGHT_SPEED
 t = np.arange(0, TIME, DT)
@@ -39,6 +40,7 @@ rng = np.random.default_rng(0)
 density = np.zeros_like(base)
 density[mask] = rng.random(np.count_nonzero(mask))
 objective_history = []
+optimizer = Optimizer(method="adam", learning_rate=LR)
 
 # Optimization loop
 for step in range(1,STEPS+1):
@@ -87,9 +89,24 @@ for step in range(1,STEPS+1):
     grad_fig.savefig(grad_path, dpi=200, bbox_inches="tight")
     plt.close(grad_fig)
 
-    # Apply the density update
-    density, _, _, _, _ = apply_density_update(density, grad/((np.abs(grad).max()) or 1.0), mask, learning_rate=LR, blur_radius=1)
-    density[~mask] = 0.0 # Reset density outside the design region
+    # Apply the density update with Adam optimizer
+    grad_norm = grad / ((np.abs(grad).max()) or 1.0)
+    _, smoothed_grad, _, _, _ = apply_density_update(
+        density,
+        grad_norm,
+        mask,
+        learning_rate=0.0,
+        blur_radius=1,
+    )
+    adam_update = optimizer.step(smoothed_grad)
+    new_density = density + adam_update
+    new_density = np.where(mask, new_density, density)
+    new_density = np.clip(new_density, 0.0, 1.0)
+    density_delta = new_density - density
+    density = new_density
+    density[~mask] = 0.0  # Reset density outside the design region
+    update_norm = float(np.linalg.norm(density_delta[mask])) if np.any(mask) else 0.0
+    max_update = float(np.max(np.abs(density_delta[mask]))) if np.any(mask) else 0.0
     density_fig, density_ax = plt.subplots(figsize=(6, 6))
     density_im = density_ax.imshow(density, origin="lower", extent=(0, design.width, 0, design.height), cmap="viridis", aspect="equal", vmin=0.0, vmax=1.0)
     plt.colorbar(density_im, ax=density_ax, orientation="vertical", label="Density")
@@ -110,7 +127,10 @@ for step in range(1,STEPS+1):
     history_ax.grid(True, alpha=0.3)
     history_fig.savefig("objective_history.png", dpi=200, bbox_inches="tight")
     plt.close(history_fig)
-    print(f"step {step}: transmission {transmission:.4e}")
+    print(
+        f"step {step}: transmission {transmission:.4e} | "
+        f"update norm {update_norm:.3e} | max density update {max_update:.3e}"
+    )
 
 # Final transmission
 eps = base.copy()
