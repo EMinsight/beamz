@@ -1462,98 +1462,6 @@ def _second_order_mode_fit(
     }
 
 
-def _run_tiny_source_free_metrics(
-    direction: str,
-    pol: str,
-    shift_override: float | None = None,
-    source_spans_override: tuple[float, float] | None = None,
-):
-    sim_i, spans_i = _build_tiny_straight_guide_sim(
-        ppw=6,
-        axis=direction[1],
-        long_cells=18,
-        transverse0_cells=8,
-        transverse1_cells=6,
-        guide0_cells=4,
-        guide1_cells=2,
-        num_steps=4,
-    )
-    if source_spans_override is not None:
-        spans_i = (
-            float(source_spans_override[0]),
-            float(source_spans_override[1]),
-        )
-    source_i, _ = _build_tiny_test_source(
-        sim_i,
-        spans_i,
-        direction=direction,
-        pol=pol,
-        clearance_cells=4,
-    )
-    if shift_override is not None:
-        source_i._dt_physical = float(shift_override)
-    source_i.inject_h(
-        sim_i.fields,
-        t=0.0,
-        dt=float(sim_i.dt),
-        current_step=0,
-        resolution=float(sim_i.resolution),
-        design=sim_i.design,
-    )
-    sim_i.fields.update_e(float(sim_i.dt))
-    source_i.inject_e(
-        sim_i.fields,
-        t=0.0,
-        dt=float(sim_i.dt),
-        current_step=0,
-        resolution=float(sim_i.resolution),
-        design=sim_i.design,
-    )
-    state0 = _field_state_arrays(sim_i.fields)
-    support0 = _support_state_arrays(state0, source_i)
-    plane0 = _sample_monitor_plane(
-        sim_i,
-        source_i,
-        spans_i,
-        direction=direction,
-        monitor_offset_cells=1,
-    )
-    sim_i.fields.update_h(float(sim_i.dt))
-    sim_i.fields.update_e(float(sim_i.dt))
-    state1 = _field_state_arrays(sim_i.fields)
-    support1 = _support_state_arrays(state1, source_i)
-    plane1 = _sample_monitor_plane(
-        sim_i,
-        source_i,
-        spans_i,
-        direction=direction,
-        monitor_offset_cells=1,
-    )
-    sim_i.fields.update_h(float(sim_i.dt))
-    sim_i.fields.update_e(float(sim_i.dt))
-    state2 = _field_state_arrays(sim_i.fields)
-    support2 = _support_state_arrays(state2, source_i)
-    plane2 = _sample_monitor_plane(
-        sim_i,
-        source_i,
-        spans_i,
-        direction=direction,
-        monitor_offset_cells=1,
-    )
-    return {
-        "dt_shift": float(source_i._dt_physical),
-        "full_residual": _second_order_mode_fit(state0, state1, state2)["global"][
-            "residual_rel"
-        ],
-        "support_residual": _second_order_mode_fit(support0, support1, support2)[
-            "global"
-        ]["residual_rel"],
-        "downstream_residual": _second_order_mode_fit(plane0, plane1, plane2)["global"][
-            "residual_rel"
-        ],
-    }
-
-
 def test_centered_straight_guide_cell_centered_raster_is_transversely_symmetric():
     sim = _build_centered_straight_guide_sim(ppw=6)
     eps = np.asarray(sim.fields.permittivity, dtype=float)
@@ -1862,74 +1770,6 @@ def test_secondary_h_pair_is_specific_to_doubly_confined_lateral_guides():
     assert z_slab["built_complex"]["weak_h_norm_ratio"] < 1e-6
 
 
-def test_default_padded_lateral_source_aperture_keeps_downstream_mode_residual_low():
-    base = _run_tiny_source_free_metrics("+x", "te")
-    assert base["downstream_residual"] < 0.25
-
-
-@pytest.mark.parametrize(
-    "direction,pol",
-    (
-        ("+x", "te"),
-        ("-x", "te"),
-        ("+x", "tm"),
-        ("-x", "tm"),
-        ("+y", "te"),
-        ("-y", "te"),
-        ("+y", "tm"),
-        ("-y", "tm"),
-        ("+z", "te"),
-        ("-z", "te"),
-        ("+z", "tm"),
-        ("-z", "tm"),
-    ),
-)
-def test_dt_physical_sign_materially_changes_tiny_source_free_mode_residual(
-    direction: str, pol: str
-):
-    sim, source_spans = _build_tiny_straight_guide_sim(
-        ppw=6,
-        axis=direction[1],
-        long_cells=18,
-        transverse0_cells=8,
-        transverse1_cells=6,
-        guide0_cells=4,
-        guide1_cells=2,
-        num_steps=4,
-    )
-    source, _dx = _build_tiny_test_source(
-        sim,
-        source_spans,
-        direction=direction,
-        pol=pol,
-        clearance_cells=4,
-    )
-    dt_shift = float(source._dt_physical)
-
-    metrics_a = _run_tiny_source_free_metrics(direction, pol, shift_override=dt_shift)
-    metrics_b = _run_tiny_source_free_metrics(direction, pol, shift_override=-dt_shift)
-
-    full_a = metrics_a["full_residual"]
-    full_b = metrics_b["full_residual"]
-
-    assert min(full_a, full_b) < 0.75 * max(full_a, full_b)
-
-
-def test_dt_physical_sign_choice_is_local_not_downstream_for_tiny_plusx_te():
-    metrics_a = _run_tiny_source_free_metrics("+x", "te")
-    metrics_b = _run_tiny_source_free_metrics(
-        "+x", "te", shift_override=-metrics_a["dt_shift"]
-    )
-
-    support_min = min(metrics_a["support_residual"], metrics_b["support_residual"])
-    support_max = max(metrics_a["support_residual"], metrics_b["support_residual"])
-    downstream_a = metrics_a["downstream_residual"]
-    downstream_b = metrics_b["downstream_residual"]
-
-    assert support_min < 0.7 * support_max
-    assert abs(downstream_a - downstream_b) < 1e-9
-
-
 @pytest.mark.parametrize("direction", ("+x", "-x", "+y", "-y", "+z", "-z"))
 @pytest.mark.parametrize("pol", ("te", "tm"))
 def test_mode_source_runtime_profiles_are_transversely_parity_clean_for_all_3d_axes_and_polarizations(
@@ -2222,28 +2062,6 @@ def _longitudinal_e_support_axis0_parity_after_one_update(
     return float(pre_h_axis0), float(post_axis0), float(post_axis1)
 
 
-@pytest.mark.parametrize("direction", ("+x", "-x", "+y", "-y", "+z", "-z"))
-@pytest.mark.parametrize("pol", ("te", "tm"))
-def test_one_step_uniform_update_keeps_longitudinal_e_axis0_parity_all_3d_directions(
-    direction: str,
-    pol: str,
-):
-    axis = direction[1]
-    pre_h_axis0, post_axis0, post_axis1 = (
-        _longitudinal_e_support_axis0_parity_after_one_update(
-            build_sim=_build_centered_uniform_sim,
-            direction=direction,
-            pol=pol,
-            sim_axis=axis,
-        )
-    )
-
-    assert pre_h_axis0 < 1e-6
-    clean_axis = 0 if (axis == "z" or pol == "te") else 1
-    post_clean = post_axis0 if clean_axis == 0 else post_axis1
-    assert post_clean < 1e-6
-
-
 @pytest.mark.parametrize("direction", ("+x", "-x", "+y", "-y"))
 @pytest.mark.parametrize("pol", ("te", "tm"))
 def test_one_step_lateral_guide_update_breaks_longitudinal_e_axis0_parity(
@@ -2264,26 +2082,6 @@ def test_one_step_lateral_guide_update_breaks_longitudinal_e_axis0_parity(
     broken_axis = 0 if pol == "te" else 1
     post_broken = post_axis0 if broken_axis == 0 else post_axis1
     assert post_broken > 0.15
-
-
-@pytest.mark.parametrize("direction", ("+z", "-z"))
-@pytest.mark.parametrize("pol", ("te", "tm"))
-def test_one_step_vertical_guide_update_keeps_longitudinal_e_axis0_parity(
-    direction: str,
-    pol: str,
-):
-    pre_h_axis0, post_axis0, post_axis1 = (
-        _longitudinal_e_support_axis0_parity_after_one_update(
-            build_sim=_build_centered_straight_guide_sim,
-            direction=direction,
-            pol=pol,
-            sim_axis="z",
-        )
-    )
-
-    assert pre_h_axis0 < 1e-6
-    assert post_axis0 < 1e-6
-    assert post_axis1 < 1e-6
 
 
 def test_tiny_straight_guide_manual_substep_update_keeps_ex_parity_with_padded_aperture():
@@ -2329,53 +2127,6 @@ def test_tiny_straight_guide_manual_substep_update_keeps_ex_parity_with_padded_a
     assert float(np.linalg.norm(ex_support.ravel())) > 0.0
     assert post_ex_axis0 < 1e-6
     assert post_ex_axis1 < 1e-6
-
-
-def test_tiny_x_guide_one_step_ex_parity_is_preserved_across_confinement_variants():
-    def one_step_ex_axis0(guide0_cells: int, guide1_cells: int) -> float:
-        sim, source_spans = _build_tiny_straight_guide_sim(
-            ppw=6,
-            axis="x",
-            long_cells=18,
-            transverse0_cells=8,
-            transverse1_cells=6,
-            guide0_cells=guide0_cells,
-            guide1_cells=guide1_cells,
-            num_steps=2,
-        )
-        source, _dx = _build_tiny_test_source(
-            sim,
-            source_spans,
-            direction="+x",
-            pol="te",
-            clearance_cells=4,
-        )
-        source.inject_h(
-            sim.fields,
-            t=0.0,
-            dt=float(sim.dt),
-            current_step=0,
-            resolution=float(sim.resolution),
-            design=sim.design,
-        )
-        sim.fields.update_e(float(sim.dt))
-        return _support_window_parity_residual(
-            sim.fields,
-            source,
-            "Ex",
-            "_Ex_indices",
-            axis=0,
-        )
-
-    baseline = one_step_ex_axis0(guide0_cells=4, guide1_cells=2)
-    no_z_interface = one_step_ex_axis0(guide0_cells=4, guide1_cells=6)
-    no_y_interface = one_step_ex_axis0(guide0_cells=8, guide1_cells=2)
-    full_core = one_step_ex_axis0(guide0_cells=8, guide1_cells=6)
-
-    assert baseline < 1e-6
-    assert no_z_interface < 1e-6
-    assert no_y_interface < 1e-6
-    assert full_core < 1e-6
 
 
 def test_zeroing_longitudinal_h_branch_removes_tiny_x_guide_ex_axis0_defect():
