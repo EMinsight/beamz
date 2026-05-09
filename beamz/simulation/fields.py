@@ -381,8 +381,8 @@ class Fields:
             nz, ny = dim1, dim2
             # TE-like set (Ex, Hy, Hz)
             self.Ex = jnp.zeros((nz, ny))
-            self.Hy = jnp.zeros((nz, ny - 1))
-            self.Hz = jnp.zeros((nz - 1, ny))
+            self.Hy = jnp.zeros((nz - 1, ny))
+            self.Hz = jnp.zeros((nz, ny - 1))
             # TM-like set (Hx, Ey, Ez)
             self.Hx = jnp.zeros((nz - 1, ny - 1))
             self.Ey = jnp.zeros((nz, ny - 1))
@@ -392,8 +392,8 @@ class Fields:
             nz, nx = dim1, dim2
             # TE-like set (Ey, Hx, Hz)
             self.Ey = jnp.zeros((nz, nx))
-            self.Hx = jnp.zeros((nz, nx - 1))
-            self.Hz = jnp.zeros((nz - 1, nx))
+            self.Hx = jnp.zeros((nz - 1, nx))
+            self.Hz = jnp.zeros((nz, nx - 1))
             # TM-like set (Hy, Ex, Ez)
             self.Hy = jnp.zeros((nz - 1, nx - 1))
             self.Ex = jnp.zeros((nz, nx - 1))

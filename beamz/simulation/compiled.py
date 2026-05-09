@@ -360,6 +360,15 @@ class CompiledSimulation:
     tm_h_source_y: jnp.ndarray
     tm_e_decay_z: jnp.ndarray
     tm_e_source_z: jnp.ndarray
+    sigma_m_hx_raw: jnp.ndarray
+    sigma_m_hy_raw: jnp.ndarray
+    sigma_m_hz_raw: jnp.ndarray
+    sig_x_raw: jnp.ndarray
+    eps_x_raw: jnp.ndarray
+    sig_y_raw: jnp.ndarray
+    eps_y_raw: jnp.ndarray
+    sig_z_raw: jnp.ndarray
+    eps_z_raw: jnp.ndarray
     tm_ez_mask: jnp.ndarray
     tm_hx_mask: jnp.ndarray
     tm_hy_mask: jnp.ndarray
@@ -1512,71 +1521,21 @@ class CompiledSimulation:
                         hy = h_decay_y * hy - h_source_y * curl_ey
                         hz = h_decay_z * hz - h_source_z * curl_ez
                     else:
-                        any_h_shell = (
-                            use_lossy_shell_hx
-                            or use_lossy_shell_hy
-                            or use_lossy_shell_hz
+                        curl_ex, curl_ey, curl_ez = ops.curl_e_to_h_3d(
+                            ex,
+                            ey,
+                            ez,
+                            resolution,
                         )
-                        if any_h_shell:
-                            # Shell path: lossless fused update, then lossy shell correction
-                            # without explicit curl arrays.
-                            hx_old, hy_old, hz_old = hx, hy, hz
-                            hx, hy, hz = ops.fused_update_h_lossless_3d(
-                                ex,
-                                ey,
-                                ez,
-                                hx,
-                                hy,
-                                hz,
-                                h_source_lossless_x,
-                                h_source_lossless_y,
-                                h_source_lossless_z,
-                                resolution,
-                            )
-                            if use_lossy_shell_hx:
-                                hx = self._apply_lossy_shell_from_lossless(
-                                    updated_lossless=hx,
-                                    old=hx_old,
-                                    decay=h_decay_x,
-                                    source=h_source_x,
-                                    source_lossless=h_source_lossless_x,
-                                    slabs=lossy_shell_hx,
-                                )
-                            if use_lossy_shell_hy:
-                                hy = self._apply_lossy_shell_from_lossless(
-                                    updated_lossless=hy,
-                                    old=hy_old,
-                                    decay=h_decay_y,
-                                    source=h_source_y,
-                                    source_lossless=h_source_lossless_y,
-                                    slabs=lossy_shell_hy,
-                                )
-                            if use_lossy_shell_hz:
-                                hz = self._apply_lossy_shell_from_lossless(
-                                    updated_lossless=hz,
-                                    old=hz_old,
-                                    decay=h_decay_z,
-                                    source=h_source_z,
-                                    source_lossless=h_source_lossless_z,
-                                    slabs=lossy_shell_hz,
-                                )
-                        else:
-                            # Fused path: no intermediate curl arrays
-                            hx, hy, hz = ops.fused_update_h_lossy_3d(
-                                ex,
-                                ey,
-                                ez,
-                                hx,
-                                hy,
-                                hz,
-                                h_decay_x,
-                                h_source_x,
-                                h_decay_y,
-                                h_source_y,
-                                h_decay_z,
-                                h_source_z,
-                                resolution,
-                            )
+                        hx = ops.advance_h_field(
+                            hx, curl_ex, self.sigma_m_hx_raw, dt
+                        )
+                        hy = ops.advance_h_field(
+                            hy, curl_ey, self.sigma_m_hy_raw, dt
+                        )
+                        hz = ops.advance_h_field(
+                            hz, curl_ez, self.sigma_m_hz_raw, dt
+                        )
                 elif use_physical_tm_xy:
                     if tm_full_pec:
                         curl_tm_hx, curl_tm_hy = full_pec_curl_e_to_h_2d_xy(
@@ -1735,73 +1694,41 @@ class CompiledSimulation:
                         ey = e_decay_y * ey + e_source_y * curl_hy
                         ez = e_decay_z * ez + e_source_z * curl_hz
                     else:
-                        any_e_shell = (
-                            use_lossy_shell_ex
-                            or use_lossy_shell_ey
-                            or use_lossy_shell_ez
+                        curl_hx, curl_hy, curl_hz = ops.curl_h_to_e_3d(
+                            hx,
+                            hy,
+                            hz,
+                            resolution,
+                            ex_shape=ex.shape,
+                            ey_shape=ey.shape,
+                            ez_shape=ez.shape,
+                            boundary_views=boundary_views,
                         )
-                        if any_e_shell:
-                            # Shell path: lossless fused update, then lossy shell correction
-                            # without explicit curl arrays.
-                            ex_old, ey_old, ez_old = ex, ey, ez
-                            ex, ey, ez = ops.fused_update_e_lossless_3d(
-                                hx,
-                                hy,
-                                hz,
-                                ex,
-                                ey,
-                                ez,
-                                e_source_lossless_x,
-                                e_source_lossless_y,
-                                e_source_lossless_z,
-                                resolution,
-                                boundary_views=boundary_views,
-                            )
-                            if use_lossy_shell_ex:
-                                ex = self._apply_lossy_shell_from_lossless(
-                                    updated_lossless=ex,
-                                    old=ex_old,
-                                    decay=e_decay_x,
-                                    source=e_source_x,
-                                    source_lossless=e_source_lossless_x,
-                                    slabs=lossy_shell_ex,
-                                )
-                            if use_lossy_shell_ey:
-                                ey = self._apply_lossy_shell_from_lossless(
-                                    updated_lossless=ey,
-                                    old=ey_old,
-                                    decay=e_decay_y,
-                                    source=e_source_y,
-                                    source_lossless=e_source_lossless_y,
-                                    slabs=lossy_shell_ey,
-                                )
-                            if use_lossy_shell_ez:
-                                ez = self._apply_lossy_shell_from_lossless(
-                                    updated_lossless=ez,
-                                    old=ez_old,
-                                    decay=e_decay_z,
-                                    source=e_source_z,
-                                    source_lossless=e_source_lossless_z,
-                                    slabs=lossy_shell_ez,
-                                )
-                        else:
-                            # Fused path: no intermediate curl arrays
-                            ex, ey, ez = ops.fused_update_e_lossy_3d(
-                                hx,
-                                hy,
-                                hz,
-                                ex,
-                                ey,
-                                ez,
-                                e_decay_x,
-                                e_source_x,
-                                e_decay_y,
-                                e_source_y,
-                                e_decay_z,
-                                e_source_z,
-                                resolution,
-                                boundary_views=boundary_views,
-                            )
+                        full_region = (slice(None), slice(None), slice(None))
+                        ex = ops.advance_e_field(
+                            ex,
+                            curl_hx,
+                            self.sig_x_raw,
+                            self.eps_x_raw,
+                            dt,
+                            full_region,
+                        )
+                        ey = ops.advance_e_field(
+                            ey,
+                            curl_hy,
+                            self.sig_y_raw,
+                            self.eps_y_raw,
+                            dt,
+                            full_region,
+                        )
+                        ez = ops.advance_e_field(
+                            ez,
+                            curl_hz,
+                            self.sig_z_raw,
+                            self.eps_z_raw,
+                            dt,
+                            full_region,
+                        )
                 elif use_physical_tm_xy:
                     curl_hx, curl_hy = xy_te_curl_h_to_e_2d(
                         hz,
@@ -1963,9 +1890,9 @@ class CompiledSimulation:
                     hx=hx,
                     hy=hy,
                     hz=hz,
-                    tm_ez=ez,
-                    tm_hx=hx,
-                    tm_hy=hy,
+                    tm_ez=ez if use_physical_tm_xy else eng.tm_ez,
+                    tm_hx=hx if use_physical_tm_xy else eng.tm_hx,
+                    tm_hy=hy if use_physical_tm_xy else eng.tm_hy,
                     fp_ex=fp_ex,
                     fp_ey=fp_ey,
                     fp_ez=fp_ez,
@@ -2869,6 +2796,15 @@ def compile_simulation(
         tm_h_source_y=tm_h_source_y,
         tm_e_decay_z=tm_e_decay_z,
         tm_e_source_z=tm_e_source_z,
+        sigma_m_hx_raw=fields.sigma_m_hx,
+        sigma_m_hy_raw=fields.sigma_m_hy,
+        sigma_m_hz_raw=fields.sigma_m_hz,
+        sig_x_raw=fields.sig_x,
+        eps_x_raw=fields.eps_x,
+        sig_y_raw=fields.sig_y,
+        eps_y_raw=fields.eps_y,
+        sig_z_raw=fields.sig_z,
+        eps_z_raw=fields.eps_z,
         tm_ez_mask=tm_ez_mask,
         tm_hx_mask=tm_hx_mask,
         tm_hy_mask=tm_hy_mask,

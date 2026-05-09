@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Literal
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -43,7 +42,6 @@ from beamz.simulation.compiled import (
     monitor_state_size,
 )
 from beamz.simulation.fields import Fields
-from beamz.simulation.ops import advance_e_field, advance_h_field
 from beamz.simulation.yee import component_coordinates_3d_um
 
 
@@ -655,275 +653,28 @@ class Simulation:
         return source_j, source_m
 
     def _create_jit_step(self):
-        """Create a JIT-compiled FDTD step function for maximum performance.
-
-        Returns a pure function that takes field arrays and returns updated field arrays.
-        """
-        resolution = self.resolution
-        dt = self.dt
-        plane_2d = self.plane_2d
-
-        if (not self.is_3d) and plane_2d == "xy":
-            raise ValueError(
-                "The xy-plane JIT step builder is not used for TMz. Use "
-                "Simulation.step()/run() or run_compiled(), which advance the "
-                "native TMz lattice."
-            )
-
-        # Material parameters (static for the simulation)
-        eps_x, sig_x, region_x = (
-            self.fields.eps_x,
-            self.fields.sig_x,
-            self.fields.region_x,
+        """Deprecated private helper kept only to fail loudly."""
+        raise NotImplementedError(
+            "Simulation._create_jit_step() is deprecated because it is not kept "
+            "mathematically equivalent to the supported `step()` and "
+            "`run_compiled()` engines."
         )
-        eps_y, sig_y, region_y = (
-            self.fields.eps_y,
-            self.fields.sig_y,
-            self.fields.region_y,
-        )
-        eps_z, sig_z, region_z = (
-            self.fields.eps_z,
-            self.fields.sig_z,
-            self.fields.region_z,
-        )
-        sigma_m_hx = self.fields.sigma_m_hx
-        sigma_m_hy = self.fields.sigma_m_hy
-        sigma_m_hz = self.fields.sigma_m_hz
-        metallic_masks = self.fields.metallic_masks or {}
-        mask_ex = metallic_masks.get("Ex")
-        mask_ey = metallic_masks.get("Ey")
-        mask_ez = metallic_masks.get("Ez")
-        mask_hx = metallic_masks.get("Hx")
-        mask_hy = metallic_masks.get("Hy")
-        mask_hz = metallic_masks.get("Hz")
-
-        from beamz.simulation.ops import (
-            curl_e_to_h_2d,
-            curl_e_to_h_3d,
-            curl_h_to_e_2d,
-            curl_h_to_e_3d,
-        )
-
-        if self.is_3d:
-            full_pec_3d = has_full_pec_3d(self.boundaries)
-
-            @jax.jit
-            def step(Ex, Ey, Ez, Hx, Hy, Hz):
-                if full_pec_3d:
-                    curlE_x, curlE_y, curlE_z = pec_curl_e_to_h_3d(
-                        Ex, Ey, Ez, resolution, Hx.shape, Hy.shape, Hz.shape
-                    )
-                else:
-                    curlE_x, curlE_y, curlE_z = curl_e_to_h_3d(Ex, Ey, Ez, resolution)
-                Hx_new = advance_h_field(Hx, curlE_x, sigma_m_hx, dt)
-                Hy_new = advance_h_field(Hy, curlE_y, sigma_m_hy, dt)
-                Hz_new = advance_h_field(Hz, curlE_z, sigma_m_hz, dt)
-                if mask_hx is not None:
-                    Hx_new = jnp.where(mask_hx, jnp.asarray(0.0, Hx_new.dtype), Hx_new)
-                if mask_hy is not None:
-                    Hy_new = jnp.where(mask_hy, jnp.asarray(0.0, Hy_new.dtype), Hy_new)
-                if mask_hz is not None:
-                    Hz_new = jnp.where(mask_hz, jnp.asarray(0.0, Hz_new.dtype), Hz_new)
-                if full_pec_3d:
-                    curlH_x, curlH_y, curlH_z = pec_curl_h_to_e_3d(
-                        Hx_new,
-                        Hy_new,
-                        Hz_new,
-                        resolution,
-                        Ex.shape,
-                        Ey.shape,
-                        Ez.shape,
-                    )
-                else:
-                    boundary_views = build_h_boundary_views_for_e_3d(
-                        Hx_new, Hy_new, Hz_new, self.boundaries
-                    )
-                    curlH_x, curlH_y, curlH_z = curl_h_to_e_3d(
-                        Hx_new,
-                        Hy_new,
-                        Hz_new,
-                        resolution,
-                        ex_shape=Ex.shape,
-                        ey_shape=Ey.shape,
-                        ez_shape=Ez.shape,
-                        boundary_views=boundary_views,
-                    )
-                Ex_new = advance_e_field(Ex, curlH_x, sig_x, eps_x, dt, region_x)
-                Ey_new = advance_e_field(Ey, curlH_y, sig_y, eps_y, dt, region_y)
-                Ez_new = advance_e_field(Ez, curlH_z, sig_z, eps_z, dt, region_z)
-                if mask_ex is not None:
-                    Ex_new = jnp.where(mask_ex, jnp.asarray(0.0, Ex_new.dtype), Ex_new)
-                if mask_ey is not None:
-                    Ey_new = jnp.where(mask_ey, jnp.asarray(0.0, Ey_new.dtype), Ey_new)
-                if mask_ez is not None:
-                    Ez_new = jnp.where(mask_ez, jnp.asarray(0.0, Ez_new.dtype), Ez_new)
-                return Ex_new, Ey_new, Ez_new, Hx_new, Hy_new, Hz_new
-
-        else:
-
-            @jax.jit
-            def step(Ex, Ey, Ez, Hx, Hy, Hz):
-                curlE_x, curlE_y, curlE_z = curl_e_to_h_2d(
-                    (Ex, Ey, Ez), resolution, plane=plane_2d
-                )
-                Hx_new = advance_h_field(Hx, curlE_x, sigma_m_hx, dt)
-                Hy_new = advance_h_field(Hy, curlE_y, sigma_m_hy, dt)
-                Hz_new = advance_h_field(Hz, curlE_z, sigma_m_hz, dt)
-                curlH_x, curlH_y, curlH_z = curl_h_to_e_2d(
-                    (Hx_new, Hy_new, Hz_new),
-                    resolution,
-                    (Ex.shape, Ey.shape, Ez.shape),
-                    plane=plane_2d,
-                )
-                Ex_new = advance_e_field(Ex, curlH_x, sig_x, eps_x, dt, region_x)
-                Ey_new = advance_e_field(Ey, curlH_y, sig_y, eps_y, dt, region_y)
-                Ez_new = advance_e_field(Ez, curlH_z, sig_z, eps_z, dt, region_z)
-                return Ex_new, Ey_new, Ez_new, Hx_new, Hy_new, Hz_new
-
-        return step
 
     def _create_jit_step_h(self):
-        """Create a JIT-compiled H-update function."""
-        resolution = self.resolution
-        dt = self.dt
-        plane_2d = self.plane_2d
-
-        if (not self.is_3d) and plane_2d == "xy":
-            raise ValueError(
-                "The xy-plane JIT H-step builder is not used for TMz. Use the "
-                "native TMz update path instead."
-            )
-
-        sigma_m_hx = self.fields.sigma_m_hx
-        sigma_m_hy = self.fields.sigma_m_hy
-        sigma_m_hz = self.fields.sigma_m_hz
-        metallic_masks = self.fields.metallic_masks or {}
-        mask_hx = metallic_masks.get("Hx")
-        mask_hy = metallic_masks.get("Hy")
-        mask_hz = metallic_masks.get("Hz")
-
-        from beamz.simulation.ops import curl_e_to_h_2d, curl_e_to_h_3d
-
-        if self.is_3d:
-            full_pec_3d = has_full_pec_3d(self.boundaries)
-
-            @jax.jit
-            def step_h(Ex, Ey, Ez, Hx, Hy, Hz):
-                if full_pec_3d:
-                    curlE_x, curlE_y, curlE_z = pec_curl_e_to_h_3d(
-                        Ex, Ey, Ez, resolution, Hx.shape, Hy.shape, Hz.shape
-                    )
-                else:
-                    curlE_x, curlE_y, curlE_z = curl_e_to_h_3d(Ex, Ey, Ez, resolution)
-                Hx_new = advance_h_field(Hx, curlE_x, sigma_m_hx, dt)
-                Hy_new = advance_h_field(Hy, curlE_y, sigma_m_hy, dt)
-                Hz_new = advance_h_field(Hz, curlE_z, sigma_m_hz, dt)
-                if mask_hx is not None:
-                    Hx_new = jnp.where(mask_hx, jnp.asarray(0.0, Hx_new.dtype), Hx_new)
-                if mask_hy is not None:
-                    Hy_new = jnp.where(mask_hy, jnp.asarray(0.0, Hy_new.dtype), Hy_new)
-                if mask_hz is not None:
-                    Hz_new = jnp.where(mask_hz, jnp.asarray(0.0, Hz_new.dtype), Hz_new)
-                return Hx_new, Hy_new, Hz_new
-
-        else:
-
-            @jax.jit
-            def step_h(Ex, Ey, Ez, Hx, Hy, Hz):
-                curlE_x, curlE_y, curlE_z = curl_e_to_h_2d(
-                    (Ex, Ey, Ez), resolution, plane=plane_2d
-                )
-                Hx_new = advance_h_field(Hx, curlE_x, sigma_m_hx, dt)
-                Hy_new = advance_h_field(Hy, curlE_y, sigma_m_hy, dt)
-                Hz_new = advance_h_field(Hz, curlE_z, sigma_m_hz, dt)
-                return Hx_new, Hy_new, Hz_new
-
-        return step_h
+        """Deprecated private helper kept only to fail loudly."""
+        raise NotImplementedError(
+            "Simulation._create_jit_step_h() is deprecated because it is not kept "
+            "mathematically equivalent to the supported `step()` and "
+            "`run_compiled()` engines."
+        )
 
     def _create_jit_step_e(self):
-        """Create a JIT-compiled E-update function."""
-        resolution = self.resolution
-        dt = self.dt
-        plane_2d = self.plane_2d
-
-        if (not self.is_3d) and plane_2d == "xy":
-            raise ValueError(
-                "The xy-plane JIT E-step builder is not used for TMz. Use the "
-                "native TMz update path instead."
-            )
-
-        eps_x, sig_x, region_x = (
-            self.fields.eps_x,
-            self.fields.sig_x,
-            self.fields.region_x,
+        """Deprecated private helper kept only to fail loudly."""
+        raise NotImplementedError(
+            "Simulation._create_jit_step_e() is deprecated because it is not kept "
+            "mathematically equivalent to the supported `step()` and "
+            "`run_compiled()` engines."
         )
-        eps_y, sig_y, region_y = (
-            self.fields.eps_y,
-            self.fields.sig_y,
-            self.fields.region_y,
-        )
-        eps_z, sig_z, region_z = (
-            self.fields.eps_z,
-            self.fields.sig_z,
-            self.fields.region_z,
-        )
-        metallic_masks = self.fields.metallic_masks or {}
-        mask_ex = metallic_masks.get("Ex")
-        mask_ey = metallic_masks.get("Ey")
-        mask_ez = metallic_masks.get("Ez")
-
-        from beamz.simulation.ops import curl_h_to_e_2d, curl_h_to_e_3d
-
-        if self.is_3d:
-            full_pec_3d = has_full_pec_3d(self.boundaries)
-
-            @jax.jit
-            def step_e(Ex, Ey, Ez, Hx, Hy, Hz):
-                if full_pec_3d:
-                    curlH_x, curlH_y, curlH_z = pec_curl_h_to_e_3d(
-                        Hx, Hy, Hz, resolution, Ex.shape, Ey.shape, Ez.shape
-                    )
-                else:
-                    boundary_views = build_h_boundary_views_for_e_3d(
-                        Hx, Hy, Hz, self.boundaries
-                    )
-                    curlH_x, curlH_y, curlH_z = curl_h_to_e_3d(
-                        Hx,
-                        Hy,
-                        Hz,
-                        resolution,
-                        ex_shape=Ex.shape,
-                        ey_shape=Ey.shape,
-                        ez_shape=Ez.shape,
-                        boundary_views=boundary_views,
-                    )
-                Ex_new = advance_e_field(Ex, curlH_x, sig_x, eps_x, dt, region_x)
-                Ey_new = advance_e_field(Ey, curlH_y, sig_y, eps_y, dt, region_y)
-                Ez_new = advance_e_field(Ez, curlH_z, sig_z, eps_z, dt, region_z)
-                if mask_ex is not None:
-                    Ex_new = jnp.where(mask_ex, jnp.asarray(0.0, Ex_new.dtype), Ex_new)
-                if mask_ey is not None:
-                    Ey_new = jnp.where(mask_ey, jnp.asarray(0.0, Ey_new.dtype), Ey_new)
-                if mask_ez is not None:
-                    Ez_new = jnp.where(mask_ez, jnp.asarray(0.0, Ez_new.dtype), Ez_new)
-                return Ex_new, Ey_new, Ez_new
-
-        else:
-
-            @jax.jit
-            def step_e(Ex, Ey, Ez, Hx, Hy, Hz):
-                curlH_x, curlH_y, curlH_z = curl_h_to_e_2d(
-                    (Hx, Hy, Hz),
-                    resolution,
-                    (Ex.shape, Ey.shape, Ez.shape),
-                    plane=plane_2d,
-                )
-                Ex_new = advance_e_field(Ex, curlH_x, sig_x, eps_x, dt, region_x)
-                Ey_new = advance_e_field(Ey, curlH_y, sig_y, eps_y, dt, region_y)
-                Ez_new = advance_e_field(Ez, curlH_z, sig_z, eps_z, dt, region_z)
-                return Ex_new, Ey_new, Ez_new
-
-        return step_e
 
     def compile(self, num_steps=None, snapshot_field=None, snapshot_interval=None):
         """Compile the v0.3 packed-data simulation program."""
