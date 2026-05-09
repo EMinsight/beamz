@@ -5,6 +5,8 @@ from beamz import LIGHT_SPEED, PML, ModeSource, Monitor, PortSpec, Simulation, d
 from beamz.design.io import gdsf
 from beamz.devices.sources.signals import gaussian_band_pulse
 
+pytestmark = [pytest.mark.integration, pytest.mark.pdk]
+
 
 def _move_along(center: tuple[float, float], direction: str, distance: float):
     x, y = center

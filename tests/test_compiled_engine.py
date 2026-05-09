@@ -35,6 +35,8 @@ from beamz.simulation.compiled import (
     batch_slab_specs,
 )
 
+pytestmark = [pytest.mark.compiled, pytest.mark.component]
+
 
 @pytest.fixture
 def small_sim_params():
