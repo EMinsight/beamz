@@ -11,10 +11,9 @@ from beamz.simulation.yee import (
 )
 
 
-def _raise_legacy_xy_tm_compact_error(function_name: str) -> None:
+def _raise_xy_tm_native_helper_error(function_name: str) -> None:
     raise ValueError(
-        f"{function_name} no longer supports plane='xy' on Beamz's legacy compact "
-        "TM storage. Use the physical full-state TMz helpers in "
+        f"{function_name} does not handle plane='xy'. Use the native TMz helpers in "
         "beamz.simulation.boundaries "
         "(tm_xy_curl_e_to_h_2d/full_pec_curl_e_to_h_2d_xy and "
         "tm_xy_curl_h_to_e_2d/full_pec_curl_h_to_e_2d_xy)."
@@ -25,7 +24,7 @@ def curl_e_to_h_2d(e_fields, resolution, plane="xy"):
     """Compute curl of E-field for H update in 2D on staggered Yee grid for arbitrary plane."""
     # Unpack E-fields based on plane
     if plane == "xy":
-        _raise_legacy_xy_tm_compact_error("curl_e_to_h_2d")
+        _raise_xy_tm_native_helper_error("curl_e_to_h_2d")
 
     elif plane == "yz":
         # E = (Ex, Ey, Ez) with ∂/∂x = 0
@@ -78,7 +77,7 @@ def curl_h_to_e_2d(h_fields, resolution, e_shapes, plane="xy"):
 
     if plane == "xy":
         del h_fields, resolution, e_shapes
-        _raise_legacy_xy_tm_compact_error("curl_h_to_e_2d")
+        _raise_xy_tm_native_helper_error("curl_h_to_e_2d")
 
     elif plane == "yz":
         # ∂/∂x = 0

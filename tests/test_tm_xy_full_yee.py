@@ -9,7 +9,7 @@ from beamz.simulation import ops
 from beamz.simulation.boundaries import (
     full_pec_curl_e_to_h_2d_xy,
     full_pec_curl_h_to_e_2d_xy,
-    initialize_full_pec_2d_xy_state,
+    initialize_tm_2d_xy_state,
     normalize_boundaries,
     tm_xy_curl_e_to_h_2d,
     tm_xy_curl_h_to_e_2d,
@@ -202,7 +202,7 @@ def _build_x_propagating_te_packet(direction: str, *, ny=13, nx=192, dx=1e-6):
     return ex, ey, hz, sample_x
 
 
-def test_ops_quarantine_legacy_xy_compact_tm_curls():
+def test_ops_reject_generic_xy_tm_curls():
     ez = np.zeros((4, 4), dtype=np.float32)
     ex = np.zeros((4, 3), dtype=np.float32)
     ey = np.zeros((3, 4), dtype=np.float32)
@@ -210,10 +210,10 @@ def test_ops_quarantine_legacy_xy_compact_tm_curls():
     hy = np.zeros((3, 4), dtype=np.float32)
     hz = np.zeros((3, 3), dtype=np.float32)
 
-    with pytest.raises(ValueError, match="legacy compact TM storage"):
+    with pytest.raises(ValueError, match="does not handle plane='xy'"):
         ops.curl_e_to_h_2d((ex, ey, ez), 1.0, plane="xy")
 
-    with pytest.raises(ValueError, match="legacy compact TM storage"):
+    with pytest.raises(ValueError, match="does not handle plane='xy'"):
         ops.curl_h_to_e_2d((hx, hy, hz), 1.0, (ex.shape, ey.shape, ez.shape), plane="xy")
 
 
@@ -314,7 +314,7 @@ def test_tm_xy_closed_pec_domain_conserves_discrete_energy():
         plane_2d="xy",
     )
     fields.boundaries = normalize_boundaries([], is_3d=False)
-    state = initialize_full_pec_2d_xy_state(fields)
+    state = initialize_tm_2d_xy_state(fields)
 
     y = np.arange(ny + 1, dtype=np.float32)[:, None]
     x = np.arange(nx + 1, dtype=np.float32)[None, :]

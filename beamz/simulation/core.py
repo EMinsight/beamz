@@ -665,9 +665,9 @@ class Simulation:
 
         if (not self.is_3d) and plane_2d == "xy":
             raise ValueError(
-                "The legacy compact xy-TM JIT step has been retired. Use "
+                "The xy-plane JIT step builder is not used for TMz. Use "
                 "Simulation.step()/run() or run_compiled(), which advance the "
-                "physical full-state TMz lattice."
+                "native TMz lattice."
             )
 
         # Material parameters (static for the simulation)
@@ -790,8 +790,8 @@ class Simulation:
 
         if (not self.is_3d) and plane_2d == "xy":
             raise ValueError(
-                "The legacy compact xy-TM JIT H-step has been retired. Use the "
-                "physical full-state TMz update path instead."
+                "The xy-plane JIT H-step builder is not used for TMz. Use the "
+                "native TMz update path instead."
             )
 
         sigma_m_hx = self.fields.sigma_m_hx
@@ -848,8 +848,8 @@ class Simulation:
 
         if (not self.is_3d) and plane_2d == "xy":
             raise ValueError(
-                "The legacy compact xy-TM JIT E-step has been retired. Use the "
-                "physical full-state TMz update path instead."
+                "The xy-plane JIT E-step builder is not used for TMz. Use the "
+                "native TMz update path instead."
             )
 
         eps_x, sig_x, region_x = (

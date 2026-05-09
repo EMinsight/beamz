@@ -19,7 +19,7 @@ from beamz.simulation.boundaries import (
     has_full_pec_2d_xy,
     has_full_pec_3d,
     initialize_full_pec_3d_state,
-    initialize_full_tm_2d_xy_state,
+    initialize_tm_2d_xy_state,
     pec_curl_e_to_h_3d,
     pec_curl_h_to_e_3d,
     sync_compact_fields_from_full_pec_3d,
@@ -88,7 +88,7 @@ class Fields:
         self.permeability = jnp.asarray(permeability)
         self.metallic_masks = None
         self.full_pec_3d_state = None
-        self.full_tm_2d_xy_state = None
+        self.tm_xy_state = None
         self.cpml_tm_xy_state = None
         self.cpml_3d_state = None
 
@@ -199,9 +199,9 @@ class Fields:
     def _initialize_cpml_tm_xy_state(self) -> CpmlTm2DxyState | None:
         if not (self.has_cpml and self.plane_2d == "xy" and self.pml_data):
             return None
-        if self.full_tm_2d_xy_state is None:
-            self.full_tm_2d_xy_state = initialize_full_tm_2d_xy_state(self)
-        state = self.full_tm_2d_xy_state
+        if self.tm_xy_state is None:
+            self.tm_xy_state = initialize_tm_2d_xy_state(self)
+        state = self.tm_xy_state
 
         tm_xy = self.pml_data.get("tm_xy_cpml")
         if tm_xy is None:
@@ -403,19 +403,19 @@ class Fields:
         """Return list of available field components."""
         return ["Ex", "Ey", "Ez", "Hx", "Hy", "Hz"]
 
-    def ensure_physical_tm_xy_state(self):
+    def ensure_tm_xy_state(self):
         """Initialize native xy-plane TMz metadata on first use."""
         if self.plane_2d != "xy":
             return None
-        if self.full_tm_2d_xy_state is None:
-            self.full_tm_2d_xy_state = initialize_full_tm_2d_xy_state(self)
-        return self.full_tm_2d_xy_state
+        if self.tm_xy_state is None:
+            self.tm_xy_state = initialize_tm_2d_xy_state(self)
+        return self.tm_xy_state
 
     def apply_tm_xy_pec_masks(self):
         """Zero constrained native xy-plane TMz samples on PEC boundaries."""
         if self.plane_2d != "xy":
             return
-        state = self.ensure_physical_tm_xy_state()
+        state = self.ensure_tm_xy_state()
         if state is None:
             return
         self.Ez = jnp.where(state.ez_mask, 0.0, self.Ez)
@@ -488,7 +488,7 @@ class Fields:
                     )
         else:
             if self.plane_2d == "xy":
-                state = self.ensure_physical_tm_xy_state()
+                state = self.ensure_tm_xy_state()
                 if has_full_pec_2d_xy(getattr(self, "boundaries", None), self.plane_2d):
                     curlE_x, curlE_y = full_pec_curl_e_to_h_2d_xy(
                         self.Ez,
@@ -549,7 +549,7 @@ class Fields:
             state.Hz = jnp.where(state.masks["Hz"], 0.0, state.Hz)
             sync_compact_fields_from_full_pec_3d(self, state)
         elif (not is_3d) and self.plane_2d == "xy":
-            state = self.ensure_physical_tm_xy_state()
+            state = self.ensure_tm_xy_state()
             self.Hx = ops.advance_h_field(self.Hx, curlE_x, state.sigma_m_hx, dt)
             self.Hy = ops.advance_h_field(self.Hy, curlE_y, state.sigma_m_hy, dt)
             self.apply_tm_xy_pec_masks()
@@ -608,7 +608,7 @@ class Fields:
                     )
         else:
             if self.plane_2d == "xy":
-                state = self.ensure_physical_tm_xy_state()
+                state = self.ensure_tm_xy_state()
                 curlH_x, curlH_y = xy_te_curl_h_to_e_2d(
                     self.Hz,
                     self.resolution,
@@ -699,7 +699,7 @@ class Fields:
             state.Ez = jnp.where(state.masks["Ez"], 0.0, state.Ez)
             sync_compact_fields_from_full_pec_3d(self, state)
         elif (not is_3d) and self.plane_2d == "xy":
-            state = self.ensure_physical_tm_xy_state()
+            state = self.ensure_tm_xy_state()
             self.Ex = ops.advance_e_field(
                 self.Ex, curlH_x, self.sig_x, self.eps_x, dt, self.region_x
             )

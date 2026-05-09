@@ -12,8 +12,8 @@ from beamz.simulation.boundaries import (
     full_pec_curl_h_to_e_2d_xy,
     full_pec_curl_h_to_e_3d,
     has_full_pec_2d_xy,
-    initialize_full_pec_2d_xy_state,
     initialize_full_pec_3d_state,
+    initialize_tm_2d_xy_state,
     normalize_boundaries,
     pec_curl_e_to_h_3d,
     pec_curl_h_to_e_3d,
@@ -215,7 +215,7 @@ def test_xy_2d_full_pec_state_adds_missing_h_boundary_edges():
     )
     fields.boundaries = normalize_boundaries([], is_3d=False)
 
-    state = initialize_full_pec_2d_xy_state(fields)
+    state = initialize_tm_2d_xy_state(fields)
     assert state.Ez.shape == fields.Ez.shape
     assert state.Hx.shape == fields.Hx.shape
     assert state.Hy.shape == fields.Hy.shape
@@ -243,7 +243,7 @@ def test_2d_tm_pec_update_keeps_constrained_h_edges_zero():
     fields.Ez = fields.Ez.at[1:4, 1:5].set(1.0)
 
     fields.update_h(dt=1e-3)
-    state = fields.ensure_physical_tm_xy_state()
+    state = fields.ensure_tm_xy_state()
 
     np.testing.assert_allclose(np.asarray(state.Hx)[:, 0], 0.0)
     np.testing.assert_allclose(np.asarray(state.Hx)[:, -1], 0.0)
@@ -278,7 +278,7 @@ def test_xy_2d_full_pec_curls_match_full_shapes():
         resolution=1.0,
         plane_2d="xy",
     )
-    state = initialize_full_pec_2d_xy_state(fields)
+    state = initialize_tm_2d_xy_state(fields)
 
     curl_hx, curl_hy = full_pec_curl_e_to_h_2d_xy(
         state.Ez,

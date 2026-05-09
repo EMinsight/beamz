@@ -694,8 +694,8 @@ class FullPec3DState:
 
 
 @dataclass
-class FullTM2DXYState:
-    """Physical 2D TMz Yee representation for the xy plane."""
+class Tm2DXYState:
+    """Native 2D TMz Yee representation for the xy plane."""
 
     Ez: jnp.ndarray
     Hx: jnp.ndarray
@@ -913,8 +913,8 @@ def full_tm_2d_xy_masks(
     }
 
 
-def initialize_full_tm_2d_xy_state(fields) -> FullTM2DXYState:
-    """Build a physical 2D TMz Yee state for an xy-plane simulation."""
+def initialize_tm_2d_xy_state(fields) -> Tm2DXYState:
+    """Build native 2D TMz Yee metadata for an xy-plane simulation."""
 
     ny, nx = (int(v) for v in fields.permittivity.shape)
     total_sigma = jnp.asarray(
@@ -930,7 +930,7 @@ def initialize_full_tm_2d_xy_state(fields) -> FullTM2DXYState:
     hx = jnp.where(masks["Hx"], 0.0, jnp.asarray(fields.Hx))
     hy = jnp.where(masks["Hy"], 0.0, jnp.asarray(fields.Hy))
 
-    return FullTM2DXYState(
+    return Tm2DXYState(
         Ez=ez,
         Hx=hx,
         Hy=hy,
@@ -949,11 +949,6 @@ def initialize_full_tm_2d_xy_state(fields) -> FullTM2DXYState:
         hx_mask=masks["Hx"],
         hy_mask=masks["Hy"],
     )
-
-
-def initialize_full_pec_2d_xy_state(fields) -> FullTM2DXYState:
-    """Backward-compatible alias for the physical xy TM state initializer."""
-    return initialize_full_tm_2d_xy_state(fields)
 
 
 def normalize_boundaries(boundaries, *, is_3d):
