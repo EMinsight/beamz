@@ -11,6 +11,10 @@ from beamz.devices._placement import (
     snap_axis_aligned_line_region,
     snap_plane_region,
 )
+from beamz.shared_kernels import (
+    full_tm_xy_component_to_centered_grid,
+    is_full_tm_xy_lattice,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,37 +33,6 @@ def _interp_complex_1d(
             dst, src, arr[:, col].imag
         )
     return out
-
-
-def _full_tm_xy_component_to_centered_grid(
-    component: str,
-    values: np.ndarray,
-) -> np.ndarray:
-    field = np.asarray(values, dtype=np.complex128)
-    comp = str(component)
-    if comp == "Ez":
-        if field.ndim != 2 or field.shape[0] < 2 or field.shape[1] < 2:
-            raise ValueError(
-                f"Ez full-TM field must be at least 2x2, got {field.shape}"
-            )
-        return 0.25 * (
-            field[:-1, :-1] + field[:-1, 1:] + field[1:, :-1] + field[1:, 1:]
-        )
-    if comp == "Hx":
-        if field.ndim != 2 or field.shape[1] < 2:
-            raise ValueError(
-                f"Hx full-TM field must have width >= 2, got {field.shape}"
-            )
-        return 0.5 * (field[:, :-1] + field[:, 1:])
-    if comp == "Hy":
-        if field.ndim != 2 or field.shape[0] < 2:
-            raise ValueError(
-                f"Hy full-TM field must have height >= 2, got {field.shape}"
-            )
-        return 0.5 * (field[:-1, :] + field[1:, :])
-    raise ValueError(f"Unsupported full-TM centered-grid component {component!r}")
-
-
 def _plane_axes_for_normal_3d(axis: str) -> tuple[str, str]:
     axis = str(axis).lower()
     mapping = {
@@ -1030,15 +1003,7 @@ class Monitor:
             return
         grid_points = self.get_grid_points_2d(dx, dy)
         line_coords = self._line_sample_coords_2d(dx, dy)
-        full_tm_xy = (
-            np.ndim(Ez) == 2
-            and np.ndim(Hx) == 2
-            and np.ndim(Hy) == 2
-            and Hx.shape[0] == Ez.shape[0] - 1
-            and Hx.shape[1] == Ez.shape[1]
-            and Hy.shape[0] == Ez.shape[0]
-            and Hy.shape[1] == Ez.shape[1] - 1
-        )
+        full_tm_xy = is_full_tm_xy_lattice(Ez, Hx, Hy)
         if full_tm_xy and line_coords is not None:
             from beamz.simulation.yee import tm_xy_full_component_coordinates_2d_um
 
@@ -1047,7 +1012,10 @@ class Monitor:
 
             def sample_full_tm(component, arr):
                 if self.dft_normalization == "meep":
-                    centered = _full_tm_xy_component_to_centered_grid(component, arr)
+                    centered = np.asarray(
+                        full_tm_xy_component_to_centered_grid(component, arr),
+                        dtype=np.complex128,
+                    )
                     centered_x = (
                         np.arange(centered.shape[1], dtype=np.float64) + 0.5
                     ) * float(dx)

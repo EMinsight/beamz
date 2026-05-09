@@ -18,7 +18,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from beamz.const import EPS_0, LIGHT_SPEED, MU_0
+from beamz.const import EPS_0, LIGHT_SPEED
 from beamz.devices.monitors.compiler import (
     BatchedMonitorData,
     CompiledMonitorSpec,
@@ -60,6 +60,11 @@ from beamz.simulation.material_models import (
     CompiledMaterialSpec,
     MaterialState,
     create_material_model,
+)
+from beamz.shared_kernels import (
+    build_cpml_3d_terms,
+    build_tm_xy_cpml_terms,
+    full_tm_xy_component_to_centered_grid,
 )
 from beamz.simulation.yee import (
     sample_voxel_grid_at_tm_xy_full_component_2d,
@@ -110,23 +115,6 @@ def _init_persistent_cache():
 
 
 _init_persistent_cache()
-
-
-def _full_tm_xy_component_to_centered_grid_jax(
-    component: str,
-    values: jnp.ndarray,
-) -> jnp.ndarray:
-    if component == "Ez":
-        return 0.25 * (
-            values[:-1, :-1] + values[:-1, 1:] + values[1:, :-1] + values[1:, 1:]
-        )
-    if component == "Hx":
-        return 0.5 * (values[:, :-1] + values[:, 1:])
-    if component == "Hy":
-        return 0.5 * (values[:-1, :] + values[1:, :])
-    raise ValueError(f"Unsupported TMxy centered-grid component {component!r}")
-
-
 def _sample_centered_grid_targets_2d(
     field: jnp.ndarray,
     x_targets: jnp.ndarray,
@@ -162,50 +150,8 @@ def _sample_centered_grid_targets_2d(
     return (one - ayf) * ((one - axf) * f00 + axf * f01) + ayf * (
         (one - axf) * f10 + axf * f11
     )
-
-
-def _embed_tm_xy_h_terms(
-    term0: jnp.ndarray, term1: jnp.ndarray, ez_shape: tuple[int, int]
-) -> jnp.ndarray:
-    out = jnp.zeros((2, *ez_shape), dtype=term0.dtype)
-    out = out.at[0, :-1, :].set(term0)
-    out = out.at[1, :, :-1].set(term1)
-    return out
-
-
 def _empty_cpml_3d_terms(dtype=jnp.float32) -> tuple[jnp.ndarray, ...]:
     return tuple(jnp.zeros((0, 0, 0), dtype=dtype) for _ in range(6))
-
-
-def _cpml_precompute_native_terms(
-    sigma_terms: tuple[jnp.ndarray, ...],
-    kappa_terms: tuple[jnp.ndarray, ...],
-    alpha_terms: tuple[jnp.ndarray, ...],
-    dt: float,
-) -> tuple[tuple[jnp.ndarray, ...], tuple[jnp.ndarray, ...], tuple[jnp.ndarray, ...]]:
-    a_terms = []
-    b_terms = []
-    inv_kappa_terms = []
-    dt_arr = jnp.asarray(dt, dtype=jnp.float32)
-    for sigma, kappa, alpha in zip(sigma_terms, kappa_terms, alpha_terms, strict=True):
-        sigma = jnp.asarray(sigma, dtype=jnp.float32)
-        kappa = jnp.maximum(jnp.asarray(kappa, dtype=jnp.float32), 1.0)
-        alpha = jnp.asarray(alpha, dtype=jnp.float32)
-        decay = (sigma / kappa + alpha) * (
-            dt_arr / jnp.asarray(EPS_0, dtype=jnp.float32)
-        )
-        b = jnp.expm1(-decay) + 1.0
-        denom = sigma + kappa * alpha
-        a = jnp.nan_to_num(
-            ((b - 1.0) * sigma) / jnp.maximum(denom * kappa, 1e-30),
-            nan=0.0,
-            posinf=0.0,
-            neginf=0.0,
-        )
-        a_terms.append(a)
-        b_terms.append(b)
-        inv_kappa_terms.append(1.0 / kappa)
-    return tuple(a_terms), tuple(b_terms), tuple(inv_kappa_terms)
 
 
 def _embed_cpml_3d_term_to_full_volume(
@@ -850,9 +796,9 @@ class CompiledSimulation:
         ):
             x_targets = spec.dft_target_x[: spec.dft_point_count]
             y_targets = spec.dft_target_y[: spec.dft_point_count]
-            ez_center = _full_tm_xy_component_to_centered_grid_jax("Ez", tm_ez)
-            hx_center = _full_tm_xy_component_to_centered_grid_jax("Hx", tm_hx)
-            hy_center = _full_tm_xy_component_to_centered_grid_jax("Hy", tm_hy)
+            ez_center = full_tm_xy_component_to_centered_grid("Ez", tm_ez)
+            hx_center = full_tm_xy_component_to_centered_grid("Hx", tm_hx)
+            hy_center = full_tm_xy_component_to_centered_grid("Hy", tm_hy)
             ez_vals = _sample_centered_grid_targets_2d(
                 ez_center,
                 x_targets,
@@ -2452,65 +2398,14 @@ def compile_simulation(
             getattr(fields, "has_cpml", False) and getattr(fields, "pml_data", None)
         )
         if use_cpml_3d:
-            pml_data = fields.pml_data
-            sigma_h_terms = (
-                jnp.asarray(pml_data["cpml3d_Hxy_sigma"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Hxz_sigma"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Hyz_sigma"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Hyx_sigma"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Hzx_sigma"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Hzy_sigma"], dtype=jnp.float32),
-            )
-            kappa_h_terms = (
-                jnp.asarray(pml_data["cpml3d_Hxy_kappa"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Hxz_kappa"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Hyz_kappa"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Hyx_kappa"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Hzx_kappa"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Hzy_kappa"], dtype=jnp.float32),
-            )
-            alpha_h_terms = (
-                jnp.asarray(pml_data["cpml3d_Hxy_alpha"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Hxz_alpha"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Hyz_alpha"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Hyx_alpha"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Hzx_alpha"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Hzy_alpha"], dtype=jnp.float32),
-            )
-            sigma_e_terms = (
-                jnp.asarray(pml_data["cpml3d_Exy_sigma"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Exz_sigma"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Eyz_sigma"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Eyx_sigma"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Ezx_sigma"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Ezy_sigma"], dtype=jnp.float32),
-            )
-            kappa_e_terms = (
-                jnp.asarray(pml_data["cpml3d_Exy_kappa"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Exz_kappa"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Eyz_kappa"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Eyx_kappa"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Ezx_kappa"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Ezy_kappa"], dtype=jnp.float32),
-            )
-            alpha_e_terms = (
-                jnp.asarray(pml_data["cpml3d_Exy_alpha"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Exz_alpha"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Eyz_alpha"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Eyx_alpha"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Ezx_alpha"], dtype=jnp.float32),
-                jnp.asarray(pml_data["cpml3d_Ezy_alpha"], dtype=jnp.float32),
-            )
-            cpml3d_a_h_terms, cpml3d_b_h_terms, cpml3d_inv_kappa_h_terms = (
-                _cpml_precompute_native_terms(
-                    sigma_h_terms, kappa_h_terms, alpha_h_terms, run_cfg.dt
-                )
-            )
-            cpml3d_a_e_terms, cpml3d_b_e_terms, cpml3d_inv_kappa_e_terms = (
-                _cpml_precompute_native_terms(
-                    sigma_e_terms, kappa_e_terms, alpha_e_terms, run_cfg.dt
-                )
-            )
+            terms = build_cpml_3d_terms(fields.pml_data, dt=run_cfg.dt)
+            if terms is not None:
+                cpml3d_a_h_terms = terms.a_h_terms
+                cpml3d_b_h_terms = terms.b_h_terms
+                cpml3d_inv_kappa_h_terms = terms.inv_kappa_h_terms
+                cpml3d_a_e_terms = terms.a_e_terms
+                cpml3d_b_e_terms = terms.b_e_terms
+                cpml3d_inv_kappa_e_terms = terms.inv_kappa_e_terms
     if not bool(run_cfg.is_3d) and run_cfg.plane_2d == "xy":
         tm_ez_shape = tuple(int(v) for v in fields.Ez.shape)
         # The physical full-state TMz lattice is the only supported xy-TM update
@@ -2524,38 +2419,20 @@ def compile_simulation(
             # to FDTDX's architecture and avoids maintaining a second xy-TM CPML
             # implementation with slightly different staggering semantics.
             use_physical_tm_xy = True
-            pml_data = fields.pml_data
-            tm_xy = pml_data.get("tm_xy_cpml")
-            if tm_xy is None:
+            terms = build_tm_xy_cpml_terms(
+                fields.pml_data.get("tm_xy_cpml"),
+                ez_shape=tm_ez_shape,
+            )
+            if terms is None:
                 use_cpml_tm_xy = False
             else:
-                sigma_hx = jnp.asarray(tm_xy["Hx_y_sigma"], dtype=jnp.float32)
-                kappa_hx = jnp.asarray(tm_xy["Hx_y_kappa"], dtype=jnp.float32)
-                alpha_hx = jnp.asarray(tm_xy["Hx_y_alpha"], dtype=jnp.float32)
-                sigma_hy = jnp.asarray(tm_xy["Hy_x_sigma"], dtype=jnp.float32)
-                kappa_hy = jnp.asarray(tm_xy["Hy_x_kappa"], dtype=jnp.float32)
-                alpha_hy = jnp.asarray(tm_xy["Hy_x_alpha"], dtype=jnp.float32)
-                sigma_ez_x = jnp.asarray(tm_xy["Ez_x_sigma"], dtype=jnp.float32)
-                kappa_ez_x = jnp.asarray(tm_xy["Ez_x_kappa"], dtype=jnp.float32)
-                alpha_ez_x = jnp.asarray(tm_xy["Ez_x_alpha"], dtype=jnp.float32)
-                sigma_ez_y = jnp.asarray(tm_xy["Ez_y_sigma"], dtype=jnp.float32)
-                kappa_ez_y = jnp.asarray(tm_xy["Ez_y_kappa"], dtype=jnp.float32)
-                alpha_ez_y = jnp.asarray(tm_xy["Ez_y_alpha"], dtype=jnp.float32)
-                cpml_sigma_h_terms = _embed_tm_xy_h_terms(
-                    sigma_hx, sigma_hy, tm_ez_shape
-                )
-                cpml_kappa_h_aux_terms = _embed_tm_xy_h_terms(
-                    kappa_hx, kappa_hy, tm_ez_shape
-                )
-                cpml_alpha_h_terms = _embed_tm_xy_h_terms(
-                    alpha_hx, alpha_hy, tm_ez_shape
-                )
-                cpml_kappa_h_direct_terms = _embed_tm_xy_h_terms(
-                    kappa_ez_y[:-1, :], kappa_ez_x[:, :-1], tm_ez_shape
-                )
-                cpml_sigma_e_terms = jnp.stack((sigma_ez_x, sigma_ez_y), axis=0)
-                cpml_kappa_e_terms = jnp.stack((kappa_ez_x, kappa_ez_y), axis=0)
-                cpml_alpha_e_terms = jnp.stack((alpha_ez_x, alpha_ez_y), axis=0)
+                cpml_sigma_h_terms = terms.sigma_h_terms
+                cpml_kappa_h_aux_terms = terms.kappa_h_aux_terms
+                cpml_alpha_h_terms = terms.alpha_h_terms
+                cpml_kappa_h_direct_terms = terms.kappa_h_direct_terms
+                cpml_sigma_e_terms = terms.sigma_e_terms
+                cpml_kappa_e_terms = terms.kappa_e_terms
+                cpml_alpha_e_terms = terms.alpha_e_terms
 
     if use_physical_tm_xy:
         total_sigma = jnp.asarray(
