@@ -35,7 +35,6 @@ from beamz.devices.sources.compiler import (
 from beamz.simulation import ops
 from beamz.simulation.boundaries import (
     build_h_boundary_views_for_e_3d,
-    compact_ez_from_full_tm_2d_xy,
     cpml_curl_e_to_h_3d,
     cpml_curl_h_to_e_3d,
     create_metallic_boundary_masks,
@@ -63,7 +62,6 @@ from beamz.simulation.material_models import (
     create_material_model,
 )
 from beamz.simulation.yee import (
-    sample_voxel_grid_at_compact_component_2d,
     sample_voxel_grid_at_tm_xy_full_component_2d,
 )
 
@@ -112,62 +110,6 @@ def _init_persistent_cache():
 
 
 _init_persistent_cache()
-
-
-def _project_compact_tm_from_physical(
-    tm_hx: jnp.ndarray, tm_hy: jnp.ndarray
-) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """Project physical 2D TM H fields back onto Beamz's compact storage."""
-
-    return tm_hx[:, :-2], tm_hy[:-2, :]
-
-
-def _sync_physical_tm_from_compact(
-    tm_hx: jnp.ndarray,
-    tm_hy: jnp.ndarray,
-    hx: jnp.ndarray,
-    hy: jnp.ndarray,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """Update the native TM H fields from compact compatibility views."""
-
-    tm_hx = tm_hx.at[:, :-2].set(hx)
-    tm_hx = tm_hx.at[:, -2].set(hx[:, -1])
-    tm_hx = tm_hx.at[:, -1].set(hx[:, -1])
-    tm_hy = tm_hy.at[:-2, :].set(hy)
-    tm_hy = tm_hy.at[-2, :].set(hy[-1, :])
-    tm_hy = tm_hy.at[-1, :].set(hy[-1, :])
-    return tm_hx, tm_hy
-
-
-def _apply_compact_ez_delta_to_physical(
-    tm_ez: jnp.ndarray, ez_before: jnp.ndarray, ez_after: jnp.ndarray
-) -> jnp.ndarray:
-    """Map a compact cell-centered Ez delta onto the native TMz node lattice."""
-
-    delta = ez_after - ez_before
-    tm_ez = tm_ez.at[:-1, :-1].add(0.25 * delta)
-    tm_ez = tm_ez.at[1:, :-1].add(0.25 * delta)
-    tm_ez = tm_ez.at[:-1, 1:].add(0.25 * delta)
-    tm_ez = tm_ez.at[1:, 1:].add(0.25 * delta)
-    return tm_ez
-
-
-def _apply_compact_hx_delta_to_physical(
-    tm_hx: jnp.ndarray, hx_before: jnp.ndarray, hx_after: jnp.ndarray
-) -> jnp.ndarray:
-    """Map a compact xy TM Hx delta onto the native TMz edge lattice."""
-
-    delta = hx_after - hx_before
-    return tm_hx.at[:, :-2].add(delta)
-
-
-def _apply_compact_hy_delta_to_physical(
-    tm_hy: jnp.ndarray, hy_before: jnp.ndarray, hy_after: jnp.ndarray
-) -> jnp.ndarray:
-    """Map a compact xy TM Hy delta onto the native TMz edge lattice."""
-
-    delta = hy_after - hy_before
-    return tm_hy.at[:-2, :].add(delta)
 
 
 def _full_tm_xy_component_to_centered_grid_jax(
@@ -1524,14 +1466,7 @@ class CompiledSimulation:
                     fp_ex = fp_ex.at[:-1, :-1, :-1].set(ex)
                     fp_ey = fp_ey.at[:-1, :-1, :-1].set(ey)
                     fp_ez = fp_ez.at[:-1, :-1, :-1].set(ez_pre)
-                if use_physical_tm_xy:
-                    tm_ez = _apply_compact_ez_delta_to_physical(tm_ez, ez, ez_pre)
-                    tm_ez = jnp.where(
-                        tm_ez_mask, jnp.asarray(0.0, dtype=tm_ez.dtype), tm_ez
-                    )
-                    ez = compact_ez_from_full_tm_2d_xy(tm_ez)
-                else:
-                    ez = ez_pre
+                ez = ez_pre
 
                 if is_3d and full_pec_3d:
                     curl_ex, curl_ey, curl_ez = full_pec_curl_e_to_h_3d(
@@ -1645,7 +1580,7 @@ class CompiledSimulation:
                 elif use_physical_tm_xy:
                     if tm_full_pec:
                         curl_tm_hx, curl_tm_hy = full_pec_curl_e_to_h_2d_xy(
-                            tm_ez, resolution, tm_hx.shape, tm_hy.shape
+                            ez, resolution, hx.shape, hy.shape
                         )
                     elif self.use_cpml_tm_xy:
                         (
@@ -1653,7 +1588,7 @@ class CompiledSimulation:
                             curl_tm_hy,
                             cpml_psi_h_terms,
                         ) = tm_xy_cpml_curl_e_to_h_2d(
-                            tm_ez,
+                            ez,
                             resolution,
                             sigma_h_terms=self.cpml_sigma_h_terms,
                             kappa_h_aux_terms=self.cpml_kappa_h_aux_terms,
@@ -1664,10 +1599,10 @@ class CompiledSimulation:
                         )
                     else:
                         curl_tm_hx, curl_tm_hy = tm_xy_curl_e_to_h_2d(
-                            tm_ez,
+                            ez,
                             resolution,
-                            tm_hx.shape,
-                            tm_hy.shape,
+                            hx.shape,
+                            hy.shape,
                             tm_metallic_edges,
                         )
                     curl_ez = xy_te_curl_e_to_h_2d(
@@ -1677,15 +1612,10 @@ class CompiledSimulation:
                         hz.shape,
                     )
 
-                    tm_hx = tm_h_decay_x * tm_hx - tm_h_source_x * curl_tm_hx
-                    tm_hy = tm_h_decay_y * tm_hy - tm_h_source_y * curl_tm_hy
-                    tm_hx = jnp.where(
-                        tm_hx_mask, jnp.asarray(0.0, dtype=tm_hx.dtype), tm_hx
-                    )
-                    tm_hy = jnp.where(
-                        tm_hy_mask, jnp.asarray(0.0, dtype=tm_hy.dtype), tm_hy
-                    )
-                    hx, hy = _project_compact_tm_from_physical(tm_hx, tm_hy)
+                    hx = tm_h_decay_x * hx - tm_h_source_x * curl_tm_hx
+                    hy = tm_h_decay_y * hy - tm_h_source_y * curl_tm_hy
+                    hx = jnp.where(tm_hx_mask, jnp.asarray(0.0, dtype=hx.dtype), hx)
+                    hy = jnp.where(tm_hy_mask, jnp.asarray(0.0, dtype=hy.dtype), hy)
 
                     hz_old = hz
                     if use_lossy_shell_hz:
@@ -1755,18 +1685,7 @@ class CompiledSimulation:
                     fp_hx = fp_hx.at[:-1, :-1, :-1].set(hx_post)
                     fp_hy = fp_hy.at[:-1, :-1, :-1].set(hy_post)
                     fp_hz = fp_hz.at[:-1, :-1, :-1].set(hz)
-                if use_physical_tm_xy:
-                    tm_hx = _apply_compact_hx_delta_to_physical(tm_hx, hx, hx_post)
-                    tm_hy = _apply_compact_hy_delta_to_physical(tm_hy, hy, hy_post)
-                    tm_hx = jnp.where(
-                        tm_hx_mask, jnp.asarray(0.0, dtype=tm_hx.dtype), tm_hx
-                    )
-                    tm_hy = jnp.where(
-                        tm_hy_mask, jnp.asarray(0.0, dtype=tm_hy.dtype), tm_hy
-                    )
-                    hx, hy = _project_compact_tm_from_physical(tm_hx, tm_hy)
-                else:
-                    hx, hy = hx_post, hy_post
+                hx, hy = hx_post, hy_post
                 hx = self._apply_metal_mask(hx, hx_metal_mask)
                 hy = self._apply_metal_mask(hy, hy_metal_mask)
                 hz = self._apply_metal_mask(hz, hz_metal_mask)
@@ -1893,17 +1812,17 @@ class CompiledSimulation:
                     )
                     if tm_full_pec:
                         curl_tm_ez = full_pec_curl_h_to_e_2d_xy(
-                            tm_hx, tm_hy, resolution, tm_ez.shape
+                            hx, hy, resolution, ez.shape
                         )
                     elif self.use_cpml_tm_xy:
                         (
                             curl_tm_ez,
                             cpml_psi_e_terms,
                         ) = tm_xy_cpml_curl_h_to_e_2d(
-                            tm_hx,
-                            tm_hy,
+                            hx,
+                            hy,
                             resolution,
-                            tm_ez.shape,
+                            ez.shape,
                             tm_metallic_edges,
                             sigma_e_terms=self.cpml_sigma_e_terms,
                             kappa_e_terms=self.cpml_kappa_e_terms,
@@ -1913,10 +1832,10 @@ class CompiledSimulation:
                         )
                     else:
                         curl_tm_ez = tm_xy_curl_h_to_e_2d(
-                            tm_hx,
-                            tm_hy,
+                            hx,
+                            hy,
                             resolution,
-                            tm_ez.shape,
+                            ez.shape,
                             tm_metallic_edges,
                         )
 
@@ -1947,11 +1866,10 @@ class CompiledSimulation:
                     else:
                         ey = e_decay_y * ey_old + e_source_y * curl_hy
 
-                    tm_ez = tm_e_decay_z * tm_ez + tm_e_source_z * curl_tm_ez
-                    tm_ez = jnp.where(
-                        tm_ez_mask, jnp.asarray(0.0, dtype=tm_ez.dtype), tm_ez
+                    ez = tm_e_decay_z * ez + tm_e_source_z * curl_tm_ez
+                    ez = jnp.where(
+                        tm_ez_mask, jnp.asarray(0.0, dtype=ez.dtype), ez
                     )
-                    ez = compact_ez_from_full_tm_2d_xy(tm_ez)
                 else:
                     curl_hx, curl_hy, curl_hz = ops.curl_h_to_e_2d(
                         (hx, hy, hz),
@@ -2010,20 +1928,12 @@ class CompiledSimulation:
                     fp_ex = fp_ex.at[:-1, :-1, :-1].set(ex)
                     fp_ey = fp_ey.at[:-1, :-1, :-1].set(ey)
                     fp_ez = fp_ez.at[:-1, :-1, :-1].set(ez_post)
-                if use_physical_tm_xy:
-                    tm_ez = _apply_compact_ez_delta_to_physical(tm_ez, ez, ez_post)
-                    tm_ez = jnp.where(
-                        tm_ez_mask, jnp.asarray(0.0, dtype=tm_ez.dtype), tm_ez
-                    )
-                    ez = compact_ez_from_full_tm_2d_xy(tm_ez)
-                else:
-                    ez = ez_post
+                ez = ez_post
                 ez = self._apply_metal_mask(ez, ez_metal_mask)
                 if use_physical_tm_xy:
-                    tm_ez = jnp.where(
-                        tm_ez_mask, jnp.asarray(0.0, dtype=tm_ez.dtype), tm_ez
+                    ez = jnp.where(
+                        tm_ez_mask, jnp.asarray(0.0, dtype=ez.dtype), ez
                     )
-                    ez = compact_ez_from_full_tm_2d_xy(tm_ez)
 
                 mat, _ = material_model.update(mat, ex, ey, ez, abs_step)
 
@@ -2039,9 +1949,9 @@ class CompiledSimulation:
                     hx,
                     hy,
                     hz,
-                    tm_ez=tm_ez,
-                    tm_hx=tm_hx,
-                    tm_hy=tm_hy,
+                    tm_ez=ez,
+                    tm_hx=hx,
+                    tm_hy=hy,
                     batched_mon=batched_mon,
                     monitors_2d=monitors_2d,
                 )
@@ -2053,9 +1963,9 @@ class CompiledSimulation:
                     hx=hx,
                     hy=hy,
                     hz=hz,
-                    tm_ez=tm_ez,
-                    tm_hx=tm_hx,
-                    tm_hy=tm_hy,
+                    tm_ez=ez,
+                    tm_hx=hx,
+                    tm_hy=hy,
                     fp_ex=fp_ex,
                     fp_ey=fp_ey,
                     fp_ez=fp_ez,
@@ -2169,7 +2079,10 @@ class CompiledSimulation:
 
         # Use function-style JIT wrapping for compatibility with older JAX
         # versions where decorator kwargs require the callable as first arg.
-        donate_argnums = (0, 1, 3) if snapshot_enabled else (0, 1)
+        if self.use_physical_tm_xy:
+            donate_argnums = (1, 3) if snapshot_enabled else (1,)
+        else:
+            donate_argnums = (0, 1, 3) if snapshot_enabled else (0, 1)
         self._compiled_scan = jax.jit(run_scan, donate_argnums=donate_argnums)
         self._compile_count += 1
 
@@ -2666,18 +2579,17 @@ def compile_simulation(
                 )
             )
     if not bool(run_cfg.is_3d) and run_cfg.plane_2d == "xy":
-        tm_ez_shape = (int(fields.Ez.shape[0]) + 1, int(fields.Ez.shape[1]) + 1)
+        tm_ez_shape = tuple(int(v) for v in fields.Ez.shape)
         # The physical full-state TMz lattice is the only supported xy-TM update
-        # path. Legacy compact curls remain available only as compatibility views
-        # around source/monitor plumbing, not as an independent solver branch.
+        # path.
         use_physical_tm_xy = True
         use_cpml_tm_xy = bool(
             getattr(fields, "has_cpml", False) and getattr(fields, "pml_data", None)
         )
         if use_cpml_tm_xy:
             # Keep CPML on the native full-TM representation only. This is closer
-            # to FDTDX's architecture and avoids maintaining a second compact-TM
-            # CPML implementation with slightly different staggering semantics.
+            # to FDTDX's architecture and avoids maintaining a second xy-TM CPML
+            # implementation with slightly different staggering semantics.
             use_physical_tm_xy = True
             pml_data = fields.pml_data
             tm_xy = pml_data.get("tm_xy_cpml")
@@ -2739,7 +2651,7 @@ def compile_simulation(
             region=(slice(None), slice(None)),
         )
         metallic_edges_2d = frozenset(resolve_metallic_edges(boundaries, is_3d=False))
-        tm_masks = full_tm_2d_xy_masks(tuple(fields.Ez.shape), metallic_edges_2d)
+        tm_masks = full_tm_2d_xy_masks(tuple(fields.permittivity.shape), metallic_edges_2d)
         tm_ez_mask = tm_masks["Ez"]
         tm_hx_mask = tm_masks["Hx"]
         tm_hy_mask = tm_masks["Hy"]

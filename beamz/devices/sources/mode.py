@@ -1878,10 +1878,7 @@ class ModeSource:
         if self.pol == "tm":
             self._ez_indices = (y_slice, center_idx)
             self._h_indices = (y_slice, offset_idx)
-            # X-directed TM launches feed the physical H update through the compact
-            # Hx compatibility lane. Routing this drive through Hy collapses the
-            # handedness and produces an almost bidirectional launch in run()/step().
-            self._h_component = "Hx"
+            self._h_component = "Hy"
 
             # +x TM: (Ez, Hy)
             Hy_raw = np.squeeze(H_mode[1])
@@ -1997,10 +1994,7 @@ class ModeSource:
         if self.pol == "tm":
             self._ez_indices = (center_idx, x_slice)
             self._h_indices = (offset_idx, x_slice)
-            # Y-directed TM launches are rotated relative to the x-directed case and
-            # must feed the compact Hy compatibility lane to recover a unidirectional
-            # physical launch on the native TMz lattice.
-            self._h_component = "Hy"
+            self._h_component = "Hx"
 
             # +y TM uses the global component pair (Ez, Hx).
             Hx_raw = np.squeeze(H_mode[0])
@@ -2545,15 +2539,17 @@ class ModeSource:
         """Inject magnetic current into H-fields for 2D (after H update)."""
         if self.pol == "tm":
             if self._h_indices is not None and self._my_profile is not None:
-                mu_val = getattr(fields, "permeability", None)
-                mu_at_source = mu_val[self._h_indices] if mu_val is not None else 1.0
+                if self._h_component == "Hx":
+                    mu_at_source = getattr(fields, "mu_tm_hx", 1.0)[self._h_indices]
+                else:
+                    mu_at_source = getattr(fields, "mu_tm_hy", 1.0)[self._h_indices]
                 my_term = self._my_profile * signal_h / resolution
                 h_injection = -my_term * dt / (MU_0 * mu_at_source)
-
                 if self._h_component == "Hx":
-                    fields.add_tm_xy_h("Hx", self._h_indices, h_injection)
+                    fields.Hx = fields.Hx.at[self._h_indices].add(h_injection)
                 else:
-                    fields.add_tm_xy_h("Hy", self._h_indices, h_injection)
+                    fields.Hy = fields.Hy.at[self._h_indices].add(h_injection)
+                fields.apply_tm_xy_pec_masks()
         else:  # TE
             if self._hz_indices is not None and self._mz_profile is not None:
                 mu_val = getattr(fields, "permeability", None)
@@ -2566,10 +2562,13 @@ class ModeSource:
         """Inject electric current into E-fields for 2D (after E update)."""
         if self.pol == "tm":
             if self._ez_indices is not None and self._jz_profile is not None:
-                eps_at_source = fields.permittivity[self._ez_indices]
+                eps_at_source = getattr(fields, "eps_tm_ez", fields.permittivity)[
+                    self._ez_indices
+                ]
                 jz_term = self._jz_profile * signal_e / resolution
                 ez_injection = +jz_term * dt / (EPS_0 * eps_at_source)
-                fields.add_tm_xy_ez(self._ez_indices, ez_injection)
+                fields.Ez = fields.Ez.at[self._ez_indices].add(ez_injection)
+                fields.apply_tm_xy_pec_masks()
         else:  # TE
             if self._e_indices is not None:
                 j_profile = (

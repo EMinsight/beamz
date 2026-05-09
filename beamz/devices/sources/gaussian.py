@@ -94,19 +94,29 @@ class GaussianSource:
         is_3d = len(self.position) >= 3 if hasattr(self.position, "__len__") else False
 
         if self._spatial_profile_ez is None:
-            self._init_spatial_profile(fields.Ez.shape, resolution, is_3d)
+            self._init_spatial_profile(
+                fields.Ez.shape,
+                resolution,
+                is_3d,
+                plane_2d=getattr(fields, "plane_2d", None),
+            )
 
         signal_val = self._get_signal_value(t + 0.5 * dt, dt)
-        eps_region = fields.permittivity[self._grid_indices]
+        eps_region = (
+            fields.eps_tm_ez[self._grid_indices]
+            if getattr(fields, "plane_2d", None) == "xy" and not is_3d
+            else fields.permittivity[self._grid_indices]
+        )
 
         term = self._spatial_profile_ez * signal_val
         injection = -term * dt / (EPS_0 * eps_region)
         if getattr(fields, "plane_2d", None) == "xy":
-            fields.add_tm_xy_ez(self._grid_indices, injection)
+            fields.Ez = fields.Ez.at[self._grid_indices].add(injection)
+            fields.apply_tm_xy_pec_masks()
         else:
             fields.Ez = fields.Ez.at[self._grid_indices].add(injection)
 
-    def _init_spatial_profile(self, ez_shape, resolution, is_3d):
+    def _init_spatial_profile(self, ez_shape, resolution, is_3d, plane_2d=None):
         """Compute the spatial Gaussian profile and grid indices (called once)."""
         sigma_grid = self.width / resolution
         radius_grid = int(np.ceil(4 * sigma_grid))
@@ -141,8 +151,12 @@ class GaussianSource:
 
             self._grid_indices = (slice(y_start, y_end), slice(x_start, x_end))
 
-            x_coords = (jnp.arange(x_start, x_end) + 0.5) * resolution
-            y_coords = (jnp.arange(y_start, y_end) + 0.5) * resolution
+            if plane_2d == "xy":
+                x_coords = jnp.arange(x_start, x_end) * resolution
+                y_coords = jnp.arange(y_start, y_end) * resolution
+            else:
+                x_coords = (jnp.arange(x_start, x_end) + 0.5) * resolution
+                y_coords = (jnp.arange(y_start, y_end) + 0.5) * resolution
             X, Y = jnp.meshgrid(x_coords, y_coords, indexing="xy")
             dist_sq = (X - x0) ** 2 + (Y - y0) ** 2
 

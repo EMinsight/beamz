@@ -1091,9 +1091,8 @@ class TestModeSourcePolarization:
         snapshot_idx = len(snapshots) // 3
         if pol == "tm":
             # The physical xy-plane TMz launch is injected through split H/E current
-            # updates on the native full-state lattice. The compact Ez compatibility
-            # view lags that settling slightly, so evaluate directionality on a later
-            # snapshot for all TM cases rather than only the backward ones.
+            # updates on the native full-state lattice, so evaluate directionality
+            # on a slightly later snapshot for TM cases.
             snapshot_idx = max(snapshot_idx, len(snapshots) // 2)
         snapshot = snapshots[snapshot_idx]
 
@@ -1121,9 +1120,7 @@ class TestModeSourcePolarization:
         )
 
         if pol == "tm":
-            physical_tm = sim.fields.physical_tm_xy_fields()
-            assert physical_tm is not None
-            physical_ez = np.asarray(physical_tm["Ez"])
+            physical_ez = np.asarray(sim.fields.Ez)
 
             if direction == "+x":
                 forward = compute_field_energy(physical_ez[:, sx:], dx)
@@ -1141,9 +1138,9 @@ class TestModeSourcePolarization:
             physical_forward_fraction = forward / (forward + backward + 1e-30)
             # The final physical TM field retains a small source-side tail from the
             # finite-width, finite-duration launch even when the propagated branch is
-            # clearly dominant. Keep this threshold below the earlier compact-snapshot
-            # directionality check so we flag true regressions without overfitting the
-            # exact late-time residual field distribution.
+            # clearly dominant. Keep this threshold below the earlier snapshot check
+            # so we flag true regressions without overfitting the exact late-time
+            # residual field distribution.
             assert physical_forward_fraction > 0.92, (
                 f"Poor final physical-TMz directionality for {direction}/{pol}: "
                 f"forward_fraction={physical_forward_fraction:.3f}"

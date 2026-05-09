@@ -652,21 +652,6 @@ def run_beamz_single(
     ez_sample_x_um = np.asarray(_meep_sample_coords_2d("Ez", cfg)["x"], dtype=np.float64)
 
     def _export_beamz_state() -> dict[str, np.ndarray]:
-        physical_tm = sim.fields.physical_tm_xy_fields()
-        if physical_tm is not None:
-            return {
-                "Ez": _beamz_raw_tm_component_to_meep_raw_grid_2d(sim, "Ez", cfg),
-                "Hx": _beamz_full_tm_component_to_meep_sample_grid_2d(
-                    np.asarray(physical_tm["Hx"]),
-                    "Hx",
-                    cfg,
-                ),
-                "Hy": _beamz_full_tm_component_to_meep_sample_grid_2d(
-                    np.asarray(physical_tm["Hy"]),
-                    "Hy",
-                    cfg,
-                ),
-            }
         return {
             "Ez": np.asarray(sim.fields.Ez, dtype=np.float32),
             "Hx": -_beamz_component_to_meep_sample_grid_2d(

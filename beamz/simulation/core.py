@@ -29,7 +29,6 @@ from beamz.simulation.boundaries import (
     create_metallic_boundary_masks,
     has_full_pec_3d,
     initialize_full_pec_3d_state,
-    initialize_full_tm_2d_xy_state,
     normalize_boundaries,
     pec_curl_e_to_h_3d,
     pec_curl_h_to_e_3d,
@@ -396,8 +395,6 @@ class Simulation:
         # 4. J injection (modifies E after update)
         self._inject_e_sources()
         self.fields.apply_metallic_boundaries_e()
-        if (not self.is_3d) and self.plane_2d == "xy":
-            self.fields.sync_compact_tm_xy_views()
 
         # Record monitor data (if monitors are in devices)
         self._record_monitors()
@@ -423,23 +420,10 @@ class Simulation:
                 sample_time = self.t + self.dt
                 device._dft_base_dt = self.dt
                 if not self.is_3d:
-                    physical_tm = self.fields.physical_tm_xy_fields()
                     device.record_fields_2d(
-                        (
-                            physical_tm["Ez"]
-                            if physical_tm is not None
-                            else self.fields.Ez
-                        ),
-                        (
-                            physical_tm["Hx"]
-                            if physical_tm is not None
-                            else self.fields.Hx
-                        ),
-                        (
-                            physical_tm["Hy"]
-                            if physical_tm is not None
-                            else self.fields.Hy
-                        ),
+                        self.fields.Ez,
+                        self.fields.Hx,
+                        self.fields.Hy,
                         sample_time,
                         self.resolution,
                         self.resolution,
@@ -515,14 +499,6 @@ class Simulation:
             snapshot_extent = None
 
         def _snapshot_output_field(name):
-            physical_tm = self.fields.physical_tm_xy_fields()
-            if (
-                physical_tm is not None
-                and not self.is_3d
-                and self.plane_2d == "xy"
-                and name in {"Ez", "Hx", "Hy"}
-            ):
-                return np.array(physical_tm[name])
             return np.array(getattr(self.fields, name))
 
         field_history = {name: [] for name in record_fields} if record_every else None
@@ -1116,14 +1092,9 @@ class Simulation:
                 and self.plane_2d == "xy"
                 and program.use_physical_tm_xy
             ):
-                if self.fields.full_tm_2d_xy_state is None:
-                    self.fields.full_tm_2d_xy_state = initialize_full_tm_2d_xy_state(
-                        self.fields
-                    )
-                tm_state = self.fields.full_tm_2d_xy_state
-                tm_ez = tm_state.Ez
-                tm_hx = tm_state.Hx
-                tm_hy = tm_state.Hy
+                tm_ez = self.fields.Ez
+                tm_hx = self.fields.Hx
+                tm_hy = self.fields.Hy
             else:
                 tm_ez = jnp.zeros((0, 0), dtype=self.fields.Ez.dtype)
                 tm_hx = jnp.zeros((0, 0), dtype=self.fields.Hx.dtype)
@@ -1290,14 +1261,9 @@ class Simulation:
                 and self.plane_2d == "xy"
                 and program.use_physical_tm_xy
             ):
-                if self.fields.full_tm_2d_xy_state is None:
-                    self.fields.full_tm_2d_xy_state = initialize_full_tm_2d_xy_state(
-                        self.fields
-                    )
-                self.fields.full_tm_2d_xy_state.Ez = engine_state.tm_ez
-                self.fields.full_tm_2d_xy_state.Hx = engine_state.tm_hx
-                self.fields.full_tm_2d_xy_state.Hy = engine_state.tm_hy
-                self.fields.sync_compact_tm_xy_views()
+                self.fields.Ez = engine_state.tm_ez
+                self.fields.Hx = engine_state.tm_hx
+                self.fields.Hy = engine_state.tm_hy
             self.t = float(np.asarray(engine_state.t))
             self.current_step = int(np.asarray(engine_state.current_step))
 

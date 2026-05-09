@@ -5,9 +5,9 @@ import jax.numpy as jnp
 
 from beamz.const import EPS_0, MU_0
 from beamz.simulation.yee import (
-    sample_voxel_grid_at_compact_component_2d,
     sample_voxel_grid_at_component_2d,
     sample_voxel_grid_at_component_3d,
+    sample_voxel_grid_at_tm_xy_full_component_2d,
 )
 
 
@@ -147,7 +147,7 @@ def material_slice_for_e_2d_component(permittivity, conductivity, component, pla
         # Grid (ny, nx). Component staggering:
         # Ex (ny, nx-1) - staggered in x
         # Ey (ny-1, nx) - staggered in y
-        # Ez (ny, nx) - centered
+        # Ez (ny+1, nx+1) - native TMz node lattice
 
         if component == "x":
             # Ex (ny, nx-1). Update region: Ex[1:-1, :] -> (ny-2, nx-1)
@@ -162,9 +162,9 @@ def material_slice_for_e_2d_component(permittivity, conductivity, component, pla
             # Region [:, 1:-1] is used for field/curl, material is pre-sliced to match
             region = (s_all, s_mid)  # [:, 1:-1] for field update
         elif component == "z":
-            # Ez (ny, nx). Update region: Ez[1:-1, 1:-1] -> (ny-2, nx-2)
-            # Material needs: permittivity[1:-1, 1:-1] -> (ny-2, nx-2)
-            region = (s_mid, s_mid)
+            # Native TMz Ez spans the full node lattice and is updated everywhere;
+            # PEC masking is applied separately to constrained boundary nodes.
+            region = (s_all, s_all)
 
     elif plane == "yz":
         # Grid (nz, ny)
@@ -195,7 +195,7 @@ def material_slice_for_e_2d_component(permittivity, conductivity, component, pla
         "xy": {
             "Ex": (permittivity.shape[0], permittivity.shape[1] - 1),
             "Ey": (permittivity.shape[0] - 1, permittivity.shape[1]),
-            "Ez": (permittivity.shape[0], permittivity.shape[1]),
+            "Ez": (permittivity.shape[0] + 1, permittivity.shape[1] + 1),
         },
         "yz": {
             "Ex": (permittivity.shape[0], permittivity.shape[1]),
@@ -209,20 +209,24 @@ def material_slice_for_e_2d_component(permittivity, conductivity, component, pla
         },
     }[plane][field_component]
 
-    eps = sample_voxel_grid_at_component_2d(
-        permittivity,
-        field_component,
-        plane,
-        stored_shape=field_shape,
-        region=region,
-    )
-    sig = sample_voxel_grid_at_component_2d(
-        conductivity,
-        field_component,
-        plane,
-        stored_shape=field_shape,
-        region=region,
-    )
+    if plane == "xy" and field_component == "Ez":
+        eps = sample_voxel_grid_at_tm_xy_full_component_2d(permittivity, "Ez")[region]
+        sig = sample_voxel_grid_at_tm_xy_full_component_2d(conductivity, "Ez")[region]
+    else:
+        eps = sample_voxel_grid_at_component_2d(
+            permittivity,
+            field_component,
+            plane,
+            stored_shape=field_shape,
+            region=region,
+        )
+        sig = sample_voxel_grid_at_component_2d(
+            conductivity,
+            field_component,
+            plane,
+            stored_shape=field_shape,
+            region=region,
+        )
 
     return eps, sig, region
 
@@ -237,14 +241,16 @@ def magnetic_conductivity_terms_2d_full(
     if plane not in {"xy", "yz", "xz"}:
         raise ValueError(f"Invalid plane: {plane}")
 
-    sample_2d = (
-        sample_voxel_grid_at_compact_component_2d
-        if plane == "xy"
-        else sample_voxel_grid_at_component_2d
-    )
-
-    sigma_m_hx = sample_2d(base_term, "Hx", plane, stored_shape=hx_shape)
-    sigma_m_hy = sample_2d(base_term, "Hy", plane, stored_shape=hy_shape)
+    if plane == "xy":
+        sigma_m_hx = sample_voxel_grid_at_tm_xy_full_component_2d(base_term, "Hx")
+        sigma_m_hy = sample_voxel_grid_at_tm_xy_full_component_2d(base_term, "Hy")
+    else:
+        sigma_m_hx = sample_voxel_grid_at_component_2d(
+            base_term, "Hx", plane, stored_shape=hx_shape
+        )
+        sigma_m_hy = sample_voxel_grid_at_component_2d(
+            base_term, "Hy", plane, stored_shape=hy_shape
+        )
     sigma_m_hz = sample_voxel_grid_at_component_2d(
         base_term,
         "Hz",
