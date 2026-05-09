@@ -86,7 +86,9 @@ def _build_pec_standing_wave_case():
         signal=signal,
     )
 
-    x_near = width - 0.75 * dx
+    # Native xy TM stores Ez on the full node lattice, including the PEC wall.
+    # Sample the wall node directly instead of the legacy near-wall interior cell.
+    x_near = width
     x_far = width - 0.25 * wavelength
     near = _point_dft_monitor("near", x_near, height / 2, frequency)
     far = _point_dft_monitor("far", x_far, height / 2, frequency)
@@ -139,7 +141,7 @@ def _build_pec_pml_channel_case(*, with_monitors: bool):
         x_probe = 4.0 * wavelength
         monitors = [
             _point_dft_monitor("mid", x_probe, height / 2, frequency),
-            _point_dft_monitor("wall", x_probe, height - dx, frequency),
+            _point_dft_monitor("wall", x_probe, height, frequency),
         ]
 
     sim = Simulation(
