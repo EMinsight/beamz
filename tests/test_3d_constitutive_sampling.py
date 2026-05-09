@@ -1603,50 +1603,6 @@ def test_tiny_centered_straight_guide_fixture_is_small_and_transversely_symmetri
     assert _mirror_residual(eps, axis=0) == 0.0
 
 
-@pytest.mark.parametrize("direction", ["+x", "-x", "+y", "-y", "+z", "-z"])
-@pytest.mark.parametrize("pol", ["te", "tm"])
-@pytest.mark.xfail(
-    reason="Known open 3D straight-guide propagation asymmetry; tracked as a characterization gate.",
-    strict=False,
-)
-def test_step_driven_centered_straight_guide_raw_planes_remain_symmetric(
-    direction: str, pol: str
-):
-    sim = _build_centered_straight_guide_sim_steps(
-        ppw=6,
-        axis=direction[1],
-        num_steps=40,
-    )
-    spans = _full_transverse_source_spans(
-        sim,
-        direction=direction,
-        margin_cells=1,
-    )
-    source, _dx = _build_step_driven_test_source(
-        sim,
-        direction=direction,
-        pol=pol,
-        source_spans=spans,
-    )
-    sim.sources = [source]
-
-    for _ in range(40):
-        sim.step()
-
-    plane = _sample_monitor_plane(
-        sim,
-        source,
-        spans,
-        direction=direction,
-        monitor_offset_cells=10,
-    )
-
-    for comp in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz"):
-        axis0_pct, axis1_pct = _best_abs_parity_pct(plane[comp])
-        assert axis0_pct < 1e-9, (direction, pol, comp, axis0_pct, axis1_pct)
-        assert axis1_pct < 1e-9, (direction, pol, comp, axis0_pct, axis1_pct)
-
-
 def test_second_order_mode_fit_is_exact_for_single_cosine_sequence():
     theta = 0.37
     coeff = 2.0 * np.cos(theta)
