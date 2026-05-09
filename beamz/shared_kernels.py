@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import jax.numpy as jnp
+import numpy as np
 
-from beamz.const import EPS_0
+from beamz.const import EPS_0, LIGHT_SPEED
 
 
 @dataclass(frozen=True)
@@ -204,4 +205,30 @@ def build_cpml_3d_terms(
         a_e_terms=a_e_terms,
         b_e_terms=b_e_terms,
         inv_kappa_e_terms=inv_kappa_e_terms,
+    )
+
+
+def poynting_magnitude_2d(ez, hx, hy):
+    """Return |E x H| for 2D TM monitor samples."""
+    sx = -ez * hy
+    sy = ez * hx
+    return (sx * sx + sy * sy) ** 0.5
+
+
+def poynting_magnitude_3d(ex, ey, ez, hx, hy, hz):
+    """Return |E x H| for 3D monitor samples."""
+    sx = ey * hz - ez * hy
+    sy = ez * hx - ex * hz
+    sz = ex * hy - ey * hx
+    return (sx * sx + sy * sy + sz * sz) ** 0.5
+
+
+def meep_dft_sample_scale(weight, base_dt, record_interval, length_unit):
+    """Return Meep-style DFT normalization scale for one sample weight."""
+    return weight * (
+        base_dt
+        * record_interval
+        * LIGHT_SPEED
+        / length_unit
+        / np.sqrt(2.0 * np.pi)
     )

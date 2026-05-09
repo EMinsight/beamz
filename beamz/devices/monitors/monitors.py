@@ -4,7 +4,7 @@ from typing import Callable, Optional
 
 import numpy as np
 
-from beamz.const import LIGHT_SPEED, µm
+from beamz.const import µm
 from beamz.devices._placement import (
     line_region_points,
     plane_region_slices,
@@ -14,6 +14,9 @@ from beamz.devices._placement import (
 from beamz.shared_kernels import (
     full_tm_xy_component_to_centered_grid,
     is_full_tm_xy_lattice,
+    meep_dft_sample_scale,
+    poynting_magnitude_2d,
+    poynting_magnitude_3d,
 )
 
 logger = logging.getLogger(__name__)
@@ -915,13 +918,14 @@ class Monitor:
         base_dt = self._dft_meep_base_dt(t, step)
         if base_dt is None or base_dt <= 0.0:
             return 0.0
-        dt_norm = (
-            float(base_dt)
-            * float(self.dft_record_interval)
-            * float(LIGHT_SPEED)
-            / float(self.dft_length_unit)
+        return float(
+            meep_dft_sample_scale(
+                w,
+                float(base_dt),
+                float(self.dft_record_interval),
+                float(self.dft_length_unit),
+            )
         )
-        return w * (dt_norm / np.sqrt(2.0 * np.pi))
 
     @staticmethod
     def _reshape_dft_component(
@@ -1252,10 +1256,10 @@ class Monitor:
         Hx_array = np.array(Hx_values)
         Hy_array = np.array(Hy_values)
         # Poynting vector S = E × H (units: W/m²)
-        Sx = -Ez_array * Hy_array
-        Sy = Ez_array * Hx_array
-        # Power magnitude per grid point
-        power_mag = np.sqrt(Sx**2 + Sy**2)
+        power_mag = np.asarray(
+            poynting_magnitude_2d(Ez_array, Hx_array, Hy_array), dtype=np.complex128
+        )
+        power_mag = np.real_if_close(power_mag)
         # Total power = integral over monitor area (multiply by cell area for proper units)
         total_power = np.sum(power_mag) * dx * dy
         if self.power_accumulated is None:
@@ -1272,12 +1276,10 @@ class Monitor:
         Power is computed as the integral of the Poynting vector magnitude
         over the monitor plane, properly normalized by grid cell area.
         """
-        # Poynting vector S = E × H (units: W/m²)
-        Sx = Ey * Hz - Ez * Hy
-        Sy = Ez * Hx - Ex * Hz
-        Sz = Ex * Hy - Ey * Hx
-        # Power magnitude per grid point
-        power_mag = np.sqrt(Sx**2 + Sy**2 + Sz**2)
+        power_mag = np.asarray(
+            poynting_magnitude_3d(Ex, Ey, Ez, Hx, Hy, Hz), dtype=np.complex128
+        )
+        power_mag = np.real_if_close(power_mag)
         # Total power = integral over monitor area (multiply by cell area for proper units)
         total_power = np.sum(power_mag) * dx * dy
         if self.power_accumulated is None:

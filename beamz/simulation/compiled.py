@@ -18,7 +18,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from beamz.const import EPS_0, LIGHT_SPEED
+from beamz.const import EPS_0
 from beamz.devices.monitors.compiler import (
     BatchedMonitorData,
     CompiledMonitorSpec,
@@ -65,6 +65,9 @@ from beamz.shared_kernels import (
     build_cpml_3d_terms,
     build_tm_xy_cpml_terms,
     full_tm_xy_component_to_centered_grid,
+    meep_dft_sample_scale,
+    poynting_magnitude_2d,
+    poynting_magnitude_3d,
 )
 from beamz.simulation.yee import (
     sample_voxel_grid_at_tm_xy_full_component_2d,
@@ -633,9 +636,7 @@ class CompiledSimulation:
         hx_vals = hx[spec.y_hx, spec.x_hx] * spec.valid_hx
         hy_vals = hy[spec.y_hy, spec.x_hy] * spec.valid_hy
 
-        sx = -ez_vals * hy_vals
-        sy = ez_vals * hx_vals
-        mag = jnp.sqrt(sx * sx + sy * sy)
+        mag = poynting_magnitude_2d(ez_vals, hx_vals, hy_vals)
         return jnp.asarray(jnp.sum(mag), dtype=jnp.float32) * power_scale
 
     def _monitor_power_3d(
@@ -692,10 +693,7 @@ class CompiledSimulation:
             spec.min_dim1,
         )
 
-        sx = eys * hzs - ezs * hys
-        sy = ezs * hxs - exs * hzs
-        sz = exs * hys - eys * hxs
-        mag = jnp.sqrt(sx * sx + sy * sy + sz * sz)
+        mag = poynting_magnitude_3d(exs, eys, ezs, hxs, hys, hzs)
         return jnp.asarray(jnp.sum(mag), dtype=jnp.float32) * power_scale
 
     @staticmethod
@@ -1137,18 +1135,18 @@ class CompiledSimulation:
                     dtype=jnp.float32,
                 )
                 sample_scale = jnp.asarray(w, dtype=jnp.float32)
-                sample_scale = jnp.where(
-                    jnp.asarray(mon.dft_normalization_code == 1),
-                    sample_scale
-                    * (
-                        dt_scalar
-                        * jnp.asarray(mon.dft_record_interval, dtype=jnp.float32)
-                        * jnp.asarray(
-                            LIGHT_SPEED / mon.dft_length_unit, dtype=jnp.float32
-                        )
-                        / jnp.asarray(np.sqrt(2.0 * np.pi), dtype=jnp.float32)
+                sample_scale = jnp.asarray(
+                    jnp.where(
+                        jnp.asarray(mon.dft_normalization_code == 1),
+                        meep_dft_sample_scale(
+                            sample_scale,
+                            dt_scalar,
+                            jnp.asarray(mon.dft_record_interval, dtype=jnp.float32),
+                            jnp.asarray(mon.dft_length_unit, dtype=jnp.float32),
+                        ),
+                        sample_scale,
                     ),
-                    sample_scale,
+                    dtype=jnp.float32,
                 )
 
                 if mon.is_3d:
@@ -1266,17 +1264,21 @@ class CompiledSimulation:
             hx: jnp.ndarray,
             hy: jnp.ndarray,
             hz: jnp.ndarray,
+            *,
+            tm_ez: jnp.ndarray | None = None,
+            tm_hx: jnp.ndarray | None = None,
+            tm_hy: jnp.ndarray | None = None,
         ) -> jnp.ndarray:
             if snapshot_field == "Ex":
                 return ex
             if snapshot_field == "Ey":
                 return ey
             if snapshot_field == "Ez":
-                return ez
+                return ez if tm_ez is None else tm_ez
             if snapshot_field == "Hx":
-                return hx
+                return hx if tm_hx is None else tm_hx
             if snapshot_field == "Hy":
-                return hy
+                return hy if tm_hy is None else tm_hy
             if snapshot_field == "Hz":
                 return hz
             raise ValueError(f"Unsupported snapshot field: {snapshot_field}")
@@ -1865,7 +1867,17 @@ class CompiledSimulation:
                 new_time = new_eng.t
                 should_snapshot = (new_step % snapshot_interval) == 0
                 slot = jnp.minimum(snap_count, snap_fields.shape[0] - 1)
-                snapshot_values = _snapshot_values(ex, ey, ez, hx, hy, hz)
+                snapshot_values = _snapshot_values(
+                    ex,
+                    ey,
+                    ez,
+                    hx,
+                    hy,
+                    hz,
+                    tm_ez=new_tm_ez if use_physical_tm_xy else None,
+                    tm_hx=new_tm_hx if use_physical_tm_xy else None,
+                    tm_hy=new_tm_hy if use_physical_tm_xy else None,
+                )
                 field_start = (slot,) + (0,) * snapshot_values.ndim
 
                 snap_fields = jax.lax.cond(

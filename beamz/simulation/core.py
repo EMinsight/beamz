@@ -445,20 +445,6 @@ class Simulation:
                         self.current_step,
                     )
 
-    def _should_fallback_to_step_run(self, *, snapshot_field=None) -> bool:
-        """Detect cases where the compiled 2D TM mode-source path is not reliable."""
-        if self.is_3d or self.plane_2d != "xy":
-            return False
-        if snapshot_field is None:
-            return False
-        from beamz.devices.sources import ModeSource
-
-        return any(
-            isinstance(source, ModeSource)
-            and str(getattr(source, "pol", "")).lower() == "tm"
-            for source in self.sources
-        )
-
     def _run_via_step_engine(
         self,
         *,
@@ -471,7 +457,7 @@ class Simulation:
         snapshot_callback,
         store_snapshots,
     ):
-        """Reference execution path used when the compiled kernel is known bad."""
+        """Reference execution path for differential checks and debugging."""
         if record_fields is None:
             record_fields = ["Ez"]
 
@@ -793,17 +779,6 @@ class Simulation:
         snapshot_interval = (
             0 if snapshot_field is None else max(1, int(snapshot_interval or 10))
         )
-        if self._should_fallback_to_step_run(snapshot_field=snapshot_field):
-            return self._run_via_step_engine(
-                num_steps=num_steps,
-                record_interval=record_interval,
-                record_fields=record_fields,
-                progress=progress,
-                snapshot_field=snapshot_field,
-                snapshot_interval=snapshot_interval,
-                snapshot_callback=snapshot_callback,
-                store_snapshots=store_snapshots,
-            )
         snapshots = []
         snapshot_layout = None
         if snapshot_field is not None:
