@@ -13,6 +13,8 @@ from beamz.simulation.boundaries import (
     normalize_boundaries,
     tm_xy_curl_e_to_h_2d,
     tm_xy_curl_h_to_e_2d,
+    xy_te_curl_e_to_h_2d,
+    xy_te_curl_h_to_e_2d,
 )
 from beamz.simulation.fields import Fields
 
@@ -72,8 +74,78 @@ def _tm_xy_energy(ez, hx, hy, *, dx):
     return float((electric + magnetic) * dx * dx)
 
 
-def _x_centroid(ez):
-    weights = np.sum(np.asarray(ez) ** 2, axis=0)
+def _te_xy_lossless_step(ex, ey, hz, *, dx, dt, metallic_edges=frozenset()):
+    ex = jnp.asarray(ex)
+    ey = jnp.asarray(ey)
+    hz = jnp.asarray(hz)
+    curl_hz = xy_te_curl_e_to_h_2d(ex, ey, dx, hz.shape)
+    hz = ops.advance_h_field(hz, curl_hz, np.zeros_like(hz), dt)
+    curl_ex, curl_ey = xy_te_curl_h_to_e_2d(hz, dx, ex.shape, ey.shape, metallic_edges)
+    ex = ops.advance_e_field(
+        ex,
+        curl_ex,
+        np.zeros_like(ex),
+        np.ones_like(ex),
+        dt,
+        (slice(None), slice(None)),
+    )
+    ey = ops.advance_e_field(
+        ey,
+        curl_ey,
+        np.zeros_like(ey),
+        np.ones_like(ey),
+        dt,
+        (slice(None), slice(None)),
+    )
+    return ex, ey, hz
+
+
+def _te_xy_pec_step(ex, ey, hz, *, dx, dt):
+    ex = jnp.asarray(ex)
+    ey = jnp.asarray(ey)
+    hz = jnp.asarray(hz)
+    curl_hz = xy_te_curl_e_to_h_2d(ex, ey, dx, hz.shape)
+    hz = ops.advance_h_field(hz, curl_hz, np.zeros_like(hz), dt)
+    curl_ex, curl_ey = xy_te_curl_h_to_e_2d(
+        hz,
+        dx,
+        ex.shape,
+        ey.shape,
+        frozenset({"left", "right", "top", "bottom"}),
+    )
+    ex = ops.advance_e_field(
+        ex,
+        curl_ex,
+        np.zeros_like(ex),
+        np.ones_like(ex),
+        dt,
+        (slice(None), slice(None)),
+    )
+    ey = ops.advance_e_field(
+        ey,
+        curl_ey,
+        np.zeros_like(ey),
+        np.ones_like(ey),
+        dt,
+        (slice(None), slice(None)),
+    )
+    ex = ex.at[0, :].set(0.0)
+    ex = ex.at[-1, :].set(0.0)
+    ey = ey.at[:, 0].set(0.0)
+    ey = ey.at[:, -1].set(0.0)
+    return ex, ey, hz
+
+
+def _te_xy_energy(ex, ey, hz, *, dx):
+    electric = 0.5 * EPS_0 * (
+        np.sum(np.asarray(ex) ** 2) + np.sum(np.asarray(ey) ** 2)
+    )
+    magnetic = 0.5 * MU_0 * np.sum(np.asarray(hz) ** 2)
+    return float((electric + magnetic) * dx * dx)
+
+
+def _x_centroid(field):
+    weights = np.sum(np.asarray(field) ** 2, axis=0)
     x = np.arange(weights.shape[0], dtype=np.float64)
     return float(np.sum(weights * x) / np.sum(weights))
 
@@ -102,6 +174,32 @@ def _build_x_propagating_packet(direction: str, *, ny=12, nx=192, dx=1e-6):
     hy = np.tile(hy_profile[None, :], (ny + 1, 1))
     sample_x = int(np.argmin(np.abs(x_hy - x0)))
     return ez, hx, hy, sample_x
+
+
+def _build_x_propagating_te_packet(direction: str, *, ny=13, nx=192, dx=1e-6):
+    eta_0 = np.sqrt(MU_0 / EPS_0)
+    x0 = 0.35 * nx * dx
+    sigma = 12.0 * dx
+    wavelength = 24.0 * dx
+    k = 2.0 * np.pi / wavelength
+    sign = 1.0 if direction == "+x" else -1.0
+
+    x_ey = (np.arange(nx, dtype=np.float32) + 0.5) * dx
+    x_hz = np.arange(nx - 1, dtype=np.float32) * dx
+
+    ey_profile = np.exp(-((x_ey - x0) / sigma) ** 2) * np.cos(k * (x_ey - x0))
+    hz_profile = (
+        sign
+        * np.exp(-((x_hz - x0) / sigma) ** 2)
+        * np.cos(k * (x_hz - x0))
+        / eta_0
+    )
+
+    ex = np.zeros((ny, nx - 1), dtype=np.float32)
+    ey = np.tile(ey_profile[None, :], (ny - 1, 1))
+    hz = np.tile(hz_profile[None, :], (ny - 1, 1))
+    sample_x = int(np.argmin(np.abs(x_hz - x0)))
+    return ex, ey, hz, sample_x
 
 
 def test_ops_quarantine_legacy_xy_compact_tm_curls():
@@ -239,6 +337,106 @@ def test_tm_xy_closed_pec_domain_conserves_discrete_energy():
             hy_mask=state.hy_mask,
         )
         energies.append(_tm_xy_energy(state.Ez, state.Hx, state.Hy, dx=dx))
+
+    energies = np.asarray(energies)
+    relative_excursion = (np.max(energies) - np.min(energies)) / np.mean(energies)
+    assert relative_excursion < 0.03
+
+
+def test_xy_te_curls_match_tez_identities():
+    ny, nx = 6, 8
+    y_hz = np.arange(ny - 1, dtype=np.float32)[:, None]
+    x_hz = np.arange(nx - 1, dtype=np.float32)[None, :]
+    hz = y_hz + 2.0 * x_hz
+
+    curl_ex, curl_ey = xy_te_curl_h_to_e_2d(
+        hz,
+        1.0,
+        (ny, nx - 1),
+        (ny - 1, nx),
+        frozenset(),
+    )
+    np.testing.assert_allclose(curl_ex[1:-1, :], np.ones((ny - 2, nx - 1)))
+    np.testing.assert_allclose(curl_ey[:, 1:-1], -2.0 * np.ones((ny - 1, nx - 2)))
+
+    y_ex = np.arange(ny, dtype=np.float32)[:, None]
+    x_ey = np.arange(nx, dtype=np.float32)[None, :]
+    ex = 3.0 * y_ex * np.ones((1, nx - 1), dtype=np.float32)
+    ey = 5.0 * np.ones((ny - 1, 1), dtype=np.float32) * x_ey
+    curl_hz = xy_te_curl_e_to_h_2d(ex, ey, 1.0, (ny - 1, nx - 1))
+    np.testing.assert_allclose(curl_hz, 2.0)
+
+
+def test_xy_te_constant_fields_have_zero_curl():
+    ny, nx = 7, 9
+    ex = np.ones((ny, nx - 1), dtype=np.float32)
+    ey = np.ones((ny - 1, nx), dtype=np.float32)
+    hz = np.ones((ny - 1, nx - 1), dtype=np.float32)
+
+    curl_hz = xy_te_curl_e_to_h_2d(ex, ey, 1.0, hz.shape)
+    curl_ex, curl_ey = xy_te_curl_h_to_e_2d(hz, 1.0, ex.shape, ey.shape, frozenset())
+
+    np.testing.assert_allclose(curl_hz, 0.0)
+    np.testing.assert_allclose(curl_ex, 0.0)
+    np.testing.assert_allclose(curl_ey, 0.0)
+
+
+def test_xy_te_plane_wave_packet_propagates_in_the_expected_x_direction():
+    dx = 1e-6
+    dt = 0.25 * dx / LIGHT_SPEED
+    ex, ey, hz, _sample_x = _build_x_propagating_te_packet("+x", dx=dx)
+    initial_centroid = _x_centroid(ey)
+
+    for _ in range(32):
+        ex, ey, hz = _te_xy_lossless_step(ex, ey, hz, dx=dx, dt=dt)
+
+    assert _x_centroid(ey) > initial_centroid + 2.0
+    np.testing.assert_allclose(ex, 0.0, atol=1e-12)
+
+
+def test_xy_te_reversing_x_propagation_flips_hz_sign_and_motion():
+    dx = 1e-6
+    dt = 0.25 * dx / LIGHT_SPEED
+    ex_plus, ey_plus, hz_plus, sample_x = _build_x_propagating_te_packet("+x", dx=dx)
+    ex_minus, ey_minus, hz_minus, _ = _build_x_propagating_te_packet("-x", dx=dx)
+
+    sample_y = hz_plus.shape[0] // 2
+    assert hz_plus[sample_y, sample_x] > 0.0
+    assert hz_minus[sample_y, sample_x] < 0.0
+
+    plus_initial = _x_centroid(ey_plus)
+    minus_initial = _x_centroid(ey_minus)
+
+    for _ in range(32):
+        ex_plus, ey_plus, hz_plus = _te_xy_lossless_step(
+            ex_plus, ey_plus, hz_plus, dx=dx, dt=dt
+        )
+        ex_minus, ey_minus, hz_minus = _te_xy_lossless_step(
+            ex_minus, ey_minus, hz_minus, dx=dx, dt=dt
+        )
+
+    assert _x_centroid(ey_plus) > plus_initial + 2.0
+    assert _x_centroid(ey_minus) < minus_initial - 2.0
+
+
+def test_xy_te_closed_pec_domain_conserves_discrete_energy():
+    ny, nx = 24, 30
+    dx = 1e-6
+    dt = 0.15 * dx / (LIGHT_SPEED * np.sqrt(2.0))
+
+    y_hz = np.arange(ny - 1, dtype=np.float32)[:, None]
+    x_hz = np.arange(nx - 1, dtype=np.float32)[None, :]
+    hz = jnp.asarray(
+        np.sin(np.pi * (y_hz + 1.0) / ny) * np.sin(2.0 * np.pi * (x_hz + 1.0) / nx),
+        dtype=jnp.float32,
+    )
+    ex = jnp.zeros((ny, nx - 1), dtype=jnp.float32)
+    ey = jnp.zeros((ny - 1, nx), dtype=jnp.float32)
+
+    energies = [_te_xy_energy(ex, ey, hz, dx=dx)]
+    for _ in range(120):
+        ex, ey, hz = _te_xy_pec_step(ex, ey, hz, dx=dx, dt=dt)
+        energies.append(_te_xy_energy(ex, ey, hz, dx=dx))
 
     energies = np.asarray(energies)
     relative_excursion = (np.max(energies) - np.min(energies)) / np.mean(energies)
