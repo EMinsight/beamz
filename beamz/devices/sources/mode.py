@@ -1899,7 +1899,10 @@ class ModeSource:
                 Hy_cropped = Hy_cropped * window
                 Ez_cropped = Ez_cropped * window
 
-            jz_profile = dir_sign * Hy_cropped
+            # For x-directed TMz launches the native full-Yee source pair must
+            # use opposite J/M handedness so the injected Ez/Hy pair carries
+            # power along the requested x direction.
+            jz_profile = -dir_sign * Hy_cropped
             my_profile = dir_sign * Ez_cropped
             jz_profile, my_profile = _normalize_2d_pair_by_power(
                 jz_profile, my_profile, signed_flux_sign=-1.0, dl=resolution
@@ -2015,10 +2018,10 @@ class ModeSource:
                 Hx_cropped = Hx_cropped * window
                 Ez_cropped = Ez_cropped * window
 
-            # On the native TMz lattice the y-directed traveling branch keeps the
-            # original electric-current handedness and only rotates the magnetic
-            # compatibility lane.
-            jz_profile = -dir_sign * Hx_cropped
+            # For y-directed TMz launches the native full-Yee source pair must
+            # keep J and M with opposite handedness so the injected Ez/Hx pair
+            # carries power along the requested y direction.
+            jz_profile = dir_sign * Hx_cropped
             my_profile = -dir_sign * Ez_cropped
             jz_profile, my_profile = _normalize_2d_pair_by_power(
                 jz_profile, my_profile, signed_flux_sign=1.0, dl=resolution
