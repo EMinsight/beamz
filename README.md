@@ -33,9 +33,6 @@ pip install beamz
 Read and try out our **[example notebooks](https://quentinwach.com/beamz-notebooks/)** or download and run [`examples/` from this repository](https://github.com/QuentinWach/beamz/tree/main/examples).
 
 
----
-
-
 ## About
 BEAMZ's goal is to become the **pragmatic** FDTD engine of choice for **photonic chip designers**.
 
