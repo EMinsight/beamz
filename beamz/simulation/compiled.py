@@ -1938,6 +1938,9 @@ class CompiledSimulation:
                 mat, _ = material_model.update(mat, ex, ey, ez, abs_step)
 
                 t_phys = eng.t + dt_scalar
+                mon_tm_ez = ez if use_physical_tm_xy else tm_ez
+                mon_tm_hx = hx if use_physical_tm_xy else tm_hx
+                mon_tm_hy = hy if use_physical_tm_xy else tm_hy
                 mon = self._update_monitors(
                     mon,
                     abs_step,
@@ -1949,13 +1952,16 @@ class CompiledSimulation:
                     hx,
                     hy,
                     hz,
-                    tm_ez=ez,
-                    tm_hx=hx,
-                    tm_hy=hy,
+                    tm_ez=mon_tm_ez,
+                    tm_hx=mon_tm_hx,
+                    tm_hy=mon_tm_hy,
                     batched_mon=batched_mon,
                     monitors_2d=monitors_2d,
                 )
 
+                new_tm_ez = ez if use_physical_tm_xy else tm_ez
+                new_tm_hx = hx if use_physical_tm_xy else tm_hx
+                new_tm_hy = hy if use_physical_tm_xy else tm_hy
                 new_eng = EngineState(
                     ex=ex,
                     ey=ey,
@@ -1963,9 +1969,9 @@ class CompiledSimulation:
                     hx=hx,
                     hy=hy,
                     hz=hz,
-                    tm_ez=ez,
-                    tm_hx=hx,
-                    tm_hy=hy,
+                    tm_ez=new_tm_ez,
+                    tm_hx=new_tm_hx,
+                    tm_hy=new_tm_hy,
                     fp_ex=fp_ex,
                     fp_ey=fp_ey,
                     fp_ez=fp_ez,
