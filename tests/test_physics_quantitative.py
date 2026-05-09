@@ -41,6 +41,8 @@ from tests.utils import (
     slab_waveguide_neff_te,
 )
 
+pytestmark = [pytest.mark.integration, pytest.mark.simulation, pytest.mark.slow]
+
 
 # =============================================================================
 # Fresnel Coefficient Tests - Quantitative

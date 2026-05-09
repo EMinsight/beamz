@@ -89,7 +89,16 @@ def test_extract_port_waves_modal_coefficients_synthetic(monkeypatch):
             spectral_map[(monitor.name, component)],
         )
 
-    def fake_projection(self, spec, monitor, frequency, cache, mode_pad_cells=6):
+    def fake_projection(
+        self,
+        spec,
+        monitor,
+        frequency,
+        cache,
+        mode_pad_cells=6,
+        previous_projection=None,
+    ):
+        del spec, monitor, frequency, cache, mode_pad_cells, previous_projection
         return {"e_component": "Ez", "h_component": "Hy", "pinv": pinv}
 
     monkeypatch.setattr(Simulation, "_sample_monitor_component_spectrum", fake_sample)
@@ -1570,7 +1579,9 @@ def test_get_S_matrix_modal_dft_respects_wave_selectors(monkeypatch):
     )
 
 
-def test_get_S_matrix_modal_dft_auto_incident_selector_prefers_dominant(monkeypatch):
+def test_get_S_matrix_modal_dft_auto_selectors_prefer_band_dominant_source_wave(
+    monkeypatch,
+):
     sim = Simulation.__new__(Simulation)
     sim.sources = []
     sim.monitors = []
@@ -1607,6 +1618,7 @@ def test_get_S_matrix_modal_dft_auto_incident_selector_prefers_dominant(monkeypa
                 direction="+x",
                 polarization="tm",
                 incident_wave="auto",
+                scattered_wave="auto",
             ),
             PortSpec(
                 name="out",
@@ -1624,7 +1636,7 @@ def test_get_S_matrix_modal_dft_auto_incident_selector_prefers_dominant(monkeypa
     )
     np.testing.assert_allclose(
         result["s_matrix"][("out", "src")],
-        np.array([0.25, 0.5], dtype=np.complex128),
+        np.array([0.25, 2.5], dtype=np.complex128),
         rtol=1e-12,
         atol=1e-12,
     )

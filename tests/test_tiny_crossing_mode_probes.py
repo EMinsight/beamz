@@ -1,8 +1,11 @@
 import numpy as np
+import pytest
 
 from beamz import LIGHT_SPEED, PML, ModeSource, Monitor, PortSpec, Simulation, dxdt, µm
 from beamz.design.io import gdsf
 from beamz.devices.sources.signals import gaussian_band_pulse
+
+pytestmark = [pytest.mark.integration, pytest.mark.pdk]
 
 
 def _move_along(center: tuple[float, float], direction: str, distance: float):
@@ -265,19 +268,28 @@ def test_tiny_crossing_y_port_mode_probes_use_ex_hz_not_ey_hy():
 
 
 def test_prepare_component_ubcpdk_uses_explicit_stack_layers():
-    prepared = gdsf.prepare_component(
-        "ebeam_crossing4",
-        layer=(1, 0),
-        n_core=3.47,
-        n_clad=1.44,
-        core_thickness=0.22 * µm,
-        clad_below=0.50 * µm,
-        clad_above=0.50 * µm,
-        xy_padding=1.50 * µm,
-        z_padding=0.50 * µm,
-        extension=1.50 * µm,
-        port_overlap=0.10 * µm,
-    )
+    try:
+        prepared = gdsf.prepare_component(
+            "ebeam_crossing4",
+            layer=(1, 0),
+            n_core=3.47,
+            n_clad=1.44,
+            core_thickness=0.22 * µm,
+            clad_below=0.50 * µm,
+            clad_above=0.50 * µm,
+            xy_padding=1.50 * µm,
+            z_padding=0.50 * µm,
+            extension=1.50 * µm,
+            port_overlap=0.10 * µm,
+        )
+    except (ImportError, ValueError) as exc:
+        message = str(exc)
+        if (
+            "Could not resolve gdsfactory/PDK component" in message
+            or "ubcpdk" in message
+        ):
+            pytest.skip("ubcpdk crossing component is unavailable in this environment")
+        raise
 
     assert prepared["stack_profile"] is not None
     design = prepared["design"]
