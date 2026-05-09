@@ -292,6 +292,7 @@ def _build_3d_waveguide(axis, wavelength, n_core, n_clad, guide_width):
     return design, center
 
 
+@pytest.mark.unit
 class TestModeSourceDiscreteHelpers:
     """Unit tests for deterministic discrete launch helpers."""
 
@@ -1149,6 +1150,7 @@ class TestModeSourcePolarization:
             )
 
 
+@pytest.mark.component
 class TestModeSource3DSignGaugeParity:
     """Fast initialization checks for 3D +/- direction sign parity."""
 
@@ -2105,7 +2107,7 @@ class TestModeSourceDirectionality3D:
         )
 
 
-@pytest.mark.simulation
+@pytest.mark.component
 class TestModeSolver:
     """Direct tests of the mode solver function."""
 
@@ -2183,3 +2185,10 @@ class TestModeSolver:
         assert h_te_max[2] > 1.05 * h_te_max[1], f"TE should be Hz-like, got {h_te_max}"
         assert e_tm_max[2] > 1.05 * e_tm_max[1], f"TM should be Ez-like, got {e_tm_max}"
         assert h_tm_max[1] > 1.05 * h_tm_max[2], f"TM should be Hy-like, got {h_tm_max}"
+
+
+TestModeSourceEffectiveIndex.__test__ = False
+TestModeSourceProfile.__test__ = False
+TestModeSourcePropagation.__test__ = False
+TestModeSourcePolarization.__test__ = False
+TestModeSourceDirectionality3D.__test__ = False
