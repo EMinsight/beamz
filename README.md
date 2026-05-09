@@ -29,7 +29,7 @@ pip install beamz
 - Optimization/autodiff utilities for gradient-based **inverse-design** with Jax.
 
 
-## Example Library
+## Examples
 Read and try out our **[example notebooks](https://quentinwach.com/beamz-notebooks/)** or download and run [`examples/` from this repository](https://github.com/QuentinWach/beamz/tree/main/examples).
 
 
