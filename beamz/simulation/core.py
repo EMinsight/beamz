@@ -687,6 +687,13 @@ class Simulation:
         dt = self.dt
         plane_2d = self.plane_2d
 
+        if (not self.is_3d) and plane_2d == "xy":
+            raise ValueError(
+                "The legacy compact xy-TM JIT step has been retired. Use "
+                "Simulation.step()/run() or run_compiled(), which advance the "
+                "physical full-state TMz lattice."
+            )
+
         # Material parameters (static for the simulation)
         eps_x, sig_x, region_x = (
             self.fields.eps_x,
@@ -804,6 +811,13 @@ class Simulation:
         resolution = self.resolution
         dt = self.dt
         plane_2d = self.plane_2d
+
+        if (not self.is_3d) and plane_2d == "xy":
+            raise ValueError(
+                "The legacy compact xy-TM JIT H-step has been retired. Use the "
+                "physical full-state TMz update path instead."
+            )
+
         sigma_m_hx = self.fields.sigma_m_hx
         sigma_m_hy = self.fields.sigma_m_hy
         sigma_m_hz = self.fields.sigma_m_hz
@@ -855,6 +869,13 @@ class Simulation:
         resolution = self.resolution
         dt = self.dt
         plane_2d = self.plane_2d
+
+        if (not self.is_3d) and plane_2d == "xy":
+            raise ValueError(
+                "The legacy compact xy-TM JIT E-step has been retired. Use the "
+                "physical full-state TMz update path instead."
+            )
+
         eps_x, sig_x, region_x = (
             self.fields.eps_x,
             self.fields.sig_x,

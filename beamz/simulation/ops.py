@@ -11,29 +11,21 @@ from beamz.simulation.yee import (
 )
 
 
+def _raise_legacy_xy_tm_compact_error(function_name: str) -> None:
+    raise ValueError(
+        f"{function_name} no longer supports plane='xy' on Beamz's legacy compact "
+        "TM storage. Use the physical full-state TMz helpers in "
+        "beamz.simulation.boundaries "
+        "(tm_xy_curl_e_to_h_2d/full_pec_curl_e_to_h_2d_xy and "
+        "tm_xy_curl_h_to_e_2d/full_pec_curl_h_to_e_2d_xy)."
+    )
+
+
 def curl_e_to_h_2d(e_fields, resolution, plane="xy"):
     """Compute curl of E-field for H update in 2D on staggered Yee grid for arbitrary plane."""
     # Unpack E-fields based on plane
     if plane == "xy":
-        # E = (Ex, Ey, Ez) with ∂/∂z = 0
-        Ex, Ey, Ez = e_fields
-        # Field shapes: Ez(ny, nx), Ex(ny, nx-1), Ey(ny-1, nx)
-        # H-field shapes: Hx(ny, nx-1), Hy(ny-1, nx), Hz(ny-1, nx-1)
-
-        # Match existing convention for backward compatibility:
-        # Hx(ny, nx-1) from diff(Ez, axis=1) -> ∂Ez/∂x gives (ny, nx-1) ✓
-        # Hy(ny-1, nx) from -diff(Ez, axis=0) -> -∂Ez/∂y gives (ny-1, nx) ✓
-        curl_ex = jnp.diff(Ez, axis=1) / resolution  # (ny, nx-1) for Hx
-        curl_ey = -jnp.diff(Ez, axis=0) / resolution  # (ny-1, nx) for Hy
-
-        # Hz(ny-1, nx-1) from ∂Ey/∂x - ∂Ex/∂y
-        # Ey(ny-1, nx) -> diff(axis=1) gives (ny-1, nx-1)
-        # Ex(ny, nx-1) -> diff(axis=0) gives (ny-1, nx-1)
-        term1_z = jnp.diff(Ey, axis=1) / resolution  # (ny-1, nx-1)
-        term2_z = jnp.diff(Ex, axis=0) / resolution  # (ny-1, nx-1)
-        curl_ez = term1_z - term2_z
-
-        return curl_ex, curl_ey, curl_ez
+        _raise_legacy_xy_tm_compact_error("curl_e_to_h_2d")
 
     elif plane == "yz":
         # E = (Ex, Ey, Ez) with ∂/∂x = 0
@@ -85,37 +77,8 @@ def curl_h_to_e_2d(h_fields, resolution, e_shapes, plane="xy"):
     # e_shapes is tuple of shapes for (Ex, Ey, Ez) to handle boundary padding
 
     if plane == "xy":
-        # ∂/∂z = 0
-        Hx, Hy, Hz = h_fields
-        # Field shapes: Hx(ny, nx-1), Hy(ny-1, nx), Hz(ny-1, nx-1)
-        # E-field shapes: Ex(ny, nx-1), Ey(ny-1, nx), Ez(ny, nx)
-
-        # Ex update: (∇×H)_x = ∂Hz/∂y - ∂Hy/∂z(0) = ∂Hz/∂y
-        # Ex(ny, nx-1), Hz(ny-1, nx-1)
-        # ∂Hz/∂y: Hz is (ny-1, nx-1), diff(axis=0) gives (ny-2, nx-1)
-        curl_ex = jnp.zeros(e_shapes[0])
-        dHz_dy = (Hz[1:, :] - Hz[:-1, :]) / resolution  # (ny-2, nx-1)
-        # Use .at[].set() for functional update (JAX immutable arrays)
-        curl_ex = curl_ex.at[1:-1, :].set(dHz_dy)
-
-        # Ey update: (∇×H)_y = ∂Hx/∂z(0) - ∂Hz/∂x = -∂Hz/∂x
-        # Ey(ny-1, nx), Hz(ny-1, nx-1)
-        # -∂Hz/∂x: -diff(Hz, axis=1) gives (ny-1, nx-2)
-        # Ey update region is [:, 1:-1] -> (ny-1, nx-2)
-        curl_ey = jnp.zeros(e_shapes[1])
-        dHz_dx = (Hz[:, 1:] - Hz[:, :-1]) / resolution  # (ny-1, nx-2)
-        curl_ey = curl_ey.at[:, 1:-1].set(-dHz_dx)
-
-        # Ez update: (∇×H)_z = ∂Hy/∂x - ∂Hx/∂y
-        # Ez(ny, nx), Hx(ny, nx-1), Hy(ny-1, nx)
-        # Match original implementation exactly for backward compatibility
-        curl_ez = jnp.zeros(e_shapes[2])
-        # Original code computed these derivatives at interior Ez points
-        dHy_dx = (Hy[1:, 1:-1] - Hy[:-1, 1:-1]) / resolution  # Shape: (ny-2, nx-2)
-        dHx_dy = (Hx[1:-1, 1:] - Hx[1:-1, :-1]) / resolution  # Shape: (ny-2, nx-2)
-        curl_ez = curl_ez.at[1:-1, 1:-1].set(dHy_dx - dHx_dy)
-
-        return curl_ex, curl_ey, curl_ez
+        del h_fields, resolution, e_shapes
+        _raise_legacy_xy_tm_compact_error("curl_h_to_e_2d")
 
     elif plane == "yz":
         # ∂/∂x = 0

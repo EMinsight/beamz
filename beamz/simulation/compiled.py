@@ -2666,12 +2666,11 @@ def compile_simulation(
                 )
             )
     if not bool(run_cfg.is_3d) and run_cfg.plane_2d == "xy":
-        from beamz.devices.sources import ModeSource
-
         tm_ez_shape = (int(fields.Ez.shape[0]) + 1, int(fields.Ez.shape[1]) + 1)
-        use_physical_tm_xy = not any(
-            isinstance(source, ModeSource) for source in sources
-        )
+        # The physical full-state TMz lattice is the only supported xy-TM update
+        # path. Legacy compact curls remain available only as compatibility views
+        # around source/monitor plumbing, not as an independent solver branch.
+        use_physical_tm_xy = True
         use_cpml_tm_xy = bool(
             getattr(fields, "has_cpml", False) and getattr(fields, "pml_data", None)
         )
