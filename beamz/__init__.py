@@ -1,0 +1,141 @@
+"""
+BeamZ - A Python package for electromagnetic simulations.
+"""
+
+import beamz.design as design
+
+# Import constants from the const module
+from beamz.const import (
+    EPS_0,
+    LIGHT_SPEED,
+    MU_0,
+    VAC_PERMEABILITY,
+    VAC_PERMITTIVITY,
+    nm,
+    um,
+    µm,
+    μm,
+)
+
+# Import design-related classes and functions
+from beamz.design.core import Design
+from beamz.design.materials import CustomMaterial, Material
+
+# Import simulation-related classes and functions
+from beamz.design.meshing import RegularGrid
+from beamz.design.structures import (
+    Circle,
+    CircularBend,
+    Polygon,
+    Rectangle,
+    Ring,
+    Sphere,
+    Taper,
+)
+from beamz.devices.monitors import Monitor
+from beamz.devices.sources import GaussianSource, ModeSource
+from beamz.devices.sources.mode import solve_modes
+from beamz.devices.sources.signals import ramped_cosine, signal_plot_data
+from beamz.optimization.autodiff import transform_density
+from beamz.optimization.topology import (
+    TopologyManager,
+    compute_overlap_gradient,
+    create_optimization_mask,
+)
+from beamz.simulation.boundaries import PEC, PML, Boundary
+from beamz.simulation.compiled import (
+    CompiledRunConfig,
+    CompiledSimulation,
+    EngineState,
+    MonitorState,
+    RunState,
+    compile_simulation,
+)
+from beamz.simulation.core import (
+    MonitorResults,
+    PortSpec,
+    Simulation,
+    SimulationResults,
+)
+
+# Import UI helpers
+from beamz.visual.helpers import (
+    calc_optimal_fdtd_params,
+    create_rich_progress,
+    display_status,
+    dxdt,
+    get_si_scale_and_label,
+)
+
+# Prepare a dictionary of all our exports
+_exports = {
+    # Constants
+    "LIGHT_SPEED": LIGHT_SPEED,
+    "VAC_PERMITTIVITY": VAC_PERMITTIVITY,
+    "VAC_PERMEABILITY": VAC_PERMEABILITY,
+    "EPS_0": EPS_0,
+    "MU_0": MU_0,
+    "um": um,
+    "nm": nm,
+    "µm": µm,
+    "μm": μm,
+    # Materials
+    "Material": Material,
+    "CustomMaterial": CustomMaterial,
+    # Structures
+    "design": design,
+    "Design": Design,
+    "Rectangle": Rectangle,
+    "Circle": Circle,
+    "Ring": Ring,
+    "CircularBend": CircularBend,
+    "Polygon": Polygon,
+    "Taper": Taper,
+    "Sphere": Sphere,
+    # Sources
+    "ModeSource": ModeSource,
+    "GaussianSource": GaussianSource,
+    # Monitors
+    "Monitor": Monitor,
+    # Signals
+    "ramped_cosine": ramped_cosine,
+    "signal_plot_data": signal_plot_data,
+    # Mode calculations
+    "solve_modes": solve_modes,
+    # Simulation
+    "RegularGrid": RegularGrid,
+    "Simulation": Simulation,
+    "PortSpec": PortSpec,
+    "MonitorResults": MonitorResults,
+    "SimulationResults": SimulationResults,
+    "CompiledRunConfig": CompiledRunConfig,
+    "CompiledSimulation": CompiledSimulation,
+    "EngineState": EngineState,
+    "MonitorState": MonitorState,
+    "RunState": RunState,
+    "compile_simulation": compile_simulation,
+    # Boundaries
+    "Boundary": Boundary,
+    "PML": PML,
+    "PEC": PEC,
+    # Optimization
+    "TopologyManager": TopologyManager,
+    "compute_overlap_gradient": compute_overlap_gradient,
+    "create_optimization_mask": create_optimization_mask,
+    "transform_density": transform_density,
+    # UI helpers
+    "display_status": display_status,
+    "create_rich_progress": create_rich_progress,
+    "get_si_scale_and_label": get_si_scale_and_label,
+    "calc_optimal_fdtd_params": calc_optimal_fdtd_params,
+    "dxdt": dxdt,
+}
+
+# Update module's dictionary with our exports
+globals().update(_exports)
+
+# Define what should be available with "from beamz import *"
+__all__ = list(_exports.keys())
+
+# Version information
+__version__ = "0.2.1"

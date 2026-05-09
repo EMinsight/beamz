@@ -1,0 +1,88 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "beamz"
+version = "0.2.1"
+dynamic = []
+authors = [
+    { name = "Quentin Wach", email = "quentin.wach+beamz@gmail.com" },
+]
+description = "EM package to create inverse / generative designs for your photonic devices with ease and efficiency."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+keywords = ["electromagnetics", "photonics", "inverse design", "generative design", "simulation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+    "numpy>=1.24.4",
+    "anywidget>=0.9.18",
+    "gdspy>=1.6.0",
+    "scipy>=1.10.1",
+    "rich>=13.9.4",
+    "shapely>=2.0.6",
+    "jax>=0.4.0",
+    "gdsfactory",
+    "jaxlib>=0.4.0",
+    "optax>=0.1.0",
+    "tidy3d>=2.0.0",
+    "traitlets>=5.14.0",
+    "matplotlib>=3.8.0",
+    "scikit-image>=0.21.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/QuentinWach/beamz"
+Repository = "https://github.com/QuentinWach/beamz"
+# Bug Tracker, Documentation etc. can be added here
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=22.0.0",
+    "isort>=5.0.0",
+    "flake8>=4.0.0",
+    "myst-parser>=2.0.0",
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.0.0",
+]
+gpu = [
+    "torch>=2.6.0",
+]
+test = [ # Adding a 'test' extra that includes pytest and pytest-cov for convenience
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-randomly>=3.0.0",
+]
+
+
+[tool.black]
+line-length = 88
+target-version = ['py310', 'py311', 'py312']
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --cov=beamz --cov-report=term-missing"
+
+[tool.hatch.build.targets.wheel]
+packages = ["beamz"]
+include = [
+    "beamz/visual/scene/static/*",
+]
