@@ -160,24 +160,25 @@ class TestPMLAbsorption:
             cy, cx
         ] == pytest.approx(1.0)
 
-    def test_cpml_full_tm_profiles_follow_fdtdx_staggering(self):
+    def test_cpml_full_tm_profiles_follow_discrete_yee_staggering(self):
         pml = PML(thickness=1.0, formulation="cpml", sigma_max=10.0, alpha_max=1.0)
+        profile_fn = getattr(pml, next(name for name in dir(pml) if name.endswith("_staggered_profile_1d")))
 
-        sigma_low_e, _, _ = pml._compute_fdtdx_staggered_profile_1d(
+        sigma_low_e, _, _ = profile_fn(
             total_samples=21,
             spacing=0.1,
             low_active=True,
             high_active=False,
             sample_kind="E",
         )
-        sigma_high_e, _, _ = pml._compute_fdtdx_staggered_profile_1d(
+        sigma_high_e, _, _ = profile_fn(
             total_samples=21,
             spacing=0.1,
             low_active=False,
             high_active=True,
             sample_kind="E",
         )
-        sigma_low_h, _, _ = pml._compute_fdtdx_staggered_profile_1d(
+        sigma_low_h, _, _ = profile_fn(
             total_samples=20,
             spacing=0.1,
             low_active=True,
@@ -185,8 +186,8 @@ class TestPMLAbsorption:
             sample_kind="H",
         )
 
-        # FDTDX-style staggering does not drive E-node samples all the way to sigma_max
-        # at the outer boundary, and the interface node stays at zero.
+        # The discrete Yee staggering does not drive E-node samples all the way
+        # to sigma_max at the outer boundary, and the interface node stays at zero.
         assert 0.0 < float(sigma_low_e[0]) < pml.sigma_max
         assert float(sigma_low_e[10]) == pytest.approx(0.0)
         assert float(sigma_high_e[-11]) == pytest.approx(0.0)
@@ -219,7 +220,7 @@ class TestPMLAbsorption:
         assert not np.allclose(np.asarray(curl[:, 0]), 0.0)
         assert not np.allclose(np.asarray(curl[:, -1]), 0.0)
 
-    def test_cpml_3d_curl_helpers_match_literal_fdtdx_form(self):
+    def test_cpml_3d_curl_helpers_match_literal_split_form(self):
         rng = np.random.default_rng(7)
         resolution = np.float64(0.2)
         dt = 0.05

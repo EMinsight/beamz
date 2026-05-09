@@ -405,7 +405,7 @@ def test_split_3d_cpml_boundaries_preserve_identity_kappa_in_compiled_terms():
     ] == pytest.approx(1.0)
 
 
-def test_compiled_3d_cpml_profiles_match_fdtdx_x_boundary_embedding():
+def test_compiled_3d_cpml_profiles_match_expected_x_boundary_embedding():
     wl = 1.55 * um
     dx, dt = calc_optimal_fdtd_params(
         wl, 1.0, dims=3, safety_factor=0.95, points_per_wavelength=8
@@ -440,7 +440,7 @@ def test_compiled_3d_cpml_profiles_match_fdtdx_x_boundary_embedding():
     nz = int(sim.fields.permittivity.shape[0])
     pml_cells = int(round(thickness / dx))
 
-    def fdtdx_profile(count: int, *, sample_kind: str):
+    def expected_profile(count: int, *, sample_kind: str):
         sigma = np.zeros((count,), dtype=np.float32)
         kappa = np.ones((count,), dtype=np.float32)
         alpha = np.zeros((count,), dtype=np.float32)
@@ -479,8 +479,8 @@ def test_compiled_3d_cpml_profiles_match_fdtdx_x_boundary_embedding():
                 alpha[-len(d) :] = np.maximum(alpha[-len(d) :], side_alpha)
         return sigma, kappa, alpha
 
-    sigma_e_x, kappa_e_x, alpha_e_x = fdtdx_profile(nx, sample_kind="E")
-    sigma_h_x, kappa_h_x, alpha_h_x = fdtdx_profile(max(nx - 1, 0), sample_kind="H")
+    sigma_e_x, kappa_e_x, alpha_e_x = expected_profile(nx, sample_kind="E")
+    sigma_h_x, kappa_h_x, alpha_h_x = expected_profile(max(nx - 1, 0), sample_kind="H")
 
     sigma_e_native = sigma_e_x[None, None, :].repeat(nz - 1, axis=0).repeat(ny, axis=1)
     kappa_e_native = kappa_e_x[None, None, :].repeat(nz - 1, axis=0).repeat(ny, axis=1)

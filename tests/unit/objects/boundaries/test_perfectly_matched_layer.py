@@ -1,0 +1,245 @@
+import jax.numpy as jnp
+import numpy as np
+import pytest
+
+from beamz import PML, Design, Material, um
+from beamz.simulation.fields import Fields
+
+pytestmark = pytest.mark.unit
+
+
+def _make_fields_2d(shape=(6, 8), *, resolution=0.1):
+    permittivity = np.ones(shape, dtype=np.float32)
+    conductivity = np.zeros(shape, dtype=np.float32)
+    permeability = np.ones(shape, dtype=np.float32)
+    return Fields(
+        permittivity=permittivity,
+        conductivity=conductivity,
+        permeability=permeability,
+        resolution=resolution,
+        plane_2d="xy",
+    )
+
+
+def _make_fields_3d(shape=(5, 6, 7), *, resolution=0.1):
+    permittivity = np.ones(shape, dtype=np.float32)
+    conductivity = np.zeros(shape, dtype=np.float32)
+    permeability = np.ones(shape, dtype=np.float32)
+    return Fields(
+        permittivity=permittivity,
+        conductivity=conductivity,
+        permeability=permeability,
+        resolution=resolution,
+    )
+
+
+def _make_design_2d(shape=(6, 8), *, resolution=0.1):
+    return Design(
+        width=shape[1] * resolution,
+        height=shape[0] * resolution,
+        material=Material(permittivity=1.0, permeability=1.0, conductivity=0.0),
+    )
+
+
+def _make_design_3d(shape=(5, 6, 7), *, resolution=0.1):
+    return Design(
+        width=shape[2] * resolution,
+        height=shape[1] * resolution,
+        depth=shape[0] * resolution,
+        material=Material(permittivity=1.0, permeability=1.0, conductivity=0.0),
+    )
+
+
+def test_pml_parameter_defaults():
+    pml = PML()
+
+    assert pml.edges == "all"
+    assert pml.thickness == pytest.approx(1.0 * um)
+    assert pml.sigma_max is None
+    assert pml.m == 3
+    assert pml.formulation == "sigma"
+    assert pml.kappa_max == pytest.approx(3.0)
+    assert pml.alpha_max is None
+    assert pml.target_reflection == pytest.approx(1e-6)
+
+
+def test_sigma_max_is_computed_when_omitted():
+    fields = _make_fields_2d()
+    design = _make_design_2d()
+    pml = PML(thickness=0.2, sigma_max=None, formulation="sigma")
+
+    payload = pml.create_pml_regions(
+        fields, design, resolution=0.1, dt=1e-15, plane_2d="xy"
+    )
+
+    assert pml.sigma_max is not None
+    assert float(pml.sigma_max) > 0.0
+    assert payload["sigma_x"].shape == fields.permittivity.shape
+    assert payload["sigma_y"].shape == fields.permittivity.shape
+    assert payload["mask"].shape == fields.permittivity.shape
+
+
+def test_cpml_alpha_is_computed_when_omitted():
+    fields = _make_fields_2d()
+    design = _make_design_2d()
+    pml = PML(
+        thickness=0.2,
+        sigma_max=5.0,
+        alpha_max=None,
+        formulation="cpml",
+    )
+
+    payload = pml.create_pml_regions(
+        fields, design, resolution=0.1, dt=2e-15, plane_2d="xy"
+    )
+
+    assert pml.alpha_max is not None
+    assert float(pml.alpha_max) > 0.0
+    assert float(np.max(np.asarray(payload["alpha_x"], dtype=np.float64))) > 0.0
+    assert float(np.max(np.asarray(payload["alpha_y"], dtype=np.float64))) > 0.0
+
+
+def test_profile_shapes_match_2d_field_grid():
+    fields = _make_fields_2d(shape=(7, 9))
+    design = _make_design_2d(shape=(7, 9))
+    pml = PML(
+        edges=["left", "right"],
+        thickness=0.2,
+        sigma_max=5.0,
+        alpha_max=0.5,
+        formulation="cpml",
+    )
+
+    payload = pml.create_pml_regions(
+        fields, design, resolution=0.1, dt=1e-15, plane_2d="xy"
+    )
+
+    for key in (
+        "mask",
+        "sigma_x",
+        "sigma_y",
+        "sigma_z",
+        "kappa_x",
+        "kappa_y",
+        "kappa_z",
+        "alpha_x",
+        "alpha_y",
+        "alpha_z",
+    ):
+        assert payload[key].shape == fields.permittivity.shape
+
+    tm_xy = payload["tm_xy_cpml"]
+    assert tm_xy["Ez_x_sigma"].shape == (fields.Ez.shape[0] + 1, fields.Ez.shape[1] + 1)
+    assert tm_xy["Ez_y_sigma"].shape == (fields.Ez.shape[0] + 1, fields.Ez.shape[1] + 1)
+    assert tm_xy["Hx_y_sigma"].shape == (fields.Ez.shape[0], fields.Ez.shape[1] + 1)
+    assert tm_xy["Hy_x_sigma"].shape == (fields.Ez.shape[0] + 1, fields.Ez.shape[1])
+
+
+def test_profile_shapes_match_3d_field_grid():
+    fields = _make_fields_3d(shape=(5, 6, 7))
+    design = _make_design_3d(shape=(5, 6, 7))
+    pml = PML(
+        edges=["left", "front"],
+        thickness=0.2,
+        sigma_max=5.0,
+        alpha_max=0.5,
+        formulation="cpml",
+    )
+
+    payload = pml.create_pml_regions(fields, design, resolution=0.1, dt=1e-15)
+
+    for key in (
+        "mask",
+        "sigma_x",
+        "sigma_y",
+        "sigma_z",
+        "kappa_x",
+        "kappa_y",
+        "kappa_z",
+        "alpha_x",
+        "alpha_y",
+        "alpha_z",
+    ):
+        assert payload[key].shape == fields.permittivity.shape
+
+    assert payload["cpml3d_Hxy_sigma"].shape == fields.Hx.shape
+    assert payload["cpml3d_Hyz_sigma"].shape == fields.Hy.shape
+    assert payload["cpml3d_Hzx_sigma"].shape == fields.Hz.shape
+    assert payload["cpml3d_Exy_sigma"].shape == fields.Ex.shape
+    assert payload["cpml3d_Eyz_sigma"].shape == fields.Ey.shape
+    assert payload["cpml3d_Ezx_sigma"].shape == fields.Ez.shape
+
+
+def test_face_resolution_matches_dimensionality():
+    pml = PML(edges="all", thickness=0.2)
+
+    assert pml._get_edges_for_dimensionality(False) == [
+        "left",
+        "right",
+        "top",
+        "bottom",
+    ]
+    assert pml._get_edges_for_dimensionality(True) == [
+        "left",
+        "right",
+        "top",
+        "bottom",
+        "front",
+        "back",
+    ]
+
+
+def test_explicit_edges_are_preserved():
+    pml = PML(edges=["left", "top"], thickness=0.2)
+
+    assert pml._get_edges_for_dimensionality(False) == ["left", "top"]
+    assert pml._get_edges_for_dimensionality(True) == ["left", "top"]
+
+
+def test_thickness_is_preserved():
+    pml = PML(thickness=0.35, sigma_max=4.0)
+    assert pml.thickness == pytest.approx(0.35)
+
+
+def test_staggered_profile_shape_dtype_and_monotonicity():
+    pml = PML(
+        thickness=0.4,
+        sigma_max=10.0,
+        alpha_max=1.0,
+        formulation="cpml",
+    )
+
+    sigma_low_e, kappa_low_e, alpha_low_e = pml._compute_fdtdx_staggered_profile_1d(
+        total_samples=10,
+        spacing=0.1,
+        low_active=True,
+        high_active=False,
+        sample_kind="E",
+    )
+    sigma_high_h, kappa_high_h, alpha_high_h = (
+        pml._compute_fdtdx_staggered_profile_1d(
+            total_samples=10,
+            spacing=0.1,
+            low_active=False,
+            high_active=True,
+            sample_kind="H",
+        )
+    )
+
+    assert sigma_low_e.shape == (10,)
+    assert kappa_low_e.shape == (10,)
+    assert alpha_low_e.shape == (10,)
+    assert sigma_low_e.dtype == jnp.float32
+    assert kappa_low_e.dtype == jnp.float32
+    assert alpha_low_e.dtype == jnp.float32
+
+    assert float(sigma_low_e[0]) > float(sigma_low_e[1]) > float(sigma_low_e[2]) >= 0.0
+    assert float(kappa_low_e[0]) > float(kappa_low_e[1]) >= 1.0
+    assert float(alpha_low_e[0]) < float(alpha_low_e[1]) < float(alpha_low_e[2])
+
+    assert sigma_high_h.dtype == jnp.float32
+    assert kappa_high_h.dtype == jnp.float32
+    assert alpha_high_h.dtype == jnp.float32
+    assert float(sigma_high_h[-1]) > float(sigma_high_h[-2]) > float(sigma_high_h[-3]) >= 0.0
+    assert float(kappa_high_h[-1]) > float(kappa_high_h[-2]) >= 1.0
+    assert float(alpha_high_h[-1]) < float(alpha_high_h[-2]) < float(alpha_high_h[-3])
