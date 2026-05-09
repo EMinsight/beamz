@@ -62,6 +62,11 @@ from beamz.simulation.material_models import (
     create_material_model,
 )
 from beamz.shared_kernels import (
+    advance_e_from_coefficients,
+    advance_e_from_curl,
+    advance_h_from_coefficients,
+    advance_h_from_curl,
+    apply_zero_mask,
     build_cpml_3d_terms,
     build_tm_xy_cpml_terms,
     full_tm_xy_component_to_centered_grid,
@@ -1436,17 +1441,23 @@ class CompiledSimulation:
                         fp_hz.shape,
                     )
 
-                    fp_hx = self.fp_h_decay_x * fp_hx - self.fp_h_source_x * curl_ex
-                    fp_hy = self.fp_h_decay_y * fp_hy - self.fp_h_source_y * curl_ey
-                    fp_hz = self.fp_h_decay_z * fp_hz - self.fp_h_source_z * curl_ez
-                    fp_hx = jnp.where(
-                        self.fp_hx_mask, jnp.asarray(0.0, dtype=fp_hx.dtype), fp_hx
+                    fp_hx = apply_zero_mask(
+                        advance_h_from_coefficients(
+                            fp_hx, curl_ex, self.fp_h_decay_x, self.fp_h_source_x
+                        ),
+                        self.fp_hx_mask,
                     )
-                    fp_hy = jnp.where(
-                        self.fp_hy_mask, jnp.asarray(0.0, dtype=fp_hy.dtype), fp_hy
+                    fp_hy = apply_zero_mask(
+                        advance_h_from_coefficients(
+                            fp_hy, curl_ey, self.fp_h_decay_y, self.fp_h_source_y
+                        ),
+                        self.fp_hy_mask,
                     )
-                    fp_hz = jnp.where(
-                        self.fp_hz_mask, jnp.asarray(0.0, dtype=fp_hz.dtype), fp_hz
+                    fp_hz = apply_zero_mask(
+                        advance_h_from_coefficients(
+                            fp_hz, curl_ez, self.fp_h_decay_z, self.fp_h_source_z
+                        ),
+                        self.fp_hz_mask,
                     )
                     hx = fp_hx[:-1, :-1, :-1]
                     hy = fp_hy[:-1, :-1, :-1]
@@ -1465,9 +1476,15 @@ class CompiledSimulation:
                                 psi_h_terms=cpml3d_psi_h_terms,
                             )
                         )
-                        hx = h_decay_x * hx - h_source_x * curl_ex
-                        hy = h_decay_y * hy - h_source_y * curl_ey
-                        hz = h_decay_z * hz - h_source_z * curl_ez
+                        hx = advance_h_from_coefficients(
+                            hx, curl_ex, h_decay_x, h_source_x
+                        )
+                        hy = advance_h_from_coefficients(
+                            hy, curl_ey, h_decay_y, h_source_y
+                        )
+                        hz = advance_h_from_coefficients(
+                            hz, curl_ez, h_decay_z, h_source_z
+                        )
                     else:
                         curl_ex, curl_ey, curl_ez = ops.curl_e_to_h_3d(
                             ex,
@@ -1475,15 +1492,9 @@ class CompiledSimulation:
                             ez,
                             resolution,
                         )
-                        hx = ops.advance_h_field(
-                            hx, curl_ex, self.sigma_m_hx_raw, dt
-                        )
-                        hy = ops.advance_h_field(
-                            hy, curl_ey, self.sigma_m_hy_raw, dt
-                        )
-                        hz = ops.advance_h_field(
-                            hz, curl_ez, self.sigma_m_hz_raw, dt
-                        )
+                        hx = advance_h_from_curl(hx, curl_ex, self.sigma_m_hx_raw, dt)
+                        hy = advance_h_from_curl(hy, curl_ey, self.sigma_m_hy_raw, dt)
+                        hz = advance_h_from_curl(hz, curl_ez, self.sigma_m_hz_raw, dt)
                 elif use_physical_tm_xy:
                     if tm_full_pec:
                         curl_tm_hx, curl_tm_hy = full_pec_curl_e_to_h_2d_xy(
@@ -1519,10 +1530,18 @@ class CompiledSimulation:
                         hz.shape,
                     )
 
-                    hx = tm_h_decay_x * hx - tm_h_source_x * curl_tm_hx
-                    hy = tm_h_decay_y * hy - tm_h_source_y * curl_tm_hy
-                    hx = jnp.where(tm_hx_mask, jnp.asarray(0.0, dtype=hx.dtype), hx)
-                    hy = jnp.where(tm_hy_mask, jnp.asarray(0.0, dtype=hy.dtype), hy)
+                    hx = apply_zero_mask(
+                        advance_h_from_coefficients(
+                            hx, curl_tm_hx, tm_h_decay_x, tm_h_source_x
+                        ),
+                        tm_hx_mask,
+                    )
+                    hy = apply_zero_mask(
+                        advance_h_from_coefficients(
+                            hy, curl_tm_hy, tm_h_decay_y, tm_h_source_y
+                        ),
+                        tm_hy_mask,
+                    )
 
                     hz_old = hz
                     if use_lossy_shell_hz:
@@ -1608,17 +1627,23 @@ class CompiledSimulation:
                         fp_ez.shape,
                     )
 
-                    fp_ex = self.fp_e_decay_x * fp_ex + self.fp_e_source_x * curl_hx
-                    fp_ey = self.fp_e_decay_y * fp_ey + self.fp_e_source_y * curl_hy
-                    fp_ez = self.fp_e_decay_z * fp_ez + self.fp_e_source_z * curl_hz
-                    fp_ex = jnp.where(
-                        self.fp_ex_mask, jnp.asarray(0.0, dtype=fp_ex.dtype), fp_ex
+                    fp_ex = apply_zero_mask(
+                        advance_e_from_coefficients(
+                            fp_ex, curl_hx, self.fp_e_decay_x, self.fp_e_source_x
+                        ),
+                        self.fp_ex_mask,
                     )
-                    fp_ey = jnp.where(
-                        self.fp_ey_mask, jnp.asarray(0.0, dtype=fp_ey.dtype), fp_ey
+                    fp_ey = apply_zero_mask(
+                        advance_e_from_coefficients(
+                            fp_ey, curl_hy, self.fp_e_decay_y, self.fp_e_source_y
+                        ),
+                        self.fp_ey_mask,
                     )
-                    fp_ez = jnp.where(
-                        self.fp_ez_mask, jnp.asarray(0.0, dtype=fp_ez.dtype), fp_ez
+                    fp_ez = apply_zero_mask(
+                        advance_e_from_coefficients(
+                            fp_ez, curl_hz, self.fp_e_decay_z, self.fp_e_source_z
+                        ),
+                        self.fp_ez_mask,
                     )
                     ex = fp_ex[:-1, :-1, :-1]
                     ey = fp_ey[:-1, :-1, :-1]
@@ -1638,9 +1663,15 @@ class CompiledSimulation:
                                 psi_e_terms=cpml3d_psi_e_terms,
                             )
                         )
-                        ex = e_decay_x * ex + e_source_x * curl_hx
-                        ey = e_decay_y * ey + e_source_y * curl_hy
-                        ez = e_decay_z * ez + e_source_z * curl_hz
+                        ex = advance_e_from_coefficients(
+                            ex, curl_hx, e_decay_x, e_source_x
+                        )
+                        ey = advance_e_from_coefficients(
+                            ey, curl_hy, e_decay_y, e_source_y
+                        )
+                        ez = advance_e_from_coefficients(
+                            ez, curl_hz, e_decay_z, e_source_z
+                        )
                     else:
                         curl_hx, curl_hy, curl_hz = ops.curl_h_to_e_3d(
                             hx,
@@ -1653,7 +1684,7 @@ class CompiledSimulation:
                             boundary_views=boundary_views,
                         )
                         full_region = (slice(None), slice(None), slice(None))
-                        ex = ops.advance_e_field(
+                        ex = advance_e_from_curl(
                             ex,
                             curl_hx,
                             self.sig_x_raw,
@@ -1661,7 +1692,7 @@ class CompiledSimulation:
                             dt,
                             full_region,
                         )
-                        ey = ops.advance_e_field(
+                        ey = advance_e_from_curl(
                             ey,
                             curl_hy,
                             self.sig_y_raw,
@@ -1669,7 +1700,7 @@ class CompiledSimulation:
                             dt,
                             full_region,
                         )
-                        ez = ops.advance_e_field(
+                        ez = advance_e_from_curl(
                             ez,
                             curl_hz,
                             self.sig_z_raw,
@@ -1741,9 +1772,11 @@ class CompiledSimulation:
                     else:
                         ey = e_decay_y * ey_old + e_source_y * curl_hy
 
-                    ez = tm_e_decay_z * ez + tm_e_source_z * curl_tm_ez
-                    ez = jnp.where(
-                        tm_ez_mask, jnp.asarray(0.0, dtype=ez.dtype), ez
+                    ez = apply_zero_mask(
+                        advance_e_from_coefficients(
+                            ez, curl_tm_ez, tm_e_decay_z, tm_e_source_z
+                        ),
+                        tm_ez_mask,
                     )
                 else:
                     curl_hx, curl_hy, curl_hz = ops.curl_h_to_e_2d(

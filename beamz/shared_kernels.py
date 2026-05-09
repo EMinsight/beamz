@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import jax.numpy as jnp
 import numpy as np
 
-from beamz.const import EPS_0, LIGHT_SPEED
+from beamz.const import EPS_0, LIGHT_SPEED, MU_0
 
 
 @dataclass(frozen=True)
@@ -232,3 +232,37 @@ def meep_dft_sample_scale(weight, base_dt, record_interval, length_unit):
         / length_unit
         / np.sqrt(2.0 * np.pi)
     )
+
+
+def advance_h_from_curl(field, curl, sigma_m, dt):
+    """Advance one H component from its curl and magnetic conductivity."""
+    denom = 1.0 + sigma_m * (dt / (2.0 * MU_0))
+    factor = (1.0 - sigma_m * (dt / (2.0 * MU_0))) / denom
+    source_coeff = (dt / MU_0) / denom
+    return field * factor - source_coeff * curl
+
+
+def advance_e_from_curl(field, curl, conductivity, permittivity, dt, region):
+    """Advance one E component from its curl and material slices."""
+    denom = 1.0 + conductivity * (dt / (2.0 * EPS_0 * permittivity))
+    factor = (1.0 - conductivity * (dt / (2.0 * EPS_0 * permittivity))) / denom
+    source = (dt / (EPS_0 * permittivity)) / denom
+    new_values = field[region] * factor + source * curl[region]
+    return field.at[region].set(new_values)
+
+
+def advance_h_from_coefficients(field, curl, decay, source):
+    """Advance one H component using precomputed dense coefficients."""
+    return decay * field - source * curl
+
+
+def advance_e_from_coefficients(field, curl, decay, source):
+    """Advance one E component using precomputed dense coefficients."""
+    return decay * field + source * curl
+
+
+def apply_zero_mask(field, mask):
+    """Zero out constrained samples when a mask is present."""
+    if mask is None:
+        return field
+    return jnp.where(mask, jnp.asarray(0.0, dtype=field.dtype), field)

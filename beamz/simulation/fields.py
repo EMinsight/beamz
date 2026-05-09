@@ -31,6 +31,9 @@ from beamz.simulation.boundaries import (
 )
 from beamz.simulation.yee import sample_voxel_grid_at_tm_xy_full_component_2d
 from beamz.shared_kernels import (
+    advance_e_from_curl,
+    advance_h_from_curl,
+    apply_zero_mask,
     build_cpml_3d_terms,
     build_tm_xy_cpml_terms,
 )
@@ -433,24 +436,30 @@ class Fields:
 
         if is_3d and has_full_pec_3d(getattr(self, "boundaries", None)):
             state = self.full_pec_3d_state
-            state.Hx = ops.advance_h_field(state.Hx, curlE_x, state.sigma_m_hx, dt)
-            state.Hy = ops.advance_h_field(state.Hy, curlE_y, state.sigma_m_hy, dt)
-            state.Hz = ops.advance_h_field(state.Hz, curlE_z, state.sigma_m_hz, dt)
-            state.Hx = jnp.where(state.masks["Hx"], 0.0, state.Hx)
-            state.Hy = jnp.where(state.masks["Hy"], 0.0, state.Hy)
-            state.Hz = jnp.where(state.masks["Hz"], 0.0, state.Hz)
+            state.Hx = apply_zero_mask(
+                advance_h_from_curl(state.Hx, curlE_x, state.sigma_m_hx, dt),
+                state.masks["Hx"],
+            )
+            state.Hy = apply_zero_mask(
+                advance_h_from_curl(state.Hy, curlE_y, state.sigma_m_hy, dt),
+                state.masks["Hy"],
+            )
+            state.Hz = apply_zero_mask(
+                advance_h_from_curl(state.Hz, curlE_z, state.sigma_m_hz, dt),
+                state.masks["Hz"],
+            )
             sync_compact_fields_from_full_pec_3d(self, state)
         elif (not is_3d) and self.plane_2d == "xy":
             state = self.ensure_tm_xy_state()
-            self.Hx = ops.advance_h_field(self.Hx, curlE_x, state.sigma_m_hx, dt)
-            self.Hy = ops.advance_h_field(self.Hy, curlE_y, state.sigma_m_hy, dt)
+            self.Hx = advance_h_from_curl(self.Hx, curlE_x, state.sigma_m_hx, dt)
+            self.Hy = advance_h_from_curl(self.Hy, curlE_y, state.sigma_m_hy, dt)
             self.apply_tm_xy_pec_masks()
-            self.Hz = ops.advance_h_field(self.Hz, curlE_z, self.sigma_m_hz, dt)
+            self.Hz = advance_h_from_curl(self.Hz, curlE_z, self.sigma_m_hz, dt)
             self.apply_metallic_boundaries_h()
         else:
-            self.Hx = ops.advance_h_field(self.Hx, curlE_x, self.sigma_m_hx, dt)
-            self.Hy = ops.advance_h_field(self.Hy, curlE_y, self.sigma_m_hy, dt)
-            self.Hz = ops.advance_h_field(self.Hz, curlE_z, self.sigma_m_hz, dt)
+            self.Hx = advance_h_from_curl(self.Hx, curlE_x, self.sigma_m_hx, dt)
+            self.Hy = advance_h_from_curl(self.Hy, curlE_y, self.sigma_m_hy, dt)
+            self.Hz = advance_h_from_curl(self.Hz, curlE_z, self.sigma_m_hz, dt)
             self.apply_metallic_boundaries_h()
 
     def update_e(self, dt, source_j=None):
@@ -562,7 +571,7 @@ class Fields:
             region_x = (slice(1, -1), slice(1, -1), slice(None))
             region_y = (slice(1, -1), slice(None), slice(1, -1))
             region_z = (slice(None), slice(1, -1), slice(1, -1))
-            state.Ex = ops.advance_e_field(
+            state.Ex = advance_e_from_curl(
                 state.Ex,
                 curlH_x,
                 state.sig_x_region,
@@ -570,7 +579,7 @@ class Fields:
                 dt,
                 region_x,
             )
-            state.Ey = ops.advance_e_field(
+            state.Ey = advance_e_from_curl(
                 state.Ey,
                 curlH_y,
                 state.sig_y_region,
@@ -578,7 +587,7 @@ class Fields:
                 dt,
                 region_y,
             )
-            state.Ez = ops.advance_e_field(
+            state.Ez = advance_e_from_curl(
                 state.Ez,
                 curlH_z,
                 state.sig_z_region,
@@ -586,19 +595,19 @@ class Fields:
                 dt,
                 region_z,
             )
-            state.Ex = jnp.where(state.masks["Ex"], 0.0, state.Ex)
-            state.Ey = jnp.where(state.masks["Ey"], 0.0, state.Ey)
-            state.Ez = jnp.where(state.masks["Ez"], 0.0, state.Ez)
+            state.Ex = apply_zero_mask(state.Ex, state.masks["Ex"])
+            state.Ey = apply_zero_mask(state.Ey, state.masks["Ey"])
+            state.Ez = apply_zero_mask(state.Ez, state.masks["Ez"])
             sync_compact_fields_from_full_pec_3d(self, state)
         elif (not is_3d) and self.plane_2d == "xy":
             state = self.ensure_tm_xy_state()
-            self.Ex = ops.advance_e_field(
+            self.Ex = advance_e_from_curl(
                 self.Ex, curlH_x, self.sig_x, self.eps_x, dt, self.region_x
             )
-            self.Ey = ops.advance_e_field(
+            self.Ey = advance_e_from_curl(
                 self.Ey, curlH_y, self.sig_y, self.eps_y, dt, self.region_y
             )
-            self.Ez = ops.advance_e_field(
+            self.Ez = advance_e_from_curl(
                 self.Ez,
                 curlH_z,
                 state.sig_z_region,
@@ -609,13 +618,13 @@ class Fields:
             self.apply_tm_xy_pec_masks()
             self.apply_metallic_boundaries_e()
         else:
-            self.Ex = ops.advance_e_field(
+            self.Ex = advance_e_from_curl(
                 self.Ex, curlH_x, self.sig_x, self.eps_x, dt, self.region_x
             )
-            self.Ey = ops.advance_e_field(
+            self.Ey = advance_e_from_curl(
                 self.Ey, curlH_y, self.sig_y, self.eps_y, dt, self.region_y
             )
-            self.Ez = ops.advance_e_field(
+            self.Ez = advance_e_from_curl(
                 self.Ez, curlH_z, self.sig_z, self.eps_z, dt, self.region_z
             )
             self.apply_metallic_boundaries_e()
