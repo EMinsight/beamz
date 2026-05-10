@@ -47,6 +47,7 @@ from beamz.simulation.compiled import (
     monitor_state_size,
 )
 from beamz.simulation.fields import Fields
+from beamz.simulation.step_sequence import run_step_sequence
 from beamz.simulation.yee import component_coordinates_3d_um
 
 
@@ -381,41 +382,54 @@ class Simulation:
         if self.current_step >= self.num_steps:
             return False
 
-        # Imperative legacy sources inject first; compiled-capable sources share
-        # the packed pre-E source path with the compiled engine.
-        self._inject_legacy_sources()
-        self._apply_compiled_source_phase("pre_e")
+        def _pre_e(sim):
+            sim._inject_legacy_sources()
+            sim._apply_compiled_source_phase("pre_e")
+            return sim
 
-        # Collect source terms from imperative-only sources that do not compile
-        # down to packed source specs.
-        source_j, source_m = self._collect_source_terms()
+        def _prepare(sim):
+            return sim, sim._collect_source_terms()
 
-        # 1. H update
-        self.fields.update_h(self.dt, source_m=source_m)
+        def _update_h(sim, payload):
+            _source_j, source_m = payload
+            sim.fields.update_h(sim.dt, source_m=source_m)
+            return sim
 
-        # 2. M injection (modifies H after update)
-        self._apply_compiled_source_phase("h")
-        self._inject_h_sources()
-        self.fields.apply_metallic_boundaries_h()
+        def _post_h(sim):
+            sim._apply_compiled_source_phase("h")
+            sim._inject_h_sources()
+            sim.fields.apply_metallic_boundaries_h()
+            return sim
 
-        # 3. E update (uses modified H)
-        self.fields.update_e(self.dt, source_j=source_j)
+        def _update_e(sim, payload):
+            source_j, _source_m = payload
+            sim.fields.update_e(sim.dt, source_j=source_j)
+            return sim
 
-        # 4. J injection (modifies E after update)
-        self._apply_compiled_source_phase("e")
-        self._inject_e_sources()
-        self.fields.apply_metallic_boundaries_e()
+        def _post_e(sim):
+            sim._apply_compiled_source_phase("e")
+            sim._inject_e_sources()
+            sim.fields.apply_metallic_boundaries_e()
+            return sim
 
-        # Record monitor data (if monitors are in devices)
-        self._record_monitors()
+        def _finalize(sim):
+            sim._record_monitors()
+            if sim.thermal is not None and getattr(sim.thermal, "enabled", True):
+                sim.thermal.step(sim)
+            sim.t += sim.dt
+            sim.current_step += 1
+            return sim
 
-        # Update coupled physics (thermal)
-        if self.thermal is not None and getattr(self.thermal, "enabled", True):
-            self.thermal.step(self)
-
-        # Update time and step counter
-        self.t += self.dt
-        self.current_step += 1
+        run_step_sequence(
+            self,
+            pre_e=_pre_e,
+            prepare=_prepare,
+            update_h=_update_h,
+            post_h=_post_h,
+            update_e=_update_e,
+            post_e=_post_e,
+            finalize=_finalize,
+        )
         return True
 
     def _record_monitors(self):
