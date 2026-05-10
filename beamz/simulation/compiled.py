@@ -2271,7 +2271,7 @@ class CompiledSimulation:
             dev.power_history = list(powers.tolist())
             dev.power_timestamps = list(ts.tolist())
             dev.power_accumulation_count = count
-            if spec.freq_count > 0:
+            if spec.accumulate_frequency and spec.freq_count > 0:
                 re = np.asarray(
                     monitor_state.freq_flux_re[spec.monitor_index, : spec.freq_count],
                     dtype=np.float32,
@@ -2280,9 +2280,10 @@ class CompiledSimulation:
                     monitor_state.freq_flux_im[spec.monitor_index, : spec.freq_count],
                     dtype=np.float32,
                 )
-                dev.frequency_flux_spectrum = (re + 1j * im).astype(np.complex64)
+                dev.power_spectrum = (re + 1j * im).astype(np.complex64)
             else:
-                dev.frequency_flux_spectrum = np.zeros((0,), dtype=np.complex64)
+                dev.power_spectrum = np.zeros((0,), dtype=np.complex64)
+            dev._frequency_flux_spectrum_legacy = dev.power_spectrum
 
             if spec.dft_enabled and spec.freq_count > 0 and spec.dft_point_count > 0:
                 comp_names = ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
@@ -2324,7 +2325,9 @@ class CompiledSimulation:
                 except ValueError:
                     pass
                 else:
-                    dev.frequency_flux_spectrum = phasor_flux.astype(np.complex64)
+                    dev._frequency_flux_spectrum_legacy = phasor_flux.astype(
+                        np.complex64
+                    )
             else:
                 dev._dft_weight_sum = np.zeros((0,), dtype=np.float64)
                 dev._dft_accum = {}

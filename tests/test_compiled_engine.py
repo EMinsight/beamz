@@ -652,8 +652,8 @@ def test_compiled_frequency_monitor_matches_direct_sum(small_sim_params):
         start=(domain * 0.35, domain * 0.35),
         end=(domain * 0.35, domain * 0.65),
         record_interval=1,
-        frequency_points=[freq],
-        frequency_record_interval=1,
+        power_spectrum_frequencies=[freq],
+        power_spectrum_record_interval=1,
     )
 
     sim = Simulation(
@@ -666,14 +666,14 @@ def test_compiled_frequency_monitor_matches_direct_sum(small_sim_params):
     )
     sim.run_compiled(num_steps=60, progress=False)
 
-    assert monitor.frequency_flux_spectrum.shape == (1,)
-    assert np.isfinite(monitor.frequency_flux_spectrum).all()
+    assert monitor.power_spectrum.shape == (1,)
+    assert np.isfinite(monitor.power_spectrum).all()
 
     power = np.asarray(monitor.power_history, dtype=np.float64)
     ts = np.asarray(monitor.power_timestamps, dtype=np.float64)
     direct = np.sum(power * np.exp(-1j * 2.0 * np.pi * freq * ts)) * dt
     assert np.allclose(
-        monitor.frequency_flux_spectrum[0],
+        monitor.power_spectrum[0],
         direct,
         rtol=5e-3,
         atol=5e-6,
@@ -692,8 +692,8 @@ def test_compiled_frequency_monitor_accumulates_across_chunks(small_sim_params):
         start=(domain * 0.35, domain * 0.35),
         end=(domain * 0.35, domain * 0.65),
         record_interval=2,
-        frequency_points=freqs,
-        frequency_record_interval=1,
+        power_spectrum_frequencies=freqs,
+        power_spectrum_record_interval=1,
     )
     sim_full = Simulation(
         design=design.copy(),
@@ -711,8 +711,8 @@ def test_compiled_frequency_monitor_accumulates_across_chunks(small_sim_params):
         start=(domain * 0.35, domain * 0.35),
         end=(domain * 0.35, domain * 0.65),
         record_interval=2,
-        frequency_points=freqs,
-        frequency_record_interval=1,
+        power_spectrum_frequencies=freqs,
+        power_spectrum_record_interval=1,
     )
     sim_chunked = Simulation(
         design=design.copy(),
@@ -731,8 +731,8 @@ def test_compiled_frequency_monitor_accumulates_across_chunks(small_sim_params):
         progress=False,
     )
 
-    s_full = np.asarray(monitor_a.frequency_flux_spectrum)
-    s_chunked = np.asarray(monitor_b.frequency_flux_spectrum)
+    s_full = np.asarray(monitor_a.power_spectrum)
+    s_chunked = np.asarray(monitor_b.power_spectrum)
     assert s_full.shape == (2,)
     assert s_chunked.shape == s_full.shape
     assert np.allclose(s_chunked, s_full, rtol=5e-3, atol=5e-6)
@@ -773,8 +773,8 @@ def test_compiled_frequency_monitor_3d_populated():
         plane_position=domain * 0.65,
         size=(domain * 0.6, depth * 0.6),
         record_interval=2,
-        frequency_points=[freq],
-        frequency_record_interval=1,
+        power_spectrum_frequencies=[freq],
+        power_spectrum_record_interval=1,
         record_fields=False,
     )
     sim = Simulation(
@@ -787,7 +787,7 @@ def test_compiled_frequency_monitor_3d_populated():
     )
     sim.run_compiled(num_steps=12, progress=False)
 
-    spec = np.asarray(monitor.frequency_flux_spectrum)
+    spec = np.asarray(monitor.power_spectrum)
     assert spec.shape == (1,)
     assert np.isfinite(spec).all()
     assert len(monitor.power_history) > 0
@@ -833,12 +833,8 @@ def test_compiled_dft_component_monitor_populated(small_sim_params):
     assert np.isfinite(hy_dft).all()
     assert np.max(np.abs(ez_dft)) > 0.0
     assert np.max(np.abs(hy_dft)) > 0.0
-    np.testing.assert_allclose(
-        np.asarray(monitor.frequency_flux_spectrum, dtype=np.complex128),
-        monitor.get_dft_flux().astype(np.complex128),
-        rtol=1e-6,
-        atol=1e-12,
-    )
+    np.testing.assert_allclose(monitor.power_spectrum, np.zeros((0,), dtype=np.complex64))
+    assert np.isfinite(monitor.get_dft_flux()).all()
 
 
 def test_compiled_static_monitor_dft_uses_current_sample_phase():

@@ -9,7 +9,7 @@ from typing import Any, Literal
 import jax.numpy as jnp
 import numpy as np
 
-from beamz.const import µm
+from beamz.const import LIGHT_SPEED, µm
 from beamz.design.core import Design
 from beamz.devices.monitors.monitors import Monitor
 from beamz.devices.sources.compiler import (
@@ -22,20 +22,18 @@ from beamz.devices.sources.mode import (
     _enforce_componentwise_parity,
     _make_3d_mode_basis_profiles,
     _modal_overlap_3d_profiles,
-    _runtime_3d_profiles,
-    _select_core_confined_mode_index,
+    _numeric_phase_delay,
+    _select_core_confined_mode_index,  # noqa: F401 - compatibility monkeypatch hook
+    _solve_numeric_k_axis,
 )
 from beamz.devices.sources.solve import solve_modes
 from beamz.simulation.boundaries import (
     PML,
     Boundary,
-    build_h_boundary_views_for_e_3d,
     create_metallic_boundary_masks,
     has_full_pec_3d,
     initialize_full_pec_3d_state,
     normalize_boundaries,
-    pec_curl_e_to_h_3d,
-    pec_curl_h_to_e_3d,
     sync_full_pec_3d_from_compact,
 )
 from beamz.simulation.compiled import (
@@ -155,6 +153,7 @@ class MonitorResults:
     fields: dict[str, tuple[Any, ...]]
     power_history: np.ndarray
     power_timestamps: np.ndarray
+    power_spectrum: np.ndarray
     frequency_flux_spectrum: np.ndarray
     objective_value: float | None = None
 
@@ -164,6 +163,17 @@ class MonitorResults:
             name: tuple(values)
             for name, values in getattr(monitor, "fields", {}).items()
         }
+        power_spectrum = np.asarray(
+            getattr(monitor, "power_spectrum", ()), dtype=np.complex64
+        )
+        state = getattr(monitor, "_state", None)
+        legacy_flux = (
+            getattr(state, "_frequency_flux_spectrum_legacy", None)
+            if state is not None
+            else None
+        )
+        if legacy_flux is None:
+            legacy_flux = power_spectrum
         return cls(
             monitor=monitor,
             fields=fields,
@@ -173,9 +183,8 @@ class MonitorResults:
             power_timestamps=np.asarray(
                 getattr(monitor, "power_timestamps", ()), dtype=float
             ),
-            frequency_flux_spectrum=np.asarray(
-                getattr(monitor, "frequency_flux_spectrum", ()), dtype=np.complex64
-            ),
+            power_spectrum=power_spectrum,
+            frequency_flux_spectrum=np.asarray(legacy_flux, dtype=np.complex64),
             objective_value=getattr(monitor, "objective_value", None),
         )
 
@@ -1519,20 +1528,71 @@ class Simulation:
 
     @staticmethod
     def _monitor_projection_phase(component, frequencies, dt):
-        """Phase-align sampled monitor spectra to the modal projection convention.
+        """Phase-align raw monitor phasors to the E-field sample time.
 
-        Monitors are recorded after the E update. Empirically, the source-port
-        modal coefficients line up with the local-mode basis when E components
-        are advanced by one full step and H components are delayed by one full
-        step before projection.
+        BeamZ's DFT uses the phasor convention
+
+            f(t) = Re{F exp(-i omega t)}
+            F ~= 2 sum_t f(t) exp(+i omega t) / sum_t 1
+
+        Monitors are sampled after the E update at timestamp T = t + dt. At
+        that instant E is stored at T, while the leapfrog H fields are stored at
+        T - dt/2. If a component is actually sampled at T + tau but accumulated
+        with exp(+i omega T), the accumulator returns F exp(-i omega tau). To
+        recover the common-time modal phasor F, multiply by exp(+i omega tau).
+        Therefore E has tau = 0 and H has tau = -dt/2.
         """
         freq_arr = np.atleast_1d(np.asarray(frequencies, dtype=float))
         comp = str(component)
-        if comp.startswith("E"):
-            return np.exp(1j * 2.0 * np.pi * freq_arr * float(dt))
         if comp.startswith("H"):
-            return np.exp(-1j * 2.0 * np.pi * freq_arr * float(dt))
+            return np.exp(-1j * np.pi * freq_arr * float(dt))
         return np.ones_like(freq_arr, dtype=np.complex128)
+
+    @staticmethod
+    def _modal_projection_spatial_phase(component, frequencies, plane_delay_s):
+        """Phase-align E components from their Yee plane to the H-referenced mode.
+
+        Mode profiles are gauged to the dominant H component, matching the
+        ModeSource launch convention. After the temporal Yee correction, E
+        samples still need the spatial propagation phase from the E Yee plane
+        to that H reference plane.
+        """
+        freq_arr = np.atleast_1d(np.asarray(frequencies, dtype=float))
+        comp = str(component)
+        delay = float(plane_delay_s)
+        if comp.startswith("E") and delay != 0.0:
+            return np.exp(1j * 2.0 * np.pi * freq_arr * delay)
+        return np.ones_like(freq_arr, dtype=np.complex128)
+
+    def _modal_projection_plane_delay_s(self, spec, frequency, mode_neff):
+        """Return the E-to-H modal-plane delay used by S-parameter projection."""
+        freq = float(frequency)
+        neff = float(np.real(np.asarray(mode_neff)))
+        if (not np.isfinite(freq)) or freq <= 0.0:
+            return 0.0
+        if (not np.isfinite(neff)) or neff <= 0.0:
+            return 0.0
+        d_axis = float(getattr(self, "resolution", 0.0) or 0.0)
+        if (not np.isfinite(d_axis)) or d_axis <= 0.0:
+            return 0.0
+
+        direction_sign = +1.0 if str(spec.direction).startswith("+") else -1.0
+        delta_s = direction_sign * 0.5 * d_axis
+        if getattr(self, "is_3d", False) and hasattr(self, "dt") and self.dt is not None:
+            omega = 2.0 * np.pi * freq
+            k_num = _solve_numeric_k_axis(omega, float(self.dt), d_axis, neff)
+            return _numeric_phase_delay(omega, k_num, delta_s)
+        return float(delta_s * neff / LIGHT_SPEED)
+
+    def _apply_modal_projection_spatial_phase(
+        self, component, values, frequency, projection
+    ):
+        phase = self._modal_projection_spatial_phase(
+            component,
+            np.asarray([float(frequency)], dtype=float),
+            float(projection.get("modal_plane_delay_s", 0.0)),
+        )[0]
+        return np.asarray(values, dtype=np.complex128) * phase
 
     def _sample_monitor_component_dft(self, monitor, component, frequencies):
         if not hasattr(monitor, "get_dft_component"):
@@ -2689,6 +2749,11 @@ class Simulation:
                 },
                 "pair_score": float(best_pair_score),
             }
+            projection["modal_plane_delay_s"] = self._modal_projection_plane_delay_s(
+                spec,
+                frequency,
+                projection["mode_neff"],
+            )
             if analysis_coords0 is not None and analysis_coords1 is not None:
                 projection["analysis_coords0"] = np.asarray(
                     analysis_coords0, dtype=np.float64
@@ -2728,6 +2793,11 @@ class Simulation:
             "pinv": np.linalg.pinv(mode_matrix),
             "mode_neff": float(candidate["mode_neff"]),
         }
+        projection["modal_plane_delay_s"] = self._modal_projection_plane_delay_s(
+            spec,
+            frequency,
+            projection["mode_neff"],
+        )
         cache[key] = projection
         return projection
 
@@ -2962,9 +3032,11 @@ class Simulation:
                 )
                 if self.is_3d:
                     raw_field_components = {
-                        comp: np.asarray(
+                        comp: self._apply_modal_projection_spatial_phase(
+                            comp,
                             spectrum_cache[(main_monitor.name, comp)][idx],
-                            dtype=np.complex128,
+                            f,
+                            proj,
                         )
                         for comp in proj_components
                     }
@@ -2978,7 +3050,12 @@ class Simulation:
                 else:
                     field_vec = np.concatenate(
                         [
-                            spectrum_cache[(main_monitor.name, comp)][idx]
+                            self._apply_modal_projection_spatial_phase(
+                                comp,
+                                spectrum_cache[(main_monitor.name, comp)][idx],
+                                f,
+                                proj,
+                            )
                             for comp in proj_components
                         ]
                     )
@@ -3043,9 +3120,11 @@ class Simulation:
                     )
                     if self.is_3d:
                         raw_field_components = {
-                            comp: np.asarray(
+                            comp: self._apply_modal_projection_spatial_phase(
+                                comp,
                                 spectrum_cache[(ref_monitor.name, comp)][idx],
-                                dtype=np.complex128,
+                                f,
+                                proj,
                             )
                             for comp in proj_components
                         }
@@ -3063,7 +3142,12 @@ class Simulation:
                     else:
                         field_vec = np.concatenate(
                             [
-                                spectrum_cache[(ref_monitor.name, comp)][idx]
+                                self._apply_modal_projection_spatial_phase(
+                                    comp,
+                                    spectrum_cache[(ref_monitor.name, comp)][idx],
+                                    f,
+                                    proj,
+                                )
                                 for comp in proj_components
                             ]
                         )
@@ -3191,9 +3275,11 @@ class Simulation:
                 )
                 if self.is_3d:
                     raw_field_components = {
-                        comp: np.asarray(
+                        comp: self._apply_modal_projection_spatial_phase(
+                            comp,
                             dft_cache[(main_monitor.name, comp)][idx],
-                            dtype=np.complex128,
+                            f,
+                            proj,
                         )
                         for comp in proj_components
                     }
@@ -3207,7 +3293,12 @@ class Simulation:
                 else:
                     field_vec = np.concatenate(
                         [
-                            dft_cache[(main_monitor.name, comp)][idx]
+                            self._apply_modal_projection_spatial_phase(
+                                comp,
+                                dft_cache[(main_monitor.name, comp)][idx],
+                                f,
+                                proj,
+                            )
                             for comp in proj_components
                         ]
                     )
@@ -3285,9 +3376,11 @@ class Simulation:
                     )
                     if self.is_3d:
                         raw_field_components = {
-                            comp: np.asarray(
+                            comp: self._apply_modal_projection_spatial_phase(
+                                comp,
                                 dft_cache[(ref_monitor.name, comp)][idx],
-                                dtype=np.complex128,
+                                f,
+                                proj,
                             )
                             for comp in proj_components
                         }
@@ -3305,7 +3398,12 @@ class Simulation:
                     else:
                         field_vec = np.concatenate(
                             [
-                                dft_cache[(ref_monitor.name, comp)][idx]
+                                self._apply_modal_projection_spatial_phase(
+                                    comp,
+                                    dft_cache[(ref_monitor.name, comp)][idx],
+                                    f,
+                                    proj,
+                                )
                                 for comp in proj_components
                             ]
                         )
@@ -3518,6 +3616,12 @@ class Simulation:
                 avg_cycles=avg_cycles,
                 window=window,
             )
+            e_main = self._apply_modal_projection_spatial_phase(
+                parts["e_component"], e_main, f, proj
+            )
+            h_main = self._apply_modal_projection_spatial_phase(
+                parts["h_component"], h_main, f, proj
+            )
             coeff = proj["pinv"] @ np.concatenate([e_main, h_main])
             a_plus = np.complex128(coeff[0])
             a_minus = np.complex128(coeff[1])
@@ -3549,6 +3653,12 @@ class Simulation:
                     t_start=steady_start_time,
                     avg_cycles=avg_cycles,
                     window=window,
+                )
+                e_ref = self._apply_modal_projection_spatial_phase(
+                    parts["e_component"], e_ref, f, ref_proj
+                )
+                h_ref = self._apply_modal_projection_spatial_phase(
+                    parts["h_component"], h_ref, f, ref_proj
                 )
                 ref_coeff = ref_proj["pinv"] @ np.concatenate([e_ref, h_ref])
                 a_incident_plus = np.complex128(ref_coeff[0])

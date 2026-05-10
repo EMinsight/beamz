@@ -478,17 +478,27 @@ def test_monitor_get_dft_component_physical_mode_returns_raw_accumulator():
 
 
 def test_monitor_power_history_records_signed_normal_flux():
-    ez = 2.0 * np.ones((3, 1), dtype=float)
-    hx = np.zeros((3, 1), dtype=float)
-    hy = -3.0 * np.ones((3, 1), dtype=float)
-
     forward = Monitor(start=(0.0, 0.0), end=(0.0, 2.0), record_fields=False)
-    forward.record_fields_2d(ez, hx, hy, t=0.0, dx=1.0, dy=1.0, step=0)
-    assert forward.power_history[-1] == pytest.approx(18.0)
+    forward._calculate_power_2d(
+        [2.0, 2.0, 2.0],
+        [0.0, 0.0, 0.0],
+        [-3.0, -3.0, -3.0],
+        t=0.0,
+        dx=2.0,
+        dy=3.0,
+    )
+    assert forward.power_history[-1] == pytest.approx(54.0)
 
     reverse = Monitor(start=(0.0, 2.0), end=(0.0, 0.0), record_fields=False)
-    reverse.record_fields_2d(ez, hx, hy, t=0.0, dx=1.0, dy=1.0, step=0)
-    assert reverse.power_history[-1] == pytest.approx(-18.0)
+    reverse._calculate_power_2d(
+        [2.0, 2.0, 2.0],
+        [0.0, 0.0, 0.0],
+        [-3.0, -3.0, -3.0],
+        t=0.0,
+        dx=2.0,
+        dy=3.0,
+    )
+    assert reverse.power_history[-1] == pytest.approx(-54.0)
 
 
 def test_monitor_get_dft_flux_uses_phasor_poynting_product():
@@ -508,8 +518,26 @@ def test_monitor_get_dft_flux_uses_phasor_poynting_product():
     mon._dft_accum["Hy"] = hy
     mon._dft_weight_sum = np.ones((1,), dtype=float)
 
-    expected = 0.5 * np.real(np.sum(-ez * np.conjugate(hy), axis=1)) * 4.0
+    expected = 0.5 * np.real(np.sum(-ez * np.conjugate(hy), axis=1)) * 2.0
     np.testing.assert_allclose(mon.get_dft_flux(), expected, rtol=1e-12, atol=1e-12)
+
+
+def test_monitor_frequency_points_aliases_are_deprecated():
+    with pytest.warns(DeprecationWarning, match="frequency_points"):
+        mon = Monitor(
+            start=(0.0, 0.0),
+            end=(0.0, 1.0),
+            frequency_points=[1.0, 2.0],
+            record_fields=False,
+        )
+    np.testing.assert_allclose(mon.power_spectrum_frequencies, [1.0, 2.0])
+
+    with pytest.warns(DeprecationWarning, match="frequency_points"):
+        np.testing.assert_allclose(mon.frequency_points, [1.0, 2.0])
+
+    mon.power_spectrum = np.array([1.0 + 0.0j, 2.0 + 0.0j], dtype=np.complex64)
+    with pytest.warns(DeprecationWarning, match="frequency_flux_spectrum"):
+        np.testing.assert_allclose(mon.frequency_flux_spectrum, mon.power_spectrum)
 
 
 def test_monitor_physical_dft_accum_matches_direct_sum():
@@ -573,6 +601,88 @@ def test_resample_complex_matrix_flattens_trailing_spatial_dims():
     out = Simulation._resample_complex_matrix(freq_src, src, freq_dst)
     assert out.shape == (2, 6)
     np.testing.assert_allclose(out, src.reshape(2, 6), rtol=1e-12, atol=1e-12)
+
+
+def test_monitor_projection_phase_uses_yee_half_step_h_lag():
+    dt = 2.0e-15
+    freqs = np.array([1.0e12, 4.0e12], dtype=float)
+
+    np.testing.assert_allclose(
+        Simulation._monitor_projection_phase("Ez", freqs, dt),
+        np.ones_like(freqs, dtype=np.complex128),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        Simulation._monitor_projection_phase("Hy", freqs, dt),
+        np.exp(-1j * np.pi * freqs * dt),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+
+def test_modal_projection_spatial_phase_advances_e_to_h_reference_plane():
+    freqs = np.array([1.0e12, 4.0e12], dtype=float)
+    plane_delay_s = 0.25e-15
+
+    np.testing.assert_allclose(
+        Simulation._modal_projection_spatial_phase("Ez", freqs, plane_delay_s),
+        np.exp(1j * 2.0 * np.pi * freqs * plane_delay_s),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        Simulation._modal_projection_spatial_phase("Hy", freqs, plane_delay_s),
+        np.ones_like(freqs, dtype=np.complex128),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+
+def test_modal_projection_plane_delay_matches_2d_yee_half_cell_delay():
+    sim = Simulation.__new__(Simulation)
+    sim.is_3d = False
+    sim.resolution = 80e-9
+    spec = PortSpec(name="o1", monitor_name="m", direction="+x", polarization="tm")
+    delay = sim._modal_projection_plane_delay_s(spec, 193.4e12, 1.8)
+    assert delay == pytest.approx(0.5 * sim.resolution * 1.8 / LIGHT_SPEED)
+
+    spec_back = PortSpec(name="o2", monitor_name="m", direction="-x", polarization="tm")
+    delay_back = sim._modal_projection_plane_delay_s(spec_back, 193.4e12, 1.8)
+    assert delay_back == pytest.approx(-delay)
+
+
+def test_sample_monitor_component_dft_applies_yee_phase_to_h_only():
+    dt = 2.0e-15
+    freqs = np.array([1.0e12, 3.0e12], dtype=float)
+    sim = Simulation.__new__(Simulation)
+    sim.dt = dt
+    mon = Monitor(
+        start=(0.0, 0.0),
+        end=(0.0, 0.0),
+        name="m_yee_phase",
+        record_fields=False,
+        dft_enabled=True,
+        dft_frequencies=freqs,
+        dft_components=("Ez", "Hy"),
+        dft_normalization="physical",
+    )
+    raw_e = np.array([[1.0 + 0.25j], [0.5 - 0.75j]], dtype=np.complex128)
+    raw_h = np.array([[0.25 - 1.0j], [-0.75 + 0.5j]], dtype=np.complex128)
+    mon._dft_accum["Ez"] = raw_e
+    mon._dft_accum["Hy"] = raw_h
+    mon._dft_weight_sum = np.ones(freqs.shape, dtype=float)
+
+    _, sampled_e = sim._sample_monitor_component_dft(mon, "Ez", freqs)
+    _, sampled_h = sim._sample_monitor_component_dft(mon, "Hy", freqs)
+
+    np.testing.assert_allclose(sampled_e, raw_e, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(
+        sampled_h,
+        raw_h * np.exp(-1j * np.pi * freqs * dt)[:, None],
+        rtol=1e-12,
+        atol=1e-12,
+    )
 
 
 def test_project_modal_coefficients_3d_recovers_forward_backward_modes():
