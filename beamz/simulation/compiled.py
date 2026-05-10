@@ -70,9 +70,13 @@ from beamz.shared_kernels import (
     build_cpml_3d_terms,
     build_tm_xy_cpml_terms,
     full_tm_xy_component_to_centered_grid,
-    meep_dft_sample_scale,
+    monitor_dft_sample_scale,
+    monitor_dft_should_accumulate,
+    monitor_dft_window_weight,
+    monitor_records_on_step,
     poynting_magnitude_2d,
     poynting_magnitude_3d,
+    step_hits_interval,
 )
 from beamz.simulation.yee import (
     sample_voxel_grid_at_tm_xy_full_component_2d,
@@ -874,7 +878,7 @@ class CompiledSimulation:
                 pwr, ts, cnt, f_re, f_im, ph_re, ph_im, d_re, d_im, d_w = carry
                 mi = bm.monitor_indices[i]
 
-                should_record = (abs_step % bm.record_intervals[i]) == 0
+                should_record = monitor_records_on_step(abs_step, bm.record_intervals[i])
                 can_record = cnt[mi] < max_records
                 do_record = should_record & can_record & bm.accumulate_flags[i]
 
@@ -941,8 +945,8 @@ class CompiledSimulation:
                 )
                 ts = ts.at[mi, slot].set(jnp.where(do_record, t_phys, ts[mi, slot]))
                 cnt = cnt.at[mi].set(cnt[mi] + jnp.where(do_record, 1, 0))
-                do_freq = bm.freq_enabled[i] & (
-                    (abs_step % bm.freq_record_intervals[i]) == 0
+                do_freq = bm.freq_enabled[i] & step_hits_interval(
+                    abs_step, bm.freq_record_intervals[i]
                 )
                 mask_f = bm.freq_mask[i]
                 row_f_re = f_re[mi]
@@ -969,35 +973,42 @@ class CompiledSimulation:
                 f_im = f_im.at[mi].set(row_f_im)
                 ph_re = ph_re.at[mi].set(row_ph_re)
                 ph_im = ph_im.at[mi].set(row_ph_im)
-                do_dft = (
-                    bm.dft_enabled[i]
-                    & ((abs_step % bm.dft_record_intervals[i]) == 0)
-                    & (t_phys >= bm.dft_t_start[i])
-                    & (t_phys <= bm.dft_t_end[i])
+                do_dft = monitor_dft_should_accumulate(
+                    bm.dft_enabled[i],
+                    abs_step,
+                    t_phys,
+                    bm.dft_t_start[i],
+                    bm.dft_t_end[i],
+                    bm.dft_record_intervals[i],
                 )
-                two_pi = jnp.asarray(2.0 * np.pi, dtype=jnp.float32)
-                one_f = jnp.asarray(1.0, dtype=jnp.float32)
-                zero_f = jnp.asarray(0.0, dtype=jnp.float32)
-                half_f = jnp.asarray(0.5, dtype=jnp.float32)
-                span = jnp.maximum(
-                    bm.dft_t_end[i] - bm.dft_t_start[i],
-                    jnp.asarray(1e-30, dtype=jnp.float32),
-                )
-                tau = jnp.clip((t_phys - bm.dft_t_start[i]) / span, zero_f, one_f)
-                w_hann = half_f * (one_f - jnp.cos(two_pi * tau))
                 w = jnp.where(
-                    bm.dft_window_code[i] == 1,
-                    w_hann,
-                    one_f,
+                    do_dft,
+                    monitor_dft_window_weight(
+                        t_phys,
+                        bm.dft_t_start[i],
+                        bm.dft_t_end[i],
+                        bm.dft_window_code[i] == 1,
+                    ),
+                    jnp.asarray(0.0, dtype=jnp.float32),
                 )
-                w = jnp.where(do_dft, w, zero_f)
                 ph_vec_re = cur_ph_re * mask_f
                 ph_vec_im = cur_ph_im * mask_f
 
                 vecs = jnp.stack((exs, eys, ezs, hxs, hys, hzs), axis=0)
                 comp_mask = bm.dft_component_mask[i][:, None, None]
-                delta_re_3d = w * comp_mask * jnp.einsum("f,cp->cfp", ph_vec_re, vecs)
-                delta_im_3d = w * comp_mask * jnp.einsum("f,cp->cfp", ph_vec_im, vecs)
+                sample_scale = monitor_dft_sample_scale(
+                    w,
+                    normalization_is_meep=bm.dft_normalization_code[i] == 1,
+                    base_dt=dt_scalar,
+                    record_interval=bm.dft_record_intervals[i],
+                    length_unit=bm.dft_length_unit[i],
+                )
+                delta_re_3d = (
+                    sample_scale * comp_mask * jnp.einsum("f,cp->cfp", ph_vec_re, vecs)
+                )
+                delta_im_3d = (
+                    sample_scale * comp_mask * jnp.einsum("f,cp->cfp", ph_vec_im, vecs)
+                )
                 d_re = d_re.at[mi].add(delta_re_3d)
                 d_im = d_im.at[mi].add(delta_im_3d)
                 d_w = d_w.at[mi].add(w * mask_f)
@@ -1035,11 +1046,11 @@ class CompiledSimulation:
 
         # Remaining static monitor specs (2D or 3D).
         for mon in monitors_2d:
-            should_record = (abs_step % mon.record_interval) == 0
+            should_record = monitor_records_on_step(abs_step, mon.record_interval)
             can_record = counts[mon.monitor_index] < max_records
             do_record = should_record & can_record & mon.accumulate_power
             do_freq = (
-                (abs_step % mon.freq_record_interval) == 0
+                step_hits_interval(abs_step, mon.freq_record_interval)
                 if mon.accumulate_frequency and mon.freq_count > 0
                 else jnp.array(False)
             )
@@ -1106,50 +1117,34 @@ class CompiledSimulation:
                 )
                 dft_ph_re = jnp.cos(theta_now)
                 dft_ph_im = jnp.sin(theta_now)
-                do_dft = (
-                    ((abs_step % mon.dft_record_interval) == 0)
-                    & (t_phys >= mon.dft_t_start)
-                    & (t_phys <= mon.dft_t_end)
-                )
-                two_pi = jnp.asarray(2.0 * np.pi, dtype=jnp.float32)
-                span = jnp.maximum(
-                    mon.dft_t_end - mon.dft_t_start,
-                    jnp.asarray(1e-30, dtype=jnp.float32),
-                )
-                tau = jnp.asarray(
-                    jnp.clip(
-                        (t_phys - mon.dft_t_start) / span,
-                        jnp.asarray(0.0, dtype=jnp.float32),
-                        jnp.asarray(1.0, dtype=jnp.float32),
-                    ),
-                    dtype=jnp.float32,
-                )
-                w_hann = jnp.asarray(0.5, dtype=jnp.float32) * (
-                    jnp.asarray(1.0, dtype=jnp.float32) - jnp.cos(two_pi * tau)
+                do_dft = monitor_dft_should_accumulate(
+                    mon.dft_enabled and mon.freq_count > 0 and mon.dft_point_count > 0,
+                    abs_step,
+                    t_phys,
+                    mon.dft_t_start,
+                    mon.dft_t_end,
+                    mon.dft_record_interval,
                 )
                 w = jnp.asarray(
                     jnp.where(
-                        mon.dft_window_code == 1,
-                        w_hann,
-                        jnp.asarray(1.0, dtype=jnp.float32),
-                    ),
-                    dtype=jnp.float32,
-                )
-                w = jnp.asarray(
-                    jnp.where(do_dft, w, jnp.asarray(0.0, dtype=jnp.float32)),
-                    dtype=jnp.float32,
-                )
-                sample_scale = jnp.asarray(w, dtype=jnp.float32)
-                sample_scale = jnp.asarray(
-                    jnp.where(
-                        jnp.asarray(mon.dft_normalization_code == 1),
-                        meep_dft_sample_scale(
-                            sample_scale,
-                            dt_scalar,
-                            jnp.asarray(mon.dft_record_interval, dtype=jnp.float32),
-                            jnp.asarray(mon.dft_length_unit, dtype=jnp.float32),
+                        do_dft,
+                        monitor_dft_window_weight(
+                            t_phys,
+                            mon.dft_t_start,
+                            mon.dft_t_end,
+                            mon.dft_window_code == 1,
                         ),
-                        sample_scale,
+                        jnp.asarray(0.0, dtype=jnp.float32),
+                    ),
+                    dtype=jnp.float32,
+                )
+                sample_scale = jnp.asarray(
+                    monitor_dft_sample_scale(
+                        w,
+                        normalization_is_meep=mon.dft_normalization_code == 1,
+                        base_dt=dt_scalar,
+                        record_interval=mon.dft_record_interval,
+                        length_unit=mon.dft_length_unit,
                     ),
                     dtype=jnp.float32,
                 )

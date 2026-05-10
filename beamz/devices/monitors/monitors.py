@@ -14,7 +14,10 @@ from beamz.devices._placement import (
 from beamz.shared_kernels import (
     full_tm_xy_component_to_centered_grid,
     is_full_tm_xy_lattice,
-    meep_dft_sample_scale,
+    monitor_dft_sample_scale,
+    monitor_dft_should_accumulate,
+    monitor_dft_window_weight,
+    monitor_records_on_step,
     poynting_magnitude_2d,
     poynting_magnitude_3d,
 )
@@ -847,27 +850,29 @@ class Monitor:
 
     def should_record(self, step):
         """Check if this step should be recorded based on interval."""
-        return (step - self.last_record_step) >= self.record_interval
+        return bool(monitor_records_on_step(step, self.record_interval))
 
     def _dft_should_accumulate(self, step, t):
-        if not self.dft_enabled or self.dft_frequencies.size == 0:
-            return False
-        if self.dft_t_end is not None and float(t) > self.dft_t_end:
-            return False
-        if float(t) < self.dft_t_start:
-            return False
-        return (int(step) % int(self.dft_record_interval)) == 0
+        return bool(
+            monitor_dft_should_accumulate(
+                bool(self.dft_enabled and self.dft_frequencies.size > 0),
+                step,
+                t,
+                self.dft_t_start,
+                np.inf if self.dft_t_end is None else self.dft_t_end,
+                self.dft_record_interval,
+            )
+        )
 
     def _dft_weight(self, t):
-        if (
-            self.dft_window == "hann"
-            and self.dft_t_end is not None
-            and self.dft_t_end > self.dft_t_start
-        ):
-            tau = (float(t) - self.dft_t_start) / (self.dft_t_end - self.dft_t_start)
-            tau = min(max(tau, 0.0), 1.0)
-            return 0.5 * (1.0 - np.cos(2.0 * np.pi * tau))
-        return 1.0
+        return float(
+            monitor_dft_window_weight(
+                t,
+                self.dft_t_start,
+                np.inf if self.dft_t_end is None else self.dft_t_end,
+                self.dft_window == "hann",
+            )
+        )
 
     def _init_or_get_dft_accum(self, component, npoints):
         arr = self._dft_accum.get(component)
@@ -913,17 +918,16 @@ class Monitor:
         w = float(self._dft_weight(t))
         if w <= 0.0:
             return 0.0
-        if self.dft_normalization != "meep":
-            return w
         base_dt = self._dft_meep_base_dt(t, step)
-        if base_dt is None or base_dt <= 0.0:
+        if self.dft_normalization == "meep" and (base_dt is None or base_dt <= 0.0):
             return 0.0
         return float(
-            meep_dft_sample_scale(
+            monitor_dft_sample_scale(
                 w,
-                float(base_dt),
-                float(self.dft_record_interval),
-                float(self.dft_length_unit),
+                normalization_is_meep=self.dft_normalization == "meep",
+                base_dt=1.0 if base_dt is None else float(base_dt),
+                record_interval=float(self.dft_record_interval),
+                length_unit=float(self.dft_length_unit),
             )
         )
 

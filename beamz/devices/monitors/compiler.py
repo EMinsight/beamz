@@ -126,6 +126,8 @@ class BatchedMonitorData:
     dft_t_start: jnp.ndarray  # (n,) float32
     dft_t_end: jnp.ndarray  # (n,) float32
     dft_window_code: jnp.ndarray  # (n,) int32
+    dft_normalization_code: jnp.ndarray  # (n,) int32
+    dft_length_unit: jnp.ndarray  # (n,) float32
     dft_component_mask: jnp.ndarray  # (n, 6) float32
 
 
@@ -192,6 +194,8 @@ def compile_batched_monitor_data(
     dft_t_start = np.zeros((n,), dtype=np.float32)
     dft_t_end = np.full((n,), np.inf, dtype=np.float32)
     dft_window_code = np.zeros((n,), dtype=np.int32)
+    dft_normalization_code = np.zeros((n,), dtype=np.int32)
+    dft_length_unit = np.ones((n,), dtype=np.float32)
     dft_component_mask = np.zeros((n, 6), dtype=np.float32)
     for i, spec in enumerate(specs_3d):
         if (
@@ -210,6 +214,8 @@ def compile_batched_monitor_data(
         dft_t_start[i] = float(spec.dft_t_start)
         dft_t_end[i] = float(spec.dft_t_end)
         dft_window_code[i] = int(spec.dft_window_code)
+        dft_normalization_code[i] = int(spec.dft_normalization_code)
+        dft_length_unit[i] = float(spec.dft_length_unit)
         if spec.dft_component_mask is not None:
             dft_component_mask[i, :] = np.asarray(
                 spec.dft_component_mask, dtype=np.float32
@@ -250,6 +256,8 @@ def compile_batched_monitor_data(
         dft_t_start=jnp.array(dft_t_start, dtype=jnp.float32),
         dft_t_end=jnp.array(dft_t_end, dtype=jnp.float32),
         dft_window_code=jnp.array(dft_window_code, dtype=jnp.int32),
+        dft_normalization_code=jnp.array(dft_normalization_code, dtype=jnp.int32),
+        dft_length_unit=jnp.array(dft_length_unit, dtype=jnp.float32),
         dft_component_mask=jnp.array(dft_component_mask, dtype=jnp.float32),
     )
 

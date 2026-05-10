@@ -266,3 +266,70 @@ def apply_zero_mask(field, mask):
     if mask is None:
         return field
     return jnp.where(mask, jnp.asarray(0.0, dtype=field.dtype), field)
+
+
+def step_hits_interval(step, interval):
+    """Return True when a zero-based step lands on a direct modulo interval."""
+    step_idx = jnp.asarray(step, dtype=jnp.int32)
+    interval_idx = jnp.maximum(jnp.asarray(interval, dtype=jnp.int32), 1)
+    return (step_idx % interval_idx) == 0
+
+
+def monitor_records_on_step(step, record_interval):
+    """Return True when a monitor should emit a power/history sample on this step."""
+    step_idx = jnp.asarray(step, dtype=jnp.int32) + jnp.asarray(1, dtype=jnp.int32)
+    return step_hits_interval(step_idx, record_interval)
+
+
+def monitor_dft_should_accumulate(enabled, step, t, t_start, t_end, record_interval):
+    """Return True when a DFT monitor should accumulate on this sample."""
+    t_now = jnp.asarray(t, dtype=jnp.float32)
+    return (
+        jnp.asarray(enabled)
+        & (t_now >= jnp.asarray(t_start, dtype=jnp.float32))
+        & (t_now <= jnp.asarray(t_end, dtype=jnp.float32))
+        & step_hits_interval(step, record_interval)
+    )
+
+
+def monitor_dft_window_weight(t, t_start, t_end, use_hann):
+    """Return the DFT window weight for one sample."""
+    t_now = jnp.asarray(t, dtype=jnp.float32)
+    t0 = jnp.asarray(t_start, dtype=jnp.float32)
+    t1 = jnp.asarray(t_end, dtype=jnp.float32)
+    use_hann = jnp.asarray(use_hann)
+    zero = jnp.asarray(0.0, dtype=jnp.float32)
+    one = jnp.asarray(1.0, dtype=jnp.float32)
+    span = jnp.maximum(t1 - t0, jnp.asarray(1e-30, dtype=jnp.float32))
+    tau = jnp.clip((t_now - t0) / span, zero, one)
+    hann = jnp.asarray(0.5, dtype=jnp.float32) * (
+        one - jnp.cos(jnp.asarray(2.0 * np.pi, dtype=jnp.float32) * tau)
+    )
+    finite_span = jnp.isfinite(t1) & (t1 > t0)
+    return jnp.where(use_hann & finite_span, hann, one)
+
+
+def monitor_dft_sample_scale(
+    weight,
+    *,
+    normalization_is_meep,
+    base_dt,
+    record_interval,
+    length_unit,
+):
+    """Return the scaled DFT sample multiplier for native or Meep normalization."""
+    weight = jnp.asarray(weight, dtype=jnp.float32)
+    normalization_is_meep = jnp.asarray(normalization_is_meep)
+    zero = jnp.asarray(0.0, dtype=jnp.float32)
+    native = jnp.where(weight > zero, weight, zero)
+    meep = jnp.where(
+        weight > zero,
+        meep_dft_sample_scale(
+            native,
+            jnp.asarray(base_dt, dtype=jnp.float32),
+            jnp.asarray(record_interval, dtype=jnp.float32),
+            jnp.asarray(length_unit, dtype=jnp.float32),
+        ),
+        zero,
+    )
+    return jnp.where(normalization_is_meep, meep, native)

@@ -6,6 +6,7 @@ import pytest
 
 from beamz import (
     LIGHT_SPEED,
+    Monitor,
     PML,
     Design,
     Material,
@@ -31,6 +32,7 @@ def _make_2d_sim(
     steps: int,
     sources=None,
     boundaries=None,
+    monitors=None,
 ) -> tuple[Simulation, float]:
     wl = TEST_WAVELENGTH
     dx, dt = calc_optimal_fdtd_params(
@@ -45,6 +47,7 @@ def _make_2d_sim(
     sim = Simulation(
         design=design,
         sources=list(sources or ()),
+        monitors=list(monitors or ()),
         boundaries=list(boundaries or ()),
         time=time,
         resolution=dx,
@@ -53,7 +56,9 @@ def _make_2d_sim(
     return sim, wl
 
 
-def _make_3d_sim(*, steps: int, sources=None, boundaries=None) -> tuple[Simulation, float]:
+def _make_3d_sim(
+    *, steps: int, sources=None, boundaries=None, monitors=None
+) -> tuple[Simulation, float]:
     wl = TEST_WAVELENGTH
     dx, dt = calc_optimal_fdtd_params(
         wl, 1.0, dims=3, safety_factor=0.9, points_per_wavelength=5
@@ -68,6 +73,7 @@ def _make_3d_sim(*, steps: int, sources=None, boundaries=None) -> tuple[Simulati
     sim = Simulation(
         design=design,
         sources=list(sources or ()),
+        monitors=list(monitors or ()),
         boundaries=list(boundaries or ()),
         time=time,
         resolution=dx,
@@ -183,6 +189,32 @@ def _assert_fields_close(
             atol=atol,
             rtol=rtol,
             err_msg=f"field mismatch for {name}",
+        )
+
+
+def _assert_monitor_close(
+    reference: Monitor,
+    compiled: Monitor,
+    *,
+    power_atol: float,
+    power_rtol: float,
+    dft_components: tuple[str, ...] = (),
+    dft_atol: float | None = None,
+    dft_rtol: float | None = None,
+) -> None:
+    ref_power = np.asarray(reference.power_history, dtype=np.float64)
+    cmp_power = np.asarray(compiled.power_history, dtype=np.float64)
+    ref_ts = np.asarray(reference.power_timestamps, dtype=np.float64)
+    cmp_ts = np.asarray(compiled.power_timestamps, dtype=np.float64)
+    np.testing.assert_allclose(cmp_power, ref_power, atol=power_atol, rtol=power_rtol)
+    np.testing.assert_allclose(cmp_ts, ref_ts, atol=1e-21, rtol=0.0)
+    for component in dft_components:
+        np.testing.assert_allclose(
+            np.asarray(compiled.get_dft_component(component), dtype=np.complex128),
+            np.asarray(reference.get_dft_component(component), dtype=np.complex128),
+            atol=power_atol if dft_atol is None else dft_atol,
+            rtol=power_rtol if dft_rtol is None else dft_rtol,
+            err_msg=f"monitor DFT mismatch for {component}",
         )
 
 
@@ -487,6 +519,94 @@ def test_step_and_compiled_match_tm_mode_source_snapshots_without_fallback():
         np.testing.assert_allclose(ref_frame, cmp_frame, atol=3e-5, rtol=3e-4)
 
     _assert_fields_close(reference, compiled, atol=3e-5, rtol=3e-4)
+
+
+def test_step_and_compiled_match_2d_monitor_power_and_dft():
+    steps = 12
+    probe, wl = _make_2d_sim(plane_2d="xy", steps=steps)
+    source_index = _center_index(tuple(np.asarray(probe.fields.Ez).shape))
+    source_a = _PointElectricCurrentSource("Ez", source_index, frequency_scale=3.5e14)
+    source_b = _PointElectricCurrentSource("Ez", source_index, frequency_scale=3.5e14)
+    freq = LIGHT_SPEED / wl
+
+    def _build_monitor():
+        return Monitor(
+            start=(1.55 * wl, 0.45 * wl),
+            end=(1.55 * wl, 1.55 * wl),
+            record_fields=False,
+            record_interval=3,
+            dft_enabled=True,
+            dft_frequencies=[freq],
+            dft_components=("Ez", "Hy"),
+            dft_window="rect",
+            dft_record_every_step=True,
+        )
+
+    ref_monitor = _build_monitor()
+    cmp_monitor = _build_monitor()
+    reference, _ = _make_2d_sim(
+        plane_2d="xy", steps=steps, sources=[source_a], monitors=[ref_monitor]
+    )
+    compiled, _ = _make_2d_sim(
+        plane_2d="xy", steps=steps, sources=[source_b], monitors=[cmp_monitor]
+    )
+
+    _run_reference(reference, steps)
+    compiled.run_compiled(num_steps=steps, progress=False)
+
+    _assert_fields_close(reference, compiled, atol=2e-6, rtol=2e-6)
+    _assert_monitor_close(
+        ref_monitor,
+        cmp_monitor,
+        power_atol=2e-6,
+        power_rtol=2e-6,
+        dft_components=("Ez", "Hy"),
+        dft_atol=2e-6,
+        dft_rtol=2e-6,
+    )
+
+
+def test_step_and_compiled_match_3d_monitor_power_and_dft():
+    steps = 8
+    probe, wl = _make_3d_sim(steps=steps)
+    source_index = _center_index(tuple(np.asarray(probe.fields.Ez).shape))
+    source_a = _PointElectricCurrentSource("Ez", source_index, frequency_scale=3.0e14)
+    source_b = _PointElectricCurrentSource("Ez", source_index, frequency_scale=3.0e14)
+    freq = LIGHT_SPEED / wl
+
+    def _build_monitor():
+        return Monitor(
+            start=(1.25 * wl, 0.35 * wl, 0.35 * wl),
+            end=(1.25 * wl, 1.45 * wl, 1.45 * wl),
+            record_fields=False,
+            record_interval=2,
+            dft_enabled=True,
+            dft_frequencies=[freq],
+            dft_components=("Ex", "Hz"),
+            dft_window="rect",
+            dft_record_every_step=True,
+        )
+
+    ref_monitor = _build_monitor()
+    cmp_monitor = _build_monitor()
+    reference, _ = _make_3d_sim(
+        steps=steps, sources=[source_a], monitors=[ref_monitor]
+    )
+    compiled, _ = _make_3d_sim(steps=steps, sources=[source_b], monitors=[cmp_monitor])
+
+    _run_reference(reference, steps)
+    compiled.run_compiled(num_steps=steps, progress=False)
+
+    _assert_fields_close(reference, compiled, atol=2e-6, rtol=2e-6)
+    _assert_monitor_close(
+        ref_monitor,
+        cmp_monitor,
+        power_atol=3e-6,
+        power_rtol=3e-6,
+        dft_components=("Ex", "Hz"),
+        dft_atol=3e-6,
+        dft_rtol=3e-6,
+    )
 
 
 def test_private_jit_step_builders_are_disabled():
