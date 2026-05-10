@@ -10,7 +10,11 @@ import jax.numpy as jnp
 import numpy as np
 
 from beamz.const import µm
-from beamz.devices.monitors.monitors import Monitor, _plane_axes_for_normal_3d
+from beamz.devices.monitors.monitors import (
+    Monitor,
+    _line_normal_2d,
+    _plane_axes_for_normal_3d,
+)
 
 
 @dataclass(frozen=True)
@@ -24,6 +28,7 @@ class CompiledMonitorSpec:
     accumulate_power: bool
     power_scale: float
     normal_axis: int = -1
+    normal_sign: float = 1.0
     accumulate_frequency: bool = False
     freq_record_interval: int = 1
     freq_count: int = 0
@@ -114,6 +119,7 @@ class BatchedMonitorData:
     hz_interp_weights: jnp.ndarray
     valid_mask: jnp.ndarray  # (n, max_points) float32
     normal_axes: jnp.ndarray  # (n,) int32; 0=x,1=y,2=z, -1=unknown
+    normal_signs: jnp.ndarray  # (n,) float32
     # Frequency-domain in-loop accumulation metadata
     freq_enabled: jnp.ndarray  # (n,) bool
     freq_record_intervals: jnp.ndarray  # (n,) int32
@@ -243,6 +249,7 @@ def compile_batched_monitor_data(
         hz_interp_weights=_pad_stack(all_weights["Hz"], np.float32),
         valid_mask=jnp.array(valid),
         normal_axes=jnp.array([int(s.normal_axis) for s in specs_3d], dtype=jnp.int32),
+        normal_signs=jnp.array([float(s.normal_sign) for s in specs_3d], dtype=jnp.float32),
         freq_enabled=jnp.array([bool(s.accumulate_frequency) for s in specs_3d]),
         freq_record_intervals=jnp.array(
             [max(1, int(s.freq_record_interval)) for s in specs_3d], dtype=jnp.int32
@@ -430,6 +437,26 @@ def sample_compiled_monitor_plane_component_3d(
     return sampled.reshape(int(dim0), int(dim1))
 
 
+def _monitor_normal_2d(monitor: Monitor, resolution: float) -> tuple[int, float]:
+    snapped = monitor.get_snapped_region(dx=resolution, dy=resolution)
+    line_normal = _line_normal_2d(
+        getattr(monitor, "start", None),
+        getattr(monitor, "end", None),
+    )
+    if snapped is not None:
+        axis = str(snapped.normal_axis).lower()
+        sign = (
+            float(line_normal[1])
+            if line_normal is not None and line_normal[0] == axis
+            else 1.0
+        )
+        return {"x": 0, "y": 1}.get(axis, -1), sign
+    if line_normal is None:
+        return -1, 1.0
+    axis, sign = line_normal
+    return {"x": 0, "y": 1}.get(axis, -1), float(sign)
+
+
 def _compile_monitor_2d_interpolation(
     monitor: Monitor,
     component: str,
@@ -594,6 +621,7 @@ def compile_monitor_specs(
                 )
                 for name in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
             }
+            normal_axis, normal_sign = _monitor_normal_2d(monitor, resolution)
 
             specs.append(
                 CompiledMonitorSpec(
@@ -603,7 +631,8 @@ def compile_monitor_specs(
                     record_interval=interval,
                     accumulate_power=bool(monitor.accumulate_power),
                     power_scale=float(resolution * resolution),
-                    normal_axis=-1,
+                    normal_axis=normal_axis,
+                    normal_sign=normal_sign,
                     accumulate_frequency=bool(freq_points.size > 0),
                     freq_record_interval=freq_interval,
                     freq_count=int(freq_points.size),
@@ -697,6 +726,7 @@ def compile_monitor_specs(
                     normal_axis={"x": 0, "y": 1, "z": 2}.get(
                         str(getattr(monitor, "plane_normal", "z")).lower(), -1
                     ),
+                    normal_sign=1.0,
                     accumulate_frequency=bool(freq_points.size > 0),
                     freq_record_interval=freq_interval,
                     freq_count=int(freq_points.size),

@@ -208,12 +208,36 @@ def poynting_magnitude_2d(ez, hx, hy):
     return (sx * sx + sy * sy) ** 0.5
 
 
+def poynting_flux_2d(ez, hx, hy, normal_axis, normal_sign=1.0):
+    """Return n . (E x H) for 2D TM monitor samples."""
+    sx = -ez * hy
+    sy = ez * hx
+    axis = str(normal_axis).lower()
+    component = sx if axis == "x" else sy
+    return component * normal_sign
+
+
 def poynting_magnitude_3d(ex, ey, ez, hx, hy, hz):
     """Return |E x H| for 3D monitor samples."""
     sx = ey * hz - ez * hy
     sy = ez * hx - ex * hz
     sz = ex * hy - ey * hx
     return (sx * sx + sy * sy + sz * sz) ** 0.5
+
+
+def poynting_flux_3d(ex, ey, ez, hx, hy, hz, normal_axis, normal_sign=1.0):
+    """Return n . (E x H) for 3D monitor samples."""
+    sx = ey * hz - ez * hy
+    sy = ez * hx - ex * hz
+    sz = ex * hy - ey * hx
+    axis = str(normal_axis).lower()
+    if axis == "x":
+        component = sx
+    elif axis == "y":
+        component = sy
+    else:
+        component = sz
+    return component * normal_sign
 
 
 def physical_dft_sample_scale(weight, base_dt, record_interval, length_unit):

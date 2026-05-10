@@ -74,6 +74,8 @@ from beamz.shared_kernels import (
     monitor_records_on_step,
     poynting_magnitude_2d,
     poynting_magnitude_3d,
+    poynting_flux_2d,
+    poynting_flux_3d,
     step_hits_interval,
 )
 from beamz.simulation.yee import (
@@ -665,8 +667,13 @@ class CompiledSimulation:
             spec.valid_hy,
         )
 
+        axis_i = int(spec.normal_axis)
+        sign = jnp.asarray(spec.normal_sign, dtype=jnp.float32)
+        flux_x = poynting_flux_2d(ez_vals, hx_vals, hy_vals, "x", sign)
+        flux_y = poynting_flux_2d(ez_vals, hx_vals, hy_vals, "y", sign)
         mag = poynting_magnitude_2d(ez_vals, hx_vals, hy_vals)
-        return jnp.asarray(jnp.sum(mag), dtype=jnp.float32) * power_scale
+        flux = jnp.where(axis_i == 0, flux_x, jnp.where(axis_i == 1, flux_y, mag))
+        return jnp.asarray(jnp.sum(flux), dtype=jnp.float32) * power_scale
 
     @staticmethod
     def _sample_monitor_component_2d(
@@ -736,8 +743,18 @@ class CompiledSimulation:
             spec.min_dim1,
         )
 
+        axis_i = int(spec.normal_axis)
+        sign = jnp.asarray(spec.normal_sign, dtype=jnp.float32)
+        flux_x = poynting_flux_3d(exs, eys, ezs, hxs, hys, hzs, "x", sign)
+        flux_y = poynting_flux_3d(exs, eys, ezs, hxs, hys, hzs, "y", sign)
+        flux_z = poynting_flux_3d(exs, eys, ezs, hxs, hys, hzs, "z", sign)
         mag = poynting_magnitude_3d(exs, eys, ezs, hxs, hys, hzs)
-        return jnp.asarray(jnp.sum(mag), dtype=jnp.float32) * power_scale
+        flux = jnp.where(
+            axis_i == 0,
+            flux_x,
+            jnp.where(axis_i == 1, flux_y, jnp.where(axis_i == 2, flux_z, mag)),
+        )
+        return jnp.asarray(jnp.sum(flux), dtype=jnp.float32) * power_scale
 
     @staticmethod
     def _sample_monitor_component_3d(
@@ -1011,13 +1028,14 @@ class CompiledSimulation:
                 axis_i = bm.normal_axes[i]
                 normal_flux = (
                     jnp.sum(jnp.where(axis_i == 0, sx, jnp.where(axis_i == 1, sy, sz)))
+                    * bm.normal_signs[i]
                     * bm.power_scales[i]
                 )
                 flux_sample = jnp.where(axis_i < 0, power_val, normal_flux)
 
                 slot = jnp.minimum(cnt[mi], max_records - 1)
                 pwr = pwr.at[mi, slot].set(
-                    jnp.where(do_record, power_val, pwr[mi, slot])
+                    jnp.where(do_record, flux_sample, pwr[mi, slot])
                 )
                 ts = ts.at[mi, slot].set(jnp.where(do_record, t_phys, ts[mi, slot]))
                 cnt = cnt.at[mi].set(cnt[mi] + jnp.where(do_record, 1, 0))
@@ -2301,6 +2319,12 @@ class CompiledSimulation:
                         dtype=np.float64,
                     )
                     dev._dft_accum[comp_name] = re + 1j * im
+                try:
+                    phasor_flux = np.asarray(dev.get_dft_flux(), dtype=np.float64)
+                except ValueError:
+                    pass
+                else:
+                    dev.frequency_flux_spectrum = phasor_flux.astype(np.complex64)
             else:
                 dev._dft_weight_sum = np.zeros((0,), dtype=np.float64)
                 dev._dft_accum = {}

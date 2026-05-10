@@ -833,6 +833,12 @@ def test_compiled_dft_component_monitor_populated(small_sim_params):
     assert np.isfinite(hy_dft).all()
     assert np.max(np.abs(ez_dft)) > 0.0
     assert np.max(np.abs(hy_dft)) > 0.0
+    np.testing.assert_allclose(
+        np.asarray(monitor.frequency_flux_spectrum, dtype=np.complex128),
+        monitor.get_dft_flux().astype(np.complex128),
+        rtol=1e-6,
+        atol=1e-12,
+    )
 
 
 def test_compiled_static_monitor_dft_uses_current_sample_phase():

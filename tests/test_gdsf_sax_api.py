@@ -477,6 +477,41 @@ def test_monitor_get_dft_component_physical_mode_returns_raw_accumulator():
     np.testing.assert_allclose(dft, raw.reshape(2, 6), rtol=1e-12, atol=1e-12)
 
 
+def test_monitor_power_history_records_signed_normal_flux():
+    ez = 2.0 * np.ones((3, 1), dtype=float)
+    hx = np.zeros((3, 1), dtype=float)
+    hy = -3.0 * np.ones((3, 1), dtype=float)
+
+    forward = Monitor(start=(0.0, 0.0), end=(0.0, 2.0), record_fields=False)
+    forward.record_fields_2d(ez, hx, hy, t=0.0, dx=1.0, dy=1.0, step=0)
+    assert forward.power_history[-1] == pytest.approx(18.0)
+
+    reverse = Monitor(start=(0.0, 2.0), end=(0.0, 0.0), record_fields=False)
+    reverse.record_fields_2d(ez, hx, hy, t=0.0, dx=1.0, dy=1.0, step=0)
+    assert reverse.power_history[-1] == pytest.approx(-18.0)
+
+
+def test_monitor_get_dft_flux_uses_phasor_poynting_product():
+    mon = Monitor(
+        start=(0.0, 0.0),
+        end=(0.0, 1.0),
+        record_fields=False,
+        dft_enabled=True,
+        dft_frequencies=np.array([1.0], dtype=float),
+        dft_components=("Ez", "Hy"),
+        dft_normalization="physical",
+    )
+    mon._resolution = 2.0
+    ez = np.array([[2.0 + 1.0j, 1.0 - 0.5j]], dtype=np.complex128)
+    hy = np.array([[-3.0 + 0.5j, -2.0 - 1.0j]], dtype=np.complex128)
+    mon._dft_accum["Ez"] = ez
+    mon._dft_accum["Hy"] = hy
+    mon._dft_weight_sum = np.ones((1,), dtype=float)
+
+    expected = 0.5 * np.real(np.sum(-ez * np.conjugate(hy), axis=1)) * 4.0
+    np.testing.assert_allclose(mon.get_dft_flux(), expected, rtol=1e-12, atol=1e-12)
+
+
 def test_monitor_physical_dft_accum_matches_direct_sum():
     n = 512
     dt = 1e-15

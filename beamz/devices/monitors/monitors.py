@@ -18,8 +18,8 @@ from beamz.shared_kernels import (
     monitor_dft_window_weight,
     monitor_records_on_step,
     monitor_dft_sample_scale,
-    poynting_magnitude_2d,
-    poynting_magnitude_3d,
+    poynting_flux_2d,
+    poynting_flux_3d,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,22 @@ def _plane_axes_for_normal_3d(axis: str) -> tuple[str, str]:
         return mapping[axis]
     except KeyError as exc:
         raise ValueError(f"Unsupported plane normal {axis!r}.") from exc
+
+
+def _line_normal_2d(start, end) -> tuple[str, float] | None:
+    """Return the signed Cartesian normal for an axis-aligned 2D monitor line."""
+    if start is None or end is None:
+        return None
+    x0, y0 = float(start[0]), float(start[1])
+    x1, y1 = float(end[0]), float(end[1])
+    dx = x1 - x0
+    dy = y1 - y0
+    tol = 1e-12 * max(abs(dx), abs(dy), 1.0)
+    if abs(dx) <= tol and abs(dy) > tol:
+        return "x", 1.0 if dy >= 0.0 else -1.0
+    if abs(dy) <= tol and abs(dx) > tol:
+        return "y", -1.0 if dx >= 0.0 else 1.0
+    return None
 
 
 @dataclass
@@ -1001,6 +1017,54 @@ class Monitor:
         ).reshape(nfreq, 1)
         return (2.0 / scale) * accum
 
+    def _normal_axis_and_sign(self) -> tuple[str, float]:
+        if self.is_3d:
+            return str(getattr(self, "plane_normal", "z")).lower(), 1.0
+        line_normal = _line_normal_2d(
+            getattr(self, "start", None),
+            getattr(self, "end", None),
+        )
+        snapped = self.get_snapped_region(
+            dx=self._resolution or 1.0,
+            dy=self._resolution or 1.0,
+        )
+        if snapped is not None:
+            axis = str(snapped.normal_axis).lower()
+            sign = (
+                float(line_normal[1])
+                if line_normal is not None and line_normal[0] == axis
+                else 1.0
+            )
+            return axis, sign
+        if line_normal is not None:
+            return line_normal
+        return "x", 1.0
+
+    def get_dft_flux(self) -> np.ndarray:
+        """Return phasor flux 0.5 Re integral n . (E(w) x H*(w)) dA."""
+        area = float((self._resolution or 1.0) ** 2)
+        axis, sign = self._normal_axis_and_sign()
+        if self.is_3d:
+            ex = np.asarray(self.get_dft_component("Ex"), dtype=np.complex128)
+            ey = np.asarray(self.get_dft_component("Ey"), dtype=np.complex128)
+            ez = np.asarray(self.get_dft_component("Ez"), dtype=np.complex128)
+            hx = np.asarray(self.get_dft_component("Hx"), dtype=np.complex128)
+            hy = np.asarray(self.get_dft_component("Hy"), dtype=np.complex128)
+            hz = np.asarray(self.get_dft_component("Hz"), dtype=np.complex128)
+            sx = ey * np.conjugate(hz) - ez * np.conjugate(hy)
+            sy = ez * np.conjugate(hx) - ex * np.conjugate(hz)
+            sz = ex * np.conjugate(hy) - ey * np.conjugate(hx)
+            component = {"x": sx, "y": sy, "z": sz}.get(axis, sz)
+        else:
+            ez = np.asarray(self.get_dft_component("Ez"), dtype=np.complex128)
+            if axis == "x":
+                hy = np.asarray(self.get_dft_component("Hy"), dtype=np.complex128)
+                component = -ez * np.conjugate(hy)
+            else:
+                hx = np.asarray(self.get_dft_component("Hx"), dtype=np.complex128)
+                component = ez * np.conjugate(hx)
+        return 0.5 * np.real(np.sum(sign * component, axis=1)) * area
+
     def record_fields_2d(
         self, Ez, Hx, Hy, t, dx, dy, step=0, Ex=None, Ey=None, Hz=None
     ):
@@ -1308,45 +1372,44 @@ class Monitor:
             self.record_fields_2d(*args, **kwargs)
 
     def _calculate_power_2d(self, Ez_values, Hx_values, Hy_values, t, dx, dy):
-        """Calculate Poynting vector and power for 2D fields.
+        """Calculate signed normal Poynting flux for 2D fields.
 
-        Power is computed as the integral of the Poynting vector magnitude
-        over the monitor line, properly normalized by grid cell area.
+        Power history stores P(t) = integral n . (E(t) x H(t)) dA.
         """
         Ez_array = np.array(Ez_values)
         Hx_array = np.array(Hx_values)
         Hy_array = np.array(Hy_values)
-        # Poynting vector S = E × H (units: W/m²)
-        power_mag = np.asarray(
-            poynting_magnitude_2d(Ez_array, Hx_array, Hy_array), dtype=np.complex128
+        axis, sign = self._normal_axis_and_sign()
+        flux = np.asarray(
+            poynting_flux_2d(Ez_array, Hx_array, Hy_array, axis, sign),
+            dtype=np.complex128,
         )
-        power_mag = np.real_if_close(power_mag)
-        # Total power = integral over monitor area (multiply by cell area for proper units)
-        total_power = np.sum(power_mag) * dx * dy
+        flux = np.real_if_close(flux)
+        total_power = np.sum(flux) * dx * dy
         if self.power_accumulated is None:
-            self.power_accumulated = power_mag
+            self.power_accumulated = flux
         else:
-            self.power_accumulated += power_mag
+            self.power_accumulated += flux
         self.power_history.append(total_power)
         self.power_timestamps.append(float(t))
         self.power_accumulation_count += 1
 
     def _calculate_power_3d(self, Ex, Ey, Ez, Hx, Hy, Hz, t, dx, dy):
-        """Calculate Poynting vector and power for 3D fields.
+        """Calculate signed normal Poynting flux for 3D fields.
 
-        Power is computed as the integral of the Poynting vector magnitude
-        over the monitor plane, properly normalized by grid cell area.
+        Power history stores P(t) = integral n . (E(t) x H(t)) dA.
         """
-        power_mag = np.asarray(
-            poynting_magnitude_3d(Ex, Ey, Ez, Hx, Hy, Hz), dtype=np.complex128
+        axis, sign = self._normal_axis_and_sign()
+        flux = np.asarray(
+            poynting_flux_3d(Ex, Ey, Ez, Hx, Hy, Hz, axis, sign),
+            dtype=np.complex128,
         )
-        power_mag = np.real_if_close(power_mag)
-        # Total power = integral over monitor area (multiply by cell area for proper units)
-        total_power = np.sum(power_mag) * dx * dy
+        flux = np.real_if_close(flux)
+        total_power = np.sum(flux) * dx * dy
         if self.power_accumulated is None:
-            self.power_accumulated = power_mag.copy()
+            self.power_accumulated = flux.copy()
         else:
-            self.power_accumulated += power_mag
+            self.power_accumulated += flux
         self.power_history.append(total_power)
         self.power_timestamps.append(float(t))
         self.power_accumulation_count += 1
