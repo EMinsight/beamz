@@ -923,7 +923,7 @@ def test_compiled_static_monitor_dft_uses_current_sample_phase():
     np.testing.assert_allclose(updated.freq_phase_im[0, 0], -1.0, rtol=1e-7, atol=1e-7)
 
 
-def test_compiled_static_monitor_meep_dft_uses_centered_tm_xy_sampling():
+def test_compiled_static_monitor_physical_dft_uses_centered_tm_xy_sampling():
     program = CompiledSimulation.__new__(CompiledSimulation)
     program.config = CompiledRunConfig(
         resolution=1.0,
@@ -934,7 +934,7 @@ def test_compiled_static_monitor_meep_dft_uses_centered_tm_xy_sampling():
     )
     program.monitor_specs = (
         CompiledMonitorSpec(
-            name="m_meep",
+            name="m_physical",
             monitor_index=0,
             is_3d=False,
             record_interval=1,
@@ -953,7 +953,7 @@ def test_compiled_static_monitor_meep_dft_uses_centered_tm_xy_sampling():
             dft_window_code=0,
             dft_normalization_code=1,
             dft_length_unit=float(LIGHT_SPEED),
-            dft_meep_centered_tm_xy=True,
+            dft_centered_tm_xy_sampling=True,
             dft_point_count=1,
             dft_component_mask=jnp.asarray([0, 0, 1, 0, 0, 0], dtype=jnp.float32),
             dft_target_x=jnp.asarray([0.5], dtype=jnp.float32),

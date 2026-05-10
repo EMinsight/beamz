@@ -6,13 +6,17 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Literal
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
 from beamz.const import LIGHT_SPEED, µm
 from beamz.design.core import Design
 from beamz.devices.monitors.monitors import Monitor
+from beamz.devices.sources.compiler import (
+    apply_compiled_source_specs,
+    compile_source_specs,
+    source_supports_compiled_specs,
+)
 from beamz.devices.sources.mode import (
     _detect_transverse_symmetry_axes,
     _enforce_componentwise_parity,
@@ -43,7 +47,7 @@ from beamz.simulation.compiled import (
     monitor_state_size,
 )
 from beamz.simulation.fields import Fields
-from beamz.simulation.ops import advance_e_field, advance_h_field
+from beamz.simulation.step_sequence import run_step_sequence
 from beamz.simulation.yee import component_coordinates_3d_um
 
 
@@ -324,6 +328,8 @@ class Simulation:
         self._compiled_program_signature = None
         self._compiled_program_cache = {}
         self._compiled_monitor_state = None
+        self._compiled_step_source_specs = None
+        self._imperative_step_sources = None
 
     @staticmethod
     def _dedupe_devices(devices):
@@ -376,36 +382,54 @@ class Simulation:
         if self.current_step >= self.num_steps:
             return False
 
-        # Legacy sources (only have inject(), no inject_h/inject_e): inject before update
-        self._inject_legacy_sources()
+        def _pre_e(sim):
+            sim._inject_legacy_sources()
+            sim._apply_compiled_source_phase("pre_e")
+            return sim
 
-        # Collect source terms from source objects that expose packed source terms.
-        source_j, source_m = self._collect_source_terms()
+        def _prepare(sim):
+            return sim, sim._collect_source_terms()
 
-        # 1. H update
-        self.fields.update_h(self.dt, source_m=source_m)
+        def _update_h(sim, payload):
+            _source_j, source_m = payload
+            sim.fields.update_h(sim.dt, source_m=source_m)
+            return sim
 
-        # 2. M injection (modifies H after update)
-        self._inject_h_sources()
-        self.fields.apply_metallic_boundaries_h()
+        def _post_h(sim):
+            sim._apply_compiled_source_phase("h")
+            sim._inject_h_sources()
+            sim.fields.apply_metallic_boundaries_h()
+            return sim
 
-        # 3. E update (uses modified H)
-        self.fields.update_e(self.dt, source_j=source_j)
+        def _update_e(sim, payload):
+            source_j, _source_m = payload
+            sim.fields.update_e(sim.dt, source_j=source_j)
+            return sim
 
-        # 4. J injection (modifies E after update)
-        self._inject_e_sources()
-        self.fields.apply_metallic_boundaries_e()
+        def _post_e(sim):
+            sim._apply_compiled_source_phase("e")
+            sim._inject_e_sources()
+            sim.fields.apply_metallic_boundaries_e()
+            return sim
 
-        # Record monitor data (if monitors are in devices)
-        self._record_monitors()
+        def _finalize(sim):
+            sim._record_monitors()
+            if sim.thermal is not None and getattr(sim.thermal, "enabled", True):
+                sim.thermal.step(sim)
+            sim.t += sim.dt
+            sim.current_step += 1
+            return sim
 
-        # Update coupled physics (thermal)
-        if self.thermal is not None and getattr(self.thermal, "enabled", True):
-            self.thermal.step(self)
-
-        # Update time and step counter
-        self.t += self.dt
-        self.current_step += 1
+        run_step_sequence(
+            self,
+            pre_e=_pre_e,
+            prepare=_prepare,
+            update_h=_update_h,
+            post_h=_post_h,
+            update_e=_update_e,
+            post_e=_post_e,
+            finalize=_finalize,
+        )
         return True
 
     def _record_monitors(self):
@@ -447,20 +471,6 @@ class Simulation:
                         self.current_step,
                     )
 
-    def _should_fallback_to_step_run(self, *, snapshot_field=None) -> bool:
-        """Detect cases where the compiled 2D TM mode-source path is not reliable."""
-        if self.is_3d or self.plane_2d != "xy":
-            return False
-        if snapshot_field is None:
-            return False
-        from beamz.devices.sources import ModeSource
-
-        return any(
-            isinstance(source, ModeSource)
-            and str(getattr(source, "pol", "")).lower() == "tm"
-            for source in self.sources
-        )
-
     def _run_via_step_engine(
         self,
         *,
@@ -473,7 +483,7 @@ class Simulation:
         snapshot_callback,
         store_snapshots,
     ):
-        """Reference execution path used when the compiled kernel is known bad."""
+        """Reference execution path for differential checks and debugging."""
         if record_fields is None:
             record_fields = ["Ez"]
 
@@ -563,9 +573,77 @@ class Simulation:
             snapshots=snapshots,
         )
 
+    def _compiled_step_source_groups(self):
+        if self._compiled_step_source_specs is not None:
+            return self._compiled_step_source_specs
+
+        compiled_sources = [
+            device for device in self.sources if source_supports_compiled_specs(device)
+        ]
+        self._imperative_step_sources = [
+            device for device in self.sources if not source_supports_compiled_specs(device)
+        ]
+        grouped = {
+            "pre_e": {"Ex": [], "Ey": [], "Ez": []},
+            "h": {"Hx": [], "Hy": [], "Hz": []},
+            "e": {"Ex": [], "Ey": [], "Ez": []},
+        }
+        if compiled_sources:
+            specs = compile_source_specs(
+                compiled_sources,
+                self.fields,
+                dt=self.dt,
+                resolution=self.resolution,
+                num_steps=self.num_steps,
+                t0=float(self.time[0]),
+                total_steps=self.num_steps,
+            )
+            for spec in specs:
+                grouped[spec.timing][spec.component].append(spec)
+        self._compiled_step_source_specs = {
+            timing: {
+                component: tuple(component_specs)
+                for component, component_specs in component_map.items()
+            }
+            for timing, component_map in grouped.items()
+        }
+        return self._compiled_step_source_specs
+
+    def _imperative_sources(self):
+        self._compiled_step_source_groups()
+        return self._imperative_step_sources
+
+    def _sync_full_pec_after_source_mutation(self):
+        if self.is_3d and has_full_pec_3d(self.boundaries):
+            if self.fields.full_pec_3d_state is None:
+                self.fields.full_pec_3d_state = initialize_full_pec_3d_state(self.fields)
+            else:
+                sync_full_pec_3d_from_compact(
+                    self.fields,
+                    self.fields.full_pec_3d_state,
+                )
+
+    def _apply_compiled_source_phase(self, timing: str):
+        phase_specs = self._compiled_step_source_groups().get(timing, {})
+        did_apply = False
+        for component, specs in phase_specs.items():
+            if specs:
+                setattr(
+                    self.fields,
+                    component,
+                    apply_compiled_source_specs(
+                        getattr(self.fields, component),
+                        self.current_step,
+                        specs,
+                    ),
+                )
+                did_apply = True
+        if did_apply:
+            self._sync_full_pec_after_source_mutation()
+
     def _inject_h_sources(self):
         """Inject magnetic currents (M) into H-fields after H update."""
-        for device in self.sources:
+        for device in self._imperative_sources():
             if hasattr(device, "inject_h"):
                 device.inject_h(
                     self.fields,
@@ -575,20 +653,11 @@ class Simulation:
                     self.resolution,
                     self.design,
                 )
-        if self.is_3d and has_full_pec_3d(self.boundaries):
-            if self.fields.full_pec_3d_state is None:
-                self.fields.full_pec_3d_state = initialize_full_pec_3d_state(
-                    self.fields
-                )
-            else:
-                sync_full_pec_3d_from_compact(
-                    self.fields,
-                    self.fields.full_pec_3d_state,
-                )
+        self._sync_full_pec_after_source_mutation()
 
     def _inject_e_sources(self):
         """Inject electric currents (J) into E-fields after E update."""
-        for device in self.sources:
+        for device in self._imperative_sources():
             if hasattr(device, "inject_e"):
                 device.inject_e(
                     self.fields,
@@ -598,20 +667,11 @@ class Simulation:
                     self.resolution,
                     self.design,
                 )
-        if self.is_3d and has_full_pec_3d(self.boundaries):
-            if self.fields.full_pec_3d_state is None:
-                self.fields.full_pec_3d_state = initialize_full_pec_3d_state(
-                    self.fields
-                )
-            else:
-                sync_full_pec_3d_from_compact(
-                    self.fields,
-                    self.fields.full_pec_3d_state,
-                )
+        self._sync_full_pec_after_source_mutation()
 
     def _inject_legacy_sources(self):
         """Inject from devices that only have inject() (no inject_h/inject_e)."""
-        for device in self.sources:
+        for device in self._imperative_sources():
             if hasattr(device, "inject") and not hasattr(device, "inject_h"):
                 device.inject(
                     self.fields,
@@ -621,23 +681,14 @@ class Simulation:
                     self.resolution,
                     self.design,
                 )
-        if self.is_3d and has_full_pec_3d(self.boundaries):
-            if self.fields.full_pec_3d_state is None:
-                self.fields.full_pec_3d_state = initialize_full_pec_3d_state(
-                    self.fields
-                )
-            else:
-                sync_full_pec_3d_from_compact(
-                    self.fields,
-                    self.fields.full_pec_3d_state,
-                )
+        self._sync_full_pec_after_source_mutation()
 
     def _collect_source_terms(self):
         """Collect electric and magnetic current sources from all devices."""
         source_j = {}  # Electric currents for E-field update
         source_m = {}  # Magnetic currents for H-field update
 
-        for device in self.sources:
+        for device in self._imperative_sources():
             if hasattr(device, "get_source_terms"):
                 j, m = device.get_source_terms(
                     self.fields,
@@ -655,275 +706,28 @@ class Simulation:
         return source_j, source_m
 
     def _create_jit_step(self):
-        """Create a JIT-compiled FDTD step function for maximum performance.
-
-        Returns a pure function that takes field arrays and returns updated field arrays.
-        """
-        resolution = self.resolution
-        dt = self.dt
-        plane_2d = self.plane_2d
-
-        if (not self.is_3d) and plane_2d == "xy":
-            raise ValueError(
-                "The xy-plane JIT step builder is not used for TMz. Use "
-                "Simulation.step()/run() or run_compiled(), which advance the "
-                "native TMz lattice."
-            )
-
-        # Material parameters (static for the simulation)
-        eps_x, sig_x, region_x = (
-            self.fields.eps_x,
-            self.fields.sig_x,
-            self.fields.region_x,
+        """Deprecated private helper kept only to fail loudly."""
+        raise NotImplementedError(
+            "Simulation._create_jit_step() is deprecated because it is not kept "
+            "mathematically equivalent to the supported `step()` and "
+            "`run_compiled()` engines."
         )
-        eps_y, sig_y, region_y = (
-            self.fields.eps_y,
-            self.fields.sig_y,
-            self.fields.region_y,
-        )
-        eps_z, sig_z, region_z = (
-            self.fields.eps_z,
-            self.fields.sig_z,
-            self.fields.region_z,
-        )
-        sigma_m_hx = self.fields.sigma_m_hx
-        sigma_m_hy = self.fields.sigma_m_hy
-        sigma_m_hz = self.fields.sigma_m_hz
-        metallic_masks = self.fields.metallic_masks or {}
-        mask_ex = metallic_masks.get("Ex")
-        mask_ey = metallic_masks.get("Ey")
-        mask_ez = metallic_masks.get("Ez")
-        mask_hx = metallic_masks.get("Hx")
-        mask_hy = metallic_masks.get("Hy")
-        mask_hz = metallic_masks.get("Hz")
-
-        from beamz.simulation.ops import (
-            curl_e_to_h_2d,
-            curl_e_to_h_3d,
-            curl_h_to_e_2d,
-            curl_h_to_e_3d,
-        )
-
-        if self.is_3d:
-            full_pec_3d = has_full_pec_3d(self.boundaries)
-
-            @jax.jit
-            def step(Ex, Ey, Ez, Hx, Hy, Hz):
-                if full_pec_3d:
-                    curlE_x, curlE_y, curlE_z = pec_curl_e_to_h_3d(
-                        Ex, Ey, Ez, resolution, Hx.shape, Hy.shape, Hz.shape
-                    )
-                else:
-                    curlE_x, curlE_y, curlE_z = curl_e_to_h_3d(Ex, Ey, Ez, resolution)
-                Hx_new = advance_h_field(Hx, curlE_x, sigma_m_hx, dt)
-                Hy_new = advance_h_field(Hy, curlE_y, sigma_m_hy, dt)
-                Hz_new = advance_h_field(Hz, curlE_z, sigma_m_hz, dt)
-                if mask_hx is not None:
-                    Hx_new = jnp.where(mask_hx, jnp.asarray(0.0, Hx_new.dtype), Hx_new)
-                if mask_hy is not None:
-                    Hy_new = jnp.where(mask_hy, jnp.asarray(0.0, Hy_new.dtype), Hy_new)
-                if mask_hz is not None:
-                    Hz_new = jnp.where(mask_hz, jnp.asarray(0.0, Hz_new.dtype), Hz_new)
-                if full_pec_3d:
-                    curlH_x, curlH_y, curlH_z = pec_curl_h_to_e_3d(
-                        Hx_new,
-                        Hy_new,
-                        Hz_new,
-                        resolution,
-                        Ex.shape,
-                        Ey.shape,
-                        Ez.shape,
-                    )
-                else:
-                    boundary_views = build_h_boundary_views_for_e_3d(
-                        Hx_new, Hy_new, Hz_new, self.boundaries
-                    )
-                    curlH_x, curlH_y, curlH_z = curl_h_to_e_3d(
-                        Hx_new,
-                        Hy_new,
-                        Hz_new,
-                        resolution,
-                        ex_shape=Ex.shape,
-                        ey_shape=Ey.shape,
-                        ez_shape=Ez.shape,
-                        boundary_views=boundary_views,
-                    )
-                Ex_new = advance_e_field(Ex, curlH_x, sig_x, eps_x, dt, region_x)
-                Ey_new = advance_e_field(Ey, curlH_y, sig_y, eps_y, dt, region_y)
-                Ez_new = advance_e_field(Ez, curlH_z, sig_z, eps_z, dt, region_z)
-                if mask_ex is not None:
-                    Ex_new = jnp.where(mask_ex, jnp.asarray(0.0, Ex_new.dtype), Ex_new)
-                if mask_ey is not None:
-                    Ey_new = jnp.where(mask_ey, jnp.asarray(0.0, Ey_new.dtype), Ey_new)
-                if mask_ez is not None:
-                    Ez_new = jnp.where(mask_ez, jnp.asarray(0.0, Ez_new.dtype), Ez_new)
-                return Ex_new, Ey_new, Ez_new, Hx_new, Hy_new, Hz_new
-
-        else:
-
-            @jax.jit
-            def step(Ex, Ey, Ez, Hx, Hy, Hz):
-                curlE_x, curlE_y, curlE_z = curl_e_to_h_2d(
-                    (Ex, Ey, Ez), resolution, plane=plane_2d
-                )
-                Hx_new = advance_h_field(Hx, curlE_x, sigma_m_hx, dt)
-                Hy_new = advance_h_field(Hy, curlE_y, sigma_m_hy, dt)
-                Hz_new = advance_h_field(Hz, curlE_z, sigma_m_hz, dt)
-                curlH_x, curlH_y, curlH_z = curl_h_to_e_2d(
-                    (Hx_new, Hy_new, Hz_new),
-                    resolution,
-                    (Ex.shape, Ey.shape, Ez.shape),
-                    plane=plane_2d,
-                )
-                Ex_new = advance_e_field(Ex, curlH_x, sig_x, eps_x, dt, region_x)
-                Ey_new = advance_e_field(Ey, curlH_y, sig_y, eps_y, dt, region_y)
-                Ez_new = advance_e_field(Ez, curlH_z, sig_z, eps_z, dt, region_z)
-                return Ex_new, Ey_new, Ez_new, Hx_new, Hy_new, Hz_new
-
-        return step
 
     def _create_jit_step_h(self):
-        """Create a JIT-compiled H-update function."""
-        resolution = self.resolution
-        dt = self.dt
-        plane_2d = self.plane_2d
-
-        if (not self.is_3d) and plane_2d == "xy":
-            raise ValueError(
-                "The xy-plane JIT H-step builder is not used for TMz. Use the "
-                "native TMz update path instead."
-            )
-
-        sigma_m_hx = self.fields.sigma_m_hx
-        sigma_m_hy = self.fields.sigma_m_hy
-        sigma_m_hz = self.fields.sigma_m_hz
-        metallic_masks = self.fields.metallic_masks or {}
-        mask_hx = metallic_masks.get("Hx")
-        mask_hy = metallic_masks.get("Hy")
-        mask_hz = metallic_masks.get("Hz")
-
-        from beamz.simulation.ops import curl_e_to_h_2d, curl_e_to_h_3d
-
-        if self.is_3d:
-            full_pec_3d = has_full_pec_3d(self.boundaries)
-
-            @jax.jit
-            def step_h(Ex, Ey, Ez, Hx, Hy, Hz):
-                if full_pec_3d:
-                    curlE_x, curlE_y, curlE_z = pec_curl_e_to_h_3d(
-                        Ex, Ey, Ez, resolution, Hx.shape, Hy.shape, Hz.shape
-                    )
-                else:
-                    curlE_x, curlE_y, curlE_z = curl_e_to_h_3d(Ex, Ey, Ez, resolution)
-                Hx_new = advance_h_field(Hx, curlE_x, sigma_m_hx, dt)
-                Hy_new = advance_h_field(Hy, curlE_y, sigma_m_hy, dt)
-                Hz_new = advance_h_field(Hz, curlE_z, sigma_m_hz, dt)
-                if mask_hx is not None:
-                    Hx_new = jnp.where(mask_hx, jnp.asarray(0.0, Hx_new.dtype), Hx_new)
-                if mask_hy is not None:
-                    Hy_new = jnp.where(mask_hy, jnp.asarray(0.0, Hy_new.dtype), Hy_new)
-                if mask_hz is not None:
-                    Hz_new = jnp.where(mask_hz, jnp.asarray(0.0, Hz_new.dtype), Hz_new)
-                return Hx_new, Hy_new, Hz_new
-
-        else:
-
-            @jax.jit
-            def step_h(Ex, Ey, Ez, Hx, Hy, Hz):
-                curlE_x, curlE_y, curlE_z = curl_e_to_h_2d(
-                    (Ex, Ey, Ez), resolution, plane=plane_2d
-                )
-                Hx_new = advance_h_field(Hx, curlE_x, sigma_m_hx, dt)
-                Hy_new = advance_h_field(Hy, curlE_y, sigma_m_hy, dt)
-                Hz_new = advance_h_field(Hz, curlE_z, sigma_m_hz, dt)
-                return Hx_new, Hy_new, Hz_new
-
-        return step_h
+        """Deprecated private helper kept only to fail loudly."""
+        raise NotImplementedError(
+            "Simulation._create_jit_step_h() is deprecated because it is not kept "
+            "mathematically equivalent to the supported `step()` and "
+            "`run_compiled()` engines."
+        )
 
     def _create_jit_step_e(self):
-        """Create a JIT-compiled E-update function."""
-        resolution = self.resolution
-        dt = self.dt
-        plane_2d = self.plane_2d
-
-        if (not self.is_3d) and plane_2d == "xy":
-            raise ValueError(
-                "The xy-plane JIT E-step builder is not used for TMz. Use the "
-                "native TMz update path instead."
-            )
-
-        eps_x, sig_x, region_x = (
-            self.fields.eps_x,
-            self.fields.sig_x,
-            self.fields.region_x,
+        """Deprecated private helper kept only to fail loudly."""
+        raise NotImplementedError(
+            "Simulation._create_jit_step_e() is deprecated because it is not kept "
+            "mathematically equivalent to the supported `step()` and "
+            "`run_compiled()` engines."
         )
-        eps_y, sig_y, region_y = (
-            self.fields.eps_y,
-            self.fields.sig_y,
-            self.fields.region_y,
-        )
-        eps_z, sig_z, region_z = (
-            self.fields.eps_z,
-            self.fields.sig_z,
-            self.fields.region_z,
-        )
-        metallic_masks = self.fields.metallic_masks or {}
-        mask_ex = metallic_masks.get("Ex")
-        mask_ey = metallic_masks.get("Ey")
-        mask_ez = metallic_masks.get("Ez")
-
-        from beamz.simulation.ops import curl_h_to_e_2d, curl_h_to_e_3d
-
-        if self.is_3d:
-            full_pec_3d = has_full_pec_3d(self.boundaries)
-
-            @jax.jit
-            def step_e(Ex, Ey, Ez, Hx, Hy, Hz):
-                if full_pec_3d:
-                    curlH_x, curlH_y, curlH_z = pec_curl_h_to_e_3d(
-                        Hx, Hy, Hz, resolution, Ex.shape, Ey.shape, Ez.shape
-                    )
-                else:
-                    boundary_views = build_h_boundary_views_for_e_3d(
-                        Hx, Hy, Hz, self.boundaries
-                    )
-                    curlH_x, curlH_y, curlH_z = curl_h_to_e_3d(
-                        Hx,
-                        Hy,
-                        Hz,
-                        resolution,
-                        ex_shape=Ex.shape,
-                        ey_shape=Ey.shape,
-                        ez_shape=Ez.shape,
-                        boundary_views=boundary_views,
-                    )
-                Ex_new = advance_e_field(Ex, curlH_x, sig_x, eps_x, dt, region_x)
-                Ey_new = advance_e_field(Ey, curlH_y, sig_y, eps_y, dt, region_y)
-                Ez_new = advance_e_field(Ez, curlH_z, sig_z, eps_z, dt, region_z)
-                if mask_ex is not None:
-                    Ex_new = jnp.where(mask_ex, jnp.asarray(0.0, Ex_new.dtype), Ex_new)
-                if mask_ey is not None:
-                    Ey_new = jnp.where(mask_ey, jnp.asarray(0.0, Ey_new.dtype), Ey_new)
-                if mask_ez is not None:
-                    Ez_new = jnp.where(mask_ez, jnp.asarray(0.0, Ez_new.dtype), Ez_new)
-                return Ex_new, Ey_new, Ez_new
-
-        else:
-
-            @jax.jit
-            def step_e(Ex, Ey, Ez, Hx, Hy, Hz):
-                curlH_x, curlH_y, curlH_z = curl_h_to_e_2d(
-                    (Hx, Hy, Hz),
-                    resolution,
-                    (Ex.shape, Ey.shape, Ez.shape),
-                    plane=plane_2d,
-                )
-                Ex_new = advance_e_field(Ex, curlH_x, sig_x, eps_x, dt, region_x)
-                Ey_new = advance_e_field(Ey, curlH_y, sig_y, eps_y, dt, region_y)
-                Ez_new = advance_e_field(Ez, curlH_z, sig_z, eps_z, dt, region_z)
-                return Ex_new, Ey_new, Ez_new
-
-        return step_e
 
     def compile(self, num_steps=None, snapshot_field=None, snapshot_interval=None):
         """Compile the v0.3 packed-data simulation program."""
@@ -1042,17 +846,6 @@ class Simulation:
         snapshot_interval = (
             0 if snapshot_field is None else max(1, int(snapshot_interval or 10))
         )
-        if self._should_fallback_to_step_run(snapshot_field=snapshot_field):
-            return self._run_via_step_engine(
-                num_steps=num_steps,
-                record_interval=record_interval,
-                record_fields=record_fields,
-                progress=progress,
-                snapshot_field=snapshot_field,
-                snapshot_interval=snapshot_interval,
-                snapshot_callback=snapshot_callback,
-                store_snapshots=store_snapshots,
-            )
         snapshots = []
         snapshot_layout = None
         if snapshot_field is not None:

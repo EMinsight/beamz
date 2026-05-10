@@ -6,7 +6,6 @@ from dataclasses import dataclass
 
 import jax.numpy as jnp
 
-from beamz.const import EPS_0, MU_0
 from beamz.simulation import ops
 from beamz.simulation.boundaries import (
     build_h_boundary_views_for_e_3d,
@@ -31,6 +30,13 @@ from beamz.simulation.boundaries import (
     xy_te_curl_h_to_e_2d,
 )
 from beamz.simulation.yee import sample_voxel_grid_at_tm_xy_full_component_2d
+from beamz.shared_kernels import (
+    advance_e_from_curl,
+    advance_h_from_curl,
+    apply_zero_mask,
+    build_cpml_3d_terms,
+    build_tm_xy_cpml_terms,
+)
 
 
 @dataclass
@@ -56,17 +62,6 @@ class Cpml3DState:
     a_e_terms: tuple[jnp.ndarray, ...]
     b_e_terms: tuple[jnp.ndarray, ...]
     inv_kappa_e_terms: tuple[jnp.ndarray, ...]
-
-
-def _embed_tm_xy_h_terms(
-    term0: jnp.ndarray, term1: jnp.ndarray, ez_shape: tuple[int, int]
-) -> jnp.ndarray:
-    out = jnp.zeros((2, *ez_shape), dtype=term0.dtype)
-    out = out.at[0, :-1, :].set(term0)
-    out = out.at[1, :, :-1].set(term1)
-    return out
-
-
 class Fields:
     """Container for E/H field arrays on staggered Yee grid with FDTD update logic."""
 
@@ -202,40 +197,25 @@ class Fields:
         if self.tm_xy_state is None:
             self.tm_xy_state = initialize_tm_2d_xy_state(self)
         state = self.tm_xy_state
-
-        tm_xy = self.pml_data.get("tm_xy_cpml")
-        if tm_xy is None:
+        terms = build_tm_xy_cpml_terms(
+            self.pml_data.get("tm_xy_cpml"),
+            ez_shape=state.Ez.shape,
+        )
+        if terms is None:
             return None
-
-        sigma_hx_y = jnp.asarray(tm_xy["Hx_y_sigma"])
-        kappa_hx_y = jnp.asarray(tm_xy["Hx_y_kappa"])
-        alpha_hx_y = jnp.asarray(tm_xy["Hx_y_alpha"])
-        sigma_hy_x = jnp.asarray(tm_xy["Hy_x_sigma"])
-        kappa_hy_x = jnp.asarray(tm_xy["Hy_x_kappa"])
-        alpha_hy_x = jnp.asarray(tm_xy["Hy_x_alpha"])
-        sigma_ez_x = jnp.asarray(tm_xy["Ez_x_sigma"])
-        kappa_ez_x = jnp.asarray(tm_xy["Ez_x_kappa"])
-        alpha_ez_x = jnp.asarray(tm_xy["Ez_x_alpha"])
-        sigma_ez_y = jnp.asarray(tm_xy["Ez_y_sigma"])
-        kappa_ez_y = jnp.asarray(tm_xy["Ez_y_kappa"])
-        alpha_ez_y = jnp.asarray(tm_xy["Ez_y_alpha"])
 
         return CpmlTm2DxyState(
             psi_h_terms=jnp.zeros((2, *state.Ez.shape), dtype=state.Ez.dtype),
             psi_e_terms=jnp.stack(
                 (jnp.zeros_like(state.Ez), jnp.zeros_like(state.Ez)), axis=0
             ),
-            sigma_h_terms=_embed_tm_xy_h_terms(sigma_hx_y, sigma_hy_x, state.Ez.shape),
-            kappa_h_aux_terms=_embed_tm_xy_h_terms(
-                kappa_hx_y, kappa_hy_x, state.Ez.shape
-            ),
-            alpha_h_terms=_embed_tm_xy_h_terms(alpha_hx_y, alpha_hy_x, state.Ez.shape),
-            kappa_h_direct_terms=_embed_tm_xy_h_terms(
-                kappa_ez_y[:-1, :], kappa_ez_x[:, :-1], state.Ez.shape
-            ),
-            sigma_e_terms=jnp.stack((sigma_ez_x, sigma_ez_y), axis=0),
-            kappa_e_terms=jnp.stack((kappa_ez_x, kappa_ez_y), axis=0),
-            alpha_e_terms=jnp.stack((alpha_ez_x, alpha_ez_y), axis=0),
+            sigma_h_terms=terms.sigma_h_terms,
+            kappa_h_aux_terms=terms.kappa_h_aux_terms,
+            alpha_h_terms=terms.alpha_h_terms,
+            kappa_h_direct_terms=terms.kappa_h_direct_terms,
+            sigma_e_terms=terms.sigma_e_terms,
+            kappa_e_terms=terms.kappa_e_terms,
+            alpha_e_terms=terms.alpha_e_terms,
         )
 
     def _ensure_cpml_tm_xy_state(self, dt):
@@ -244,106 +224,21 @@ class Fields:
             self.cpml_tm_xy_state = self._initialize_cpml_tm_xy_state()
         return self.cpml_tm_xy_state
 
-    @staticmethod
-    def _cpml_ab_terms(
-        sigma_terms: tuple[jnp.ndarray, ...],
-        kappa_terms: tuple[jnp.ndarray, ...],
-        alpha_terms: tuple[jnp.ndarray, ...],
-        *,
-        dt: float,
-    ) -> tuple[
-        tuple[jnp.ndarray, ...], tuple[jnp.ndarray, ...], tuple[jnp.ndarray, ...]
-    ]:
-        a_terms = []
-        b_terms = []
-        inv_kappa_terms = []
-        for sigma, kappa, alpha in zip(
-            sigma_terms, kappa_terms, alpha_terms, strict=True
-        ):
-            kappa = jnp.maximum(jnp.asarray(kappa), 1.0)
-            sigma = jnp.asarray(sigma)
-            alpha = jnp.asarray(alpha)
-            decay = (sigma / kappa + alpha) * (float(dt) / EPS_0)
-            b = jnp.expm1(-decay) + 1.0
-            denom = sigma + kappa * alpha
-            a = jnp.nan_to_num(
-                ((b - 1.0) * sigma) / jnp.maximum(denom * kappa, 1e-30),
-                nan=0.0,
-                posinf=0.0,
-                neginf=0.0,
-            )
-            a_terms.append(a)
-            b_terms.append(b)
-            inv_kappa_terms.append(1.0 / kappa)
-        return tuple(a_terms), tuple(b_terms), tuple(inv_kappa_terms)
-
     def _initialize_cpml_3d_state(self) -> Cpml3DState | None:
         if not (self.has_cpml and self.permittivity.ndim == 3 and self.pml_data):
             return None
-
-        sigma_h_terms = (
-            jnp.asarray(self.pml_data["cpml3d_Hxy_sigma"]),
-            jnp.asarray(self.pml_data["cpml3d_Hxz_sigma"]),
-            jnp.asarray(self.pml_data["cpml3d_Hyz_sigma"]),
-            jnp.asarray(self.pml_data["cpml3d_Hyx_sigma"]),
-            jnp.asarray(self.pml_data["cpml3d_Hzx_sigma"]),
-            jnp.asarray(self.pml_data["cpml3d_Hzy_sigma"]),
-        )
-        kappa_h_terms = (
-            jnp.asarray(self.pml_data["cpml3d_Hxy_kappa"]),
-            jnp.asarray(self.pml_data["cpml3d_Hxz_kappa"]),
-            jnp.asarray(self.pml_data["cpml3d_Hyz_kappa"]),
-            jnp.asarray(self.pml_data["cpml3d_Hyx_kappa"]),
-            jnp.asarray(self.pml_data["cpml3d_Hzx_kappa"]),
-            jnp.asarray(self.pml_data["cpml3d_Hzy_kappa"]),
-        )
-        alpha_h_terms = (
-            jnp.asarray(self.pml_data["cpml3d_Hxy_alpha"]),
-            jnp.asarray(self.pml_data["cpml3d_Hxz_alpha"]),
-            jnp.asarray(self.pml_data["cpml3d_Hyz_alpha"]),
-            jnp.asarray(self.pml_data["cpml3d_Hyx_alpha"]),
-            jnp.asarray(self.pml_data["cpml3d_Hzx_alpha"]),
-            jnp.asarray(self.pml_data["cpml3d_Hzy_alpha"]),
-        )
-        sigma_e_terms = (
-            jnp.asarray(self.pml_data["cpml3d_Exy_sigma"]),
-            jnp.asarray(self.pml_data["cpml3d_Exz_sigma"]),
-            jnp.asarray(self.pml_data["cpml3d_Eyz_sigma"]),
-            jnp.asarray(self.pml_data["cpml3d_Eyx_sigma"]),
-            jnp.asarray(self.pml_data["cpml3d_Ezx_sigma"]),
-            jnp.asarray(self.pml_data["cpml3d_Ezy_sigma"]),
-        )
-        kappa_e_terms = (
-            jnp.asarray(self.pml_data["cpml3d_Exy_kappa"]),
-            jnp.asarray(self.pml_data["cpml3d_Exz_kappa"]),
-            jnp.asarray(self.pml_data["cpml3d_Eyz_kappa"]),
-            jnp.asarray(self.pml_data["cpml3d_Eyx_kappa"]),
-            jnp.asarray(self.pml_data["cpml3d_Ezx_kappa"]),
-            jnp.asarray(self.pml_data["cpml3d_Ezy_kappa"]),
-        )
-        alpha_e_terms = (
-            jnp.asarray(self.pml_data["cpml3d_Exy_alpha"]),
-            jnp.asarray(self.pml_data["cpml3d_Exz_alpha"]),
-            jnp.asarray(self.pml_data["cpml3d_Eyz_alpha"]),
-            jnp.asarray(self.pml_data["cpml3d_Eyx_alpha"]),
-            jnp.asarray(self.pml_data["cpml3d_Ezx_alpha"]),
-            jnp.asarray(self.pml_data["cpml3d_Ezy_alpha"]),
-        )
-        a_h_terms, b_h_terms, inv_kappa_h_terms = self._cpml_ab_terms(
-            sigma_h_terms, kappa_h_terms, alpha_h_terms, dt=self._cpml_dt
-        )
-        a_e_terms, b_e_terms, inv_kappa_e_terms = self._cpml_ab_terms(
-            sigma_e_terms, kappa_e_terms, alpha_e_terms, dt=self._cpml_dt
-        )
+        terms = build_cpml_3d_terms(self.pml_data, dt=self._cpml_dt)
+        if terms is None:
+            return None
         return Cpml3DState(
-            psi_h_terms=tuple(jnp.zeros_like(term) for term in b_h_terms),
-            psi_e_terms=tuple(jnp.zeros_like(term) for term in b_e_terms),
-            a_h_terms=a_h_terms,
-            b_h_terms=b_h_terms,
-            inv_kappa_h_terms=inv_kappa_h_terms,
-            a_e_terms=a_e_terms,
-            b_e_terms=b_e_terms,
-            inv_kappa_e_terms=inv_kappa_e_terms,
+            psi_h_terms=tuple(jnp.zeros_like(term) for term in terms.b_h_terms),
+            psi_e_terms=tuple(jnp.zeros_like(term) for term in terms.b_e_terms),
+            a_h_terms=terms.a_h_terms,
+            b_h_terms=terms.b_h_terms,
+            inv_kappa_h_terms=terms.inv_kappa_h_terms,
+            a_e_terms=terms.a_e_terms,
+            b_e_terms=terms.b_e_terms,
+            inv_kappa_e_terms=terms.inv_kappa_e_terms,
         )
 
     def _ensure_cpml_3d_state(self, dt):
@@ -381,8 +276,8 @@ class Fields:
             nz, ny = dim1, dim2
             # TE-like set (Ex, Hy, Hz)
             self.Ex = jnp.zeros((nz, ny))
-            self.Hy = jnp.zeros((nz, ny - 1))
-            self.Hz = jnp.zeros((nz - 1, ny))
+            self.Hy = jnp.zeros((nz - 1, ny))
+            self.Hz = jnp.zeros((nz, ny - 1))
             # TM-like set (Hx, Ey, Ez)
             self.Hx = jnp.zeros((nz - 1, ny - 1))
             self.Ey = jnp.zeros((nz, ny - 1))
@@ -392,8 +287,8 @@ class Fields:
             nz, nx = dim1, dim2
             # TE-like set (Ey, Hx, Hz)
             self.Ey = jnp.zeros((nz, nx))
-            self.Hx = jnp.zeros((nz, nx - 1))
-            self.Hz = jnp.zeros((nz - 1, nx))
+            self.Hx = jnp.zeros((nz - 1, nx))
+            self.Hz = jnp.zeros((nz, nx - 1))
             # TM-like set (Hy, Ex, Ez)
             self.Hy = jnp.zeros((nz - 1, nx - 1))
             self.Ex = jnp.zeros((nz, nx - 1))
@@ -541,24 +436,30 @@ class Fields:
 
         if is_3d and has_full_pec_3d(getattr(self, "boundaries", None)):
             state = self.full_pec_3d_state
-            state.Hx = ops.advance_h_field(state.Hx, curlE_x, state.sigma_m_hx, dt)
-            state.Hy = ops.advance_h_field(state.Hy, curlE_y, state.sigma_m_hy, dt)
-            state.Hz = ops.advance_h_field(state.Hz, curlE_z, state.sigma_m_hz, dt)
-            state.Hx = jnp.where(state.masks["Hx"], 0.0, state.Hx)
-            state.Hy = jnp.where(state.masks["Hy"], 0.0, state.Hy)
-            state.Hz = jnp.where(state.masks["Hz"], 0.0, state.Hz)
+            state.Hx = apply_zero_mask(
+                advance_h_from_curl(state.Hx, curlE_x, state.sigma_m_hx, dt),
+                state.masks["Hx"],
+            )
+            state.Hy = apply_zero_mask(
+                advance_h_from_curl(state.Hy, curlE_y, state.sigma_m_hy, dt),
+                state.masks["Hy"],
+            )
+            state.Hz = apply_zero_mask(
+                advance_h_from_curl(state.Hz, curlE_z, state.sigma_m_hz, dt),
+                state.masks["Hz"],
+            )
             sync_compact_fields_from_full_pec_3d(self, state)
         elif (not is_3d) and self.plane_2d == "xy":
             state = self.ensure_tm_xy_state()
-            self.Hx = ops.advance_h_field(self.Hx, curlE_x, state.sigma_m_hx, dt)
-            self.Hy = ops.advance_h_field(self.Hy, curlE_y, state.sigma_m_hy, dt)
+            self.Hx = advance_h_from_curl(self.Hx, curlE_x, state.sigma_m_hx, dt)
+            self.Hy = advance_h_from_curl(self.Hy, curlE_y, state.sigma_m_hy, dt)
             self.apply_tm_xy_pec_masks()
-            self.Hz = ops.advance_h_field(self.Hz, curlE_z, self.sigma_m_hz, dt)
+            self.Hz = advance_h_from_curl(self.Hz, curlE_z, self.sigma_m_hz, dt)
             self.apply_metallic_boundaries_h()
         else:
-            self.Hx = ops.advance_h_field(self.Hx, curlE_x, self.sigma_m_hx, dt)
-            self.Hy = ops.advance_h_field(self.Hy, curlE_y, self.sigma_m_hy, dt)
-            self.Hz = ops.advance_h_field(self.Hz, curlE_z, self.sigma_m_hz, dt)
+            self.Hx = advance_h_from_curl(self.Hx, curlE_x, self.sigma_m_hx, dt)
+            self.Hy = advance_h_from_curl(self.Hy, curlE_y, self.sigma_m_hy, dt)
+            self.Hz = advance_h_from_curl(self.Hz, curlE_z, self.sigma_m_hz, dt)
             self.apply_metallic_boundaries_h()
 
     def update_e(self, dt, source_j=None):
@@ -670,7 +571,7 @@ class Fields:
             region_x = (slice(1, -1), slice(1, -1), slice(None))
             region_y = (slice(1, -1), slice(None), slice(1, -1))
             region_z = (slice(None), slice(1, -1), slice(1, -1))
-            state.Ex = ops.advance_e_field(
+            state.Ex = advance_e_from_curl(
                 state.Ex,
                 curlH_x,
                 state.sig_x_region,
@@ -678,7 +579,7 @@ class Fields:
                 dt,
                 region_x,
             )
-            state.Ey = ops.advance_e_field(
+            state.Ey = advance_e_from_curl(
                 state.Ey,
                 curlH_y,
                 state.sig_y_region,
@@ -686,7 +587,7 @@ class Fields:
                 dt,
                 region_y,
             )
-            state.Ez = ops.advance_e_field(
+            state.Ez = advance_e_from_curl(
                 state.Ez,
                 curlH_z,
                 state.sig_z_region,
@@ -694,19 +595,19 @@ class Fields:
                 dt,
                 region_z,
             )
-            state.Ex = jnp.where(state.masks["Ex"], 0.0, state.Ex)
-            state.Ey = jnp.where(state.masks["Ey"], 0.0, state.Ey)
-            state.Ez = jnp.where(state.masks["Ez"], 0.0, state.Ez)
+            state.Ex = apply_zero_mask(state.Ex, state.masks["Ex"])
+            state.Ey = apply_zero_mask(state.Ey, state.masks["Ey"])
+            state.Ez = apply_zero_mask(state.Ez, state.masks["Ez"])
             sync_compact_fields_from_full_pec_3d(self, state)
         elif (not is_3d) and self.plane_2d == "xy":
             state = self.ensure_tm_xy_state()
-            self.Ex = ops.advance_e_field(
+            self.Ex = advance_e_from_curl(
                 self.Ex, curlH_x, self.sig_x, self.eps_x, dt, self.region_x
             )
-            self.Ey = ops.advance_e_field(
+            self.Ey = advance_e_from_curl(
                 self.Ey, curlH_y, self.sig_y, self.eps_y, dt, self.region_y
             )
-            self.Ez = ops.advance_e_field(
+            self.Ez = advance_e_from_curl(
                 self.Ez,
                 curlH_z,
                 state.sig_z_region,
@@ -717,13 +618,13 @@ class Fields:
             self.apply_tm_xy_pec_masks()
             self.apply_metallic_boundaries_e()
         else:
-            self.Ex = ops.advance_e_field(
+            self.Ex = advance_e_from_curl(
                 self.Ex, curlH_x, self.sig_x, self.eps_x, dt, self.region_x
             )
-            self.Ey = ops.advance_e_field(
+            self.Ey = advance_e_from_curl(
                 self.Ey, curlH_y, self.sig_y, self.eps_y, dt, self.region_y
             )
-            self.Ez = ops.advance_e_field(
+            self.Ez = advance_e_from_curl(
                 self.Ez, curlH_z, self.sig_z, self.eps_z, dt, self.region_z
             )
             self.apply_metallic_boundaries_e()

@@ -35,9 +35,9 @@ class CompiledMonitorSpec:
     dft_t_start: float = 0.0
     dft_t_end: float = np.inf
     dft_window_code: int = 0  # 0=rect, 1=hann
-    dft_normalization_code: int = 0  # 0=native, 1=meep
+    dft_normalization_code: int = 0  # 0=native, 1=physical
     dft_length_unit: float = 1e-6
-    dft_meep_centered_tm_xy: bool = False
+    dft_centered_tm_xy_sampling: bool = False
     dft_point_count: int = 0
     dft_component_mask: jnp.ndarray | None = None
     dft_target_x: jnp.ndarray | None = None
@@ -126,6 +126,8 @@ class BatchedMonitorData:
     dft_t_start: jnp.ndarray  # (n,) float32
     dft_t_end: jnp.ndarray  # (n,) float32
     dft_window_code: jnp.ndarray  # (n,) int32
+    dft_normalization_code: jnp.ndarray  # (n,) int32
+    dft_length_unit: jnp.ndarray  # (n,) float32
     dft_component_mask: jnp.ndarray  # (n, 6) float32
 
 
@@ -192,6 +194,8 @@ def compile_batched_monitor_data(
     dft_t_start = np.zeros((n,), dtype=np.float32)
     dft_t_end = np.full((n,), np.inf, dtype=np.float32)
     dft_window_code = np.zeros((n,), dtype=np.int32)
+    dft_normalization_code = np.zeros((n,), dtype=np.int32)
+    dft_length_unit = np.ones((n,), dtype=np.float32)
     dft_component_mask = np.zeros((n, 6), dtype=np.float32)
     for i, spec in enumerate(specs_3d):
         if (
@@ -210,6 +214,8 @@ def compile_batched_monitor_data(
         dft_t_start[i] = float(spec.dft_t_start)
         dft_t_end[i] = float(spec.dft_t_end)
         dft_window_code[i] = int(spec.dft_window_code)
+        dft_normalization_code[i] = int(spec.dft_normalization_code)
+        dft_length_unit[i] = float(spec.dft_length_unit)
         if spec.dft_component_mask is not None:
             dft_component_mask[i, :] = np.asarray(
                 spec.dft_component_mask, dtype=np.float32
@@ -250,6 +256,8 @@ def compile_batched_monitor_data(
         dft_t_start=jnp.array(dft_t_start, dtype=jnp.float32),
         dft_t_end=jnp.array(dft_t_end, dtype=jnp.float32),
         dft_window_code=jnp.array(dft_window_code, dtype=jnp.int32),
+        dft_normalization_code=jnp.array(dft_normalization_code, dtype=jnp.int32),
+        dft_length_unit=jnp.array(dft_length_unit, dtype=jnp.float32),
         dft_component_mask=jnp.array(dft_component_mask, dtype=jnp.float32),
     )
 
@@ -492,7 +500,7 @@ def compile_monitor_specs(
             dft_window = "rect"
         dft_window_code = 1 if dft_window == "hann" else 0
         dft_normalization = str(getattr(monitor, "dft_normalization", "native")).lower()
-        dft_normalization_code = 1 if dft_normalization == "meep" else 0
+        dft_normalization_code = 1 if dft_normalization == "physical" else 0
         dft_length_unit = float(getattr(monitor, "dft_length_unit", 1e-6))
         dft_t_end_val = float(
             np.inf
@@ -526,7 +534,7 @@ def compile_monitor_specs(
             else:
                 dft_target_x = np.zeros((0,), dtype=np.float32)
                 dft_target_y = np.zeros((0,), dtype=np.float32)
-            dft_meep_centered_tm_xy = bool(
+            dft_centered_tm_xy_sampling = bool(
                 dft_normalization_code == 1 and dft_target_x.size > 0
             )
 
@@ -559,7 +567,7 @@ def compile_monitor_specs(
                     dft_window_code=dft_window_code,
                     dft_normalization_code=dft_normalization_code,
                     dft_length_unit=dft_length_unit,
-                    dft_meep_centered_tm_xy=dft_meep_centered_tm_xy,
+                    dft_centered_tm_xy_sampling=dft_centered_tm_xy_sampling,
                     dft_point_count=int(
                         dft_target_x.size if dft_target_x.size > 0 else x_ez.size
                     ),

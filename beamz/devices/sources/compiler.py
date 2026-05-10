@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -80,6 +81,44 @@ class CompiledSourceSpec:
     is_slab: bool = False
     slab_starts: tuple[int, ...] | None = None
     slab_sizes: tuple[int, ...] | None = None
+
+
+def source_supports_compiled_specs(device) -> bool:
+    """Return True when a source can emit packed compiled-step source specs."""
+    return isinstance(device, (GaussianSource, ModeSource)) or hasattr(
+        device, "compile_source_specs"
+    )
+
+
+def apply_compiled_source_specs(
+    field: jnp.ndarray,
+    abs_step: int,
+    specs: tuple[CompiledSourceSpec, ...],
+) -> jnp.ndarray:
+    """Apply packed source specs to one field component for a single step."""
+    out = field
+    step_idx = jnp.asarray(abs_step, dtype=jnp.int32)
+    for spec in specs:
+        if spec.waveform.size == 0:
+            continue
+        safe_idx = jnp.clip(step_idx, 0, spec.waveform.shape[0] - 1)
+        patch = spec.coeff * spec.waveform[safe_idx]
+        if (
+            spec.is_slab
+            and spec.slab_starts is not None
+            and spec.slab_sizes is not None
+        ):
+            cur = jax.lax.dynamic_slice(out, spec.slab_starts, spec.slab_sizes)
+            out = jax.lax.dynamic_update_slice(out, cur + patch, spec.slab_starts)
+            continue
+        target = out[spec.index]
+        if patch.shape != target.shape:
+            if patch.size == target.size:
+                patch = jnp.reshape(patch, target.shape)
+            else:
+                patch = jnp.broadcast_to(patch, target.shape)
+        out = out.at[spec.index].add(patch)
+    return out
 
 
 def _as_slab_spec(

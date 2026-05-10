@@ -455,16 +455,16 @@ def test_monitor_get_dft_component_raises_for_invalid_frequency_axis():
         mon.get_dft_component("Ez")
 
 
-def test_monitor_get_dft_component_meep_mode_returns_raw_accumulator():
+def test_monitor_get_dft_component_physical_mode_returns_raw_accumulator():
     mon = Monitor(
         start=(0.0, 0.0),
         end=(0.0, 0.0),
-        name="m_meep_shape",
+        name="m_physical_shape",
         record_fields=False,
         dft_enabled=True,
         dft_frequencies=np.array([1.0, 2.0], dtype=float),
         dft_components=("Ez",),
-        dft_normalization="meep",
+        dft_normalization="physical",
     )
     raw = (np.arange(12, dtype=float) + 1j * np.arange(12, dtype=float)).reshape(
         2, 2, 3
@@ -477,7 +477,7 @@ def test_monitor_get_dft_component_meep_mode_returns_raw_accumulator():
     np.testing.assert_allclose(dft, raw.reshape(2, 6), rtol=1e-12, atol=1e-12)
 
 
-def test_monitor_meep_dft_accum_matches_direct_sum():
+def test_monitor_physical_dft_accum_matches_direct_sum():
     n = 512
     dt = 1e-15
     k_bin = 23
@@ -489,13 +489,13 @@ def test_monitor_meep_dft_accum_matches_direct_sum():
     mon = Monitor(
         start=(0.0, 0.0),
         end=(0.0, 0.0),
-        name="m_meep_dft",
+        name="m_physical_dft",
         record_fields=False,
         dft_enabled=True,
         dft_frequencies=np.array([freq], dtype=float),
         dft_components=("Ez",),
         dft_window="rect",
-        dft_normalization="meep",
+        dft_normalization="physical",
         dft_length_unit=1e-6,
     )
     mon._dft_base_dt = dt

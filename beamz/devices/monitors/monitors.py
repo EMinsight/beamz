@@ -4,12 +4,22 @@ from typing import Callable, Optional
 
 import numpy as np
 
-from beamz.const import LIGHT_SPEED, µm
+from beamz.const import µm
 from beamz.devices._placement import (
     line_region_points,
     plane_region_slices,
     snap_axis_aligned_line_region,
     snap_plane_region,
+)
+from beamz.shared_kernels import (
+    full_tm_xy_component_to_centered_grid,
+    is_full_tm_xy_lattice,
+    monitor_dft_should_accumulate,
+    monitor_dft_window_weight,
+    monitor_records_on_step,
+    monitor_dft_sample_scale,
+    poynting_magnitude_2d,
+    poynting_magnitude_3d,
 )
 
 logger = logging.getLogger(__name__)
@@ -29,37 +39,6 @@ def _interp_complex_1d(
             dst, src, arr[:, col].imag
         )
     return out
-
-
-def _full_tm_xy_component_to_centered_grid(
-    component: str,
-    values: np.ndarray,
-) -> np.ndarray:
-    field = np.asarray(values, dtype=np.complex128)
-    comp = str(component)
-    if comp == "Ez":
-        if field.ndim != 2 or field.shape[0] < 2 or field.shape[1] < 2:
-            raise ValueError(
-                f"Ez full-TM field must be at least 2x2, got {field.shape}"
-            )
-        return 0.25 * (
-            field[:-1, :-1] + field[:-1, 1:] + field[1:, :-1] + field[1:, 1:]
-        )
-    if comp == "Hx":
-        if field.ndim != 2 or field.shape[1] < 2:
-            raise ValueError(
-                f"Hx full-TM field must have width >= 2, got {field.shape}"
-            )
-        return 0.5 * (field[:, :-1] + field[:, 1:])
-    if comp == "Hy":
-        if field.ndim != 2 or field.shape[0] < 2:
-            raise ValueError(
-                f"Hy full-TM field must have height >= 2, got {field.shape}"
-            )
-        return 0.5 * (field[:-1, :] + field[1:, :])
-    raise ValueError(f"Unsupported full-TM centered-grid component {component!r}")
-
-
 def _plane_axes_for_normal_3d(axis: str) -> tuple[str, str]:
     axis = str(axis).lower()
     mapping = {
@@ -216,9 +195,9 @@ class Monitor:
                 f"dft_window must be one of ['rect', 'hann'], got {dft_window!r}"
             )
         self.dft_normalization = str(dft_normalization).lower()
-        if self.dft_normalization not in {"native", "meep"}:
+        if self.dft_normalization not in {"native", "physical"}:
             raise ValueError(
-                "dft_normalization must be one of ['native', 'meep'], "
+                "dft_normalization must be one of ['native', 'physical'], "
                 f"got {dft_normalization!r}"
             )
         self.dft_length_unit = float(dft_length_unit)
@@ -871,27 +850,29 @@ class Monitor:
 
     def should_record(self, step):
         """Check if this step should be recorded based on interval."""
-        return (step - self.last_record_step) >= self.record_interval
+        return bool(monitor_records_on_step(step, self.record_interval))
 
     def _dft_should_accumulate(self, step, t):
-        if not self.dft_enabled or self.dft_frequencies.size == 0:
-            return False
-        if self.dft_t_end is not None and float(t) > self.dft_t_end:
-            return False
-        if float(t) < self.dft_t_start:
-            return False
-        return (int(step) % int(self.dft_record_interval)) == 0
+        return bool(
+            monitor_dft_should_accumulate(
+                bool(self.dft_enabled and self.dft_frequencies.size > 0),
+                step,
+                t,
+                self.dft_t_start,
+                np.inf if self.dft_t_end is None else self.dft_t_end,
+                self.dft_record_interval,
+            )
+        )
 
     def _dft_weight(self, t):
-        if (
-            self.dft_window == "hann"
-            and self.dft_t_end is not None
-            and self.dft_t_end > self.dft_t_start
-        ):
-            tau = (float(t) - self.dft_t_start) / (self.dft_t_end - self.dft_t_start)
-            tau = min(max(tau, 0.0), 1.0)
-            return 0.5 * (1.0 - np.cos(2.0 * np.pi * tau))
-        return 1.0
+        return float(
+            monitor_dft_window_weight(
+                t,
+                self.dft_t_start,
+                np.inf if self.dft_t_end is None else self.dft_t_end,
+                self.dft_window == "hann",
+            )
+        )
 
     def _init_or_get_dft_accum(self, component, npoints):
         arr = self._dft_accum.get(component)
@@ -922,7 +903,7 @@ class Monitor:
         self._dft_last_t = t_now
         return self._dft_phase
 
-    def _dft_meep_base_dt(self, t, step):
+    def _dft_physical_base_dt(self, t, step):
         base_dt = self._dft_base_dt
         if base_dt is not None and float(base_dt) > 0.0:
             return float(base_dt)
@@ -937,18 +918,18 @@ class Monitor:
         w = float(self._dft_weight(t))
         if w <= 0.0:
             return 0.0
-        if self.dft_normalization != "meep":
-            return w
-        base_dt = self._dft_meep_base_dt(t, step)
-        if base_dt is None or base_dt <= 0.0:
+        base_dt = self._dft_physical_base_dt(t, step)
+        if self.dft_normalization == "physical" and (base_dt is None or base_dt <= 0.0):
             return 0.0
-        dt_norm = (
-            float(base_dt)
-            * float(self.dft_record_interval)
-            * float(LIGHT_SPEED)
-            / float(self.dft_length_unit)
+        return float(
+            monitor_dft_sample_scale(
+                w,
+                normalization_code=1 if self.dft_normalization == "physical" else 0,
+                base_dt=1.0 if base_dt is None else float(base_dt),
+                record_interval=float(self.dft_record_interval),
+                length_unit=float(self.dft_length_unit),
+            )
         )
-        return w * (dt_norm / np.sqrt(2.0 * np.pi))
 
     @staticmethod
     def _reshape_dft_component(
@@ -1013,7 +994,7 @@ class Monitor:
                 f"Monitor '{self.name}' has no configured DFT frequencies."
             )
         accum = self._reshape_dft_component(self._dft_accum[comp], nfreq, comp)
-        if self.dft_normalization == "meep":
+        if self.dft_normalization == "physical":
             return accum
         scale = np.maximum(
             np.asarray(self._dft_weight_sum, dtype=float), 1e-18
@@ -1030,15 +1011,7 @@ class Monitor:
             return
         grid_points = self.get_grid_points_2d(dx, dy)
         line_coords = self._line_sample_coords_2d(dx, dy)
-        full_tm_xy = (
-            np.ndim(Ez) == 2
-            and np.ndim(Hx) == 2
-            and np.ndim(Hy) == 2
-            and Hx.shape[0] == Ez.shape[0] - 1
-            and Hx.shape[1] == Ez.shape[1]
-            and Hy.shape[0] == Ez.shape[0]
-            and Hy.shape[1] == Ez.shape[1] - 1
-        )
+        full_tm_xy = is_full_tm_xy_lattice(Ez, Hx, Hy)
         if full_tm_xy and line_coords is not None:
             from beamz.simulation.yee import tm_xy_full_component_coordinates_2d_um
 
@@ -1046,8 +1019,11 @@ class Monitor:
             x_targets, y_targets = line_coords
 
             def sample_full_tm(component, arr):
-                if self.dft_normalization == "meep":
-                    centered = _full_tm_xy_component_to_centered_grid(component, arr)
+                if self.dft_normalization == "physical":
+                    centered = np.asarray(
+                        full_tm_xy_component_to_centered_grid(component, arr),
+                        dtype=np.complex128,
+                    )
                     centered_x = (
                         np.arange(centered.shape[1], dtype=np.float64) + 0.5
                     ) * float(dx)
@@ -1284,10 +1260,10 @@ class Monitor:
         Hx_array = np.array(Hx_values)
         Hy_array = np.array(Hy_values)
         # Poynting vector S = E × H (units: W/m²)
-        Sx = -Ez_array * Hy_array
-        Sy = Ez_array * Hx_array
-        # Power magnitude per grid point
-        power_mag = np.sqrt(Sx**2 + Sy**2)
+        power_mag = np.asarray(
+            poynting_magnitude_2d(Ez_array, Hx_array, Hy_array), dtype=np.complex128
+        )
+        power_mag = np.real_if_close(power_mag)
         # Total power = integral over monitor area (multiply by cell area for proper units)
         total_power = np.sum(power_mag) * dx * dy
         if self.power_accumulated is None:
@@ -1304,12 +1280,10 @@ class Monitor:
         Power is computed as the integral of the Poynting vector magnitude
         over the monitor plane, properly normalized by grid cell area.
         """
-        # Poynting vector S = E × H (units: W/m²)
-        Sx = Ey * Hz - Ez * Hy
-        Sy = Ez * Hx - Ex * Hz
-        Sz = Ex * Hy - Ey * Hx
-        # Power magnitude per grid point
-        power_mag = np.sqrt(Sx**2 + Sy**2 + Sz**2)
+        power_mag = np.asarray(
+            poynting_magnitude_3d(Ex, Ey, Ez, Hx, Hy, Hz), dtype=np.complex128
+        )
+        power_mag = np.real_if_close(power_mag)
         # Total power = integral over monitor area (multiply by cell area for proper units)
         total_power = np.sum(power_mag) * dx * dy
         if self.power_accumulated is None:
