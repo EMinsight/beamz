@@ -9,7 +9,7 @@ from typing import Any, Literal
 import jax.numpy as jnp
 import numpy as np
 
-from beamz.const import LIGHT_SPEED, µm
+from beamz.const import µm
 from beamz.design.core import Design
 from beamz.devices.monitors.monitors import Monitor
 from beamz.devices.sources.compiler import (
@@ -130,6 +130,13 @@ def _projection_solver_direction_3d(direction: str, axis: str) -> str:
 
 @dataclass(frozen=True)
 class PortSpec:
+    """Modal extraction metadata for one named port.
+
+    ``reference_monitor`` selects an alternate incident-wave normalization plane.
+    Scattered waves are still read from ``monitor_name``; no reference-plane
+    subtraction is applied implicitly.
+    """
+
     name: str
     monitor_name: str
     direction: Literal["+x", "-x", "+y", "-y", "+z", "-z"]
@@ -1332,103 +1339,6 @@ class Simulation:
             # a hard dependency on the external `sax` package.
             return dict(s_matrix)
         return s_matrix
-
-    @staticmethod
-    def _monitor_axis_center(monitor, axis):
-        axis_idx = {"x": 0, "y": 1, "z": 2}[str(axis)]
-        start = tuple(float(v) for v in getattr(monitor, "start", ()))
-        end = getattr(monitor, "end", None)
-        if end is not None:
-            end = tuple(float(v) for v in end)
-            if len(start) > axis_idx and len(end) > axis_idx:
-                return 0.5 * (start[axis_idx] + end[axis_idx])
-        if len(start) > axis_idx:
-            return start[axis_idx]
-        return 0.0
-
-    def _source_scattered_correction(
-        self,
-        *,
-        source_spec,
-        source_waves,
-        monitor_by_name,
-        frequencies,
-        scattered_selector=None,
-    ):
-        ref_name = getattr(source_spec, "reference_monitor", None)
-        if not ref_name:
-            return None
-
-        main_monitor = monitor_by_name.get(source_spec.monitor_name)
-        ref_monitor = monitor_by_name.get(ref_name)
-        if main_monitor is None or ref_monitor is None:
-            return None
-
-        axis = str(source_spec.direction)[1]
-        delta_s = self._monitor_axis_center(
-            main_monitor, axis
-        ) - self._monitor_axis_center(ref_monitor, axis)
-        if abs(float(delta_s)) <= 1e-30:
-            return None
-
-        neff_main = np.asarray(source_waves.get("mode_neff", []), dtype=float)
-        neff_ref = np.asarray(source_waves.get("reference_mode_neff", []), dtype=float)
-        if neff_main.size == 0 and neff_ref.size == 0:
-            return None
-        if neff_main.size == 0:
-            neff = neff_ref
-        elif neff_ref.size == 0:
-            neff = neff_main
-        else:
-            neff = np.where(
-                np.isfinite(neff_main) & (neff_main > 1e-6),
-                neff_main,
-                neff_ref,
-            )
-        neff = np.asarray(neff, dtype=float)
-        if neff.size == 0:
-            return None
-
-        freqs = np.atleast_1d(np.asarray(frequencies, dtype=float))
-        if neff.size != freqs.size:
-            if neff.size == 1:
-                neff = np.full(freqs.shape, float(neff[0]), dtype=float)
-            else:
-                return None
-
-        ref_scattered = np.asarray(
-            self._select_wave_component(
-                source_waves,
-                selector=(
-                    scattered_selector
-                    if scattered_selector is not None
-                    else source_spec.scattered_wave
-                ),
-                use_reference=True,
-            ),
-            dtype=np.complex128,
-        )
-        phase = np.exp(-1j * 2.0 * np.pi * freqs * neff * float(delta_s) / LIGHT_SPEED)
-        propagated = phase * ref_scattered
-        main_scattered = np.asarray(
-            self._select_wave_component(
-                source_waves,
-                selector=(
-                    scattered_selector
-                    if scattered_selector is not None
-                    else source_spec.scattered_wave
-                ),
-                use_reference=False,
-            ),
-            dtype=np.complex128,
-        )
-        # The source-plane correction is only meant to remove the source's own
-        # backward-wave contamination. If the propagated reference term is
-        # phase-opposed to the main scattered branch, subtracting it would
-        # amplify the apparent reflection instead of canceling it.
-        alignment = np.real(main_scattered * np.conjugate(propagated))
-        sign = np.where(alignment >= 0.0, 1.0 + 0.0j, -1.0 + 0.0j)
-        return propagated * sign
 
     @staticmethod
     def _normalize_portspecs(ports):
@@ -3475,17 +3385,7 @@ class Simulation:
         abs_floor = max(1e-18, rel_floor)
         valid_mask = np.abs(a_incident) >= abs_floor
 
-        corrected_scattered = {}
-        source_scattered_correction = self._source_scattered_correction(
-            source_spec=source_spec,
-            source_waves=waves[source_port],
-            monitor_by_name=monitor_by_name,
-            frequencies=frequencies,
-            scattered_selector=source_scattered_selector,
-        )
-        applied_source_scattered_correction = np.zeros_like(
-            a_incident, dtype=np.complex128
-        )
+        scattered_waves = {}
         s_matrix = {}
         for out_port in output_ports:
             out_spec = port_map[out_port]
@@ -3500,27 +3400,7 @@ class Simulation:
                 use_reference=False,
             )
             b_out = np.asarray(b_out, dtype=np.complex128)
-            if out_port == source_port and source_scattered_correction is not None:
-                corr = np.asarray(source_scattered_correction, dtype=np.complex128)
-                corr_power = np.abs(corr) ** 2
-                alpha = np.zeros_like(corr_power, dtype=float)
-                valid_corr = corr_power > 1e-18
-                if np.any(valid_corr):
-                    alpha_valid = (
-                        np.real(b_out[valid_corr] * np.conjugate(corr[valid_corr]))
-                        / corr_power[valid_corr]
-                    )
-                    alpha[valid_corr] = np.clip(alpha_valid, 0.0, 1.0)
-                applied = corr * alpha
-                corrected = b_out - applied
-                improve_mask = np.abs(corrected) < np.abs(b_out)
-                applied_source_scattered_correction = np.where(
-                    improve_mask,
-                    applied,
-                    0.0 + 0.0j,
-                )
-                b_out = np.where(improve_mask, corrected, b_out)
-            corrected_scattered[out_port] = b_out
+            scattered_waves[out_port] = b_out
             ratio = self._safe_ratio(b_out, a_incident)
             ratio = np.where(valid_mask, ratio, 0.0 + 0.0j)
             s_matrix[(out_port, source_port)] = ratio
@@ -3534,7 +3414,7 @@ class Simulation:
         p_in = np.abs(a_incident) ** 2
         p_guided_out = np.zeros_like(p_in, dtype=float)
         for out_port in output_ports:
-            p_guided_out += np.abs(corrected_scattered[out_port]) ** 2
+            p_guided_out += np.abs(scattered_waves[out_port]) ** 2
         power_sum = p_guided_out / np.maximum(p_in, 1e-18)
         loss_est = 1.0 - power_sum
         power_sum = np.where(valid_mask, power_sum, np.nan)
@@ -3561,10 +3441,13 @@ class Simulation:
                 }
                 for name, data in waves.items()
             },
-            "source_scattered_correction": (
-                np.asarray(applied_source_scattered_correction, dtype=np.complex128)
-            ),
-            "corrected_scattered": corrected_scattered,
+            "source_reference_normalization": {
+                "enabled": bool(source_spec.reference_monitor),
+                "monitor": source_spec.reference_monitor,
+                "incident_wave": source_incident_selector,
+                "scattered_wave": source_scattered_selector,
+            },
+            "scattered_waves": scattered_waves,
         }
         return {"s_matrix": s_output, "diagnostics": diagnostics}
 
@@ -3795,6 +3678,12 @@ class Simulation:
             "P_guided_out": p_guided_out,
             "power_sum": power_sum,
             "loss_est": 1.0 - power_sum,
+            "source_reference_normalization": {
+                "enabled": bool(source_spec.reference_monitor),
+                "monitor": source_spec.reference_monitor,
+                "incident_wave": source_incident_selector,
+                "scattered_wave": _source_scattered_selector,
+            },
         }
         return {"s_matrix": s_output, "diagnostics": diagnostics}
 
@@ -3909,6 +3798,12 @@ class Simulation:
             "P_guided_out": p_guided_out,
             "power_sum": power_sum,
             "loss_est": 1.0 - power_sum,
+            "source_reference_normalization": {
+                "enabled": bool(source_spec.reference_monitor),
+                "monitor": source_spec.reference_monitor,
+                "incident_wave": source_incident_selector,
+                "scattered_wave": _source_scattered_selector,
+            },
         }
         return {"s_matrix": s_output, "diagnostics": diagnostics}
 

@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import numpy as np
 
 from beamz import PortSpec, Simulation
@@ -299,4 +301,79 @@ def test_dft_loss_visibility_with_absorption():
     )
     assert np.nanmean(high_result["diagnostics"]["loss_est"]) > np.nanmean(
         low_result["diagnostics"]["loss_est"]
+    )
+
+
+def test_dft_reference_monitor_normalizes_but_does_not_subtract_source_scatter():
+    freqs = np.array([1.0], dtype=float)
+    sim = Simulation.__new__(Simulation)
+    sim.sources = []
+    sim.monitors = [
+        SimpleNamespace(name="src_m", start=(1.0, 0.0), end=(1.0, 1.0)),
+        SimpleNamespace(name="src_ref", start=(0.0, 0.0), end=(0.0, 1.0)),
+    ]
+    sim.is_3d = False
+    sim.plane_2d = "xy"
+    waves = {
+        "src": {
+            "a_plus": np.array([0.25], dtype=np.complex128),
+            "a_minus": np.array([1.0], dtype=np.complex128),
+            "a_incident_plus": np.array([0.20], dtype=np.complex128),
+            "a_incident_minus": np.array([2.0], dtype=np.complex128),
+            "mode_neff": np.array([1.0], dtype=float),
+            "reference_mode_neff": np.array([1.0], dtype=float),
+        },
+    }
+
+    def fake_extract(
+        self,
+        ports,
+        frequencies,
+        min_incident_db=-40.0,
+        return_power=True,
+    ):
+        del self, ports, min_incident_db, return_power
+        np.testing.assert_allclose(frequencies, freqs)
+        return waves
+
+    sim.extract_port_waves_dft = fake_extract.__get__(sim, Simulation)
+    result = sim.get_S_matrix_modal_dft(
+        source_port="src",
+        ports=[
+            PortSpec(
+                name="src",
+                monitor_name="src_m",
+                reference_monitor="src_ref",
+                direction="+x",
+                polarization="tm",
+                incident_wave="minus",
+                scattered_wave="plus",
+            )
+        ],
+        output_ports=["src"],
+        frequencies=freqs,
+        as_sax=False,
+        return_diagnostics=True,
+        min_incident_db=-80.0,
+    )
+
+    np.testing.assert_allclose(
+        result["s_matrix"][("src", "src")],
+        np.array([0.125], dtype=np.complex128),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    assert "source_scattered_correction" not in result["diagnostics"]
+    assert "corrected_scattered" not in result["diagnostics"]
+    assert result["diagnostics"]["source_reference_normalization"] == {
+        "enabled": True,
+        "monitor": "src_ref",
+        "incident_wave": "minus",
+        "scattered_wave": "plus",
+    }
+    np.testing.assert_allclose(
+        result["diagnostics"]["scattered_waves"]["src"],
+        np.array([0.25], dtype=np.complex128),
+        rtol=1e-12,
+        atol=1e-12,
     )

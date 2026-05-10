@@ -1,4 +1,4 @@
-"""Sweep source-port reference spacing for 3D raw vs corrected S11.
+"""Sweep source-port reference spacing for 3D reference-normalized S11.
 
 This benchmark targets issue #106 directly. It compares two devices under the
 same source-port extraction path:
@@ -8,8 +8,8 @@ same source-port extraction path:
 
 For each device, the sweep varies only the source-monitor spacing relative to a
 fixed source/reference plane and reports:
-- raw source-port S11 from the main monitor branch before source correction
-- corrected source-port S11 from `get_S_matrix_modal_dft(...)`
+- source-port S11 from the main monitor scattered branch normalized by the
+  reference-monitor incident branch
 - source-port wave dominance
 - transmission/cross-port center-frequency values for sanity
 
@@ -405,10 +405,8 @@ class SweepCaseResult:
     crossing_output_monitor_offset_um: float
     source_reference_offset_um: float
     source_monitor_offset_um: float
-    raw_s11_db: float
-    corrected_s11_db: float
+    source_s11_db: float
     source_dominance_db: float
-    source_correction_mag: float
     incident_mag: float
     source_monitor_clearance_um: float
     source_reference_clearance_um: float
@@ -938,21 +936,7 @@ def run_case(cfg: SweepConfig, device: str, monitor_delta_um: float) -> SweepCas
     valid = np.asarray(result["diagnostics"]["valid_mask"], dtype=bool)
     source_spec = ports[0]
     waves = result["diagnostics"]["waves"]["o1"]
-    raw_num = select_wave_component(
-        waves,
-        source_spec.scattered_wave,
-        use_reference=False,
-    )
-    raw_den = select_wave_component(
-        waves,
-        source_spec.incident_wave,
-        use_reference=True,
-    )
-    raw_s11 = np.zeros_like(raw_num, dtype=np.complex128)
-    valid_den = np.abs(raw_den) > 1e-18
-    raw_s11[valid_den] = raw_num[valid_den] / raw_den[valid_den]
-    raw_s11_db = 20.0 * np.log10(max(abs(complex(np.asarray(raw_s11)[center_idx])), 1e-12))
-    corrected_s11 = complex(
+    source_s11 = complex(
         np.asarray(result["s_matrix"][("o1", "o1")], dtype=np.complex128)[center_idx]
     )
     transmission_db = None
@@ -1024,16 +1008,12 @@ def run_case(cfg: SweepConfig, device: str, monitor_delta_um: float) -> SweepCas
         crossing_output_monitor_offset_um=float(cfg.crossing_output_monitor_offset_um),
         source_reference_offset_um=float(meta["source_reference_offset_um"]),
         source_monitor_offset_um=float(meta["source_monitor_offset_um"]),
-        raw_s11_db=float(raw_s11_db),
-        corrected_s11_db=20.0 * math.log10(max(abs(corrected_s11), 1e-12)),
+        source_s11_db=20.0 * math.log10(max(abs(source_s11), 1e-12)),
         source_dominance_db=wave_dominance_db(
             waves["a_plus"],
             waves["a_minus"],
             source_spec.incident_wave,
             valid,
-        ),
-        source_correction_mag=float(
-            abs(np.asarray(result["diagnostics"]["source_scattered_correction"], dtype=np.complex128)[center_idx])
         ),
         incident_mag=float(
             abs(
@@ -1068,11 +1048,9 @@ def plot_results(results: list[SweepCaseResult], out_dir: Path) -> Path:
             key=lambda row: row.monitor_delta_um,
         )
         x = np.asarray([r.monitor_delta_um for r in rows], dtype=float)
-        raw = np.asarray([r.raw_s11_db for r in rows], dtype=float)
-        corrected = np.asarray([r.corrected_s11_db for r in rows], dtype=float)
+        source_s11 = np.asarray([r.source_s11_db for r in rows], dtype=float)
         dominance = np.asarray([r.source_dominance_db for r in rows], dtype=float)
-        axes[0].plot(x, raw, marker="o", lw=1.8, label=f"{device} raw")
-        axes[0].plot(x, corrected, marker="o", lw=1.8, ls="--", label=f"{device} corrected")
+        axes[0].plot(x, source_s11, marker="o", lw=1.8, label=device)
         axes[1].plot(x, dominance, marker="o", lw=1.8, label=device)
     axes[0].set_title("Source-Port S11 vs Source-Monitor Spacing")
     axes[0].set_xlabel("Source-monitor delta (um)")
@@ -1225,10 +1203,8 @@ def main() -> None:
     for row in results:
         line = (
             f"{row.device:8s} Δ={row.monitor_delta_um:.2f} um | "
-            f"raw S11={row.raw_s11_db:.2f} dB | "
-            f"corrected S11={row.corrected_s11_db:.2f} dB | "
-            f"dominance={row.source_dominance_db:.2f} dB | "
-            f"corr={row.source_correction_mag:.4f}"
+            f"S11={row.source_s11_db:.2f} dB | "
+            f"dominance={row.source_dominance_db:.2f} dB"
         )
         if row.transmission_db is not None:
             line += f" | through={row.transmission_db:.2f} dB"
