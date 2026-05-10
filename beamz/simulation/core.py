@@ -12,6 +12,11 @@ import numpy as np
 from beamz.const import LIGHT_SPEED, µm
 from beamz.design.core import Design
 from beamz.devices.monitors.monitors import Monitor
+from beamz.devices.sources.compiler import (
+    apply_compiled_source_specs,
+    compile_source_specs,
+    source_supports_compiled_specs,
+)
 from beamz.devices.sources.mode import (
     _detect_transverse_symmetry_axes,
     _enforce_componentwise_parity,
@@ -322,6 +327,8 @@ class Simulation:
         self._compiled_program_signature = None
         self._compiled_program_cache = {}
         self._compiled_monitor_state = None
+        self._compiled_step_source_specs = None
+        self._imperative_step_sources = None
 
     @staticmethod
     def _dedupe_devices(devices):
@@ -374,16 +381,20 @@ class Simulation:
         if self.current_step >= self.num_steps:
             return False
 
-        # Legacy sources (only have inject(), no inject_h/inject_e): inject before update
+        # Imperative legacy sources inject first; compiled-capable sources share
+        # the packed pre-E source path with the compiled engine.
         self._inject_legacy_sources()
+        self._apply_compiled_source_phase("pre_e")
 
-        # Collect source terms from source objects that expose packed source terms.
+        # Collect source terms from imperative-only sources that do not compile
+        # down to packed source specs.
         source_j, source_m = self._collect_source_terms()
 
         # 1. H update
         self.fields.update_h(self.dt, source_m=source_m)
 
         # 2. M injection (modifies H after update)
+        self._apply_compiled_source_phase("h")
         self._inject_h_sources()
         self.fields.apply_metallic_boundaries_h()
 
@@ -391,6 +402,7 @@ class Simulation:
         self.fields.update_e(self.dt, source_j=source_j)
 
         # 4. J injection (modifies E after update)
+        self._apply_compiled_source_phase("e")
         self._inject_e_sources()
         self.fields.apply_metallic_boundaries_e()
 
@@ -547,9 +559,77 @@ class Simulation:
             snapshots=snapshots,
         )
 
+    def _compiled_step_source_groups(self):
+        if self._compiled_step_source_specs is not None:
+            return self._compiled_step_source_specs
+
+        compiled_sources = [
+            device for device in self.sources if source_supports_compiled_specs(device)
+        ]
+        self._imperative_step_sources = [
+            device for device in self.sources if not source_supports_compiled_specs(device)
+        ]
+        grouped = {
+            "pre_e": {"Ex": [], "Ey": [], "Ez": []},
+            "h": {"Hx": [], "Hy": [], "Hz": []},
+            "e": {"Ex": [], "Ey": [], "Ez": []},
+        }
+        if compiled_sources:
+            specs = compile_source_specs(
+                compiled_sources,
+                self.fields,
+                dt=self.dt,
+                resolution=self.resolution,
+                num_steps=self.num_steps,
+                t0=float(self.time[0]),
+                total_steps=self.num_steps,
+            )
+            for spec in specs:
+                grouped[spec.timing][spec.component].append(spec)
+        self._compiled_step_source_specs = {
+            timing: {
+                component: tuple(component_specs)
+                for component, component_specs in component_map.items()
+            }
+            for timing, component_map in grouped.items()
+        }
+        return self._compiled_step_source_specs
+
+    def _imperative_sources(self):
+        self._compiled_step_source_groups()
+        return self._imperative_step_sources
+
+    def _sync_full_pec_after_source_mutation(self):
+        if self.is_3d and has_full_pec_3d(self.boundaries):
+            if self.fields.full_pec_3d_state is None:
+                self.fields.full_pec_3d_state = initialize_full_pec_3d_state(self.fields)
+            else:
+                sync_full_pec_3d_from_compact(
+                    self.fields,
+                    self.fields.full_pec_3d_state,
+                )
+
+    def _apply_compiled_source_phase(self, timing: str):
+        phase_specs = self._compiled_step_source_groups().get(timing, {})
+        did_apply = False
+        for component, specs in phase_specs.items():
+            if specs:
+                setattr(
+                    self.fields,
+                    component,
+                    apply_compiled_source_specs(
+                        getattr(self.fields, component),
+                        self.current_step,
+                        specs,
+                    ),
+                )
+                did_apply = True
+        if did_apply:
+            self._sync_full_pec_after_source_mutation()
+
     def _inject_h_sources(self):
         """Inject magnetic currents (M) into H-fields after H update."""
-        for device in self.sources:
+        for device in self._imperative_sources():
             if hasattr(device, "inject_h"):
                 device.inject_h(
                     self.fields,
@@ -559,20 +639,11 @@ class Simulation:
                     self.resolution,
                     self.design,
                 )
-        if self.is_3d and has_full_pec_3d(self.boundaries):
-            if self.fields.full_pec_3d_state is None:
-                self.fields.full_pec_3d_state = initialize_full_pec_3d_state(
-                    self.fields
-                )
-            else:
-                sync_full_pec_3d_from_compact(
-                    self.fields,
-                    self.fields.full_pec_3d_state,
-                )
+        self._sync_full_pec_after_source_mutation()
 
     def _inject_e_sources(self):
         """Inject electric currents (J) into E-fields after E update."""
-        for device in self.sources:
+        for device in self._imperative_sources():
             if hasattr(device, "inject_e"):
                 device.inject_e(
                     self.fields,
@@ -582,20 +653,11 @@ class Simulation:
                     self.resolution,
                     self.design,
                 )
-        if self.is_3d and has_full_pec_3d(self.boundaries):
-            if self.fields.full_pec_3d_state is None:
-                self.fields.full_pec_3d_state = initialize_full_pec_3d_state(
-                    self.fields
-                )
-            else:
-                sync_full_pec_3d_from_compact(
-                    self.fields,
-                    self.fields.full_pec_3d_state,
-                )
+        self._sync_full_pec_after_source_mutation()
 
     def _inject_legacy_sources(self):
         """Inject from devices that only have inject() (no inject_h/inject_e)."""
-        for device in self.sources:
+        for device in self._imperative_sources():
             if hasattr(device, "inject") and not hasattr(device, "inject_h"):
                 device.inject(
                     self.fields,
@@ -605,23 +667,14 @@ class Simulation:
                     self.resolution,
                     self.design,
                 )
-        if self.is_3d and has_full_pec_3d(self.boundaries):
-            if self.fields.full_pec_3d_state is None:
-                self.fields.full_pec_3d_state = initialize_full_pec_3d_state(
-                    self.fields
-                )
-            else:
-                sync_full_pec_3d_from_compact(
-                    self.fields,
-                    self.fields.full_pec_3d_state,
-                )
+        self._sync_full_pec_after_source_mutation()
 
     def _collect_source_terms(self):
         """Collect electric and magnetic current sources from all devices."""
         source_j = {}  # Electric currents for E-field update
         source_m = {}  # Magnetic currents for H-field update
 
-        for device in self.sources:
+        for device in self._imperative_sources():
             if hasattr(device, "get_source_terms"):
                 j, m = device.get_source_terms(
                     self.fields,
