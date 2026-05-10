@@ -9,6 +9,7 @@ from beamz.shared_kernels import CPML_3D_E_DERIVATIVES, CPML_3D_H_DERIVATIVES
 from beamz.simulation.yee import (
     component_axis_offsets_3d,
     sample_voxel_grid_at_component_3d,
+    sample_voxel_grid_at_e_component_3d_centered,
     sample_voxel_grid_at_tm_xy_full_component_2d,
 )
 
@@ -870,37 +871,37 @@ def initialize_full_pec_3d_state(fields) -> FullPec3DState:
         Hx=_full("Hx"),
         Hy=_full("Hy"),
         Hz=_full("Hz"),
-        eps_x_region=sample_voxel_grid_at_component_3d(
+        eps_x_region=sample_voxel_grid_at_e_component_3d_centered(
             fields.permittivity,
             "Ex",
             stored_shape=full_shapes["Ex"],
             region=region_x,
         ),
-        sig_x_region=sample_voxel_grid_at_component_3d(
+        sig_x_region=sample_voxel_grid_at_e_component_3d_centered(
             total_sigma,
             "Ex",
             stored_shape=full_shapes["Ex"],
             region=region_x,
         ),
-        eps_y_region=sample_voxel_grid_at_component_3d(
+        eps_y_region=sample_voxel_grid_at_e_component_3d_centered(
             fields.permittivity,
             "Ey",
             stored_shape=full_shapes["Ey"],
             region=region_y,
         ),
-        sig_y_region=sample_voxel_grid_at_component_3d(
+        sig_y_region=sample_voxel_grid_at_e_component_3d_centered(
             total_sigma,
             "Ey",
             stored_shape=full_shapes["Ey"],
             region=region_y,
         ),
-        eps_z_region=sample_voxel_grid_at_component_3d(
+        eps_z_region=sample_voxel_grid_at_e_component_3d_centered(
             fields.permittivity,
             "Ez",
             stored_shape=full_shapes["Ez"],
             region=region_z,
         ),
-        sig_z_region=sample_voxel_grid_at_component_3d(
+        sig_z_region=sample_voxel_grid_at_e_component_3d_centered(
             total_sigma,
             "Ez",
             stored_shape=full_shapes["Ez"],

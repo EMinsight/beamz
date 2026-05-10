@@ -38,7 +38,7 @@ from beamz import (
 )
 from beamz.simulation import ops
 from beamz.simulation.boundaries import build_h_boundary_views_for_e_3d
-from beamz.simulation.yee import sample_voxel_grid_at_component_3d
+from beamz.simulation.yee import sample_voxel_grid_at_e_component_3d_centered
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -408,8 +408,14 @@ def _ex_update_breakdown(fields, source: ModeSource, dt: float, resolution: floa
         dtype=float,
     )
     curl_hx = d_hz_dy - d_hy_dz
-    eps_x = np.asarray(sample_voxel_grid_at_component_3d(fields.permittivity, "Ex"), dtype=float)
-    sigma_x = np.asarray(sample_voxel_grid_at_component_3d(fields.conductivity, "Ex"), dtype=float)
+    eps_x = np.asarray(
+        sample_voxel_grid_at_e_component_3d_centered(fields.permittivity, "Ex"),
+        dtype=float,
+    )
+    sigma_x = np.asarray(
+        sample_voxel_grid_at_e_component_3d_centered(fields.conductivity, "Ex"),
+        dtype=float,
+    )
     denom = 1.0 + sigma_x * (dt / (2.0 * EPS_0 * eps_x))
     source_coeff_x = (dt / (EPS_0 * eps_x)) / denom
 

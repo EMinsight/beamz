@@ -66,17 +66,22 @@ def test_get_S_matrix_proxy_raises_and_points_to_modal_api():
 def test_port_abstraction_derives_wave_selectors_from_incoming_direction():
     source = Port(name="o1", monitor="m1", direction="+x", polarization="tm")
     output = Port(name="o2", monitor="m2", direction="-x", polarization="tm")
+    cross = Port(name="o3", monitor="m3", direction="+y", polarization="tm")
 
-    specs = Simulation._normalize_portspecs([source, output])
+    specs = Simulation._normalize_portspecs([source, output, cross])
 
     assert specs["o1"].monitor_name == "m1"
     assert specs["o1"].direction == "+x"
-    assert specs["o1"].incident_wave == "plus"
-    assert specs["o1"].scattered_wave == "minus"
+    assert specs["o1"].incident_wave == "minus"
+    assert specs["o1"].scattered_wave == "plus"
     assert specs["o2"].monitor_name == "m2"
-    assert specs["o2"].direction == "+x"
+    assert specs["o2"].direction == "-x"
     assert specs["o2"].incident_wave == "minus"
     assert specs["o2"].scattered_wave == "plus"
+    assert specs["o3"].monitor_name == "m3"
+    assert specs["o3"].direction == "+y"
+    assert specs["o3"].incident_wave == "minus"
+    assert specs["o3"].scattered_wave == "plus"
 
 
 def test_mode_monitor_is_first_class_port_metadata():
@@ -95,7 +100,7 @@ def test_mode_monitor_is_first_class_port_metadata():
     assert set(mon.dft_components) == {"Ex", "Ey", "Ez", "Hx", "Hy", "Hz"}
     spec = Simulation._normalize_portspecs([mon])["o2"]
     assert spec.monitor_name == "o2"
-    assert spec.direction == "+x"
+    assert spec.direction == "-x"
     assert spec.incident_wave == "minus"
     assert spec.scattered_wave == "plus"
 
@@ -126,8 +131,8 @@ def test_get_s_matrix_modal_dft_accepts_mode_monitor_ports(monkeypatch):
         "o1": {
             "a_plus": np.array([0.05], dtype=np.complex128),
             "a_minus": np.array([0.01], dtype=np.complex128),
-            "a_incident_plus": np.array([2.0], dtype=np.complex128),
-            "a_incident_minus": np.array([0.0], dtype=np.complex128),
+            "a_incident_plus": np.array([0.0], dtype=np.complex128),
+            "a_incident_minus": np.array([2.0], dtype=np.complex128),
         },
         "o2": {
             "a_plus": np.array([1.4], dtype=np.complex128),
@@ -146,8 +151,8 @@ def test_get_s_matrix_modal_dft_accepts_mode_monitor_ports(monkeypatch):
         np.testing.assert_allclose(frequencies, freqs)
         by_name = {p.name: p for p in ports}
         assert by_name["o1"].reference_monitor == "o1_ref"
-        assert by_name["o1"].incident_wave == "plus"
-        assert by_name["o1"].scattered_wave == "minus"
+        assert by_name["o1"].incident_wave == "minus"
+        assert by_name["o1"].scattered_wave == "plus"
         assert by_name["o2"].incident_wave == "minus"
         assert by_name["o2"].scattered_wave == "plus"
         return waves
@@ -177,8 +182,8 @@ def test_get_s_matrix_modal_dft_accepts_mode_monitor_ports(monkeypatch):
     assert result["diagnostics"]["source_reference_normalization"] == {
         "enabled": True,
         "monitor": "o1_ref",
-        "incident_wave": "plus",
-        "scattered_wave": "minus",
+        "incident_wave": "minus",
+        "scattered_wave": "plus",
     }
 
 

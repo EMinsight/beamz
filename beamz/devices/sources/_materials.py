@@ -13,9 +13,9 @@ def component_permittivity_at(fields, component: str, index):
     if fields.permittivity.ndim == 3:
         material = getattr(fields, f"eps_{component[-1].lower()}", None)
         if material is None:
-            from beamz.simulation.yee import sample_voxel_grid_at_component_3d
+            from beamz.simulation.yee import sample_voxel_grid_at_e_component_3d_centered
 
-            material = sample_voxel_grid_at_component_3d(
+            material = sample_voxel_grid_at_e_component_3d_centered(
                 fields.permittivity,
                 component,
                 stored_shape=tuple(getattr(fields, component).shape),

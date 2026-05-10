@@ -5,7 +5,6 @@ import numpy as np
 
 from beamz.simulation.boundaries import (
     PEC,
-    build_h_boundary_views_for_e_3d,
     create_metallic_boundary_masks,
     full_pec_curl_e_to_h_2d_xy,
     full_pec_curl_e_to_h_3d,
@@ -19,7 +18,6 @@ from beamz.simulation.boundaries import (
     pec_curl_h_to_e_3d,
 )
 from beamz.simulation.fields import Fields
-from beamz.simulation.ops import curl_h_to_e_3d
 from beamz.simulation.yee import (
     sample_voxel_grid_at_component_2d,
     sample_voxel_grid_at_tm_xy_full_component_2d,
@@ -165,7 +163,7 @@ def test_initialize_full_pec_3d_state_adds_missing_high_planes():
     np.testing.assert_allclose(np.asarray(state.Ez)[:, :, -1], 0.0)
 
 
-def test_full_pec_material_regions_sample_true_yee_positions():
+def test_full_pec_material_regions_sample_centered_e_positions():
     permittivity = np.arange(4 * 4 * 4, dtype=np.float32).reshape(4, 4, 4)
     conductivity = np.zeros_like(permittivity)
     permeability = np.ones_like(permittivity)
@@ -177,9 +175,18 @@ def test_full_pec_material_regions_sample_true_yee_positions():
     )
     state = initialize_full_pec_3d_state(fields)
 
-    expected_ex = permittivity[np.ix_([1, 2, 3], [1, 2, 3], [0, 1, 2, 3])]
-    expected_ey = permittivity[np.ix_([1, 2, 3], [0, 1, 2, 3], [1, 2, 3])]
-    expected_ez = permittivity[np.ix_([0, 1, 2, 3], [1, 2, 3], [1, 2, 3])]
+    expected_ex = 0.5 * (
+        permittivity[np.ix_([1, 2, 3], [1, 2, 3], [0, 1, 2, 3])]
+        + permittivity[np.ix_([1, 2, 3], [1, 2, 3], [1, 2, 3, 3])]
+    )
+    expected_ey = 0.5 * (
+        permittivity[np.ix_([1, 2, 3], [0, 1, 2, 3], [1, 2, 3])]
+        + permittivity[np.ix_([1, 2, 3], [1, 2, 3, 3], [1, 2, 3])]
+    )
+    expected_ez = 0.5 * (
+        permittivity[np.ix_([0, 1, 2, 3], [1, 2, 3], [1, 2, 3])]
+        + permittivity[np.ix_([1, 2, 3, 3], [1, 2, 3], [1, 2, 3])]
+    )
 
     np.testing.assert_array_equal(np.asarray(state.eps_x_region), expected_ex)
     np.testing.assert_array_equal(np.asarray(state.eps_y_region), expected_ey)

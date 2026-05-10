@@ -41,7 +41,14 @@ def _wave_for_direction(direction: str, projection_direction: str) -> WaveSelect
             "Port direction and projection_direction must use the same axis: "
             f"{direction!r} vs {projection_direction!r}."
         )
-    return "plus" if direction[0] == projection_direction[0] else "minus"
+    same_direction = direction[0] == projection_direction[0]
+    if direction[1] in {"x", "y"}:
+        # BeamZ's 3D x/y modal projection follows the ModeSource local-mode
+        # branch convention: the wave propagating along the PortSpec direction
+        # is returned as the "minus" coefficient, and the opposite-going wave
+        # as "plus".
+        return "minus" if same_direction else "plus"
+    return "plus" if same_direction else "minus"
 
 
 def _opposite_wave(selector: str) -> WaveSelector:
@@ -126,7 +133,7 @@ class Port:
                     f"{direction!r} vs {incoming!r}."
                 )
             return direction
-        return positive_axis_direction(self.direction)
+        return _normalize_direction(self.direction)
 
     @property
     def incident_wave(self) -> WaveSelector:

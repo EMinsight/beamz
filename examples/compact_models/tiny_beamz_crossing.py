@@ -42,13 +42,14 @@ LAYER = (1, 0)
 CORE_T = 0.22 * µm
 CLAD_BELOW = 0.50 * µm
 CLAD_ABOVE = 0.50 * µm
-PML_XY, PML_Z = 1.0 * µm, 1.0 * µm
+PML_XY, PML_Z = 1.5 * µm, 1.5 * µm
 XY_MARGIN = 0.50 * µm
 Z_PADDING = 0.50 * µm
 EXTENSION = XY_MARGIN + PML_XY
 PORT_OVERLAP = 0.0 * µm
 PORT_MARGIN = 0.50 * µm
-MONITOR_Z_SPAN = CORE_T + 2.0 * PORT_MARGIN
+MODE_PLANE_SIZE_SCALE = 1.8
+MONITOR_Z_SPAN = MODE_PLANE_SIZE_SCALE * (CORE_T + 2.0 * PORT_MARGIN)
 SOURCE_PORT_OFFSET = 0.10 * µm
 DISTANCE_SOURCE_TO_MONITORS = 0.40 * µm
 # For the y-directed weak ports, deeper planes look cleaner visually but snap
@@ -58,9 +59,6 @@ OUTPUT_MONITOR_OFFSET = 0.05 * µm
 RUN_AFTER_SOURCES_UOC = 90.0
 DECAY_RATIO = 1e-4
 LOOKBACK_RECORDS = 20
-# The current CPML path underperforms the legacy sponge absorber on BeamZ's
-# live normal-incidence and oblique PML benchmarks, so keep this example on the
-# more reliable absorber until CPML is corrected.
 PML_FORMULATION = "sigma"
 
 def move_along(center: tuple[float, float], direction: str, distance: float):
@@ -96,8 +94,51 @@ def line_center(line):
 
 def port_mode_geometry(port: dict) -> tuple[float, float, float]:
     width = float(port["width"])
-    span = max(width + 2.0 * PORT_MARGIN, width + 0.1 * µm)
+    span = MODE_PLANE_SIZE_SCALE * max(width + 2.0 * PORT_MARGIN, width + 0.1 * µm)
     return span, float(MONITOR_Z_SPAN), float(port["z_center"])
+
+
+def enable_cpml_material_extrusion(design, *, pml_xy: float, pml_z: float) -> None:
+    """Extrude rasterized material through CPML without changing geometry."""
+    get_material_grids = design.get_material_grids
+
+    def _copy_shell(arr: np.ndarray, axis: int, count: int) -> np.ndarray:
+        if count <= 0 or count >= arr.shape[axis]:
+            return arr
+        low = [slice(None)] * arr.ndim
+        low[axis] = slice(0, count)
+        low_ref = [slice(None)] * arr.ndim
+        low_ref[axis] = count
+        arr[tuple(low)] = np.expand_dims(arr[tuple(low_ref)], axis=axis)
+
+        high = [slice(None)] * arr.ndim
+        high[axis] = slice(arr.shape[axis] - count, arr.shape[axis])
+        high_ref = [slice(None)] * arr.ndim
+        high_ref[axis] = arr.shape[axis] - count - 1
+        arr[tuple(high)] = np.expand_dims(arr[tuple(high_ref)], axis=axis)
+        return arr
+
+    def _extruded_material_grids(resolution):
+        grids = get_material_grids(resolution)
+        pml_counts = {
+            "x": int(np.ceil(float(pml_xy) / float(resolution))),
+            "y": int(np.ceil(float(pml_xy) / float(resolution))),
+            "z": int(np.ceil(float(pml_z) / float(resolution))),
+        }
+        out = []
+        for grid_arr in grids:
+            arr = np.array(grid_arr, copy=True)
+            if arr.ndim == 3:
+                arr = _copy_shell(arr, axis=2, count=pml_counts["x"])
+                arr = _copy_shell(arr, axis=1, count=pml_counts["y"])
+                arr = _copy_shell(arr, axis=0, count=pml_counts["z"])
+            elif arr.ndim == 2:
+                arr = _copy_shell(arr, axis=1, count=pml_counts["x"])
+                arr = _copy_shell(arr, axis=0, count=pml_counts["y"])
+            out.append(arr)
+        return tuple(out)
+
+    design.get_material_grids = _extruded_material_grids
 
 
 def plot_simulation_overview(
@@ -231,6 +272,8 @@ source_port, output_ports = "o1", ["o2", "o3", "o4"]
 port_names = (source_port, *output_ports)
 dx, dt = dxdt(WL0, n_max=N_CORE, dims=3, safety_factor=0.999, points_per_wavelength=PPW)
 grid = design.rasterize(resolution=dx)
+if PML_FORMULATION == "cpml":
+    enable_cpml_material_extrusion(design, pml_xy=PML_XY, pml_z=PML_Z)
 freqs = np.linspace(LIGHT_SPEED / WL_MAX, LIGHT_SPEED / WL_MIN, NUM_FREQS, dtype=np.float32)
 wl_um = LIGHT_SPEED / freqs / µm
 

@@ -1,12 +1,12 @@
 """Numerical operations for FDTD field updates: curls, field advancement, material handling on staggered Yee grids."""
 
-import jax
 import jax.numpy as jnp
 
 from beamz.const import EPS_0, MU_0
 from beamz.simulation.yee import (
     sample_voxel_grid_at_component_2d,
     sample_voxel_grid_at_component_3d,
+    sample_voxel_grid_at_e_component_3d_centered,
     sample_voxel_grid_at_tm_xy_full_component_2d,
 )
 
@@ -577,6 +577,6 @@ def material_slice_for_e_3d(permittivity, conductivity, orientation):
     # separately via masks after the update step.
     component = {"x": "Ex", "y": "Ey", "z": "Ez"}[orientation]
     f_region = (slice(None), slice(None), slice(None))
-    eps = sample_voxel_grid_at_component_3d(permittivity, component)
-    sig = sample_voxel_grid_at_component_3d(conductivity, component)
+    eps = sample_voxel_grid_at_e_component_3d_centered(permittivity, component)
+    sig = sample_voxel_grid_at_e_component_3d_centered(conductivity, component)
     return eps, sig, f_region

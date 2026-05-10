@@ -5,9 +5,7 @@ import numpy as np
 import pytest
 
 from beamz import (
-    EPS_0,
     LIGHT_SPEED,
-    MU_0,
     Design,
     Material,
     ModeSource,
@@ -23,7 +21,6 @@ from beamz.devices.sources.mode import (
     _build_3d_profiles,
     _detect_transverse_symmetry_axes,
     _enforce_componentwise_parity,
-    _get_3d_huygens_terms,
     _make_3d_mode_basis_profiles,
     _match_shape,
     _modal_overlap_3d_profiles,
@@ -1885,6 +1882,31 @@ def test_centered_3d_e_sampling_restores_mirror_symmetry():
     assert _mirror_residual(eps_y, axis=0) == 0.0
     assert _mirror_residual(eps_z, axis=1) == 0.0
     assert _mirror_residual(eps_z, axis=0) == 0.0
+
+
+def test_runtime_3d_e_material_sampling_preserves_mirror_symmetry():
+    sim = _build_centered_straight_guide_sim(ppw=6)
+
+    for eps_comp in (sim.fields.eps_ex, sim.fields.eps_ey, sim.fields.eps_ez):
+        assert _mirror_residual(np.asarray(eps_comp, dtype=float), axis=1) == 0.0
+        assert _mirror_residual(np.asarray(eps_comp, dtype=float), axis=0) == 0.0
+
+
+def test_generic_3d_component_sampler_uses_centered_e_mapping():
+    sim = _build_centered_straight_guide_sim(ppw=6)
+    eps = np.asarray(sim.fields.permittivity, dtype=float)
+
+    for component, runtime_eps in (
+        ("Ex", sim.fields.eps_ex),
+        ("Ey", sim.fields.eps_ey),
+        ("Ez", sim.fields.eps_ez),
+    ):
+        np.testing.assert_allclose(
+            np.asarray(sample_voxel_grid_at_component_3d(eps, component), dtype=float),
+            np.asarray(runtime_eps, dtype=float),
+            rtol=0.0,
+            atol=0.0,
+        )
 
 
 def test_one_step_uniform_medium_keeps_small_transverse_e_asymmetry():

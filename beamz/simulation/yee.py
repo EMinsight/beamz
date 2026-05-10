@@ -123,7 +123,20 @@ def sample_voxel_grid_at_component_3d(
     stored_shape: tuple[int, int, int] | None = None,
     region: tuple[slice, slice, slice] | None = None,
 ):
-    """Sample a cell-centered 3D raster at the physical Yee locations of a component."""
+    """Sample a cell-centered 3D raster on a Yee component lattice.
+
+    Staggered E components use symmetric centered sampling. H components retain
+    owner-cell sampling because their material terms are already collocated with
+    the magnetic lattice convention used by the update.
+    """
+
+    if component in {"Ex", "Ey", "Ez"}:
+        return sample_voxel_grid_at_e_component_3d_centered(
+            grid,
+            component,
+            stored_shape=stored_shape,
+            region=region,
+        )
 
     z_idx, y_idx, x_idx = component_index_arrays_3d(
         component,
