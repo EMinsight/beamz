@@ -19,6 +19,7 @@ from beamz.simulation.boundaries import (
     has_full_pec_3d,
     initialize_full_pec_3d_state,
     initialize_tm_2d_xy_state,
+    resolve_metallic_edges,
     sync_compact_fields_from_full_pec_3d,
     tm_xy_cpml_curl_e_to_h_2d,
     tm_xy_cpml_curl_h_to_e_2d,
@@ -572,6 +573,9 @@ class Fields:
                         b_e_terms=cpml.b_e_terms,
                         inv_kappa_e_terms=cpml.inv_kappa_e_terms,
                         psi_e_terms=cpml.psi_e_terms,
+                        metallic_edges=resolve_metallic_edges(
+                            getattr(self, "boundaries", None), is_3d=True
+                        ),
                     )
                 else:
                     boundary_views = build_h_boundary_views_for_e_3d(

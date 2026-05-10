@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from beamz.const import EPS_0, MU_0, µm
+from beamz.shared_kernels import CPML_3D_E_DERIVATIVES, CPML_3D_H_DERIVATIVES
 from beamz.simulation.yee import (
     component_axis_offsets_3d,
     sample_voxel_grid_at_component_3d,
@@ -133,7 +134,7 @@ class PML(Boundary):
                 out = self._create_cpml_profiles_3d(fields, design)
             else:
                 out = self._create_cpml_profiles_2d(fields, design, plane_2d)
-            self._warn_if_material_not_extruded(fields, out, plane_2d)
+            self._raise_if_cpml_material_not_extruded(fields, out, plane_2d)
             return out
 
         if fields.permittivity.ndim == 3:
@@ -143,11 +144,11 @@ class PML(Boundary):
         self._warn_if_material_not_extruded(fields, out, plane_2d)
         return out
 
-    def _warn_if_material_not_extruded(self, fields, pml_data, plane_2d="xy"):
-        """Warn when material changes along the PML normal inside the absorber."""
+    def _pml_material_variation_edges(self, fields, pml_data, plane_2d="xy"):
+        """Return edges where material changes along the PML normal."""
         material = np.asarray(fields.permittivity)
         if material.size == 0:
-            return
+            return []
         axis_map_3d = {"z": 0, "y": 1, "x": 2}
         axis_map_2d = {
             "xy": {"y": 0, "x": 1},
@@ -186,6 +187,11 @@ class PML(Boundary):
                 continue
             if self._pml_edge_material_varies(material, axis, side, count):
                 bad_edges.append(edge)
+        return bad_edges
+
+    def _warn_if_material_not_extruded(self, fields, pml_data, plane_2d="xy"):
+        """Warn when material changes along the PML normal inside the absorber."""
+        bad_edges = self._pml_material_variation_edges(fields, pml_data, plane_2d)
         if bad_edges:
             warnings.warn(
                 "PML material varies along the absorber normal on edges "
@@ -193,6 +199,16 @@ class PML(Boundary):
                 "profile through the PML or keep geometry clear of the absorber.",
                 RuntimeWarning,
                 stacklevel=3,
+            )
+
+    def _raise_if_cpml_material_not_extruded(self, fields, pml_data, plane_2d="xy"):
+        """Reject CPML when geometry varies through the absorber."""
+        bad_edges = self._pml_material_variation_edges(fields, pml_data, plane_2d)
+        if bad_edges:
+            raise ValueError(
+                "CPML material varies along the absorber normal on edges "
+                f"{bad_edges}. Extrude the boundary material profile through the "
+                "CPML or keep geometry clear of the absorber."
             )
 
     @staticmethod
@@ -659,95 +675,46 @@ class PML(Boundary):
         dy = float(height) / max(ny, 1)
         dx = float(width) / max(nx, 1)
 
-        sigma_hy_1d, kappa_hy_1d, alpha_hy_1d = (
-            self._compute_fdtdx_staggered_profile_1d(
-                max(ny - 1, 0), dy, "bottom" in edges, "top" in edges, sample_kind="H"
-            )
-        )
-        sigma_hz_1d, kappa_hz_1d, alpha_hz_1d = (
-            self._compute_fdtdx_staggered_profile_1d(
-                max(nz - 1, 0), dz, "front" in edges, "back" in edges, sample_kind="H"
-            )
-        )
-        sigma_hx_1d, kappa_hx_1d, alpha_hx_1d = (
-            self._compute_fdtdx_staggered_profile_1d(
-                max(nx - 1, 0), dx, "left" in edges, "right" in edges, sample_kind="H"
-            )
-        )
-        sigma_ey_1d, kappa_ey_1d, alpha_ey_1d = (
-            self._compute_fdtdx_staggered_profile_1d(
-                ny, dy, "bottom" in edges, "top" in edges, sample_kind="E"
-            )
-        )
-        sigma_ez_1d, kappa_ez_1d, alpha_ez_1d = (
-            self._compute_fdtdx_staggered_profile_1d(
-                nz, dz, "front" in edges, "back" in edges, sample_kind="E"
-            )
-        )
-        sigma_ex_1d, kappa_ex_1d, alpha_ex_1d = (
-            self._compute_fdtdx_staggered_profile_1d(
-                nx, dx, "left" in edges, "right" in edges, sample_kind="E"
-            )
-        )
+        axis_index = {"z": 0, "y": 1, "x": 2}
+        axis_spacing = {"z": dz, "y": dy, "x": dx}
+        axis_edges = {
+            "z": ("front", "back"),
+            "y": ("bottom", "top"),
+            "x": ("left", "right"),
+        }
 
-        def bcast_y(profile, target_shape):
-            return jnp.broadcast_to(profile[None, :, None], target_shape)
+        def bcast_axis(profile, axis_name, target_shape):
+            shape_1d = [1, 1, 1]
+            shape_1d[axis_index[axis_name]] = profile.shape[0]
+            return jnp.broadcast_to(jnp.reshape(profile, tuple(shape_1d)), target_shape)
 
-        def bcast_z(profile, target_shape):
-            return jnp.broadcast_to(profile[:, None, None], target_shape)
+        def profile_for_spec(spec):
+            target = getattr(fields, spec.target_component)
+            target_shape = tuple(int(v) for v in target.shape)
+            axis_name = spec.derivative_axis
+            low_edge, high_edge = axis_edges[axis_name]
+            offset = component_axis_offsets_3d(spec.target_component)[axis_name]
+            sample_kind = "E" if offset == 0.0 else "H"
+            return self._compute_fdtdx_staggered_profile_1d(
+                target_shape[axis_index[axis_name]],
+                axis_spacing[axis_name],
+                low_edge in edges,
+                high_edge in edges,
+                sample_kind=sample_kind,
+            )
 
-        def bcast_x(profile, target_shape):
-            return jnp.broadcast_to(profile[None, None, :], target_shape)
-
-        hx_shape = fields.Hx.shape
-        hy_shape = fields.Hy.shape
-        hz_shape = fields.Hz.shape
-        ex_shape = fields.Ex.shape
-        ey_shape = fields.Ey.shape
-        ez_shape = fields.Ez.shape
-
-        out.update(
-            {
-                # H-side derivative terms (FDTDX order)
-                "cpml3d_Hxy_sigma": bcast_y(sigma_hy_1d, hx_shape),
-                "cpml3d_Hxy_kappa": bcast_y(kappa_hy_1d, hx_shape),
-                "cpml3d_Hxy_alpha": bcast_y(alpha_hy_1d, hx_shape),
-                "cpml3d_Hxz_sigma": bcast_z(sigma_hz_1d, hx_shape),
-                "cpml3d_Hxz_kappa": bcast_z(kappa_hz_1d, hx_shape),
-                "cpml3d_Hxz_alpha": bcast_z(alpha_hz_1d, hx_shape),
-                "cpml3d_Hyz_sigma": bcast_z(sigma_hz_1d, hy_shape),
-                "cpml3d_Hyz_kappa": bcast_z(kappa_hz_1d, hy_shape),
-                "cpml3d_Hyz_alpha": bcast_z(alpha_hz_1d, hy_shape),
-                "cpml3d_Hyx_sigma": bcast_x(sigma_hx_1d, hy_shape),
-                "cpml3d_Hyx_kappa": bcast_x(kappa_hx_1d, hy_shape),
-                "cpml3d_Hyx_alpha": bcast_x(alpha_hx_1d, hy_shape),
-                "cpml3d_Hzx_sigma": bcast_x(sigma_hx_1d, hz_shape),
-                "cpml3d_Hzx_kappa": bcast_x(kappa_hx_1d, hz_shape),
-                "cpml3d_Hzx_alpha": bcast_x(alpha_hx_1d, hz_shape),
-                "cpml3d_Hzy_sigma": bcast_y(sigma_hy_1d, hz_shape),
-                "cpml3d_Hzy_kappa": bcast_y(kappa_hy_1d, hz_shape),
-                "cpml3d_Hzy_alpha": bcast_y(alpha_hy_1d, hz_shape),
-                # E-side derivative terms (FDTDX order)
-                "cpml3d_Exy_sigma": bcast_y(sigma_ey_1d, ex_shape),
-                "cpml3d_Exy_kappa": bcast_y(kappa_ey_1d, ex_shape),
-                "cpml3d_Exy_alpha": bcast_y(alpha_ey_1d, ex_shape),
-                "cpml3d_Exz_sigma": bcast_z(sigma_ez_1d, ex_shape),
-                "cpml3d_Exz_kappa": bcast_z(kappa_ez_1d, ex_shape),
-                "cpml3d_Exz_alpha": bcast_z(alpha_ez_1d, ex_shape),
-                "cpml3d_Eyz_sigma": bcast_z(sigma_ez_1d, ey_shape),
-                "cpml3d_Eyz_kappa": bcast_z(kappa_ez_1d, ey_shape),
-                "cpml3d_Eyz_alpha": bcast_z(alpha_ez_1d, ey_shape),
-                "cpml3d_Eyx_sigma": bcast_x(sigma_ex_1d, ey_shape),
-                "cpml3d_Eyx_kappa": bcast_x(kappa_ex_1d, ey_shape),
-                "cpml3d_Eyx_alpha": bcast_x(alpha_ex_1d, ey_shape),
-                "cpml3d_Ezx_sigma": bcast_x(sigma_ex_1d, ez_shape),
-                "cpml3d_Ezx_kappa": bcast_x(kappa_ex_1d, ez_shape),
-                "cpml3d_Ezx_alpha": bcast_x(alpha_ex_1d, ez_shape),
-                "cpml3d_Ezy_sigma": bcast_y(sigma_ey_1d, ez_shape),
-                "cpml3d_Ezy_kappa": bcast_y(kappa_ey_1d, ez_shape),
-                "cpml3d_Ezy_alpha": bcast_y(alpha_ey_1d, ez_shape),
-            }
-        )
+        for spec in (*CPML_3D_H_DERIVATIVES, *CPML_3D_E_DERIVATIVES):
+            target_shape = tuple(int(v) for v in getattr(fields, spec.target_component).shape)
+            sigma_1d, kappa_1d, alpha_1d = profile_for_spec(spec)
+            out[f"cpml3d_{spec.name}_sigma"] = bcast_axis(
+                sigma_1d, spec.derivative_axis, target_shape
+            )
+            out[f"cpml3d_{spec.name}_kappa"] = bcast_axis(
+                kappa_1d, spec.derivative_axis, target_shape
+            )
+            out[f"cpml3d_{spec.name}_alpha"] = bcast_axis(
+                alpha_1d, spec.derivative_axis, target_shape
+            )
         return out
 
 
@@ -1157,18 +1124,29 @@ def create_metallic_boundary_masks(fields, boundaries, *, is_3d, plane_2d="xy"):
     return {name: jnp.asarray(mask) for name, mask in masks.items()}
 
 
-def _pad_with_zero_ghosts(arr, axis):
-    """Pad one axis with explicit zero-valued ghost layers.
-
-    The core Yee update ops should only compute local adjacent differences.
-    Boundary conditions are expressed here by constructing the ghost-valued
-    arrays that those ops consume.
-    """
+def _pad_with_boundary_ghosts(arr, axis, *, low_metallic=False, high_metallic=False):
+    """Pad one axis with PEC ghosts on metallic sides and open ghosts otherwise."""
 
     shape = list(arr.shape)
     shape[axis] = 1
-    ghost = jnp.zeros(tuple(shape), dtype=arr.dtype)
-    return jnp.concatenate([ghost, arr, ghost], axis=axis)
+    zero = jnp.zeros(tuple(shape), dtype=arr.dtype)
+    low = zero if low_metallic else jnp.take(arr, indices=jnp.array([0]), axis=axis)
+    high = (
+        zero
+        if high_metallic
+        else jnp.take(arr, indices=jnp.array([arr.shape[axis] - 1]), axis=axis)
+    )
+    return jnp.concatenate([low, arr, high], axis=axis)
+
+
+def _edge_pair_for_axis(axis):
+    if axis == 0:
+        return "front", "back"
+    if axis == 1:
+        return "bottom", "top"
+    if axis == 2:
+        return "left", "right"
+    raise ValueError(f"Unsupported axis {axis!r}")
 
 
 def _scalar_like(value, dtype):
@@ -1491,26 +1469,38 @@ def cpml_curl_h_to_e_3d(
     b_e_terms,
     inv_kappa_e_terms,
     psi_e_terms,
+    metallic_edges=frozenset(),
 ):
     """CPML-corrected 3D curl H -> E on native Yee derivative terms."""
 
+    metallic_edges = frozenset(metallic_edges or ())
+
+    def pad(arr, axis):
+        low_edge, high_edge = _edge_pair_for_axis(axis)
+        return _pad_with_boundary_ghosts(
+            arr,
+            axis,
+            low_metallic=low_edge in metallic_edges,
+            high_metallic=high_edge in metallic_edges,
+        )
+
     d_hz_dy = _adjacent_difference(
-        _pad_with_zero_ghosts(hz, axis=1), axis=1, resolution=resolution
+        pad(hz, axis=1), axis=1, resolution=resolution
     )
     d_hy_dz = _adjacent_difference(
-        _pad_with_zero_ghosts(hy, axis=0), axis=0, resolution=resolution
+        pad(hy, axis=0), axis=0, resolution=resolution
     )
     d_hx_dz = _adjacent_difference(
-        _pad_with_zero_ghosts(hx, axis=0), axis=0, resolution=resolution
+        pad(hx, axis=0), axis=0, resolution=resolution
     )
     d_hz_dx = _adjacent_difference(
-        _pad_with_zero_ghosts(hz, axis=2), axis=2, resolution=resolution
+        pad(hz, axis=2), axis=2, resolution=resolution
     )
     d_hy_dx = _adjacent_difference(
-        _pad_with_zero_ghosts(hy, axis=2), axis=2, resolution=resolution
+        pad(hy, axis=2), axis=2, resolution=resolution
     )
     d_hx_dy = _adjacent_difference(
-        _pad_with_zero_ghosts(hx, axis=1), axis=1, resolution=resolution
+        pad(hx, axis=1), axis=1, resolution=resolution
     )
 
     term0, psi0 = _cpml_correct_native_term(

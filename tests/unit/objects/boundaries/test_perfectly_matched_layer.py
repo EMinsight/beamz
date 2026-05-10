@@ -174,6 +174,36 @@ def test_pml_warns_when_material_changes_along_absorber_normal():
         )
 
 
+def test_cpml_rejects_material_changes_along_absorber_normal():
+    eps = np.ones((6, 8), dtype=np.float32)
+    eps[:, 0] = 3.0
+    eps[:, 1] = 2.0
+    fields = Fields(
+        permittivity=eps,
+        conductivity=np.zeros_like(eps),
+        permeability=np.ones_like(eps),
+        resolution=0.1,
+        plane_2d="xy",
+    )
+    design = _make_design_2d(shape=eps.shape)
+    pml = PML(
+        edges=["left"],
+        thickness=0.2,
+        sigma_max=5.0,
+        alpha_max=0.5,
+        formulation="cpml",
+    )
+
+    with pytest.raises(ValueError, match="CPML material varies"):
+        pml.create_pml_regions(
+            fields,
+            design,
+            resolution=0.1,
+            dt=1e-15,
+            plane_2d="xy",
+        )
+
+
 def test_pml_allows_material_extruded_through_absorber():
     eps = np.ones((6, 8), dtype=np.float32)
     eps[:, :3] = 2.0

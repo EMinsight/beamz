@@ -345,6 +345,7 @@ class CompiledSimulation:
     cpml3d_a_e_terms: tuple[jnp.ndarray, ...]
     cpml3d_b_e_terms: tuple[jnp.ndarray, ...]
     cpml3d_inv_kappa_e_terms: tuple[jnp.ndarray, ...]
+    cpml3d_metallic_edges: frozenset[str]
     full_pec_3d: bool
     fp_h_decay_x: jnp.ndarray
     fp_h_source_x: jnp.ndarray
@@ -1793,6 +1794,7 @@ class CompiledSimulation:
                                     b_e_terms=self.cpml3d_b_e_terms,
                                     inv_kappa_e_terms=self.cpml3d_inv_kappa_e_terms,
                                     psi_e_terms=cpml3d_psi_e_terms,
+                                    metallic_edges=self.cpml3d_metallic_edges,
                                 )
                             )
                             ex = advance_e_from_coefficients(
@@ -2577,7 +2579,9 @@ def compile_simulation(
     cpml3d_a_e_terms = _empty_cpml_3d_terms(jnp.float32)
     cpml3d_b_e_terms = _empty_cpml_3d_terms(jnp.float32)
     cpml3d_inv_kappa_e_terms = _empty_cpml_3d_terms(jnp.float32)
+    cpml3d_metallic_edges = frozenset()
     if bool(run_cfg.is_3d):
+        cpml3d_metallic_edges = frozenset(resolve_metallic_edges(boundaries, is_3d=True))
         use_cpml_3d = bool(
             getattr(fields, "has_cpml", False) and getattr(fields, "pml_data", None)
         )
@@ -2892,6 +2896,7 @@ def compile_simulation(
         cpml3d_a_e_terms=cpml3d_a_e_terms,
         cpml3d_b_e_terms=cpml3d_b_e_terms,
         cpml3d_inv_kappa_e_terms=cpml3d_inv_kappa_e_terms,
+        cpml3d_metallic_edges=cpml3d_metallic_edges,
         full_pec_3d=full_pec_3d,
         fp_h_decay_x=fp_h_decay_x,
         fp_h_source_x=fp_h_source_x,

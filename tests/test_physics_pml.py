@@ -373,6 +373,9 @@ class TestPMLAbsorption:
             b_e_terms=b_e_mixed,
             inv_kappa_e_terms=inv_kappa_e_mixed,
             psi_e_terms=psi_e,
+            metallic_edges=frozenset(
+                {"left", "right", "bottom", "top", "front", "back"}
+            ),
         )
 
         d_terms_e = (
