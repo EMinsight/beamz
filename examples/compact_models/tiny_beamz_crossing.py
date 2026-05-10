@@ -17,10 +17,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 from beamz import (
     LIGHT_SPEED,
+    ModeMonitor,
     ModeSource,
     Monitor,
     PML,
-    PortSpec,
     Simulation,
     dxdt,
     µm,
@@ -63,19 +63,6 @@ LOOKBACK_RECORDS = 20
 # more reliable absorber until CPML is corrected.
 PML_FORMULATION = "sigma"
 
-def incoming_wave(direction: str) -> str:
-    # BeamZ's modal coefficients use the "minus" branch for waves propagating
-    # along the positive axis and the "plus" branch for waves propagating along
-    # the negative axis. Here `direction` is the physical propagation direction.
-    return "minus" if str(direction).startswith("+") else "plus"
-
-
-def outgoing_wave(direction: str) -> str:
-    # Ports store the inward-facing device direction, so the outgoing guided
-    # wave propagates along the opposite signed axis.
-    return incoming_wave(gdsf.outward_direction(direction))
-
-
 def move_along(center: tuple[float, float], direction: str, distance: float):
     x, y = center
     return {
@@ -112,57 +99,6 @@ def port_mode_geometry(port: dict) -> tuple[float, float, float]:
     span = max(width + 2.0 * PORT_MARGIN, width + 0.1 * µm)
     return span, float(MONITOR_Z_SPAN), float(port["z_center"])
 
-
-def distance_to_xy_pml(port: dict, *, width: float, height: float, pml_xy: float) -> float:
-    outward = gdsf.outward_direction(port["direction"])
-    x, y = map(float, port["center"])
-    return {
-        "-x": max(x - float(pml_xy), 0.0),
-        "+x": max(float(width) - float(pml_xy) - x, 0.0),
-        "-y": max(y - float(pml_xy), 0.0),
-        "+y": max(float(height) - float(pml_xy) - y, 0.0),
-    }[outward]
-
-
-def print_plane_clearances(
-    *,
-    source_plane,
-    monitor_planes,
-    world_origin: tuple[float, float, float],
-    width: float,
-    height: float,
-    depth: float,
-    pml_xy: float,
-    pml_z: float,
-):
-    active_min = np.asarray(world_origin, dtype=float) + np.asarray(
-        [float(pml_xy), float(pml_xy), float(pml_z)], dtype=float
-    )
-    active_max = np.asarray(world_origin, dtype=float) + np.asarray(
-        [float(width) - float(pml_xy), float(height) - float(pml_xy), float(depth) - float(pml_z)],
-        dtype=float,
-    )
-    print("Plane clearances to CPML start (um):")
-    for name, plane in [("source", source_plane), *monitor_planes.items()]:
-        a = np.asarray(plane[0], dtype=float) + np.asarray(world_origin, dtype=float)
-        b = np.asarray(plane[1], dtype=float) + np.asarray(world_origin, dtype=float)
-        pmin = np.minimum(a, b)
-        pmax = np.maximum(a, b)
-        clearances = {
-            "left": (pmin[0] - active_min[0]) / µm,
-            "right": (active_max[0] - pmax[0]) / µm,
-            "bottom": (pmin[1] - active_min[1]) / µm,
-            "top": (active_max[1] - pmax[1]) / µm,
-            "front": (pmin[2] - active_min[2]) / µm,
-            "back": (active_max[2] - pmax[2]) / µm,
-        }
-        nearest_name = min(clearances, key=clearances.get)
-        print(
-            f"  {name}: nearest {nearest_name} = {clearances[nearest_name]:.2f} "
-            f"(left={clearances['left']:.2f}, right={clearances['right']:.2f}, "
-            f"bottom={clearances['bottom']:.2f}, top={clearances['top']:.2f}, "
-            f"front={clearances['front']:.2f}, back={clearances['back']:.2f})"
-        )
 
 def plot_simulation_overview(
     out_path: Path,
@@ -248,7 +184,8 @@ def wave_dominance_db(a_plus: np.ndarray, a_minus: np.ndarray, selector: str, ma
     sel = np.asarray(a_plus if selector == "plus" else a_minus, dtype=np.complex128)
     opp = np.asarray(a_minus if selector == "plus" else a_plus, dtype=np.complex128)
     valid = np.asarray(mask, dtype=bool)
-    if not np.any(valid): return float("nan")
+    if not np.any(valid):
+        return float("nan")
     p_sel = float(np.mean(np.abs(sel[valid]) ** 2))
     p_opp = float(np.mean(np.abs(opp[valid]) ** 2))
     return 10.0 * np.log10(max(p_sel, 1e-18) / max(p_opp, 1e-18))
@@ -263,128 +200,6 @@ def format_duration(seconds: float) -> str:
         return f"{int(minutes)}m {sec:.0f}s"
     hours, minutes = divmod(minutes, 60.0)
     return f"{int(hours)}h {int(minutes)}m"
-
-
-def expected_mode_components(axis: str, pol: str) -> tuple[str, str]:
-    pol_key = str(pol).lower()
-    if pol_key == "te":
-        mapping = {"x": ("Ey", "Hz"), "y": ("Ex", "Hz"), "z": ("Ex", "Hy")}
-    else:
-        mapping = {"x": ("Ez", "Hy"), "y": ("Ez", "Hx"), "z": ("Ey", "Hx")}
-    return mapping[str(axis)]
-
-
-def save_mode_profile_plot(
-    *,
-    label: str,
-    mode_src: ModeSource,
-    grid_eps: np.ndarray,
-    dx: float,
-    out_path: Path,
-) -> None:
-    axis = mode_src.direction[1]
-    e_expected, h_expected = expected_mode_components(axis, mode_src.pol)
-    eps2d = np.asarray(getattr(mode_src, "_eps_profile_2d", np.array([])))
-    if eps2d.ndim == 2 and eps2d.size > 0:
-        profile_map = {
-            "Ex": getattr(mode_src, "_Ex_profile", None),
-            "Ey": getattr(mode_src, "_Ey_profile", None),
-            "Ez": getattr(mode_src, "_Ez_profile", None),
-            "Hx": getattr(mode_src, "_Hx_profile", None),
-            "Hy": getattr(mode_src, "_Hy_profile", None),
-            "Hz": getattr(mode_src, "_Hz_profile", None),
-        }
-        fig, ax = plt.subplots(2, 4, figsize=(10.8, 5.4), dpi=250)
-        ax = ax.ravel()
-        im_eps = ax[0].imshow(eps2d, origin="lower", cmap="viridis", aspect="equal")
-        ax[0].set_title(f"{label}: eps")
-        fig.colorbar(im_eps, ax=ax[0], fraction=0.046, pad=0.04)
-        for i, name in enumerate(["Ex", "Ey", "Ez", "Hx", "Hy", "Hz"], start=1):
-            arr = profile_map[name]
-            if arr is None:
-                ax[i].axis("off")
-                continue
-            a2 = np.asarray(arr).squeeze()
-            if a2.ndim != 2:
-                a2 = np.atleast_2d(a2)
-            im = ax[i].imshow(np.abs(a2), origin="lower", cmap="magma", aspect="equal")
-            ax[i].set_title(f"{label}: |{name}|")
-            fig.colorbar(im, ax=ax[i], fraction=0.046, pad=0.04)
-        ax[7].axis("off")
-        ax[7].text(
-            0.02,
-            0.95,
-            (
-                f"pol={mode_src.pol}\n"
-                f"dir={mode_src.direction}\n"
-                f"axis={axis}\n"
-                f"expected E/H={e_expected}/{h_expected}\n"
-                f"neff={float(np.real(getattr(mode_src, '_neff', np.nan))):.5f}\n"
-                f"width={float(mode_src.width)/µm:.3f}um\n"
-                f"height={float(getattr(mode_src, 'height', 0.0) or 0.0)/µm:.3f}um"
-            ),
-            va="top",
-            ha="left",
-            fontsize=9,
-            family="monospace",
-        )
-        fig.tight_layout()
-        fig.savefig(out_path, dpi=300)
-        plt.close(fig)
-        return
-
-    if grid_eps.ndim == 3:
-        zc = int(np.clip(round(float(mode_src.center[2]) / dx), 0, grid_eps.shape[0] - 1))
-        yc = int(np.clip(round(float(mode_src.center[1]) / dx), 0, grid_eps.shape[1] - 1))
-        xc = int(np.clip(round(float(mode_src.center[0]) / dx), 0, grid_eps.shape[2] - 1))
-        eps_profile = np.asarray(grid_eps[zc, :, xc] if axis == "x" else grid_eps[zc, yc, :], dtype=float)
-    else:
-        if axis == "x":
-            x_idx = int(np.clip(round(float(mode_src.center[0]) / dx), 0, grid_eps.shape[1] - 1))
-            eps_profile = np.asarray(grid_eps[:, x_idx], dtype=float)
-        else:
-            y_idx = int(np.clip(round(float(mode_src.center[1]) / dx), 0, grid_eps.shape[0] - 1))
-            eps_profile = np.asarray(grid_eps[y_idx, :], dtype=float)
-
-    profiles = {
-        "jz": getattr(mode_src, "_jz_profile", None),
-        "jy": getattr(mode_src, "_jy_profile", None),
-        "jx": getattr(mode_src, "_jx_profile", None),
-        "my": getattr(mode_src, "_my_profile", None),
-        "mz": getattr(mode_src, "_mz_profile", None),
-    }
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(8.2, 2.8), dpi=260)
-    u = np.arange(eps_profile.size, dtype=float) * dx / µm
-    ax0.plot(u, eps_profile, color="tab:blue", lw=1.6)
-    ax0.set_title(f"{label}: eps profile")
-    ax0.set_xlabel("transverse coordinate (um)")
-    ax0.set_ylabel("permittivity")
-    ax0.grid(alpha=0.3)
-
-    plotted = False
-    for name, arr in profiles.items():
-        if arr is None:
-            continue
-        a = np.asarray(arr, dtype=np.complex128).reshape(-1)
-        if a.size == 0:
-            continue
-        uu = np.arange(a.size, dtype=float) * dx / µm
-        ax1.plot(uu, np.abs(a), lw=1.5, label=f"|{name}|")
-        plotted = True
-    if not plotted:
-        ax1.text(0.02, 0.7, "No mode profile data", transform=ax1.transAxes)
-    ax1.set_title(
-        f"{label}: mode profile ({mode_src.pol}, {mode_src.direction})\n"
-        f"expected {e_expected}/{h_expected}, neff={float(np.real(getattr(mode_src, '_neff', np.nan))):.4f}"
-    )
-    ax1.set_xlabel("transverse coordinate (um)")
-    ax1.set_ylabel("normalized magnitude")
-    ax1.grid(alpha=0.3)
-    if plotted:
-        ax1.legend(loc="best", fontsize=8, frameon=False)
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=300)
-    plt.close(fig)
 
 
 # 1. Import the GDSFactory/PDK component, extrude it to 3D, pad the domain,
@@ -410,9 +225,10 @@ except ValueError as exc:
         f"{Path(__file__).name}."
     )
     raise SystemExit(0) from exc
-component_label, design, ports = prepared["component_label"], prepared["design"], prepared["ports"]
+design, ports = prepared["design"], prepared["ports"]
 world_origin = tuple(float(v) for v in prepared.get("world_origin", (0.0, 0.0, 0.0)))
 source_port, output_ports = "o1", ["o2", "o3", "o4"]
+port_names = (source_port, *output_ports)
 dx, dt = dxdt(WL0, n_max=N_CORE, dims=3, safety_factor=0.999, points_per_wavelength=PPW)
 grid = design.rasterize(resolution=dx)
 freqs = np.linspace(LIGHT_SPEED / WL_MAX, LIGHT_SPEED / WL_MIN, NUM_FREQS, dtype=np.float32)
@@ -473,18 +289,8 @@ monitor_planes["o2"] = (o2_region.start, o2_region.end)
 monitor_planes["o4"] = (o4_region.start, o4_region.end)
 print("Plane positions relative to imported ports (um):")
 print(f"  source: {SOURCE_PORT_OFFSET / µm:.2f}")
-for port_name in (source_port, *output_ports):
+for port_name in port_names:
     print(f"  {port_name}: {monitor_offsets[port_name] / µm:.2f}")
-print_plane_clearances(
-    source_plane=source_plane,
-    monitor_planes=monitor_planes,
-    world_origin=world_origin,
-    width=design.width,
-    height=design.height,
-    depth=design.depth,
-    pml_xy=PML_XY,
-    pml_z=PML_Z,
-)
 runtime_output_distance_um = 0.0
 for port_name in output_ports:
     c_out = line_center(monitor_planes[port_name])
@@ -521,14 +327,19 @@ monitor_cfg = dict(
     dft_record_every_step=True,
 )
 monitors = [
-    Monitor(
+    ModeMonitor(
         start=monitor_planes[p][0],
         end=monitor_planes[p][1],
         name=p,
+        direction=ports[p]["direction"],
+        polarization="te",
+        reference_monitor="o1_ref" if p == source_port else None,
         **monitor_cfg,
     )
-    for p in (source_port, *output_ports)
+    for p in port_names
 ]
+mode_monitors = {m.name: m for m in monitors}
+modal_ports = [mode_monitors[name] for name in port_names]
 reference_monitor = Monitor(
     start=source_plane[0],
     end=source_plane[1],
@@ -537,43 +348,6 @@ reference_monitor = Monitor(
 )
 all_monitors = [*monitors, reference_monitor]
 decay_monitors = monitors
-
-# Create one diagnostic modal basis plot per source/monitor location before
-# time stepping so monitor placement issues are visible immediately.
-save_mode_profile_plot(
-    label="source_o1",
-    mode_src=source,
-    grid_eps=np.asarray(grid.permittivity),
-    dx=dx,
-    out_path=OUT_DIR / "beamz_crossing_mode_source_o1.png",
-)
-mode_plot_paths = [OUT_DIR / "beamz_crossing_mode_source_o1.png"]
-for port_name in output_ports:
-    plane_center = line_center(monitor_planes[port_name])
-    span, monitor_z_span, _ = port_mode_geometry(ports[port_name])
-    mode_probe = ModeSource(
-        grid=grid,
-        center=plane_center,
-        width=span,
-        height=monitor_z_span,
-        wavelength=WL0,
-        pol="te",
-        signal=np.zeros((1,), dtype=np.float32),
-        direction=gdsf.outward_direction(ports[port_name]["direction"]),
-    )
-    mode_probe.initialize(grid.permittivity, dx)
-    out_path = OUT_DIR / f"beamz_crossing_mode_{port_name}.png"
-    save_mode_profile_plot(
-        label=f"monitor_{port_name}",
-        mode_src=mode_probe,
-        grid_eps=np.asarray(grid.permittivity),
-        dx=dx,
-        out_path=out_path,
-    )
-    mode_plot_paths.append(out_path)
-print("Saved mode profile plots:")
-for path in mode_plot_paths:
-    print(f"  - {path}")
 
 # 4. Feed the design, source, monitors, boundaries, and time array into the
 # simulation object.
@@ -639,36 +413,14 @@ print(
     f"wall={wall_s:.2f}s, step_rate={executed_steps / wall_s:.2f} steps/s, MCUPS={num_voxels * executed_steps / wall_s / 1e6:.2f}"
 )
 
-# 7. Define one modal port per monitor plane and extract the broadband S-matrix
-# directly from the in-simulation DFT accumulators.
-source_spec = PortSpec(
-    name="o1",
-    monitor_name="o1",
-    reference_monitor="o1_ref",
-    direction=gdsf.positive_axis_direction(source_direction),
-    polarization="te",
-    mode_index=0,
-    incident_wave=incoming_wave(source_direction),
-    scattered_wave=outgoing_wave(source_direction),
-)
-selected_specs = [source_spec]
-for port_name in output_ports:
-    direction = ports[port_name]["direction"]
-    selected_specs.append(
-        PortSpec(
-            name=port_name,
-            monitor_name=port_name,
-            direction=gdsf.positive_axis_direction(direction),
-            polarization="te",
-            mode_index=0,
-            incident_wave=incoming_wave(direction),
-            scattered_wave=outgoing_wave(direction),
-        )
-    )
+# 7. Extract the broadband S-matrix directly from the first-class modal
+# monitors. Each ModeMonitor carries the port direction and derives the modal
+# wave selectors used by the projection code.
+port_specs = {name: mode_monitors[name].to_port() for name in port_names}
 result = sim.get_S_matrix_modal_dft(
-    source_port="o1",
-    ports=selected_specs,
-    output_ports=["o1", *output_ports],
+    source_port=mode_monitors[source_port],
+    ports=modal_ports,
+    output_ports=modal_ports,
     frequencies=freqs,
     as_sax=False,
     return_diagnostics=True,
@@ -677,7 +429,12 @@ result = sim.get_S_matrix_modal_dft(
 i0 = int(np.argmin(np.abs(wl_um - WL0 / µm)))
 valid = np.asarray(result["diagnostics"]["valid_mask"], dtype=bool)
 source_waves = result["diagnostics"]["waves"]["o1"]
-source_dom = wave_dominance_db(source_waves["a_plus"], source_waves["a_minus"], source_spec.incident_wave, valid)
+source_dom = wave_dominance_db(
+    source_waves["a_plus"],
+    source_waves["a_minus"],
+    port_specs[source_port].incident_wave,
+    valid,
+)
 print(f"o1 wave dominance: {source_dom:.2f} dB")
 src_cond = np.asarray(
     result["diagnostics"]["condition_numbers"]["o1"]["monitor"], dtype=float
@@ -691,31 +448,30 @@ if src_cond.size and src_ref_cond.size:
         f"@ {wl_um[i0]:.4f}um: main={src_cond[i0]:.2e}, ref={src_ref_cond[i0]:.2e}"
     )
 
-selected_monitor_planes = {source_port: monitor_planes[source_port]}
-selected_s = {("o1", "o1"): np.asarray(result["s_matrix"][("o1", "o1")], dtype=np.complex128)}
+s_matrix = {
+    (port_name, source_port): np.asarray(
+        result["s_matrix"][(port_name, source_port)], dtype=np.complex128
+    )
+    for port_name in port_names
+}
 for port_name in output_ports:
     waves = result["diagnostics"]["waves"][port_name]
     dom = wave_dominance_db(
         waves["a_plus"],
         waves["a_minus"],
-        outgoing_wave(ports[port_name]["direction"]),
+        port_specs[port_name].scattered_wave,
         valid,
-    )
-    selected_monitor_planes[port_name] = monitor_planes[port_name]
-    selected_s[(port_name, "o1")] = np.asarray(
-        result["s_matrix"][(port_name, "o1")], dtype=np.complex128
     )
     print(
         f"{port_name} at imported port plane offset {monitor_offsets[port_name] / µm:.2f} um "
         f"(dominance={dom:.2f} dB)"
     )
-s_matrix = selected_s
-for port_name in ("o1", "o2", "o3", "o4"):
+for port_name in port_names:
     mag = abs(s_matrix[(port_name, "o1")][i0])
     print(f"S[{port_name},o1] @ {wl_um[i0]:.4f}um: {20.0 * np.log10(max(mag, 1e-12)):.2f} dB")
 
-# Overwrite the overview with the selected monitor planes so the saved figure
-# matches the final S-matrix extraction path.
+# Refresh the overview after the run so the latest generated artifact matches
+# the final S-matrix extraction path.
 plot_simulation_overview(
     OUT_DIR / "beamz_crossing_overview.png",
     np.asarray(grid.permittivity, dtype=float),
@@ -724,7 +480,7 @@ plot_simulation_overview(
     depth=design.depth,
     z_focus=overview_z_focus,
     source_plane=source_plane,
-    monitor_planes=selected_monitor_planes,
+    monitor_planes=monitor_planes,
     world_origin=world_origin,
 )
 print(f"Updated overview figure: {OUT_DIR / 'beamz_crossing_overview.png'}")
