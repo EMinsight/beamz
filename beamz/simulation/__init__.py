@@ -3,6 +3,7 @@ Simulation module for BEAMZ - Contains FDTD simulation and field operations.
 """
 
 from beamz.design.meshing import RegularGrid
+from beamz.devices.ports import Port
 from beamz.simulation.boundaries import PEC, PML, Boundary
 from beamz.simulation.compiled import (
     CompiledRunConfig,
@@ -28,6 +29,7 @@ from beamz.simulation.yee import (
 __all__ = [
     "RegularGrid",
     "Simulation",
+    "Port",
     "PortSpec",
     "MonitorResults",
     "SimulationResults",

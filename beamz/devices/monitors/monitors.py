@@ -12,6 +12,7 @@ from beamz.devices._placement import (
     snap_axis_aligned_line_region,
     snap_plane_region,
 )
+from beamz.devices.ports import Port, _normalize_direction, _normalize_polarization
 from beamz.shared_kernels import (
     full_tm_xy_component_to_centered_grid,
     is_full_tm_xy_lattice,
@@ -1832,3 +1833,63 @@ class Monitor:
                 dft_normalization=self.dft_normalization,
                 dft_length_unit=self.dft_length_unit,
             )
+
+
+class ModeMonitor(Monitor):
+    """A monitor carrying modal-port metadata.
+
+    `direction` is the direction of a wave entering the simulated device at this
+    port. Pass `ModeMonitor` objects directly to modal S-parameter extraction to
+    avoid manually selecting `plus`/`minus` incident and scattered waves.
+    """
+
+    def __init__(
+        self,
+        *args,
+        direction,
+        polarization,
+        mode_index=0,
+        reference_monitor=None,
+        projection_direction=None,
+        dft_components=None,
+        dft_enabled=None,
+        **kwargs,
+    ):
+        self.direction = _normalize_direction(direction)
+        self.polarization = _normalize_polarization(polarization)
+        self.mode_index = int(mode_index)
+        self.reference_monitor = reference_monitor
+        self.projection_direction = (
+            None
+            if projection_direction is None
+            else _normalize_direction(projection_direction)
+        )
+        if dft_enabled is None:
+            dft_enabled = kwargs.get("dft_frequencies") is not None
+        if dft_components is None:
+            # Keep the first-class monitor robust across 2D/3D and TE/TM. Modal
+            # extraction will only consume the tangential components it needs.
+            dft_components = ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
+        super().__init__(
+            *args,
+            dft_enabled=bool(dft_enabled),
+            dft_components=dft_components,
+            **kwargs,
+        )
+
+    def to_port(self, *, name=None) -> Port:
+        port_name = self.name if name is None else name
+        if not port_name:
+            raise ValueError("ModeMonitor must have a name to be used as a Port.")
+        return Port(
+            name=str(port_name),
+            monitor=self,
+            direction=self.direction,
+            polarization=self.polarization,
+            mode_index=self.mode_index,
+            reference_monitor=self.reference_monitor,
+            projection_direction=self.projection_direction,
+        )
+
+    def to_portspec_dict(self) -> dict:
+        return self.to_port().to_portspec_dict()

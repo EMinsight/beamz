@@ -5,7 +5,9 @@ import pytest
 
 from beamz import (
     LIGHT_SPEED,
+    ModeMonitor,
     Monitor,
+    Port,
     PortSpec,
     Simulation,
     calc_optimal_fdtd_params,
@@ -59,6 +61,125 @@ def test_get_S_matrix_proxy_raises_and_points_to_modal_api():
         sim.get_S_matrix(input_ports=["o1"], output_ports=["o1"], source_port="o1")
     with pytest.raises(RuntimeError, match="get_s_matrix_modal"):
         sim.get_s_matrix(input_ports=["o1"], output_ports=["o1"], source_port="o1")
+
+
+def test_port_abstraction_derives_wave_selectors_from_incoming_direction():
+    source = Port(name="o1", monitor="m1", direction="+x", polarization="tm")
+    output = Port(name="o2", monitor="m2", direction="-x", polarization="tm")
+
+    specs = Simulation._normalize_portspecs([source, output])
+
+    assert specs["o1"].monitor_name == "m1"
+    assert specs["o1"].direction == "+x"
+    assert specs["o1"].incident_wave == "plus"
+    assert specs["o1"].scattered_wave == "minus"
+    assert specs["o2"].monitor_name == "m2"
+    assert specs["o2"].direction == "+x"
+    assert specs["o2"].incident_wave == "minus"
+    assert specs["o2"].scattered_wave == "plus"
+
+
+def test_mode_monitor_is_first_class_port_metadata():
+    freqs = np.array([1.0], dtype=float)
+    mon = ModeMonitor(
+        start=(0.0, 0.0),
+        end=(0.0, 1.0),
+        name="o2",
+        direction="-x",
+        polarization="tm",
+        dft_frequencies=freqs,
+        record_fields=False,
+    )
+
+    assert mon.dft_enabled
+    assert set(mon.dft_components) == {"Ex", "Ey", "Ez", "Hx", "Hy", "Hz"}
+    spec = Simulation._normalize_portspecs([mon])["o2"]
+    assert spec.monitor_name == "o2"
+    assert spec.direction == "+x"
+    assert spec.incident_wave == "minus"
+    assert spec.scattered_wave == "plus"
+
+
+def test_get_s_matrix_modal_dft_accepts_mode_monitor_ports(monkeypatch):
+    freqs = np.array([1.0], dtype=float)
+    src = ModeMonitor(
+        start=(0.0, 0.0),
+        end=(0.0, 1.0),
+        name="o1",
+        direction="+x",
+        polarization="tm",
+        reference_monitor="o1_ref",
+        dft_frequencies=freqs,
+        record_fields=False,
+    )
+    out = ModeMonitor(
+        start=(1.0, 0.0),
+        end=(1.0, 1.0),
+        name="o2",
+        direction="-x",
+        polarization="tm",
+        dft_frequencies=freqs,
+        record_fields=False,
+    )
+
+    waves = {
+        "o1": {
+            "a_plus": np.array([0.05], dtype=np.complex128),
+            "a_minus": np.array([0.01], dtype=np.complex128),
+            "a_incident_plus": np.array([2.0], dtype=np.complex128),
+            "a_incident_minus": np.array([0.0], dtype=np.complex128),
+        },
+        "o2": {
+            "a_plus": np.array([1.4], dtype=np.complex128),
+            "a_minus": np.array([0.2], dtype=np.complex128),
+        },
+    }
+
+    def fake_extract(
+        self,
+        ports,
+        frequencies,
+        min_incident_db=-40.0,
+        return_power=True,
+    ):
+        del self, min_incident_db, return_power
+        np.testing.assert_allclose(frequencies, freqs)
+        by_name = {p.name: p for p in ports}
+        assert by_name["o1"].reference_monitor == "o1_ref"
+        assert by_name["o1"].incident_wave == "plus"
+        assert by_name["o1"].scattered_wave == "minus"
+        assert by_name["o2"].incident_wave == "minus"
+        assert by_name["o2"].scattered_wave == "plus"
+        return waves
+
+    sim = Simulation.__new__(Simulation)
+    sim.sources = []
+    sim.monitors = [src, Monitor(start=(0.0, 0.0), end=(0.0, 1.0), name="o1_ref"), out]
+    sim.is_3d = False
+    sim.plane_2d = "xy"
+    monkeypatch.setattr(Simulation, "extract_port_waves_dft", fake_extract)
+
+    result = sim.get_S_matrix_modal_dft(
+        source_port=src,
+        ports=[src, out],
+        output_ports=[out],
+        frequencies=freqs,
+        as_sax=False,
+        return_diagnostics=True,
+    )
+
+    np.testing.assert_allclose(
+        result["s_matrix"][("o2", "o1")],
+        np.array([0.7], dtype=np.complex128),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    assert result["diagnostics"]["source_reference_normalization"] == {
+        "enabled": True,
+        "monitor": "o1_ref",
+        "incident_wave": "plus",
+        "scattered_wave": "minus",
+    }
 
 
 def test_extract_port_waves_modal_coefficients_synthetic(monkeypatch):

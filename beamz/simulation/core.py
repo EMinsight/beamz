@@ -12,6 +12,7 @@ import numpy as np
 from beamz.const import LIGHT_SPEED, µm
 from beamz.design.core import Design
 from beamz.devices.monitors.monitors import Monitor
+from beamz.devices.ports import Port
 from beamz.devices.sources.compiler import (
     apply_compiled_source_specs,
     compile_source_specs,
@@ -1350,6 +1351,32 @@ class Simulation:
         return s_matrix
 
     @staticmethod
+    def _port_name(port):
+        if isinstance(port, str):
+            return port
+        if isinstance(port, (PortSpec, Port)):
+            return str(port.name)
+        if isinstance(port, Mapping):
+            return str(port["name"])
+        if hasattr(port, "to_port"):
+            return str(port.to_port().name)
+        name = getattr(port, "name", None)
+        if name:
+            return str(name)
+        raise ValueError(f"Cannot infer port name from {port!r}.")
+
+    @classmethod
+    def _normalize_output_port_names(cls, output_ports, port_map):
+        if output_ports is None:
+            names = list(port_map.keys())
+        else:
+            names = [cls._port_name(item) for item in output_ports]
+        missing = [name for name in names if name not in port_map]
+        if missing:
+            raise ValueError(f"output_ports contains unknown ports: {missing}")
+        return names
+
+    @staticmethod
     def _normalize_portspecs(ports):
         if isinstance(ports, dict):
             values = list(ports.values())
@@ -1362,17 +1389,25 @@ class Simulation:
         for item in values:
             if isinstance(item, PortSpec):
                 spec = item
+            elif isinstance(item, Port):
+                spec = PortSpec(**item.to_portspec_dict())
+            elif hasattr(item, "to_portspec_dict"):
+                spec = PortSpec(**item.to_portspec_dict())
             else:
-                spec = PortSpec(
-                    name=item["name"],
-                    monitor_name=item["monitor_name"],
-                    direction=item["direction"],
-                    polarization=item["polarization"],
-                    mode_index=int(item.get("mode_index", 0)),
-                    reference_monitor=item.get("reference_monitor"),
-                    incident_wave=str(item.get("incident_wave", "plus")).lower(),
-                    scattered_wave=str(item.get("scattered_wave", "minus")).lower(),
-                )
+                item = dict(item)
+                if "monitor" in item or "projection_direction" in item:
+                    spec = PortSpec(**Port.from_mapping(item).to_portspec_dict())
+                else:
+                    spec = PortSpec(
+                        name=item["name"],
+                        monitor_name=item["monitor_name"],
+                        direction=item["direction"],
+                        polarization=item["polarization"],
+                        mode_index=int(item.get("mode_index", 0)),
+                        reference_monitor=item.get("reference_monitor"),
+                        incident_wave=str(item.get("incident_wave", "plus")).lower(),
+                        scattered_wave=str(item.get("scattered_wave", "minus")).lower(),
+                    )
             if spec.direction not in {"+x", "-x", "+y", "-y", "+z", "-z"}:
                 raise ValueError(f"Unsupported port direction '{spec.direction}'.")
             pol = str(spec.polarization).lower()
@@ -3436,6 +3471,7 @@ class Simulation:
     ):
         """Broadband modal S extraction from in-simulation DFT monitor accumulators."""
         port_map = self._normalize_portspecs(ports)
+        source_port = self._port_name(source_port)
         if source_port not in port_map:
             raise ValueError(f"source_port '{source_port}' not found in ports.")
 
@@ -3456,13 +3492,7 @@ class Simulation:
             return_power=True,
         )
 
-        if output_ports is None:
-            output_ports = list(port_map.keys())
-        else:
-            output_ports = list(output_ports)
-        missing = [name for name in output_ports if name not in port_map]
-        if missing:
-            raise ValueError(f"output_ports contains unknown ports: {missing}")
+        output_ports = self._normalize_output_port_names(output_ports, port_map)
 
         source_spec = port_map[source_port]
         source_incident_selector, source_scattered_selector = (
@@ -3692,6 +3722,7 @@ class Simulation:
         passivity/loss checks, prefer get_S_matrix_modal_cw(...).
         """
         port_map = self._normalize_portspecs(ports)
+        source_port = self._port_name(source_port)
         if source_port not in port_map:
             raise ValueError(f"source_port '{source_port}' not found in ports.")
 
@@ -3717,13 +3748,7 @@ class Simulation:
             return_power=True,
         )
 
-        if output_ports is None:
-            output_ports = list(port_map.keys())
-        else:
-            output_ports = list(output_ports)
-        missing = [name for name in output_ports if name not in port_map]
-        if missing:
-            raise ValueError(f"output_ports contains unknown ports: {missing}")
+        output_ports = self._normalize_output_port_names(output_ports, port_map)
 
         source_spec = port_map[source_port]
         source_incident_selector, _source_scattered_selector = (
@@ -3818,6 +3843,7 @@ class Simulation:
             raise ValueError("frequency is required for get_S_matrix_modal_cw.")
 
         port_map = self._normalize_portspecs(ports)
+        source_port = self._port_name(source_port)
         if source_port not in port_map:
             raise ValueError(f"source_port '{source_port}' not found in ports.")
 
@@ -3831,13 +3857,7 @@ class Simulation:
             return_power=True,
         )
 
-        if output_ports is None:
-            output_ports = list(port_map.keys())
-        else:
-            output_ports = list(output_ports)
-        missing = [name for name in output_ports if name not in port_map]
-        if missing:
-            raise ValueError(f"output_ports contains unknown ports: {missing}")
+        output_ports = self._normalize_output_port_names(output_ports, port_map)
 
         source_spec = port_map[source_port]
         source_incident_selector, _source_scattered_selector = (
