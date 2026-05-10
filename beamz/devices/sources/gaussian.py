@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from beamz.const import EPS_0
+from beamz.devices.sources._materials import component_permittivity_at
 
 
 @dataclass
@@ -102,11 +103,7 @@ class GaussianSource:
             )
 
         signal_val = self._get_signal_value(t + 0.5 * dt, dt)
-        eps_region = (
-            fields.eps_tm_ez[self._grid_indices]
-            if getattr(fields, "plane_2d", None) == "xy" and not is_3d
-            else fields.permittivity[self._grid_indices]
-        )
+        eps_region = component_permittivity_at(fields, "Ez", self._grid_indices)
 
         term = self._spatial_profile_ez * signal_val
         injection = -term * dt / (EPS_0 * eps_region)

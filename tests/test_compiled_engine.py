@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from types import SimpleNamespace
 
 from beamz import (
     LIGHT_SPEED,
@@ -20,18 +21,17 @@ from beamz import (
 )
 from beamz.const import EPS_0
 from beamz.devices.monitors.compiler import CompiledMonitorSpec
-from beamz.devices.sources.compiler import _as_slab_spec, _sample_waveform
-from beamz.simulation.boundaries import (
-    cpml_curl_e_to_h_3d,
-    cpml_curl_h_to_e_3d,
-    initialize_full_pec_3d_state,
+from beamz.devices.sources.compiler import (
+    _as_slab_spec,
+    _compile_mode_source_3d,
+    _sample_waveform,
 )
+from beamz.simulation.boundaries import initialize_full_pec_3d_state
 from beamz.simulation.compiled import (
     CompiledRunConfig,
     CompiledSimulation,
     EngineState,
     MonitorState,
-    batch_slab_specs,
 )
 
 pytestmark = [pytest.mark.compiled, pytest.mark.component]
@@ -1192,6 +1192,57 @@ def test_compile_mode_source_builds_e_and_h_specs():
 
     sim.run_compiled(num_steps=20, progress=False)
     assert np.isfinite(np.asarray(sim.fields.Ez)).all()
+
+
+def test_compile_3d_mode_source_scales_e_terms_by_component_eps():
+    fields = SimpleNamespace(
+        permittivity=jnp.full((2, 2, 2), 99.0),
+        permeability=jnp.ones((2, 2, 2)),
+        Ex=jnp.zeros((2, 2, 1)),
+        Ey=jnp.zeros((2, 1, 2)),
+        Ez=jnp.zeros((1, 2, 2)),
+        Hx=jnp.zeros((1, 1, 2)),
+        Hy=jnp.zeros((1, 2, 1)),
+        Hz=jnp.zeros((2, 1, 1)),
+        eps_x=jnp.full((2, 2, 1), 2.0),
+        eps_y=jnp.full((2, 1, 2), 3.0),
+        eps_z=jnp.full((1, 2, 2), 4.0),
+    )
+    one = np.ones((1, 1, 1), dtype=np.float32)
+    source = SimpleNamespace(
+        _axis="z",
+        pol="te",
+        _direction_sign=1.0,
+        _Ex_profile=one,
+        _Ey_profile=one,
+        _Ez_profile=None,
+        _Hx_profile=one,
+        _Hy_profile=one,
+        _Hz_profile=None,
+        _Ex_indices=(slice(0, 1), slice(0, 1), slice(0, 1)),
+        _Ey_indices=(slice(0, 1), slice(0, 1), slice(0, 1)),
+        _Ez_indices=None,
+        _Hx_indices=(slice(0, 1), slice(0, 1), slice(0, 1)),
+        _Hy_indices=(slice(0, 1), slice(0, 1), slice(0, 1)),
+        _Hz_indices=None,
+    )
+
+    specs = _compile_mode_source_3d(
+        source,
+        fields,
+        dt=5.0,
+        resolution=7.0,
+        h_waveform=jnp.ones((1,), dtype=jnp.float32),
+        e_waveform=jnp.ones((1,), dtype=jnp.float32),
+    )
+    e_specs = {spec.component: spec for spec in specs if spec.timing == "e"}
+
+    assert np.asarray(e_specs["Ex"].coeff).item() == pytest.approx(
+        -5.0 / (EPS_0 * 2.0 * 7.0)
+    )
+    assert np.asarray(e_specs["Ey"].coeff).item() == pytest.approx(
+        5.0 / (EPS_0 * 3.0 * 7.0)
+    )
 
 
 def test_cache_reuse_across_equal_chunks(small_sim_params):

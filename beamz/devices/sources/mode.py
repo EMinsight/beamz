@@ -6,6 +6,10 @@ import numpy as np
 
 from beamz.const import EPS_0, LIGHT_SPEED, MU_0
 from beamz.devices._placement import snap_centered_extent, snap_mode_source_region
+from beamz.devices.sources._materials import (
+    component_permeability_at,
+    component_permittivity_at,
+)
 from beamz.devices.sources.solve import solve_modes
 
 logger = logging.getLogger(__name__)
@@ -1372,7 +1376,7 @@ def _inject_e_component(
     if j_term is None:
         logger.debug("Shape mismatch injecting %s, skipping", comp)
         return
-    eps = fields.permittivity[idx]
+    eps = component_permittivity_at(fields, comp, idx)
     setattr(
         fields,
         comp,
@@ -2542,10 +2546,11 @@ class ModeSource:
         """Inject magnetic current into H-fields for 2D (after H update)."""
         if self.pol == "tm":
             if self._h_indices is not None and self._my_profile is not None:
-                if self._h_component == "Hx":
-                    mu_at_source = getattr(fields, "mu_tm_hx", 1.0)[self._h_indices]
-                else:
-                    mu_at_source = getattr(fields, "mu_tm_hy", 1.0)[self._h_indices]
+                mu_at_source = component_permeability_at(
+                    fields,
+                    self._h_component,
+                    self._h_indices,
+                )
                 my_term = self._my_profile * signal_h / resolution
                 h_injection = -my_term * dt / (MU_0 * mu_at_source)
                 if self._h_component == "Hx":
@@ -2555,8 +2560,7 @@ class ModeSource:
                 fields.apply_tm_xy_pec_masks()
         else:  # TE
             if self._hz_indices is not None and self._mz_profile is not None:
-                mu_val = getattr(fields, "permeability", None)
-                mu_at_source = mu_val[self._hz_indices] if mu_val is not None else 1.0
+                mu_at_source = component_permeability_at(fields, "Hz", self._hz_indices)
                 mz_term = self._mz_profile * signal_h / resolution
                 hz_injection = +mz_term * dt / (MU_0 * mu_at_source)
                 fields.Hz = fields.Hz.at[self._hz_indices].add(hz_injection)
@@ -2565,9 +2569,11 @@ class ModeSource:
         """Inject electric current into E-fields for 2D (after E update)."""
         if self.pol == "tm":
             if self._ez_indices is not None and self._jz_profile is not None:
-                eps_at_source = getattr(fields, "eps_tm_ez", fields.permittivity)[
-                    self._ez_indices
-                ]
+                eps_at_source = component_permittivity_at(
+                    fields,
+                    "Ez",
+                    self._ez_indices,
+                )
                 jz_term = self._jz_profile * signal_e / resolution
                 ez_injection = +jz_term * dt / (EPS_0 * eps_at_source)
                 fields.Ez = fields.Ez.at[self._ez_indices].add(ez_injection)
@@ -2578,7 +2584,11 @@ class ModeSource:
                     self._jx_profile if self._e_component == "Ex" else self._jy_profile
                 )
                 if j_profile is not None:
-                    eps_at_source = fields.permittivity[self._e_indices]
+                    eps_at_source = component_permittivity_at(
+                        fields,
+                        self._e_component,
+                        self._e_indices,
+                    )
                     j_term = j_profile * signal_e / resolution
                     e_injection = -j_term * dt / (EPS_0 * eps_at_source)
 
