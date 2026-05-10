@@ -14,7 +14,7 @@ from beamz.devices._placement import (
 from beamz.shared_kernels import (
     full_tm_xy_component_to_centered_grid,
     is_full_tm_xy_lattice,
-    monitor_dft_sample_scale,
+    meep_dft_sample_scale,
     monitor_dft_should_accumulate,
     monitor_dft_window_weight,
     monitor_records_on_step,
@@ -918,16 +918,17 @@ class Monitor:
         w = float(self._dft_weight(t))
         if w <= 0.0:
             return 0.0
+        if self.dft_normalization != "meep":
+            return w
         base_dt = self._dft_meep_base_dt(t, step)
-        if self.dft_normalization == "meep" and (base_dt is None or base_dt <= 0.0):
+        if base_dt is None or base_dt <= 0.0:
             return 0.0
         return float(
-            monitor_dft_sample_scale(
+            meep_dft_sample_scale(
                 w,
-                normalization_is_meep=self.dft_normalization == "meep",
-                base_dt=1.0 if base_dt is None else float(base_dt),
-                record_interval=float(self.dft_record_interval),
-                length_unit=float(self.dft_length_unit),
+                float(base_dt),
+                float(self.dft_record_interval),
+                float(self.dft_length_unit),
             )
         )
 
