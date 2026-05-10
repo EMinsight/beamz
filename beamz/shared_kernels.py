@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -223,8 +224,8 @@ def poynting_magnitude_3d(ex, ey, ez, hx, hy, hz):
     return (sx * sx + sy * sy + sz * sz) ** 0.5
 
 
-def meep_dft_sample_scale(weight, base_dt, record_interval, length_unit):
-    """Return Meep-style DFT normalization scale for one sample weight."""
+def physical_dft_sample_scale(weight, base_dt, record_interval, length_unit):
+    """Return the physical-unit DFT accumulation scale for one sample."""
     return weight * (
         base_dt
         * record_interval
@@ -312,24 +313,32 @@ def monitor_dft_window_weight(t, t_start, t_end, use_hann):
 def monitor_dft_sample_scale(
     weight,
     *,
-    normalization_is_meep,
+    normalization_code,
     base_dt,
     record_interval,
     length_unit,
 ):
-    """Return the scaled DFT sample multiplier for native or Meep normalization."""
-    weight = jnp.asarray(weight, dtype=jnp.float32)
-    normalization_is_meep = jnp.asarray(normalization_is_meep)
-    zero = jnp.asarray(0.0, dtype=jnp.float32)
-    native = jnp.where(weight > zero, weight, zero)
-    meep = jnp.where(
-        weight > zero,
-        meep_dft_sample_scale(
+    """Return the scaled DFT sample multiplier for native or physical mode."""
+    if isinstance(weight, (jax.Array, jax.core.Tracer)):
+        zero = jnp.asarray(0.0, dtype=jnp.result_type(weight, base_dt, record_interval))
+        native = jnp.where(weight > zero, weight, zero)
+        physical = jnp.where(
+            weight > zero,
+            physical_dft_sample_scale(
+                native,
+                base_dt,
+                record_interval,
+                length_unit,
+            ),
+            zero,
+        )
+        return jnp.where(jnp.asarray(normalization_code) == 1, physical, native)
+    native = weight if float(weight) > 0.0 else 0.0
+    if int(normalization_code) == 1:
+        return physical_dft_sample_scale(
             native,
-            jnp.asarray(base_dt, dtype=jnp.float32),
-            jnp.asarray(record_interval, dtype=jnp.float32),
-            jnp.asarray(length_unit, dtype=jnp.float32),
-        ),
-        zero,
-    )
-    return jnp.where(normalization_is_meep, meep, native)
+            base_dt,
+            record_interval,
+            length_unit,
+        )
+    return native

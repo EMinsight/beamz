@@ -14,10 +14,10 @@ from beamz.devices._placement import (
 from beamz.shared_kernels import (
     full_tm_xy_component_to_centered_grid,
     is_full_tm_xy_lattice,
-    meep_dft_sample_scale,
     monitor_dft_should_accumulate,
     monitor_dft_window_weight,
     monitor_records_on_step,
+    monitor_dft_sample_scale,
     poynting_magnitude_2d,
     poynting_magnitude_3d,
 )
@@ -195,9 +195,9 @@ class Monitor:
                 f"dft_window must be one of ['rect', 'hann'], got {dft_window!r}"
             )
         self.dft_normalization = str(dft_normalization).lower()
-        if self.dft_normalization not in {"native", "meep"}:
+        if self.dft_normalization not in {"native", "physical"}:
             raise ValueError(
-                "dft_normalization must be one of ['native', 'meep'], "
+                "dft_normalization must be one of ['native', 'physical'], "
                 f"got {dft_normalization!r}"
             )
         self.dft_length_unit = float(dft_length_unit)
@@ -903,7 +903,7 @@ class Monitor:
         self._dft_last_t = t_now
         return self._dft_phase
 
-    def _dft_meep_base_dt(self, t, step):
+    def _dft_physical_base_dt(self, t, step):
         base_dt = self._dft_base_dt
         if base_dt is not None and float(base_dt) > 0.0:
             return float(base_dt)
@@ -918,17 +918,16 @@ class Monitor:
         w = float(self._dft_weight(t))
         if w <= 0.0:
             return 0.0
-        if self.dft_normalization != "meep":
-            return w
-        base_dt = self._dft_meep_base_dt(t, step)
-        if base_dt is None or base_dt <= 0.0:
+        base_dt = self._dft_physical_base_dt(t, step)
+        if self.dft_normalization == "physical" and (base_dt is None or base_dt <= 0.0):
             return 0.0
         return float(
-            meep_dft_sample_scale(
+            monitor_dft_sample_scale(
                 w,
-                float(base_dt),
-                float(self.dft_record_interval),
-                float(self.dft_length_unit),
+                normalization_code=1 if self.dft_normalization == "physical" else 0,
+                base_dt=1.0 if base_dt is None else float(base_dt),
+                record_interval=float(self.dft_record_interval),
+                length_unit=float(self.dft_length_unit),
             )
         )
 
@@ -995,7 +994,7 @@ class Monitor:
                 f"Monitor '{self.name}' has no configured DFT frequencies."
             )
         accum = self._reshape_dft_component(self._dft_accum[comp], nfreq, comp)
-        if self.dft_normalization == "meep":
+        if self.dft_normalization == "physical":
             return accum
         scale = np.maximum(
             np.asarray(self._dft_weight_sum, dtype=float), 1e-18
@@ -1020,7 +1019,7 @@ class Monitor:
             x_targets, y_targets = line_coords
 
             def sample_full_tm(component, arr):
-                if self.dft_normalization == "meep":
+                if self.dft_normalization == "physical":
                     centered = np.asarray(
                         full_tm_xy_component_to_centered_grid(component, arr),
                         dtype=np.complex128,

@@ -794,7 +794,7 @@ class CompiledSimulation:
 
         if (
             spec.dft_normalization_code == 1
-            and spec.dft_meep_centered_tm_xy
+            and spec.dft_centered_tm_xy_sampling
             and tm_ez is not None
             and tm_hx is not None
             and tm_hy is not None
@@ -999,7 +999,7 @@ class CompiledSimulation:
                 comp_mask = bm.dft_component_mask[i][:, None, None]
                 sample_scale = monitor_dft_sample_scale(
                     w,
-                    normalization_is_meep=bm.dft_normalization_code[i] == 1,
+                    normalization_code=bm.dft_normalization_code[i],
                     base_dt=dt_scalar,
                     record_interval=bm.dft_record_intervals[i],
                     length_unit=bm.dft_length_unit[i],
@@ -1142,7 +1142,7 @@ class CompiledSimulation:
                 sample_scale = jnp.asarray(
                     monitor_dft_sample_scale(
                         w,
-                        normalization_is_meep=mon.dft_normalization_code == 1,
+                        normalization_code=mon.dft_normalization_code,
                         base_dt=dt_scalar,
                         record_interval=mon.dft_record_interval,
                         length_unit=mon.dft_length_unit,
