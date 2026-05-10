@@ -10,16 +10,11 @@ import numpy as np
 import pytest
 
 from beamz import (
-    EPS_0,
     LIGHT_SPEED,
     PML,
-    Design,
     GaussianSource,
-    Material,
     Simulation,
-    calc_optimal_fdtd_params,
     ramped_cosine,
-    um,
 )
 from beamz.simulation.boundaries import (
     _cpml_ab_from_profiles,
@@ -27,9 +22,9 @@ from beamz.simulation.boundaries import (
     cpml_curl_h_to_e_3d,
     tm_xy_curl_h_to_e_2d,
 )
+from beamz.shared_kernels import build_tm_xy_cpml_terms
 
-# Import utilities
-from tests.utils import TEST_WAVELENGTH, compute_field_energy
+from tests.utils import compute_field_energy
 
 
 @pytest.mark.simulation
@@ -160,6 +155,14 @@ class TestPMLAbsorption:
         assert np.asarray(tm_xy["Ez_y_kappa"], dtype=np.float64)[
             cy, cx
         ] == pytest.approx(1.0)
+
+        terms = build_tm_xy_cpml_terms(tm_xy, ez_shape=sim.fields.Ez.shape)
+        np.testing.assert_allclose(
+            np.asarray(terms.kappa_h_direct_terms),
+            np.asarray(terms.kappa_h_aux_terms),
+            rtol=0.0,
+            atol=0.0,
+        )
 
     def test_cpml_full_tm_profiles_follow_discrete_yee_staggering(self):
         pml = PML(thickness=1.0, formulation="cpml", sigma_max=10.0, alpha_max=1.0)

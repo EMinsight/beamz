@@ -129,9 +129,7 @@ def build_tm_xy_cpml_terms(
         sigma_h_terms=embed_tm_xy_h_terms(sigma_hx, sigma_hy, ez_shape),
         kappa_h_aux_terms=embed_tm_xy_h_terms(kappa_hx, kappa_hy, ez_shape),
         alpha_h_terms=embed_tm_xy_h_terms(alpha_hx, alpha_hy, ez_shape),
-        kappa_h_direct_terms=embed_tm_xy_h_terms(
-            kappa_ez_y[:-1, :], kappa_ez_x[:, :-1], ez_shape
-        ),
+        kappa_h_direct_terms=embed_tm_xy_h_terms(kappa_hx, kappa_hy, ez_shape),
         sigma_e_terms=jnp.stack((sigma_ez_x, sigma_ez_y), axis=0),
         kappa_e_terms=jnp.stack((kappa_ez_x, kappa_ez_y), axis=0),
         alpha_e_terms=jnp.stack((alpha_ez_x, alpha_ez_y), axis=0),
