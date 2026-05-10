@@ -1601,6 +1601,11 @@ class Simulation:
 
     def _modal_projection_plane_delay_s(self, spec, frequency, mode_neff):
         """Return the E-to-H modal-plane delay used by S-parameter projection."""
+        if getattr(self, "is_3d", False):
+            # 3D monitors interpolate every recorded component onto the same
+            # physical analysis plane. There is no remaining normal-direction
+            # Yee half-cell offset to compensate during modal extraction.
+            return 0.0
         freq = float(frequency)
         neff = float(np.real(np.asarray(mode_neff)))
         if (not np.isfinite(freq)) or freq <= 0.0:

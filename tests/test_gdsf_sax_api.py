@@ -778,6 +778,18 @@ def test_modal_projection_plane_delay_matches_2d_yee_half_cell_delay():
     assert delay_back == pytest.approx(-delay)
 
 
+def test_modal_projection_plane_delay_is_zero_for_3d_colocated_monitors():
+    sim = Simulation.__new__(Simulation)
+    sim.is_3d = True
+    sim.resolution = 80e-9
+    sim.dt = 0.1e-15
+    spec = PortSpec(name="o1", monitor_name="m", direction="+y", polarization="te")
+
+    delay = sim._modal_projection_plane_delay_s(spec, 193.4e12, 2.4)
+
+    assert delay == pytest.approx(0.0)
+
+
 def test_sample_monitor_component_dft_applies_yee_phase_to_h_only():
     dt = 2.0e-15
     freqs = np.array([1.0e12, 3.0e12], dtype=float)
