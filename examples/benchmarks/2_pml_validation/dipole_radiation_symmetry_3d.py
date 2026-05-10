@@ -34,8 +34,8 @@ class Config:
     probe_radius_wl: float = 1.0
     pulse_sigma_periods: float = 1.5
     pulse_center_sigmas: float = 4.0
-    cpml_kappa_max: float = 3.0
-    cpml_alpha_max: float | None = 0.0
+    cpml_kappa_max: float = 2.0
+    cpml_alpha_max: float | None = None
     formulations: tuple[str, ...] = ("sigma", "cpml")
 
     @property

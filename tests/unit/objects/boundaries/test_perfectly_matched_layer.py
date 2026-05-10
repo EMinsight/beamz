@@ -60,7 +60,7 @@ def test_pml_parameter_defaults():
     assert pml.sigma_max is None
     assert pml.m == 3
     assert pml.formulation == "sponge"
-    assert pml.kappa_max == pytest.approx(3.0)
+    assert pml.kappa_max == pytest.approx(2.0)
     assert pml.alpha_max is None
     assert pml.target_reflection == pytest.approx(1e-6)
 

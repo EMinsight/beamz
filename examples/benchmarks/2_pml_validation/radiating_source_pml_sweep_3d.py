@@ -32,8 +32,8 @@ class SweepConfig:
     pulse_sigma_periods: float = 1.5
     pulse_center_sigmas: float = 4.0
     reference_window_fraction: float = 0.15
-    cpml_kappa_max: float = 3.0
-    cpml_alpha_max: float | None = 0.0
+    cpml_kappa_max: float = 2.0
+    cpml_alpha_max: float | None = None
     pml_formulations: tuple[str, ...] = ("sigma", "cpml")
     pml_thicknesses_wl: tuple[float, ...] = (0.5, 1.0, 1.5)
 

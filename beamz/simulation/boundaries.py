@@ -69,6 +69,7 @@ class PML(Boundary):
     """
 
     _DEFAULT_CPML_ALPHA_NORMALIZED = 0.225
+    _DEFAULT_CPML_SIGMA_SCALE = 0.375
 
     def __init__(
         self,
@@ -77,7 +78,7 @@ class PML(Boundary):
         sigma_max=None,
         m=3,
         formulation="sponge",
-        kappa_max=3.0,
+        kappa_max=2.0,
         alpha_max=None,
         target_reflection=1e-6,
     ):
@@ -115,9 +116,10 @@ class PML(Boundary):
                 / (2.0 * eta * thickness)
             )
             if self.formulation == "cpml":
-                # Empirically, a slightly softer sigma ramp improves our 3D CPML
-                # benchmarks with the native CPML curl correction.
-                self.sigma_max *= 0.75
+                # The CPML curl correction plus collocated material loss is
+                # sensitive to over-damping at the absorber entrance. A softer
+                # ramp reduces impedance mismatch on BeamZ's native Yee grid.
+                self.sigma_max *= self._DEFAULT_CPML_SIGMA_SCALE
         if self.formulation == "cpml" and self.alpha_max is None:
             # Convert a conservative normalized CFS alpha into the solver's
             # conductivity-like units so the default CPML keeps a nonzero

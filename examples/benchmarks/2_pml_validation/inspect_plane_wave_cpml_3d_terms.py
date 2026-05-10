@@ -11,13 +11,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-import jax.numpy as jnp
 
 from beamz import EPS_0, LIGHT_SPEED, Design, Material, PML, Simulation
 from beamz.devices.sources.compiler import _as_slab_spec, _sample_waveform
@@ -84,8 +82,8 @@ class InspectConfig:
     courant_safety: float = 0.95
     pulse_sigma_periods: float = 1.5
     pulse_center_sigmas: float = 4.0
-    cpml_kappa_max: float = 3.0
-    cpml_alpha_max: float | None = 0.0
+    cpml_kappa_max: float = 2.0
+    cpml_alpha_max: float | None = None
 
     @property
     def wavelength_m(self) -> float:
