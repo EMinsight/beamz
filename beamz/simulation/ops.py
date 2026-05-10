@@ -5,35 +5,26 @@ import jax.numpy as jnp
 
 from beamz.const import EPS_0, MU_0
 from beamz.simulation.yee import (
-    sample_voxel_grid_at_compact_component_2d,
     sample_voxel_grid_at_component_2d,
     sample_voxel_grid_at_component_3d,
+    sample_voxel_grid_at_tm_xy_full_component_2d,
 )
+
+
+def _raise_xy_tm_native_helper_error(function_name: str) -> None:
+    raise ValueError(
+        f"{function_name} does not handle plane='xy'. Use the native TMz helpers in "
+        "beamz.simulation.boundaries "
+        "(tm_xy_curl_e_to_h_2d/full_pec_curl_e_to_h_2d_xy and "
+        "tm_xy_curl_h_to_e_2d/full_pec_curl_h_to_e_2d_xy)."
+    )
 
 
 def curl_e_to_h_2d(e_fields, resolution, plane="xy"):
     """Compute curl of E-field for H update in 2D on staggered Yee grid for arbitrary plane."""
     # Unpack E-fields based on plane
     if plane == "xy":
-        # E = (Ex, Ey, Ez) with ∂/∂z = 0
-        Ex, Ey, Ez = e_fields
-        # Field shapes: Ez(ny, nx), Ex(ny, nx-1), Ey(ny-1, nx)
-        # H-field shapes: Hx(ny, nx-1), Hy(ny-1, nx), Hz(ny-1, nx-1)
-
-        # Match existing convention for backward compatibility:
-        # Hx(ny, nx-1) from diff(Ez, axis=1) -> ∂Ez/∂x gives (ny, nx-1) ✓
-        # Hy(ny-1, nx) from -diff(Ez, axis=0) -> -∂Ez/∂y gives (ny-1, nx) ✓
-        curl_ex = jnp.diff(Ez, axis=1) / resolution  # (ny, nx-1) for Hx
-        curl_ey = -jnp.diff(Ez, axis=0) / resolution  # (ny-1, nx) for Hy
-
-        # Hz(ny-1, nx-1) from ∂Ey/∂x - ∂Ex/∂y
-        # Ey(ny-1, nx) -> diff(axis=1) gives (ny-1, nx-1)
-        # Ex(ny, nx-1) -> diff(axis=0) gives (ny-1, nx-1)
-        term1_z = jnp.diff(Ey, axis=1) / resolution  # (ny-1, nx-1)
-        term2_z = jnp.diff(Ex, axis=0) / resolution  # (ny-1, nx-1)
-        curl_ez = term1_z - term2_z
-
-        return curl_ex, curl_ey, curl_ez
+        _raise_xy_tm_native_helper_error("curl_e_to_h_2d")
 
     elif plane == "yz":
         # E = (Ex, Ey, Ez) with ∂/∂x = 0
@@ -85,37 +76,8 @@ def curl_h_to_e_2d(h_fields, resolution, e_shapes, plane="xy"):
     # e_shapes is tuple of shapes for (Ex, Ey, Ez) to handle boundary padding
 
     if plane == "xy":
-        # ∂/∂z = 0
-        Hx, Hy, Hz = h_fields
-        # Field shapes: Hx(ny, nx-1), Hy(ny-1, nx), Hz(ny-1, nx-1)
-        # E-field shapes: Ex(ny, nx-1), Ey(ny-1, nx), Ez(ny, nx)
-
-        # Ex update: (∇×H)_x = ∂Hz/∂y - ∂Hy/∂z(0) = ∂Hz/∂y
-        # Ex(ny, nx-1), Hz(ny-1, nx-1)
-        # ∂Hz/∂y: Hz is (ny-1, nx-1), diff(axis=0) gives (ny-2, nx-1)
-        curl_ex = jnp.zeros(e_shapes[0])
-        dHz_dy = (Hz[1:, :] - Hz[:-1, :]) / resolution  # (ny-2, nx-1)
-        # Use .at[].set() for functional update (JAX immutable arrays)
-        curl_ex = curl_ex.at[1:-1, :].set(dHz_dy)
-
-        # Ey update: (∇×H)_y = ∂Hx/∂z(0) - ∂Hz/∂x = -∂Hz/∂x
-        # Ey(ny-1, nx), Hz(ny-1, nx-1)
-        # -∂Hz/∂x: -diff(Hz, axis=1) gives (ny-1, nx-2)
-        # Ey update region is [:, 1:-1] -> (ny-1, nx-2)
-        curl_ey = jnp.zeros(e_shapes[1])
-        dHz_dx = (Hz[:, 1:] - Hz[:, :-1]) / resolution  # (ny-1, nx-2)
-        curl_ey = curl_ey.at[:, 1:-1].set(-dHz_dx)
-
-        # Ez update: (∇×H)_z = ∂Hy/∂x - ∂Hx/∂y
-        # Ez(ny, nx), Hx(ny, nx-1), Hy(ny-1, nx)
-        # Match original implementation exactly for backward compatibility
-        curl_ez = jnp.zeros(e_shapes[2])
-        # Original code computed these derivatives at interior Ez points
-        dHy_dx = (Hy[1:, 1:-1] - Hy[:-1, 1:-1]) / resolution  # Shape: (ny-2, nx-2)
-        dHx_dy = (Hx[1:-1, 1:] - Hx[1:-1, :-1]) / resolution  # Shape: (ny-2, nx-2)
-        curl_ez = curl_ez.at[1:-1, 1:-1].set(dHy_dx - dHx_dy)
-
-        return curl_ex, curl_ey, curl_ez
+        del h_fields, resolution, e_shapes
+        _raise_xy_tm_native_helper_error("curl_h_to_e_2d")
 
     elif plane == "yz":
         # ∂/∂x = 0
@@ -184,7 +146,7 @@ def material_slice_for_e_2d_component(permittivity, conductivity, component, pla
         # Grid (ny, nx). Component staggering:
         # Ex (ny, nx-1) - staggered in x
         # Ey (ny-1, nx) - staggered in y
-        # Ez (ny, nx) - centered
+        # Ez (ny+1, nx+1) - native TMz node lattice
 
         if component == "x":
             # Ex (ny, nx-1). Update region: Ex[1:-1, :] -> (ny-2, nx-1)
@@ -199,9 +161,9 @@ def material_slice_for_e_2d_component(permittivity, conductivity, component, pla
             # Region [:, 1:-1] is used for field/curl, material is pre-sliced to match
             region = (s_all, s_mid)  # [:, 1:-1] for field update
         elif component == "z":
-            # Ez (ny, nx). Update region: Ez[1:-1, 1:-1] -> (ny-2, nx-2)
-            # Material needs: permittivity[1:-1, 1:-1] -> (ny-2, nx-2)
-            region = (s_mid, s_mid)
+            # Native TMz Ez spans the full node lattice and is updated everywhere;
+            # PEC masking is applied separately to constrained boundary nodes.
+            region = (s_all, s_all)
 
     elif plane == "yz":
         # Grid (nz, ny)
@@ -232,7 +194,7 @@ def material_slice_for_e_2d_component(permittivity, conductivity, component, pla
         "xy": {
             "Ex": (permittivity.shape[0], permittivity.shape[1] - 1),
             "Ey": (permittivity.shape[0] - 1, permittivity.shape[1]),
-            "Ez": (permittivity.shape[0], permittivity.shape[1]),
+            "Ez": (permittivity.shape[0] + 1, permittivity.shape[1] + 1),
         },
         "yz": {
             "Ex": (permittivity.shape[0], permittivity.shape[1]),
@@ -246,20 +208,24 @@ def material_slice_for_e_2d_component(permittivity, conductivity, component, pla
         },
     }[plane][field_component]
 
-    eps = sample_voxel_grid_at_component_2d(
-        permittivity,
-        field_component,
-        plane,
-        stored_shape=field_shape,
-        region=region,
-    )
-    sig = sample_voxel_grid_at_component_2d(
-        conductivity,
-        field_component,
-        plane,
-        stored_shape=field_shape,
-        region=region,
-    )
+    if plane == "xy" and field_component == "Ez":
+        eps = sample_voxel_grid_at_tm_xy_full_component_2d(permittivity, "Ez")[region]
+        sig = sample_voxel_grid_at_tm_xy_full_component_2d(conductivity, "Ez")[region]
+    else:
+        eps = sample_voxel_grid_at_component_2d(
+            permittivity,
+            field_component,
+            plane,
+            stored_shape=field_shape,
+            region=region,
+        )
+        sig = sample_voxel_grid_at_component_2d(
+            conductivity,
+            field_component,
+            plane,
+            stored_shape=field_shape,
+            region=region,
+        )
 
     return eps, sig, region
 
@@ -274,14 +240,16 @@ def magnetic_conductivity_terms_2d_full(
     if plane not in {"xy", "yz", "xz"}:
         raise ValueError(f"Invalid plane: {plane}")
 
-    sample_2d = (
-        sample_voxel_grid_at_compact_component_2d
-        if plane == "xy"
-        else sample_voxel_grid_at_component_2d
-    )
-
-    sigma_m_hx = sample_2d(base_term, "Hx", plane, stored_shape=hx_shape)
-    sigma_m_hy = sample_2d(base_term, "Hy", plane, stored_shape=hy_shape)
+    if plane == "xy":
+        sigma_m_hx = sample_voxel_grid_at_tm_xy_full_component_2d(base_term, "Hx")
+        sigma_m_hy = sample_voxel_grid_at_tm_xy_full_component_2d(base_term, "Hy")
+    else:
+        sigma_m_hx = sample_voxel_grid_at_component_2d(
+            base_term, "Hx", plane, stored_shape=hx_shape
+        )
+        sigma_m_hy = sample_voxel_grid_at_component_2d(
+            base_term, "Hy", plane, stored_shape=hy_shape
+        )
     sigma_m_hz = sample_voxel_grid_at_component_2d(
         base_term,
         "Hz",

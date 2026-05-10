@@ -263,10 +263,19 @@ def _compile_gaussian_source(
     # Initialize spatial profile once.
     is_3d = len(device.position) >= 3 if hasattr(device.position, "__len__") else False
     if device._spatial_profile_ez is None:
-        device._init_spatial_profile(fields.Ez.shape, resolution, is_3d)
+        device._init_spatial_profile(
+            fields.Ez.shape,
+            resolution,
+            is_3d,
+            plane_2d=getattr(fields, "plane_2d", None),
+        )
 
     idx = device._grid_indices
-    eps_region = np.asarray(fields.permittivity[idx])
+    eps_region = np.asarray(
+        fields.eps_tm_ez[idx]
+        if getattr(fields, "plane_2d", None) == "xy" and not is_3d
+        else fields.permittivity[idx]
+    )
     profile = np.asarray(device._spatial_profile_ez)
 
     coeff = -profile * dt / (EPS_0 * eps_region)

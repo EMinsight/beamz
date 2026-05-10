@@ -4,8 +4,6 @@ import numpy as np
 import pytest
 
 from beamz.simulation.yee import (
-    compact_component_coordinates_2d_um,
-    compact_component_shape_2d,
     component_coordinates_2d_um,
     component_coordinates_3d_um,
     component_shape_2d,
@@ -54,20 +52,12 @@ def test_component_coordinates_2d_follow_standard_xy_offsets():
     grid_shape = (24, 24)
     dx_um = 0.125
 
-    assert component_shape_2d("Ez", grid_shape, "xy") == (24, 24)
-    assert compact_component_shape_2d("Hx", grid_shape, "xy") == (24, 23)
-    assert compact_component_shape_2d("Hy", grid_shape, "xy") == (23, 24)
+    assert component_shape_2d("Ez", grid_shape, "xy") == (25, 25)
 
     ez = component_coordinates_2d_um("Ez", grid_shape, dx_um, "xy")
-    hx = compact_component_coordinates_2d_um("Hx", grid_shape, dx_um, "xy")
-    hy = compact_component_coordinates_2d_um("Hy", grid_shape, dx_um, "xy")
 
-    np.testing.assert_allclose(ez["y"][0], 0.0625)
-    np.testing.assert_allclose(ez["x"][0], 0.0625)
-    np.testing.assert_allclose(hx["y"][0], 0.0625)
-    np.testing.assert_allclose(hx["x"][0], 0.0)
-    np.testing.assert_allclose(hy["y"][0], 0.0)
-    np.testing.assert_allclose(hy["x"][0], 0.0625)
+    np.testing.assert_allclose(ez["y"][0], 0.0)
+    np.testing.assert_allclose(ez["x"][0], 0.0)
 
 
 def test_tm_xy_full_state_coordinates_follow_physical_tmz_offsets():
@@ -90,8 +80,8 @@ def test_tm_xy_full_state_coordinates_follow_physical_tmz_offsets():
     np.testing.assert_allclose(hy["x"][0], 0.0625)
 
 
-def test_xy_generic_h_coordinates_are_rejected_to_force_explicit_choice():
-    with pytest.raises(ValueError):
-        component_shape_2d("Hx", (24, 24), "xy")
-    with pytest.raises(ValueError):
-        component_coordinates_2d_um("Hy", (24, 24), 0.125, "xy")
+def test_xy_generic_h_coordinates_follow_native_tmz_offsets():
+    assert component_shape_2d("Hx", (24, 24), "xy") == (24, 25)
+    hy = component_coordinates_2d_um("Hy", (24, 24), 0.125, "xy")
+    np.testing.assert_allclose(hy["y"][0], 0.0)
+    np.testing.assert_allclose(hy["x"][0], 0.0625)

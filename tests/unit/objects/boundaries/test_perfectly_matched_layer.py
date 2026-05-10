@@ -129,10 +129,10 @@ def test_profile_shapes_match_2d_field_grid():
         assert payload[key].shape == fields.permittivity.shape
 
     tm_xy = payload["tm_xy_cpml"]
-    assert tm_xy["Ez_x_sigma"].shape == (fields.Ez.shape[0] + 1, fields.Ez.shape[1] + 1)
-    assert tm_xy["Ez_y_sigma"].shape == (fields.Ez.shape[0] + 1, fields.Ez.shape[1] + 1)
-    assert tm_xy["Hx_y_sigma"].shape == (fields.Ez.shape[0], fields.Ez.shape[1] + 1)
-    assert tm_xy["Hy_x_sigma"].shape == (fields.Ez.shape[0] + 1, fields.Ez.shape[1])
+    assert tm_xy["Ez_x_sigma"].shape == fields.Ez.shape
+    assert tm_xy["Ez_y_sigma"].shape == fields.Ez.shape
+    assert tm_xy["Hx_y_sigma"].shape == fields.Hx.shape
+    assert tm_xy["Hy_x_sigma"].shape == fields.Hy.shape
 
 
 def test_profile_shapes_match_3d_field_grid():

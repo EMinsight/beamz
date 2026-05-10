@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import jax.numpy as jnp
 import numpy as np
 
 from beamz.simulation.boundaries import (
@@ -11,8 +12,8 @@ from beamz.simulation.boundaries import (
     full_pec_curl_h_to_e_2d_xy,
     full_pec_curl_h_to_e_3d,
     has_full_pec_2d_xy,
-    initialize_full_pec_2d_xy_state,
     initialize_full_pec_3d_state,
+    initialize_tm_2d_xy_state,
     normalize_boundaries,
     pec_curl_e_to_h_3d,
     pec_curl_h_to_e_3d,
@@ -20,7 +21,6 @@ from beamz.simulation.boundaries import (
 from beamz.simulation.fields import Fields
 from beamz.simulation.ops import curl_h_to_e_3d
 from beamz.simulation.yee import (
-    sample_voxel_grid_at_compact_component_2d,
     sample_voxel_grid_at_component_2d,
     sample_voxel_grid_at_tm_xy_full_component_2d,
 )
@@ -192,15 +192,13 @@ def test_xy_2d_component_sampling_matches_expected_owned_voxels():
     ex = sample_voxel_grid_at_component_2d(grid, "Ex", "xy")
     ey = sample_voxel_grid_at_component_2d(grid, "Ey", "xy")
     ez = sample_voxel_grid_at_component_2d(grid, "Ez", "xy")
-    hx = sample_voxel_grid_at_compact_component_2d(grid, "Hx", "xy")
-    hy = sample_voxel_grid_at_compact_component_2d(grid, "Hy", "xy")
     hz = sample_voxel_grid_at_component_2d(grid, "Hz", "xy")
 
     np.testing.assert_array_equal(np.asarray(ex), grid[:, :-1])
     np.testing.assert_array_equal(np.asarray(ey), grid[:-1, :])
-    np.testing.assert_array_equal(np.asarray(ez), grid)
-    np.testing.assert_array_equal(np.asarray(hx), grid[:, :-1])
-    np.testing.assert_array_equal(np.asarray(hy), grid[:-1, :])
+    np.testing.assert_array_equal(
+        np.asarray(ez), np.pad(grid, ((0, 1), (0, 1)), mode="edge")
+    )
     np.testing.assert_array_equal(np.asarray(hz), grid[:-1, :-1])
 
 
@@ -217,10 +215,10 @@ def test_xy_2d_full_pec_state_adds_missing_h_boundary_edges():
     )
     fields.boundaries = normalize_boundaries([], is_3d=False)
 
-    state = initialize_full_pec_2d_xy_state(fields)
-    assert state.Ez.shape == (fields.Ez.shape[0] + 1, fields.Ez.shape[1] + 1)
-    assert state.Hx.shape == (fields.Ez.shape[0], fields.Ez.shape[1] + 1)
-    assert state.Hy.shape == (fields.Ez.shape[0] + 1, fields.Ez.shape[1])
+    state = initialize_tm_2d_xy_state(fields)
+    assert state.Ez.shape == fields.Ez.shape
+    assert state.Hx.shape == fields.Hx.shape
+    assert state.Hy.shape == fields.Hy.shape
     assert has_full_pec_2d_xy(fields.boundaries, "xy")
     np.testing.assert_allclose(np.asarray(state.Hx)[:, 0], 0.0)
     np.testing.assert_allclose(np.asarray(state.Hx)[:, -1], 0.0)
@@ -241,13 +239,11 @@ def test_2d_tm_pec_update_keeps_constrained_h_edges_zero():
     )
     fields.boundaries = normalize_boundaries([], is_3d=False)
 
-    ez = np.zeros((fields.Ez.shape[0] + 1, fields.Ez.shape[1] + 1), dtype=np.float32)
-    ez[1:4, 1:5] = 1.0
-    fields.full_tm_2d_xy_state = initialize_full_pec_2d_xy_state(fields)
-    fields.full_tm_2d_xy_state.Ez = ez
+    fields.Ez = jnp.zeros(fields.Ez.shape, dtype=jnp.float32)
+    fields.Ez = fields.Ez.at[1:4, 1:5].set(1.0)
 
     fields.update_h(dt=1e-3)
-    state = fields.full_tm_2d_xy_state
+    state = fields.ensure_tm_xy_state()
 
     np.testing.assert_allclose(np.asarray(state.Hx)[:, 0], 0.0)
     np.testing.assert_allclose(np.asarray(state.Hx)[:, -1], 0.0)
@@ -255,33 +251,6 @@ def test_2d_tm_pec_update_keeps_constrained_h_edges_zero():
     np.testing.assert_allclose(np.asarray(state.Hy)[-1, :], 0.0)
     assert np.max(np.abs(np.asarray(state.Hx)[:, 1:-1])) > 0.0
     assert np.max(np.abs(np.asarray(state.Hy)[1:-1, :])) > 0.0
-
-
-def test_xy_physical_tm_state_syncs_from_compact_injections():
-    permittivity = np.ones((4, 5), dtype=np.float32)
-    conductivity = np.zeros_like(permittivity)
-    permeability = np.ones_like(permittivity)
-    fields = Fields(
-        permittivity=permittivity,
-        conductivity=conductivity,
-        permeability=permeability,
-        resolution=1.0,
-        plane_2d="xy",
-    )
-    fields.boundaries = normalize_boundaries([], is_3d=False)
-    fields.full_tm_2d_xy_state = initialize_full_pec_2d_xy_state(fields)
-
-    fields.Ez = fields.Ez.at[1, 2].set(3.0)
-    fields.Hx = fields.Hx.at[2, 1].set(4.0)
-    fields.Hy = fields.Hy.at[1, 3].set(-5.0)
-
-    fields.sync_physical_tm_xy_from_compact()
-
-    state = fields.full_tm_2d_xy_state
-    assert float(state.Ez[1, 2]) > 0.0
-    assert float(state.Ez[2, 3]) > 0.0
-    assert float(state.Hx[2, 1]) == 4.0
-    assert float(state.Hy[1, 3]) == -5.0
 
 
 def test_xy_2d_full_state_sampling_uses_physical_tmz_h_locations():
@@ -309,7 +278,7 @@ def test_xy_2d_full_pec_curls_match_full_shapes():
         resolution=1.0,
         plane_2d="xy",
     )
-    state = initialize_full_pec_2d_xy_state(fields)
+    state = initialize_tm_2d_xy_state(fields)
 
     curl_hx, curl_hy = full_pec_curl_e_to_h_2d_xy(
         state.Ez,

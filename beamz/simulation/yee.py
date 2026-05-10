@@ -193,21 +193,21 @@ def sample_voxel_grid_at_e_component_3d_centered(
     return 0.5 * (sampled_lo + sampled_hi)
 
 
-def compact_component_shape_2d(
+def component_shape_2d(
     component: str,
     grid_shape: tuple[int, int],
     plane: str,
 ) -> tuple[int, int]:
-    """Return the legacy compact 2D Beamz field shape for a component."""
+    """Return the canonical 2D Beamz field shape for a component."""
 
     dim0, dim1 = (int(v) for v in grid_shape)
     if plane == "xy":
         mapping = {
             "Ex": (dim0, dim1 - 1),
             "Ey": (dim0 - 1, dim1),
-            "Ez": (dim0, dim1),
-            "Hx": (dim0, dim1 - 1),
-            "Hy": (dim0 - 1, dim1),
+            "Ez": (dim0 + 1, dim1 + 1),
+            "Hx": (dim0, dim1 + 1),
+            "Hy": (dim0 + 1, dim1),
             "Hz": (dim0 - 1, dim1 - 1),
         }
     elif plane == "yz":
@@ -230,42 +230,23 @@ def compact_component_shape_2d(
         }
     else:
         raise ValueError(f"Unsupported plane {plane!r}")
+
     try:
         return mapping[component]
     except KeyError as exc:
         raise ValueError(f"Unsupported component {component!r}") from exc
 
 
-def component_shape_2d(
-    component: str,
-    grid_shape: tuple[int, int],
-    plane: str,
-) -> tuple[int, int]:
-    """Return the canonical 2D field shape for a component.
-
-    For ``xy`` TM, the physical Yee representation is the full-state TMz lattice
-    exposed via :func:`tm_xy_full_component_shape_2d`. The legacy compact
-    ``Hx``/``Hy`` storage is retained only for backward compatibility and should
-    be accessed explicitly via :func:`compact_component_shape_2d`.
-    """
-
-    if plane == "xy" and component in {"Hx", "Hy"}:
-        raise ValueError(
-            "component_shape_2d('Hx'/'Hy', 'xy') is ambiguous; use "
-            "tm_xy_full_component_shape_2d for physical TM fields or "
-            "compact_component_shape_2d for legacy compact storage."
-        )
-    return compact_component_shape_2d(component, grid_shape, plane)
-
-
-def _compact_component_axis_offsets_2d(
+def _component_axis_offsets_2d(
     component: str, plane: str
 ) -> tuple[tuple[str, str], dict[str, float]]:
+    """Return canonical 2D Yee offsets for stored component samples."""
+
     if plane == "xy":
         offsets = {
             "Ex": {"y": 0.5, "x": 0.0},
             "Ey": {"y": 0.0, "x": 0.5},
-            "Ez": {"y": 0.5, "x": 0.5},
+            "Ez": {"y": 0.0, "x": 0.0},
             "Hx": {"y": 0.5, "x": 0.0},
             "Hy": {"y": 0.0, "x": 0.5},
             "Hz": {"y": 0.0, "x": 0.0},
@@ -300,59 +281,26 @@ def _compact_component_axis_offsets_2d(
         raise ValueError(f"Unsupported component {component!r}") from exc
 
 
-def _component_axis_offsets_2d(
-    component: str, plane: str
-) -> tuple[tuple[str, str], dict[str, float]]:
-    """Return canonical 2D Yee offsets for components with unique 2D meaning."""
-
-    if plane == "xy" and component in {"Hx", "Hy"}:
-        raise ValueError(
-            "_component_axis_offsets_2d('Hx'/'Hy', 'xy') is ambiguous; use "
-            "tm_xy_full_component_coordinates_2d_um for physical TM fields or "
-            "_compact_component_axis_offsets_2d for legacy compact storage."
-        )
-    return _compact_component_axis_offsets_2d(component, plane)
-
-
-def compact_component_coordinates_2d_um(
-    component: str,
-    grid_shape: tuple[int, int],
-    dx_um: float,
-    plane: str,
-) -> dict[str, np.ndarray]:
-    """Return legacy compact 2D sample coordinates for a component."""
-
-    shape = compact_component_shape_2d(component, grid_shape, plane)
-    axes, offsets = _compact_component_axis_offsets_2d(component, plane)
-    return {
-        axis: (np.arange(length, dtype=np.float64) + offsets[axis]) * dx_um
-        for axis, length in zip(axes, shape, strict=True)
-    }
-
-
 def component_coordinates_2d_um(
     component: str,
     grid_shape: tuple[int, int],
     dx_um: float,
     plane: str,
 ) -> dict[str, np.ndarray]:
-    """Return canonical 2D component coordinates.
+    """Return canonical 2D component coordinates."""
 
-    For ``xy`` TM, use :func:`tm_xy_full_component_coordinates_2d_um` for
-    physical ``Hx``/``Hy`` or :func:`compact_component_coordinates_2d_um` for the
-    legacy compact projection.
-    """
+    if plane == "xy" and component in {"Ez", "Hx", "Hy"}:
+        return tm_xy_full_component_coordinates_2d_um(component, grid_shape, dx_um)
 
-    if plane == "xy" and component in {"Hx", "Hy"}:
-        raise ValueError(
-            "component_coordinates_2d_um('Hx'/'Hy', 'xy') is ambiguous; use "
-            "tm_xy_full_component_coordinates_2d_um or "
-            "compact_component_coordinates_2d_um explicitly."
-        )
-    return compact_component_coordinates_2d_um(component, grid_shape, dx_um, plane)
+    shape = component_shape_2d(component, grid_shape, plane)
+    axes, offsets = _component_axis_offsets_2d(component, plane)
+    return {
+        axis: (np.arange(length, dtype=np.float64) + offsets[axis]) * dx_um
+        for axis, length in zip(axes, shape, strict=True)
+    }
 
 
-def sample_voxel_grid_at_compact_component_2d(
+def sample_voxel_grid_at_component_2d(
     grid,
     component: str,
     plane: str,
@@ -360,19 +308,30 @@ def sample_voxel_grid_at_compact_component_2d(
     stored_shape: tuple[int, int] | None = None,
     region: tuple[slice, slice] | None = None,
 ):
-    """Sample a cell-centered 2D raster at legacy compact 2D component locations."""
+    """Sample a cell-centered 2D raster at canonical 2D component locations."""
+
+    if plane == "xy" and component in {"Ez", "Hx", "Hy"}:
+        sampled = sample_voxel_grid_at_tm_xy_full_component_2d(grid, component)
+        canonical_shape = tm_xy_full_component_shape_2d(
+            component, tuple(int(v) for v in np.asarray(grid).shape)
+        )
+        if stored_shape is not None and tuple(int(v) for v in stored_shape) != canonical_shape:
+            raise ValueError(
+                f"stored_shape={stored_shape!r} does not match canonical xy TM "
+                f"shape {canonical_shape!r} for component {component!r}"
+            )
+        region = region or (slice(None), slice(None))
+        return sampled[region]
 
     grid_np = np.asarray(grid)
     shape = (
         tuple(int(v) for v in stored_shape)
         if stored_shape is not None
-        else compact_component_shape_2d(
-            component, tuple(int(v) for v in grid_np.shape), plane
-        )
+        else component_shape_2d(component, tuple(int(v) for v in grid_np.shape), plane)
     )
     region = region or (slice(None), slice(None))
 
-    axes, offsets = _compact_component_axis_offsets_2d(component, plane)
+    axes, offsets = _component_axis_offsets_2d(component, plane)
     index_axes = []
     for axis, dim, grid_dim, axis_region in zip(
         axes,
@@ -391,31 +350,6 @@ def sample_voxel_grid_at_compact_component_2d(
     sampled = jnp.take(sampled, jnp.asarray(dim0_idx), axis=0)
     sampled = jnp.take(sampled, jnp.asarray(dim1_idx), axis=1)
     return sampled
-
-
-def sample_voxel_grid_at_component_2d(
-    grid,
-    component: str,
-    plane: str,
-    *,
-    stored_shape: tuple[int, int] | None = None,
-    region: tuple[slice, slice] | None = None,
-):
-    """Sample a cell-centered 2D raster at canonical 2D component locations."""
-
-    if plane == "xy" and component in {"Hx", "Hy"}:
-        raise ValueError(
-            "sample_voxel_grid_at_component_2d('Hx'/'Hy', 'xy') is ambiguous; use "
-            "sample_voxel_grid_at_tm_xy_full_component_2d for physical TM fields or "
-            "sample_voxel_grid_at_compact_component_2d for legacy compact storage."
-        )
-    return sample_voxel_grid_at_compact_component_2d(
-        grid,
-        component,
-        plane,
-        stored_shape=stored_shape,
-        region=region,
-    )
 
 
 def tm_xy_full_component_shape_2d(

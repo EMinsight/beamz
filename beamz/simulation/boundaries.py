@@ -514,56 +514,6 @@ class PML(Boundary):
                 "Hy_x_kappa": jnp.broadcast_to(kappa_hy_x[None, :], (ny + 1, nx)),
                 "Hy_x_alpha": jnp.broadcast_to(alpha_hy_x[None, :], (ny + 1, nx)),
             }
-            y_ez_compact = (jnp.arange(ny, dtype=jnp.float32) + 0.5) * dy
-            x_ez_compact = (jnp.arange(nx, dtype=jnp.float32) + 0.5) * dx
-            y_hy_compact = jnp.arange(max(ny - 1, 0), dtype=jnp.float32) * dy
-            x_hx_compact = jnp.arange(max(nx - 1, 0), dtype=jnp.float32) * dx
-            sigma_ezc_y, kappa_ezc_y, alpha_ezc_y = (
-                self._compute_1d_cpml_profile_with_coords(
-                    y_ez_compact, len1, "bottom" in edges, "top" in edges
-                )
-            )
-            sigma_ezc_x, kappa_ezc_x, alpha_ezc_x = (
-                self._compute_1d_cpml_profile_with_coords(
-                    x_ez_compact, len2, "left" in edges, "right" in edges
-                )
-            )
-            sigma_hxc_x, kappa_hxc_x, alpha_hxc_x = (
-                self._compute_1d_cpml_profile_with_coords(
-                    x_hx_compact, len2, "left" in edges, "right" in edges
-                )
-            )
-            sigma_hyc_y, kappa_hyc_y, alpha_hyc_y = (
-                self._compute_1d_cpml_profile_with_coords(
-                    y_hy_compact, len1, "bottom" in edges, "top" in edges
-                )
-            )
-            out["compact_xy_cpml"] = {
-                "Ez_x_sigma": jnp.broadcast_to(sigma_ezc_x[None, :], (ny, nx)),
-                "Ez_x_kappa": jnp.broadcast_to(kappa_ezc_x[None, :], (ny, nx)),
-                "Ez_x_alpha": jnp.broadcast_to(alpha_ezc_x[None, :], (ny, nx)),
-                "Ez_y_sigma": jnp.broadcast_to(sigma_ezc_y[:, None], (ny, nx)),
-                "Ez_y_kappa": jnp.broadcast_to(kappa_ezc_y[:, None], (ny, nx)),
-                "Ez_y_alpha": jnp.broadcast_to(alpha_ezc_y[:, None], (ny, nx)),
-                "Hx_x_sigma": jnp.broadcast_to(
-                    sigma_hxc_x[None, :], (ny, max(nx - 1, 0))
-                ),
-                "Hx_x_kappa": jnp.broadcast_to(
-                    kappa_hxc_x[None, :], (ny, max(nx - 1, 0))
-                ),
-                "Hx_x_alpha": jnp.broadcast_to(
-                    alpha_hxc_x[None, :], (ny, max(nx - 1, 0))
-                ),
-                "Hy_y_sigma": jnp.broadcast_to(
-                    sigma_hyc_y[:, None], (max(ny - 1, 0), nx)
-                ),
-                "Hy_y_kappa": jnp.broadcast_to(
-                    kappa_hyc_y[:, None], (max(ny - 1, 0), nx)
-                ),
-                "Hy_y_alpha": jnp.broadcast_to(
-                    alpha_hyc_y[:, None], (max(ny - 1, 0), nx)
-                ),
-            }
         return out
 
     def _create_cpml_profiles_3d(self, fields, design):
@@ -744,8 +694,8 @@ class FullPec3DState:
 
 
 @dataclass
-class FullTM2DXYState:
-    """Physical 2D TMz Yee representation for the xy plane."""
+class Tm2DXYState:
+    """Native 2D TMz Yee representation for the xy plane."""
 
     Ez: jnp.ndarray
     Hx: jnp.ndarray
@@ -963,38 +913,10 @@ def full_tm_2d_xy_masks(
     }
 
 
-def compact_ez_to_full_tm_2d_xy(ez: jnp.ndarray | np.ndarray) -> jnp.ndarray:
-    """Lift a compact cell-centered Ez view onto the native TMz node lattice."""
+def initialize_tm_2d_xy_state(fields) -> Tm2DXYState:
+    """Build native 2D TMz Yee metadata for an xy-plane simulation."""
 
-    ez = jnp.asarray(ez)
-    ny, nx = (int(v) for v in ez.shape)
-    full = jnp.zeros((ny + 1, nx + 1), dtype=ez.dtype)
-
-    full = full.at[1:-1, 1:-1].set(
-        0.25 * (ez[:-1, :-1] + ez[:-1, 1:] + ez[1:, :-1] + ez[1:, 1:])
-    )
-    full = full.at[0, 1:-1].set(0.5 * (ez[0, :-1] + ez[0, 1:]))
-    full = full.at[-1, 1:-1].set(0.5 * (ez[-1, :-1] + ez[-1, 1:]))
-    full = full.at[1:-1, 0].set(0.5 * (ez[:-1, 0] + ez[1:, 0]))
-    full = full.at[1:-1, -1].set(0.5 * (ez[:-1, -1] + ez[1:, -1]))
-    full = full.at[0, 0].set(ez[0, 0])
-    full = full.at[0, -1].set(ez[0, -1])
-    full = full.at[-1, 0].set(ez[-1, 0])
-    full = full.at[-1, -1].set(ez[-1, -1])
-    return full
-
-
-def compact_ez_from_full_tm_2d_xy(ez: jnp.ndarray | np.ndarray) -> jnp.ndarray:
-    """Interpolate native TMz Ez nodes to Beamz's compact cell-centered view."""
-
-    ez = jnp.asarray(ez)
-    return 0.25 * (ez[:-1, :-1] + ez[:-1, 1:] + ez[1:, :-1] + ez[1:, 1:])
-
-
-def initialize_full_tm_2d_xy_state(fields) -> FullTM2DXYState:
-    """Build a physical 2D TMz Yee state for an xy-plane simulation."""
-
-    ny, nx = (int(v) for v in fields.Ez.shape)
+    ny, nx = (int(v) for v in fields.permittivity.shape)
     total_sigma = jnp.asarray(
         getattr(fields, "total_conductivity", fields.conductivity)
     )
@@ -1003,24 +925,12 @@ def initialize_full_tm_2d_xy_state(fields) -> FullTM2DXYState:
         resolve_metallic_edges(getattr(fields, "boundaries", None), is_3d=False)
     )
 
-    ez = compact_ez_to_full_tm_2d_xy(fields.Ez)
-    hx = jnp.zeros((ny, nx + 1), dtype=fields.Hx.dtype)
-    hy = jnp.zeros((ny + 1, nx), dtype=fields.Hy.dtype)
-    if fields.Hx.size:
-        hx = hx.at[:, :-2].set(jnp.asarray(fields.Hx))
-        hx = hx.at[:, -2].set(jnp.asarray(fields.Hx)[:, -1])
-        hx = hx.at[:, -1].set(jnp.asarray(fields.Hx)[:, -1])
-    if fields.Hy.size:
-        hy = hy.at[:-2, :].set(jnp.asarray(fields.Hy))
-        hy = hy.at[-2, :].set(jnp.asarray(fields.Hy)[-1, :])
-        hy = hy.at[-1, :].set(jnp.asarray(fields.Hy)[-1, :])
-
     masks = full_tm_2d_xy_masks((ny, nx), metallic_edges)
-    ez = jnp.where(masks["Ez"], 0.0, ez)
-    hx = jnp.where(masks["Hx"], 0.0, hx)
-    hy = jnp.where(masks["Hy"], 0.0, hy)
+    ez = jnp.where(masks["Ez"], 0.0, jnp.asarray(fields.Ez))
+    hx = jnp.where(masks["Hx"], 0.0, jnp.asarray(fields.Hx))
+    hy = jnp.where(masks["Hy"], 0.0, jnp.asarray(fields.Hy))
 
-    return FullTM2DXYState(
+    return Tm2DXYState(
         Ez=ez,
         Hx=hx,
         Hy=hy,
@@ -1039,24 +949,6 @@ def initialize_full_tm_2d_xy_state(fields) -> FullTM2DXYState:
         hx_mask=masks["Hx"],
         hy_mask=masks["Hy"],
     )
-
-
-def sync_compact_fields_from_full_tm_2d_xy(fields, state: FullTM2DXYState) -> None:
-    """Project the native 2D TMz state onto Beamz's compact compatibility views."""
-
-    fields.Ez = compact_ez_from_full_tm_2d_xy(state.Ez)
-    fields.Hx = state.Hx[:, :-2]
-    fields.Hy = state.Hy[:-2, :]
-
-
-def initialize_full_pec_2d_xy_state(fields) -> FullTM2DXYState:
-    """Backward-compatible alias for the physical xy TM state initializer."""
-    return initialize_full_tm_2d_xy_state(fields)
-
-
-def sync_compact_fields_from_full_pec_2d_xy(fields, state: FullTM2DXYState) -> None:
-    """Backward-compatible alias for syncing the physical xy TM state."""
-    sync_compact_fields_from_full_tm_2d_xy(fields, state)
 
 
 def normalize_boundaries(boundaries, *, is_3d):

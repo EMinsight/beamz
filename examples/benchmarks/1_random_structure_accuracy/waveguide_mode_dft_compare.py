@@ -702,13 +702,8 @@ def run_beamz_single(
 
     start = time.perf_counter()
     while sim.step():
-        physical_tm = sim.fields.physical_tm_xy_fields()
-        if physical_tm is None:
-            ez_full = np.asarray(sim.fields.Ez, dtype=np.float32)
-            hy_full = np.asarray(sim.fields.Hy, dtype=np.float32)
-        else:
-            ez_full = np.asarray(physical_tm["Ez"], dtype=np.float32)
-            hy_full = np.asarray(physical_tm["Hy"], dtype=np.float32)
+        ez_full = np.asarray(sim.fields.Ez, dtype=np.float32)
+        hy_full = np.asarray(sim.fields.Hy, dtype=np.float32)
         if int(sim.current_step) in snapshot_steps:
             snapshot_records.append(
                 (int(sim.current_step), float(sim.t), np.asarray(ez_full, dtype=np.float32))

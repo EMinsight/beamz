@@ -25,7 +25,6 @@ from beamz.simulation.boundaries import (
     cpml_curl_e_to_h_3d,
     cpml_curl_h_to_e_3d,
     initialize_full_pec_3d_state,
-    initialize_full_tm_2d_xy_state,
 )
 from beamz.simulation.compiled import (
     CompiledRunConfig,
@@ -60,12 +59,9 @@ def small_sim_params():
 
 def _engine_state_for_sim(sim: Simulation) -> EngineState:
     if (not sim.is_3d) and sim.plane_2d == "xy":
-        if sim.fields.full_tm_2d_xy_state is None:
-            sim.fields.full_tm_2d_xy_state = initialize_full_tm_2d_xy_state(sim.fields)
-        tm_state = sim.fields.full_tm_2d_xy_state
-        tm_ez = tm_state.Ez
-        tm_hx = tm_state.Hx
-        tm_hy = tm_state.Hy
+        tm_ez = sim.fields.Ez
+        tm_hx = sim.fields.Hx
+        tm_hy = sim.fields.Hy
     else:
         tm_ez = jnp.zeros((0, 0), dtype=sim.fields.Ez.dtype)
         tm_hx = jnp.zeros((0, 0), dtype=sim.fields.Hx.dtype)

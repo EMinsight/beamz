@@ -10,7 +10,6 @@ from beamz.const import EPS_0, MU_0
 from beamz.simulation import ops
 from beamz.simulation.boundaries import (
     build_h_boundary_views_for_e_3d,
-    compact_ez_to_full_tm_2d_xy,
     cpml_curl_e_to_h_3d,
     cpml_curl_h_to_e_3d,
     full_pec_curl_e_to_h_2d_xy,
@@ -20,11 +19,10 @@ from beamz.simulation.boundaries import (
     has_full_pec_2d_xy,
     has_full_pec_3d,
     initialize_full_pec_3d_state,
-    initialize_full_tm_2d_xy_state,
+    initialize_tm_2d_xy_state,
     pec_curl_e_to_h_3d,
     pec_curl_h_to_e_3d,
     sync_compact_fields_from_full_pec_3d,
-    sync_compact_fields_from_full_tm_2d_xy,
     tm_xy_cpml_curl_e_to_h_2d,
     tm_xy_cpml_curl_h_to_e_2d,
     tm_xy_curl_e_to_h_2d,
@@ -90,7 +88,7 @@ class Fields:
         self.permeability = jnp.asarray(permeability)
         self.metallic_masks = None
         self.full_pec_3d_state = None
-        self.full_tm_2d_xy_state = None
+        self.tm_xy_state = None
         self.cpml_tm_xy_state = None
         self.cpml_3d_state = None
 
@@ -184,13 +182,26 @@ class Fields:
                     self.plane_2d,
                 )
             )
+            if self.plane_2d == "xy":
+                self.eps_tm_ez = sample_voxel_grid_at_tm_xy_full_component_2d(
+                    self.permittivity,
+                    "Ez",
+                )
+                self.mu_tm_hx = sample_voxel_grid_at_tm_xy_full_component_2d(
+                    self.permeability,
+                    "Hx",
+                )
+                self.mu_tm_hy = sample_voxel_grid_at_tm_xy_full_component_2d(
+                    self.permeability,
+                    "Hy",
+                )
 
     def _initialize_cpml_tm_xy_state(self) -> CpmlTm2DxyState | None:
         if not (self.has_cpml and self.plane_2d == "xy" and self.pml_data):
             return None
-        if self.full_tm_2d_xy_state is None:
-            self.full_tm_2d_xy_state = initialize_full_tm_2d_xy_state(self)
-        state = self.full_tm_2d_xy_state
+        if self.tm_xy_state is None:
+            self.tm_xy_state = initialize_tm_2d_xy_state(self)
+        state = self.tm_xy_state
 
         tm_xy = self.pml_data.get("tm_xy_cpml")
         if tm_xy is None:
@@ -357,10 +368,10 @@ class Fields:
 
         if self.plane_2d == "xy":
             ny, nx = dim1, dim2
-            # TM set (Ez, Hx, Hy)
-            self.Ez = jnp.zeros((ny, nx))
-            self.Hx = jnp.zeros((ny, nx - 1))
-            self.Hy = jnp.zeros((ny - 1, nx))
+            # Native TMz set (Ez, Hx, Hy)
+            self.Ez = jnp.zeros((ny + 1, nx + 1))
+            self.Hx = jnp.zeros((ny, nx + 1))
+            self.Hy = jnp.zeros((ny + 1, nx))
             # TE set (Hz, Ex, Ey)
             self.Hz = jnp.zeros((ny - 1, nx - 1))
             self.Ex = jnp.zeros((ny, nx - 1))
@@ -392,110 +403,27 @@ class Fields:
         """Return list of available field components."""
         return ["Ex", "Ey", "Ez", "Hx", "Hy", "Hz"]
 
-    def physical_tm_xy_fields(self):
-        """Return the physical xy-plane TMz fields when the full-state path is active."""
-        if self.plane_2d != "xy" or self.full_tm_2d_xy_state is None:
-            return None
-        return {
-            "Ez": self.full_tm_2d_xy_state.Ez,
-            "Hx": self.full_tm_2d_xy_state.Hx,
-            "Hy": self.full_tm_2d_xy_state.Hy,
-        }
-
-    def ensure_physical_tm_xy_state(self):
-        """Initialize the physical xy-plane TMz state on first use."""
+    def ensure_tm_xy_state(self):
+        """Initialize native xy-plane TMz metadata on first use."""
         if self.plane_2d != "xy":
             return None
-        if self.full_tm_2d_xy_state is None:
-            self.full_tm_2d_xy_state = initialize_full_tm_2d_xy_state(self)
-        return self.full_tm_2d_xy_state
+        if self.tm_xy_state is None:
+            self.tm_xy_state = initialize_tm_2d_xy_state(self)
+        return self.tm_xy_state
 
-    def sync_compact_tm_xy_views(self):
-        """Refresh compact xy TM compatibility arrays from the physical TM state."""
-        state = self.ensure_physical_tm_xy_state()
+    def apply_tm_xy_pec_masks(self):
+        """Zero constrained native xy-plane TMz samples on PEC boundaries."""
+        if self.plane_2d != "xy":
+            return
+        state = self.ensure_tm_xy_state()
         if state is None:
             return
-        sync_compact_fields_from_full_tm_2d_xy(self, state)
-
-    def sync_physical_tm_xy_ez_from_compact(self):
-        """Update only Ez in the physical TM state from the compact storage."""
-        state = self.ensure_physical_tm_xy_state()
-        if state is None:
-            return
-        state.Ez = jnp.where(state.ez_mask, 0.0, compact_ez_to_full_tm_2d_xy(self.Ez))
-
-    def sync_physical_tm_xy_from_compact(self):
-        """Best-effort compatibility sync from compact views into the physical TM state."""
-        state = self.ensure_physical_tm_xy_state()
-        if state is None:
-            return
-        state.Ez = jnp.where(state.ez_mask, 0.0, compact_ez_to_full_tm_2d_xy(self.Ez))
-        if self.Hx.size:
-            state.Hx = state.Hx.at[:, :-2].set(self.Hx)
-            state.Hx = state.Hx.at[:, -2].set(self.Hx[:, -1])
-            state.Hx = state.Hx.at[:, -1].set(self.Hx[:, -1])
-        if self.Hy.size:
-            state.Hy = state.Hy.at[:-2, :].set(self.Hy)
-            state.Hy = state.Hy.at[-2, :].set(self.Hy[-1, :])
-            state.Hy = state.Hy.at[-1, :].set(self.Hy[-1, :])
-        state.Hx = jnp.where(state.hx_mask, 0.0, state.Hx)
-        state.Hy = jnp.where(state.hy_mask, 0.0, state.Hy)
-
-    def add_tm_xy_ez(self, indices, values):
-        """Inject compact cell-centered Ez into the native xy-plane TM state."""
-        state = self.ensure_physical_tm_xy_state()
-        if state is None:
-            self.Ez = self.Ez.at[indices].add(values)
-            return
-        state.Ez = state.Ez.at[indices].add(0.25 * values)
-        state.Ez = state.Ez.at[self._shift_tm_xy_indices(indices, dy=1, dx=0)].add(
-            0.25 * values
-        )
-        state.Ez = state.Ez.at[self._shift_tm_xy_indices(indices, dy=0, dx=1)].add(
-            0.25 * values
-        )
-        state.Ez = state.Ez.at[self._shift_tm_xy_indices(indices, dy=1, dx=1)].add(
-            0.25 * values
-        )
-        state.Ez = jnp.where(state.ez_mask, 0.0, state.Ez)
-
-    def add_tm_xy_h(self, compact_component: str, indices, values):
-        """Inject H directly into the physical xy-plane TM state.
-
-        ``compact_component`` uses Beamz's legacy compact naming so sources can
-        keep their existing component selection logic.
-        """
-        state = self.ensure_physical_tm_xy_state()
-        if state is None:
-            if compact_component == "Hx":
-                self.Hx = self.Hx.at[indices].add(values)
-            elif compact_component == "Hy":
-                self.Hy = self.Hy.at[indices].add(values)
-            else:
-                raise ValueError(f"Unsupported TM H component {compact_component!r}")
-            return
-
-        if compact_component == "Hx":
-            state.Hy = state.Hy.at[indices].add(-values)
-            state.Hy = jnp.where(state.hy_mask, 0.0, state.Hy)
-        elif compact_component == "Hy":
-            state.Hx = state.Hx.at[indices].add(-values)
-            state.Hx = jnp.where(state.hx_mask, 0.0, state.Hx)
-        else:
-            raise ValueError(f"Unsupported TM H component {compact_component!r}")
-
-    @staticmethod
-    def _shift_tm_xy_indices(indices, *, dy: int, dx: int):
-        shifted = list(indices)
-        for axis, delta in enumerate((dy, dx)):
-            index = shifted[axis]
-            if isinstance(index, slice):
-                start = None if index.start is None else index.start + delta
-                stop = None if index.stop is None else index.stop + delta
-                shifted[axis] = slice(start, stop, index.step)
-            else:
-                shifted[axis] = index + delta
-        return tuple(shifted)
+        self.Ez = jnp.where(state.ez_mask, 0.0, self.Ez)
+        self.Hx = jnp.where(state.hx_mask, 0.0, self.Hx)
+        self.Hy = jnp.where(state.hy_mask, 0.0, self.Hy)
+        state.Ez = self.Ez
+        state.Hx = self.Hx
+        state.Hy = self.Hy
 
     def set_metallic_masks(self, masks):
         """Attach precomputed per-component metallic-wall masks."""
@@ -560,21 +488,19 @@ class Fields:
                     )
         else:
             if self.plane_2d == "xy":
-                if self.full_tm_2d_xy_state is None:
-                    self.full_tm_2d_xy_state = initialize_full_tm_2d_xy_state(self)
-                state = self.full_tm_2d_xy_state
+                state = self.ensure_tm_xy_state()
                 if has_full_pec_2d_xy(getattr(self, "boundaries", None), self.plane_2d):
                     curlE_x, curlE_y = full_pec_curl_e_to_h_2d_xy(
-                        state.Ez,
+                        self.Ez,
                         self.resolution,
-                        state.Hx.shape,
-                        state.Hy.shape,
+                        self.Hx.shape,
+                        self.Hy.shape,
                     )
                 else:
                     cpml = self._ensure_cpml_tm_xy_state(dt)
                     if cpml is not None:
                         curlE_x, curlE_y, cpml.psi_h_terms = tm_xy_cpml_curl_e_to_h_2d(
-                            state.Ez,
+                            self.Ez,
                             self.resolution,
                             sigma_h_terms=cpml.sigma_h_terms,
                             kappa_h_aux_terms=cpml.kappa_h_aux_terms,
@@ -585,10 +511,10 @@ class Fields:
                         )
                     else:
                         curlE_x, curlE_y = tm_xy_curl_e_to_h_2d(
-                            state.Ez,
+                            self.Ez,
                             self.resolution,
-                            state.Hx.shape,
-                            state.Hy.shape,
+                            self.Hx.shape,
+                            self.Hy.shape,
                             state.metallic_edges,
                         )
                 curlE_z = xy_te_curl_e_to_h_2d(
@@ -623,11 +549,10 @@ class Fields:
             state.Hz = jnp.where(state.masks["Hz"], 0.0, state.Hz)
             sync_compact_fields_from_full_pec_3d(self, state)
         elif (not is_3d) and self.plane_2d == "xy":
-            state = self.full_tm_2d_xy_state
-            state.Hx = ops.advance_h_field(state.Hx, curlE_x, state.sigma_m_hx, dt)
-            state.Hy = ops.advance_h_field(state.Hy, curlE_y, state.sigma_m_hy, dt)
-            state.Hx = jnp.where(state.hx_mask, 0.0, state.Hx)
-            state.Hy = jnp.where(state.hy_mask, 0.0, state.Hy)
+            state = self.ensure_tm_xy_state()
+            self.Hx = ops.advance_h_field(self.Hx, curlE_x, state.sigma_m_hx, dt)
+            self.Hy = ops.advance_h_field(self.Hy, curlE_y, state.sigma_m_hy, dt)
+            self.apply_tm_xy_pec_masks()
             self.Hz = ops.advance_h_field(self.Hz, curlE_z, self.sigma_m_hz, dt)
             self.apply_metallic_boundaries_h()
         else:
@@ -683,9 +608,7 @@ class Fields:
                     )
         else:
             if self.plane_2d == "xy":
-                if self.full_tm_2d_xy_state is None:
-                    self.full_tm_2d_xy_state = initialize_full_tm_2d_xy_state(self)
-                state = self.full_tm_2d_xy_state
+                state = self.ensure_tm_xy_state()
                 curlH_x, curlH_y = xy_te_curl_h_to_e_2d(
                     self.Hz,
                     self.resolution,
@@ -695,19 +618,19 @@ class Fields:
                 )
                 if has_full_pec_2d_xy(getattr(self, "boundaries", None), self.plane_2d):
                     curlH_z = full_pec_curl_h_to_e_2d_xy(
-                        state.Hx,
-                        state.Hy,
+                        self.Hx,
+                        self.Hy,
                         self.resolution,
-                        state.Ez.shape,
+                        self.Ez.shape,
                     )
                 else:
                     cpml = self._ensure_cpml_tm_xy_state(dt)
                     if cpml is not None:
                         curlH_z, cpml.psi_e_terms = tm_xy_cpml_curl_h_to_e_2d(
-                            state.Hx,
-                            state.Hy,
+                            self.Hx,
+                            self.Hy,
                             self.resolution,
-                            state.Ez.shape,
+                            self.Ez.shape,
                             state.metallic_edges,
                             sigma_e_terms=cpml.sigma_e_terms,
                             kappa_e_terms=cpml.kappa_e_terms,
@@ -717,10 +640,10 @@ class Fields:
                         )
                     else:
                         curlH_z = tm_xy_curl_h_to_e_2d(
-                            state.Hx,
-                            state.Hy,
+                            self.Hx,
+                            self.Hy,
                             self.resolution,
-                            state.Ez.shape,
+                            self.Ez.shape,
                             state.metallic_edges,
                         )
             else:
@@ -776,22 +699,22 @@ class Fields:
             state.Ez = jnp.where(state.masks["Ez"], 0.0, state.Ez)
             sync_compact_fields_from_full_pec_3d(self, state)
         elif (not is_3d) and self.plane_2d == "xy":
-            state = self.full_tm_2d_xy_state
+            state = self.ensure_tm_xy_state()
             self.Ex = ops.advance_e_field(
                 self.Ex, curlH_x, self.sig_x, self.eps_x, dt, self.region_x
             )
             self.Ey = ops.advance_e_field(
                 self.Ey, curlH_y, self.sig_y, self.eps_y, dt, self.region_y
             )
-            state.Ez = ops.advance_e_field(
-                state.Ez,
+            self.Ez = ops.advance_e_field(
+                self.Ez,
                 curlH_z,
                 state.sig_z_region,
                 state.eps_z_region,
                 dt,
                 (slice(None), slice(None)),
             )
-            state.Ez = jnp.where(state.ez_mask, 0.0, state.Ez)
+            self.apply_tm_xy_pec_masks()
             self.apply_metallic_boundaries_e()
         else:
             self.Ex = ops.advance_e_field(
