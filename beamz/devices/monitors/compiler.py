@@ -430,6 +430,50 @@ def sample_compiled_monitor_plane_component_3d(
     return sampled.reshape(int(dim0), int(dim1))
 
 
+def _compile_monitor_2d_interpolation(
+    monitor: Monitor,
+    component: str,
+    fields,
+    resolution: float,
+) -> tuple[jnp.ndarray | None, jnp.ndarray | None]:
+    from beamz.simulation.yee import component_coordinates_2d_um
+
+    line_coords = monitor._line_sample_coords_2d(resolution, resolution)
+    if line_coords is None:
+        return None, None
+
+    plane = getattr(fields, "plane_2d", "xy")
+    coords = component_coordinates_2d_um(
+        component,
+        tuple(int(v) for v in fields.permittivity.shape),
+        float(resolution),
+        plane,
+    )
+    if "x" not in coords or "y" not in coords:
+        return None, None
+
+    src_x = np.asarray(coords["x"], dtype=np.float64)
+    src_y = np.asarray(coords["y"], dtype=np.float64)
+    dst_x = np.asarray(line_coords[0], dtype=np.float64).reshape(-1)
+    dst_y = np.asarray(line_coords[1], dtype=np.float64).reshape(-1)
+    if dst_x.size != dst_y.size:
+        return None, None
+
+    x0, x1, wx0, wx1 = _linear_interp_plan_1d(src_x, dst_x)
+    y0, y1, wy0, wy1 = _linear_interp_plan_1d(src_y, dst_y)
+    bits = np.asarray([(0, 0), (0, 1), (1, 0), (1, 1)], dtype=np.int32)
+    x_idx = np.where(bits[:, 1][None, :] == 0, x0[:, None], x1[:, None])
+    y_idx = np.where(bits[:, 0][None, :] == 0, y0[:, None], y1[:, None])
+    wx = np.where(bits[:, 1][None, :] == 0, wx0[:, None], wx1[:, None])
+    wy = np.where(bits[:, 0][None, :] == 0, wy0[:, None], wy1[:, None])
+    weights = (wx * wy).astype(np.float32)
+    flat_idx = np.ravel_multi_index(
+        (y_idx.astype(np.int32), x_idx.astype(np.int32)),
+        dims=tuple(int(v) for v in getattr(fields, component).shape),
+    ).astype(np.int32)
+    return jnp.asarray(flat_idx), jnp.asarray(weights)
+
+
 def compile_monitor_specs(
     monitors: list,
     fields,
@@ -544,6 +588,12 @@ def compile_monitor_specs(
             x_hx, y_hx, v_hx = _clip_indices(x_raw, y_raw, tuple(fields.Hx.shape))
             x_hy, y_hy, v_hy = _clip_indices(x_raw, y_raw, tuple(fields.Hy.shape))
             x_hz, y_hz, v_hz = _clip_indices(x_raw, y_raw, tuple(fields.Hz.shape))
+            interp_2d = {
+                name: _compile_monitor_2d_interpolation(
+                    monitor, name, fields, resolution
+                )
+                for name in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
+            }
 
             specs.append(
                 CompiledMonitorSpec(
@@ -592,6 +642,18 @@ def compile_monitor_specs(
                     x_hz=jnp.asarray(x_hz),
                     y_hz=jnp.asarray(y_hz),
                     valid_hz=jnp.asarray(v_hz),
+                    ex_interp_flat_idx=interp_2d["Ex"][0],
+                    ex_interp_weights=interp_2d["Ex"][1],
+                    ey_interp_flat_idx=interp_2d["Ey"][0],
+                    ey_interp_weights=interp_2d["Ey"][1],
+                    ez_interp_flat_idx=interp_2d["Ez"][0],
+                    ez_interp_weights=interp_2d["Ez"][1],
+                    hx_interp_flat_idx=interp_2d["Hx"][0],
+                    hx_interp_weights=interp_2d["Hx"][1],
+                    hy_interp_flat_idx=interp_2d["Hy"][0],
+                    hy_interp_weights=interp_2d["Hy"][1],
+                    hz_interp_flat_idx=interp_2d["Hz"][0],
+                    hz_interp_weights=interp_2d["Hz"][1],
                 )
             )
         else:

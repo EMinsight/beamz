@@ -7,6 +7,8 @@ def component_permittivity_at(fields, component: str, index):
     """Return permittivity sampled on the target E-field component lattice."""
     if component not in {"Ex", "Ey", "Ez"}:
         raise ValueError(f"Unsupported E component {component!r}")
+    if hasattr(fields, "material_at_component"):
+        return fields.material_at_component(component, index)
 
     if fields.permittivity.ndim == 3:
         material = getattr(fields, f"eps_{component[-1].lower()}", None)
@@ -42,6 +44,8 @@ def component_permeability_at(fields, component: str, index):
     """Return permeability sampled on the target H-field component lattice."""
     if component not in {"Hx", "Hy", "Hz"}:
         raise ValueError(f"Unsupported H component {component!r}")
+    if hasattr(fields, "material_at_component"):
+        return fields.material_at_component(component, index)
 
     if fields.permittivity.ndim == 3:
         from beamz.simulation.yee import sample_voxel_grid_at_component_3d

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import warnings
 
 import jax.numpy as jnp
 import numpy as np
@@ -6,7 +7,6 @@ import numpy as np
 from beamz.const import EPS_0, MU_0, µm
 from beamz.simulation.yee import (
     component_axis_offsets_3d,
-    sample_voxel_grid_at_component_2d,
     sample_voxel_grid_at_component_3d,
     sample_voxel_grid_at_tm_xy_full_component_2d,
 )
@@ -130,13 +130,87 @@ class PML(Boundary):
 
         if self.formulation == "cpml":
             if fields.permittivity.ndim == 3:
-                return self._create_cpml_profiles_3d(fields, design)
-            return self._create_cpml_profiles_2d(fields, design, plane_2d)
+                out = self._create_cpml_profiles_3d(fields, design)
+            else:
+                out = self._create_cpml_profiles_2d(fields, design, plane_2d)
+            self._warn_if_material_not_extruded(fields, out, plane_2d)
+            return out
 
         if fields.permittivity.ndim == 3:
-            return self._create_pml_profiles_3d(fields, design)
+            out = self._create_pml_profiles_3d(fields, design)
         else:
-            return self._create_pml_profiles_2d(fields, design, plane_2d)
+            out = self._create_pml_profiles_2d(fields, design, plane_2d)
+        self._warn_if_material_not_extruded(fields, out, plane_2d)
+        return out
+
+    def _warn_if_material_not_extruded(self, fields, pml_data, plane_2d="xy"):
+        """Warn when material changes along the PML normal inside the absorber."""
+        material = np.asarray(fields.permittivity)
+        if material.size == 0:
+            return
+        axis_map_3d = {"z": 0, "y": 1, "x": 2}
+        axis_map_2d = {
+            "xy": {"y": 0, "x": 1},
+            "yz": {"z": 0, "y": 1},
+            "xz": {"z": 0, "x": 1},
+        }.get(str(plane_2d), {})
+        edge_axes = {
+            "left": ("x", "low"),
+            "right": ("x", "high"),
+            "bottom": ("y", "low"),
+            "top": ("y", "high"),
+            "front": ("z", "low"),
+            "back": ("z", "high"),
+        }
+        is_3d = material.ndim == 3
+        axis_map = axis_map_3d if is_3d else axis_map_2d
+        bad_edges = []
+        for edge in self._get_edges_for_dimensionality(is_3d):
+            axis_name, side = edge_axes.get(edge, (None, None))
+            if axis_name not in axis_map:
+                continue
+            sigma = pml_data.get(f"sigma_{axis_name}")
+            if sigma is None:
+                continue
+            axis = axis_map[axis_name]
+            active_1d = np.any(
+                np.asarray(sigma) > 0.0,
+                axis=tuple(i for i in range(material.ndim) if i != axis),
+            )
+            if side == "low":
+                count = int(np.argmax(~active_1d)) if np.any(~active_1d) else 0
+            else:
+                rev = active_1d[::-1]
+                count = int(np.argmax(~rev)) if np.any(~rev) else 0
+            if count <= 0 or count >= material.shape[axis]:
+                continue
+            if self._pml_edge_material_varies(material, axis, side, count):
+                bad_edges.append(edge)
+        if bad_edges:
+            warnings.warn(
+                "PML material varies along the absorber normal on edges "
+                f"{bad_edges}. For lower reflection, extrude the boundary material "
+                "profile through the PML or keep geometry clear of the absorber.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+
+    @staticmethod
+    def _pml_edge_material_varies(material, axis: int, side: str, count: int) -> bool:
+        mat = np.asarray(material)
+        if side == "low":
+            slab_sel = [slice(None)] * mat.ndim
+            slab_sel[axis] = slice(0, count)
+            ref_sel = [slice(None)] * mat.ndim
+            ref_sel[axis] = count
+        else:
+            slab_sel = [slice(None)] * mat.ndim
+            slab_sel[axis] = slice(mat.shape[axis] - count, mat.shape[axis])
+            ref_sel = [slice(None)] * mat.ndim
+            ref_sel[axis] = mat.shape[axis] - count - 1
+        slab = mat[tuple(slab_sel)]
+        ref = np.expand_dims(mat[tuple(ref_sel)], axis=axis)
+        return bool(np.any(np.abs(slab - ref) > 1e-9))
 
     def get_conductivity(
         self, x, y, z=0, dx=1e-6, dt=1e-15, eps_avg=1.0, width=0, height=0, depth=0

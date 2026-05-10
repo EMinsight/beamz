@@ -43,11 +43,8 @@ from beamz.simulation.boundaries import (
     full_pec_curl_h_to_e_2d_xy,
     full_pec_curl_h_to_e_3d,
     full_tm_2d_xy_masks,
-    has_full_pec_2d_xy,
     has_full_pec_3d,
     initialize_full_pec_3d_state,
-    pec_curl_e_to_h_3d,
-    pec_curl_h_to_e_3d,
     resolve_metallic_edges,
     tm_xy_cpml_curl_e_to_h_2d,
     tm_xy_cpml_curl_h_to_e_2d,
@@ -642,12 +639,47 @@ class CompiledSimulation:
         hy: jnp.ndarray,
     ) -> jnp.ndarray:
         power_scale = jnp.asarray(spec.power_scale, dtype=jnp.float32)
-        ez_vals = ez[spec.y_ez, spec.x_ez] * spec.valid_ez
-        hx_vals = hx[spec.y_hx, spec.x_hx] * spec.valid_hx
-        hy_vals = hy[spec.y_hy, spec.x_hy] * spec.valid_hy
+        ez_vals = self._sample_monitor_component_2d(
+            ez,
+            spec.ez_interp_flat_idx,
+            spec.ez_interp_weights,
+            spec.x_ez,
+            spec.y_ez,
+            spec.valid_ez,
+        )
+        hx_vals = self._sample_monitor_component_2d(
+            hx,
+            spec.hx_interp_flat_idx,
+            spec.hx_interp_weights,
+            spec.x_hx,
+            spec.y_hx,
+            spec.valid_hx,
+        )
+        hy_vals = self._sample_monitor_component_2d(
+            hy,
+            spec.hy_interp_flat_idx,
+            spec.hy_interp_weights,
+            spec.x_hy,
+            spec.y_hy,
+            spec.valid_hy,
+        )
 
         mag = poynting_magnitude_2d(ez_vals, hx_vals, hy_vals)
         return jnp.asarray(jnp.sum(mag), dtype=jnp.float32) * power_scale
+
+    @staticmethod
+    def _sample_monitor_component_2d(
+        field: jnp.ndarray,
+        flat_idx: jnp.ndarray | None,
+        weights: jnp.ndarray | None,
+        x_idx: jnp.ndarray,
+        y_idx: jnp.ndarray,
+        valid: jnp.ndarray,
+    ) -> jnp.ndarray:
+        if flat_idx is not None and weights is not None:
+            gathered = field.reshape(-1)[flat_idx]
+            return jnp.sum(gathered * weights, axis=-1)
+        return field[y_idx, x_idx] * valid
 
     def _monitor_power_3d(
         self,
@@ -788,9 +820,30 @@ class CompiledSimulation:
         tm_hx: jnp.ndarray | None = None,
         tm_hy: jnp.ndarray | None = None,
     ) -> jnp.ndarray:
-        ex_vals = ex[spec.y_ex, spec.x_ex] * spec.valid_ex
-        ey_vals = ey[spec.y_ey, spec.x_ey] * spec.valid_ey
-        hz_vals = hz[spec.y_hz, spec.x_hz] * spec.valid_hz
+        ex_vals = self._sample_monitor_component_2d(
+            ex,
+            spec.ex_interp_flat_idx,
+            spec.ex_interp_weights,
+            spec.x_ex,
+            spec.y_ex,
+            spec.valid_ex,
+        )
+        ey_vals = self._sample_monitor_component_2d(
+            ey,
+            spec.ey_interp_flat_idx,
+            spec.ey_interp_weights,
+            spec.x_ey,
+            spec.y_ey,
+            spec.valid_ey,
+        )
+        hz_vals = self._sample_monitor_component_2d(
+            hz,
+            spec.hz_interp_flat_idx,
+            spec.hz_interp_weights,
+            spec.x_hz,
+            spec.y_hz,
+            spec.valid_hz,
+        )
 
         if (
             spec.dft_normalization_code == 1
@@ -826,9 +879,30 @@ class CompiledSimulation:
                 self.config.resolution,
             )
         else:
-            ez_vals = ez[spec.y_ez, spec.x_ez] * spec.valid_ez
-            hx_vals = hx[spec.y_hx, spec.x_hx] * spec.valid_hx
-            hy_vals = hy[spec.y_hy, spec.x_hy] * spec.valid_hy
+            ez_vals = self._sample_monitor_component_2d(
+                ez,
+                spec.ez_interp_flat_idx,
+                spec.ez_interp_weights,
+                spec.x_ez,
+                spec.y_ez,
+                spec.valid_ez,
+            )
+            hx_vals = self._sample_monitor_component_2d(
+                hx,
+                spec.hx_interp_flat_idx,
+                spec.hx_interp_weights,
+                spec.x_hx,
+                spec.y_hx,
+                spec.valid_hx,
+            )
+            hy_vals = self._sample_monitor_component_2d(
+                hy,
+                spec.hy_interp_flat_idx,
+                spec.hy_interp_weights,
+                spec.x_hy,
+                spec.y_hy,
+                spec.valid_hy,
+            )
 
         return jnp.stack((ex_vals, ey_vals, ez_vals, hx_vals, hy_vals, hz_vals), axis=0)
 

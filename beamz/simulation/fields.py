@@ -19,8 +19,6 @@ from beamz.simulation.boundaries import (
     has_full_pec_3d,
     initialize_full_pec_3d_state,
     initialize_tm_2d_xy_state,
-    pec_curl_e_to_h_3d,
-    pec_curl_h_to_e_3d,
     sync_compact_fields_from_full_pec_3d,
     tm_xy_cpml_curl_e_to_h_2d,
     tm_xy_cpml_curl_h_to_e_2d,
@@ -29,7 +27,11 @@ from beamz.simulation.boundaries import (
     xy_te_curl_e_to_h_2d,
     xy_te_curl_h_to_e_2d,
 )
-from beamz.simulation.yee import sample_voxel_grid_at_tm_xy_full_component_2d
+from beamz.simulation.yee import (
+    sample_voxel_grid_at_component_2d,
+    sample_voxel_grid_at_component_3d,
+    sample_voxel_grid_at_tm_xy_full_component_2d,
+)
 from beamz.shared_kernels import (
     advance_e_from_curl,
     advance_h_from_curl,
@@ -148,6 +150,9 @@ class Fields:
                 setattr(self, f"eps_{comp}", eps)
                 setattr(self, f"sig_{comp}", sig)
                 setattr(self, f"region_{comp}", region)
+            self.eps_ex = self.eps_x
+            self.eps_ey = self.eps_y
+            self.eps_ez = self.eps_z
 
             self.sigma_m_hx, self.sigma_m_hy, self.sigma_m_hz = (
                 ops.magnetic_conductivity_terms_3d(
@@ -158,6 +163,21 @@ class Fields:
                     self.Hz.shape,
                 )
             )
+            self.mu_hx = sample_voxel_grid_at_component_3d(
+                self.permeability,
+                "Hx",
+                stored_shape=tuple(self.Hx.shape),
+            )
+            self.mu_hy = sample_voxel_grid_at_component_3d(
+                self.permeability,
+                "Hy",
+                stored_shape=tuple(self.Hy.shape),
+            )
+            self.mu_hz = sample_voxel_grid_at_component_3d(
+                self.permeability,
+                "Hz",
+                stored_shape=tuple(self.Hz.shape),
+            )
         else:
             for comp in ("x", "y", "z"):
                 eps, sig, region = ops.material_slice_for_e_2d_component(
@@ -166,6 +186,9 @@ class Fields:
                 setattr(self, f"eps_{comp}", eps)
                 setattr(self, f"sig_{comp}", sig)
                 setattr(self, f"region_{comp}", region)
+            self.eps_ex = self._sample_e_material_2d("Ex")
+            self.eps_ey = self._sample_e_material_2d("Ey")
+            self.eps_ez = self._sample_e_material_2d("Ez")
 
             self.sigma_m_hx, self.sigma_m_hy, self.sigma_m_hz = (
                 ops.magnetic_conductivity_terms_2d_full(
@@ -177,6 +200,9 @@ class Fields:
                     self.plane_2d,
                 )
             )
+            self.mu_hx = self._sample_h_material_2d("Hx")
+            self.mu_hy = self._sample_h_material_2d("Hy")
+            self.mu_hz = self._sample_h_material_2d("Hz")
             if self.plane_2d == "xy":
                 self.eps_tm_ez = sample_voxel_grid_at_tm_xy_full_component_2d(
                     self.permittivity,
@@ -190,6 +216,60 @@ class Fields:
                     self.permeability,
                     "Hy",
                 )
+
+    def _sample_e_material_2d(self, component: str):
+        if self.plane_2d == "xy" and component == "Ez":
+            return sample_voxel_grid_at_tm_xy_full_component_2d(
+                self.permittivity,
+                component,
+            )
+        return sample_voxel_grid_at_component_2d(
+            self.permittivity,
+            component,
+            self.plane_2d,
+            stored_shape=tuple(getattr(self, component).shape),
+        )
+
+    def _sample_h_material_2d(self, component: str):
+        if self.plane_2d == "xy" and component in {"Hx", "Hy"}:
+            return sample_voxel_grid_at_tm_xy_full_component_2d(
+                self.permeability,
+                component,
+            )
+        return sample_voxel_grid_at_component_2d(
+            self.permeability,
+            component,
+            self.plane_2d,
+            stored_shape=tuple(getattr(self, component).shape),
+        )
+
+    def permittivity_for_component(self, component: str):
+        """Return effective permittivity on an E-component Yee lattice."""
+        mapping = {"Ex": "eps_ex", "Ey": "eps_ey", "Ez": "eps_ez"}
+        try:
+            return getattr(self, mapping[component])
+        except KeyError as exc:
+            raise ValueError(f"Unsupported E component {component!r}") from exc
+
+    def permeability_for_component(self, component: str):
+        """Return effective permeability on an H-component Yee lattice."""
+        mapping = {"Hx": "mu_hx", "Hy": "mu_hy", "Hz": "mu_hz"}
+        try:
+            return getattr(self, mapping[component])
+        except KeyError as exc:
+            raise ValueError(f"Unsupported H component {component!r}") from exc
+
+    def material_for_component(self, component: str):
+        """Return the material array collocated with a Yee field component."""
+        if component in {"Ex", "Ey", "Ez"}:
+            return self.permittivity_for_component(component)
+        if component in {"Hx", "Hy", "Hz"}:
+            return self.permeability_for_component(component)
+        raise ValueError(f"Unsupported field component {component!r}")
+
+    def material_at_component(self, component: str, index):
+        """Return material values collocated with a component support/index."""
+        return self.material_for_component(component)[index]
 
     def _initialize_cpml_tm_xy_state(self) -> CpmlTm2DxyState | None:
         if not (self.has_cpml and self.plane_2d == "xy" and self.pml_data):

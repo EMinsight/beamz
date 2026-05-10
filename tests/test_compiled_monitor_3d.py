@@ -5,12 +5,12 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from beamz import PML, Design, Material, ModeSource, Monitor, Simulation, um
+from beamz import Design, Material, Monitor, um
 from beamz.devices.monitors.compiler import (
     compile_monitor_specs,
     sample_compiled_monitor_plane_component_3d,
 )
-from beamz.simulation.yee import component_coordinates_3d_um
+from beamz.simulation.yee import component_coordinates_2d_um, component_coordinates_3d_um
 from tests.test_3d_constitutive_sampling import (
     _build_centered_straight_guide_sim_steps,
     _build_step_driven_test_source,
@@ -25,6 +25,20 @@ def _linear_component(
     y = np.asarray(coords["y"], dtype=float)[None, :, None] * float(um)
     x = np.asarray(coords["x"], dtype=float)[None, None, :] * float(um)
     return (100.0 * z) + (10.0 * y) + x
+
+
+def _linear_component_2d(component: str, grid_shape: tuple[int, int], dx: float):
+    coords = component_coordinates_2d_um(component, grid_shape, float(dx), "xy")
+    y = np.asarray(coords["y"], dtype=float)[:, None]
+    x = np.asarray(coords["x"], dtype=float)[None, :]
+    return 10.0 * x + y
+
+
+def _sample_compiled_2d(field, flat_idx, weights):
+    flat = np.asarray(field, dtype=np.complex128).reshape(-1)
+    idx = np.asarray(flat_idx, dtype=np.int32)
+    w = np.asarray(weights, dtype=np.float32)
+    return np.sum(flat[idx] * w, axis=1)
 
 
 def _make_arbitrary_monitor(normal: str) -> tuple[Design, Monitor]:
@@ -51,6 +65,92 @@ def _make_arbitrary_monitor(normal: str) -> tuple[Design, Monitor]:
         dft_enabled=False,
     )
     return design, monitor
+
+
+def test_2d_monitor_samples_te_components_at_component_locations():
+    dx = 1.0
+    grid_shape = (4, 5)
+    design = Design(width=5.0, height=4.0, material=Material(1.0))
+    monitor = Monitor(
+        design=design,
+        start=(1.5, 0.0),
+        end=(1.5, 2.0),
+        name="m2d",
+        dft_enabled=False,
+    )
+    fields = {
+        "Ex": _linear_component_2d("Ex", grid_shape, dx),
+        "Ey": _linear_component_2d("Ey", grid_shape, dx),
+        "Hz": _linear_component_2d("Hz", grid_shape, dx),
+    }
+    monitor.record_fields_2d(
+        np.zeros((5, 6), dtype=np.float32),
+        np.zeros((4, 6), dtype=np.float32),
+        np.zeros((5, 5), dtype=np.float32),
+        t=0.0,
+        dx=dx,
+        dy=dx,
+        step=0,
+        Ex=fields["Ex"],
+        Ey=fields["Ey"],
+        Hz=fields["Hz"],
+    )
+
+    x_targets, y_targets = monitor._line_sample_coords_2d(dx, dx)
+    expected = 10.0 * np.asarray(x_targets) + np.asarray(y_targets)
+    for comp in ("Ex", "Ey", "Hz"):
+        np.testing.assert_allclose(monitor.fields[comp][0], expected)
+
+
+def test_compiled_2d_monitor_interpolation_matches_imperative_record_fields():
+    dx = 1.0
+    grid_shape = (4, 5)
+    design = Design(width=5.0, height=4.0, material=Material(1.0))
+    monitor = Monitor(
+        design=design,
+        start=(1.5, 0.0),
+        end=(1.5, 2.0),
+        name="m2d_compiled",
+        dft_enabled=False,
+    )
+    field_ns = SimpleNamespace(
+        permittivity=np.ones(grid_shape, dtype=np.float32),
+        plane_2d="xy",
+        Ex=_linear_component_2d("Ex", grid_shape, dx),
+        Ey=_linear_component_2d("Ey", grid_shape, dx),
+        Ez=np.zeros((5, 6), dtype=np.float32),
+        Hx=np.zeros((4, 6), dtype=np.float32),
+        Hy=np.zeros((5, 5), dtype=np.float32),
+        Hz=_linear_component_2d("Hz", grid_shape, dx),
+    )
+    monitor.record_fields_2d(
+        field_ns.Ez,
+        field_ns.Hx,
+        field_ns.Hy,
+        t=0.0,
+        dx=dx,
+        dy=dx,
+        step=0,
+        Ex=field_ns.Ex,
+        Ey=field_ns.Ey,
+        Hz=field_ns.Hz,
+    )
+    specs, _ = compile_monitor_specs(
+        [monitor],
+        field_ns,
+        resolution=dx,
+        num_steps=1,
+        dt=1.0,
+    )
+    spec = specs[0]
+
+    for comp in ("Ex", "Ey", "Hz"):
+        sampled = _sample_compiled_2d(
+            getattr(field_ns, comp),
+            getattr(spec, f"{comp.lower()}_interp_flat_idx"),
+            getattr(spec, f"{comp.lower()}_interp_weights"),
+        )
+        np.testing.assert_allclose(sampled, monitor.fields[comp][0])
 
 
 @pytest.mark.parametrize("normal", ["x", "y", "z"])

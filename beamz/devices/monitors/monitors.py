@@ -1076,23 +1076,80 @@ class Monitor:
                 else:
                     Hy_values.append(0.0)
 
+        def sample_xy_component(component, arr):
+            if arr is None:
+                return [0.0] * len(grid_points)
+            if line_coords is None:
+                return None
+            from beamz.simulation.yee import component_coordinates_2d_um
+
+            if Ex is not None and Ey is not None:
+                grid_shape = (int(Ex.shape[0]), int(Ey.shape[1]))
+            elif Ey is not None and Hz is not None:
+                grid_shape = (int(Hz.shape[0]) + 1, int(Ey.shape[1]))
+            elif Ex is not None and Hz is not None:
+                grid_shape = (int(Ex.shape[0]), int(Hz.shape[1]) + 1)
+            elif full_tm_xy:
+                grid_shape = (int(Ez.shape[0]) - 1, int(Ez.shape[1]) - 1)
+            else:
+                return None
+            coords = component_coordinates_2d_um(component, grid_shape, float(dx), "xy")
+            x_targets, y_targets = line_coords
+            try:
+                return self._sample_component_line_2d(
+                    arr,
+                    coords["x"],
+                    coords["y"],
+                    x_targets,
+                    y_targets,
+                ).tolist()
+            except Exception:
+                return None
+
+        sampled_ex = sample_xy_component("Ex", Ex)
+        sampled_ey = sample_xy_component("Ey", Ey)
+        sampled_hz = sample_xy_component("Hz", Hz)
+
         Ex_values, Ey_values, Hz_values = [], [], []
-        for x_idx, y_idx in grid_points:
-            if Ex is not None and 0 <= y_idx < Ex.shape[0] and 0 <= x_idx < Ex.shape[1]:
-                val = Ex[y_idx, x_idx]
-                Ex_values.append(complex(val) if np.iscomplexobj(val) else float(val))
-            else:
-                Ex_values.append(0.0)
-            if Ey is not None and 0 <= y_idx < Ey.shape[0] and 0 <= x_idx < Ey.shape[1]:
-                val = Ey[y_idx, x_idx]
-                Ey_values.append(complex(val) if np.iscomplexobj(val) else float(val))
-            else:
-                Ey_values.append(0.0)
-            if Hz is not None and 0 <= y_idx < Hz.shape[0] and 0 <= x_idx < Hz.shape[1]:
-                val = Hz[y_idx, x_idx]
-                Hz_values.append(complex(val) if np.iscomplexobj(val) else float(val))
-            else:
-                Hz_values.append(0.0)
+        if sampled_ex is not None and sampled_ey is not None and sampled_hz is not None:
+            Ex_values = sampled_ex
+            Ey_values = sampled_ey
+            Hz_values = sampled_hz
+        else:
+            for x_idx, y_idx in grid_points:
+                if (
+                    Ex is not None
+                    and 0 <= y_idx < Ex.shape[0]
+                    and 0 <= x_idx < Ex.shape[1]
+                ):
+                    val = Ex[y_idx, x_idx]
+                    Ex_values.append(
+                        complex(val) if np.iscomplexobj(val) else float(val)
+                    )
+                else:
+                    Ex_values.append(0.0)
+                if (
+                    Ey is not None
+                    and 0 <= y_idx < Ey.shape[0]
+                    and 0 <= x_idx < Ey.shape[1]
+                ):
+                    val = Ey[y_idx, x_idx]
+                    Ey_values.append(
+                        complex(val) if np.iscomplexobj(val) else float(val)
+                    )
+                else:
+                    Ey_values.append(0.0)
+                if (
+                    Hz is not None
+                    and 0 <= y_idx < Hz.shape[0]
+                    and 0 <= x_idx < Hz.shape[1]
+                ):
+                    val = Hz[y_idx, x_idx]
+                    Hz_values.append(
+                        complex(val) if np.iscomplexobj(val) else float(val)
+                    )
+                else:
+                    Hz_values.append(0.0)
 
         if do_record and self.should_record_fields:
             self.fields["Ex"].append(Ex_values)
