@@ -125,7 +125,7 @@ class Fields:
         is_3d = self.permittivity.ndim == 3
         base_sigma = self.conductivity
 
-        if self.has_pml and hasattr(self, "pml_data") and not self.has_cpml:
+        if self.has_pml and hasattr(self, "pml_data"):
             sigma_pml = jnp.zeros_like(base_sigma)
             if is_3d:
                 pml_keys = ("sigma_x", "sigma_y", "sigma_z")
