@@ -20,7 +20,7 @@ pip install beamz
 - **GPU-accelerated** (but CPU-capable).
 - Built-in layout flow (GDSII import/export).
 - FDTD simulation in 2D and **3D**.
-- PML, CPML (WIP), and PEC boundaries.
+- Absorbing Layers, CPML (WIP), and PEC boundaries.
 - **Sub-pixel smoothing** (using super-sampling).
 - Gaussian and **mode sources** with TE and TM polarization.
 - Custom source time profiles.

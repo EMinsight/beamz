@@ -303,7 +303,7 @@ def _plot(results: list[Result], out_dir: Path) -> Path:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", type=Path, default=SCRIPT_DIR / "results_dipole_radiation_symmetry_3d")
-    parser.add_argument("--formulations", type=str, default="sigma,cpml")
+    parser.add_argument("--formulations", type=str, default="sponge,cpml")
     parser.add_argument("--pml-thicknesses-wl", type=str, default="1.0")
     parser.add_argument("--cpml-kappa-values", type=str, default="4.0,6.0")
     parser.add_argument("--cpml-alpha-values", type=str, default="300.0,150.0")

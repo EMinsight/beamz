@@ -58,7 +58,7 @@ OUTPUT_MONITOR_OFFSET = 0.05 * µm
 RUN_AFTER_SOURCES_UOC = 90.0
 DECAY_RATIO = 1e-4
 LOOKBACK_RECORDS = 20
-# The current CPML path underperforms the legacy sigma absorber on BeamZ's
+# The current CPML path underperforms the legacy sponge absorber on BeamZ's
 # live normal-incidence and oblique PML benchmarks, so keep this example on the
 # more reliable absorber until CPML is corrected.
 PML_FORMULATION = "sigma"

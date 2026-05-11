@@ -2,7 +2,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from beamz import PML, Design, Material, um
+from beamz import AbsorbingLayer, PML, Design, Material, um
 from beamz.simulation.fields import Fields
 
 pytestmark = pytest.mark.unit
@@ -57,7 +57,7 @@ def test_pml_parameter_defaults():
     assert pml.thickness == pytest.approx(1.0 * um)
     assert pml.sigma_max is None
     assert pml.m == 3
-    assert pml.formulation == "sigma"
+    assert pml.formulation == "sponge"
     assert pml.kappa_max == pytest.approx(3.0)
     assert pml.alpha_max is None
     assert pml.target_reflection == pytest.approx(1e-6)
@@ -66,7 +66,7 @@ def test_pml_parameter_defaults():
 def test_sigma_max_is_computed_when_omitted():
     fields = _make_fields_2d()
     design = _make_design_2d()
-    pml = PML(thickness=0.2, sigma_max=None, formulation="sigma")
+    pml = PML(thickness=0.2, sigma_max=None, formulation="sponge")
 
     payload = pml.create_pml_regions(
         fields, design, resolution=0.1, dt=1e-15, plane_2d="xy"
@@ -77,6 +77,19 @@ def test_sigma_max_is_computed_when_omitted():
     assert payload["sigma_x"].shape == fields.permittivity.shape
     assert payload["sigma_y"].shape == fields.permittivity.shape
     assert payload["mask"].shape == fields.permittivity.shape
+    assert payload["formulation"] == "sponge"
+
+
+def test_absorbing_layer_uses_sponge_formulation():
+    absorber = AbsorbingLayer(thickness=0.2, sigma_max=5.0)
+
+    assert absorber.formulation == "sponge"
+
+
+def test_sigma_alias_maps_to_sponge():
+    pml = PML(formulation="sigma")
+
+    assert pml.formulation == "sponge"
 
 
 def test_cpml_alpha_is_computed_when_omitted():

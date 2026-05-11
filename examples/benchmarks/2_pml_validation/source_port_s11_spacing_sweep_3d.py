@@ -14,7 +14,7 @@ fixed source/reference plane and reports:
 - transmission/cross-port center-frequency values for sanity
 
 The defaults intentionally use a low-cost configuration:
-- sigma absorber only
+- sponge absorber only
 - 3D
 - 6 PPW
 """
@@ -652,7 +652,7 @@ def build_straight_case(cfg: SweepConfig, monitor_delta_um: float):
         design=design,
         sources=[source],
         monitors=monitors,
-        boundaries=[PML(edges="all", thickness=cfg.pml_m, formulation="sigma")],
+        boundaries=[PML(edges="all", thickness=cfg.pml_m, formulation="sponge")],
         time=pulse.time,
         resolution=dx,
     )
@@ -856,8 +856,8 @@ def build_crossing_case(cfg: SweepConfig, monitor_delta_um: float):
         sources=[source],
         monitors=monitors,
         boundaries=[
-            PML(edges=["left", "right", "top", "bottom"], thickness=cfg.pml_m, formulation="sigma"),
-            PML(edges=["front", "back"], thickness=cfg.pml_m, formulation="sigma"),
+            PML(edges=["left", "right", "top", "bottom"], thickness=cfg.pml_m, formulation="sponge"),
+            PML(edges=["front", "back"], thickness=cfg.pml_m, formulation="sponge"),
         ],
         time=pulse.time,
         resolution=dx,

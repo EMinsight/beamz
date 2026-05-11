@@ -18,7 +18,7 @@ DX, DT = calc_optimal_fdtd_params(WL, 2.25, points_per_wavelength=20) # reduce t
 STEPS = 50 # reduce to 40 for faster optimization
 MAT_PENALTY = 0.3      # Target core material fraction (0.0 to 1.0)
 PENALTY_STRENGTH = 1 # Scaling factor for the penalty gradient
-PML_FORMULATION_2D = "sigma"
+PML_FORMULATION_2D = "sponge"
 
 # Design & Materials
 design = Design(width=W, height=H, material=Material(permittivity=N_CLAD**2))

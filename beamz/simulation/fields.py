@@ -107,7 +107,7 @@ class Fields:
     def set_pml_conductivity(self, pml_data):
         """Set effective conductivity for PML regions."""
         self.has_pml = True
-        self.has_cpml = str(pml_data.get("formulation", "sigma")).lower() == "cpml"
+        self.has_cpml = str(pml_data.get("formulation", "sponge")).lower() == "cpml"
         # Convert PML data arrays to JAX
         self.pml_data = {
             k: jnp.asarray(v) if hasattr(v, "__array__") else v

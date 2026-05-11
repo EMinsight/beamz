@@ -309,7 +309,7 @@ def _plot_probe_trace(debug: dict, out_dir: Path, *, formulation: str, thickness
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sweep oblique plane-wave reflection versus absorber thickness.")
     parser.add_argument("--output-dir", type=Path, default=SCRIPT_DIR / "results_oblique_plane_wave_pml_sweep")
-    parser.add_argument("--formulations", type=str, default="sigma,cpml")
+    parser.add_argument("--formulations", type=str, default="sponge,cpml")
     parser.add_argument("--pml-thicknesses-wl", type=str, default="0.5,1.0,1.5")
     parser.add_argument("--angle-deg", type=float, default=SweepConfig().angle_deg)
     parser.add_argument("--cpml-kappa-max", type=float, default=SweepConfig().cpml_kappa_max)

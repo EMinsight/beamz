@@ -342,7 +342,7 @@ def main() -> None:
     parser.add_argument(
         "--formulations",
         type=str,
-        default="sigma,cpml",
+        default="sponge,cpml",
         help="Comma-separated formulations to compare.",
     )
     parser.add_argument(

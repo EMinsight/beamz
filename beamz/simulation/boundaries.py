@@ -12,6 +12,23 @@ from beamz.simulation.yee import (
 )
 
 
+def _canonicalize_pml_formulation(formulation):
+    """Normalize public absorber/PML formulation names."""
+
+    normalized = str(formulation).lower()
+    aliases = {
+        "sigma": "sponge",
+        "sponge": "sponge",
+        "cpml": "cpml",
+    }
+    if normalized not in aliases:
+        raise ValueError(
+            "Unsupported boundary formulation "
+            f"{formulation!r}. Expected one of: 'sponge', 'sigma', 'cpml'."
+        )
+    return aliases[normalized]
+
+
 class Boundary:
     """Abstract base class for all boundary conditions."""
 
@@ -43,8 +60,9 @@ class Boundary:
 class PML(Boundary):
     """Perfectly Matched Layer boundary condition.
 
-    BeamZ defaults to the graded-conductivity absorber via
-    ``formulation="sigma"``. The optional ``formulation="cpml"`` path exposes
+    BeamZ keeps this class for backwards compatibility, but the default
+    formulation is a graded-conductivity absorbing layer exposed as
+    ``formulation="sponge"``. The optional ``formulation="cpml"`` path exposes
     the additional ``sigma/kappa/alpha`` profiles needed for a true
     convolutional PML in the solver update equations.
     """
@@ -57,7 +75,7 @@ class PML(Boundary):
         thickness=1 * µm,
         sigma_max=None,
         m=3,
-        formulation="sigma",
+        formulation="sponge",
         kappa_max=3.0,
         alpha_max=None,
         target_reflection=1e-6,
@@ -68,13 +86,14 @@ class PML(Boundary):
             thickness: PML thickness
             sigma_max: maximum conductivity (auto-calculated if None)
             m: conductivity grading order
-            formulation: ``"sigma"`` for the default graded-conductivity
-                absorber or ``"cpml"`` for the convolutional PML
+            formulation: ``"sponge"`` for the default graded-conductivity
+                absorber, ``"sigma"`` as a backwards-compatible alias, or
+                ``"cpml"`` for the convolutional PML
         """
         super().__init__(edges, thickness)
         self.sigma_max = sigma_max
         self.m = m
-        self.formulation = str(formulation).lower()
+        self.formulation = _canonicalize_pml_formulation(formulation)
         self.kappa_max = float(kappa_max)
         self.alpha_max = None if alpha_max is None else float(alpha_max)
         self.target_reflection = float(target_reflection)
@@ -331,7 +350,7 @@ class PML(Boundary):
         return sigma, kappa, alpha
 
     def _create_pml_profiles_2d(self, fields, design, plane_2d):
-        """Create graded-sigma PML profiles for 2D plane."""
+        """Create graded-conductivity absorber profiles for a 2D plane."""
         shape = fields.permittivity.shape
         dim1, dim2 = shape
 
@@ -371,10 +390,10 @@ class PML(Boundary):
         }
 
         pml_mask = (sigma_axis1 > 0) | (sigma_axis2 > 0)
-        return {"mask": pml_mask, **profiles}
+        return {"formulation": "sponge", "mask": pml_mask, **profiles}
 
     def _create_pml_profiles_3d(self, fields, design):
-        """Create graded-sigma PML profiles for 3D."""
+        """Create graded-conductivity absorber profiles for 3D."""
         shape = fields.permittivity.shape  # (nz, ny, nx)
         nz, ny, nx = shape
         depth, height, width = design.depth, design.height, design.width
@@ -406,7 +425,7 @@ class PML(Boundary):
         }
 
         pml_mask = (sigma_x > 0) | (sigma_y > 0) | (sigma_z > 0)
-        return {"mask": pml_mask, **profiles}
+        return {"formulation": "sponge", "mask": pml_mask, **profiles}
 
     def _create_cpml_profiles_2d(self, fields, design, plane_2d):
         """Create sigma/kappa/alpha CPML profiles for 2D."""
@@ -656,6 +675,31 @@ class PML(Boundary):
             }
         )
         return out
+
+
+class AbsorbingLayer(PML):
+    """Legacy graded-conductivity absorbing layer.
+
+    This boundary adds loss by merging a graded conductivity shell into the
+    material conductivity update. It is not a matched-layer formulation.
+    """
+
+    def __init__(
+        self,
+        edges="all",
+        thickness=1 * µm,
+        sigma_max=None,
+        m=3,
+        target_reflection=1e-6,
+    ):
+        super().__init__(
+            edges=edges,
+            thickness=thickness,
+            sigma_max=sigma_max,
+            m=m,
+            formulation="sponge",
+            target_reflection=target_reflection,
+        )
 
 
 class PEC(Boundary):
