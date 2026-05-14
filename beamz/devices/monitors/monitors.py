@@ -1,4 +1,5 @@
 import logging
+import warnings
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -11,6 +12,7 @@ from beamz.devices._placement import (
     snap_axis_aligned_line_region,
     snap_plane_region,
 )
+from beamz.devices.ports import Port, _normalize_direction, _normalize_polarization
 from beamz.shared_kernels import (
     full_tm_xy_component_to_centered_grid,
     is_full_tm_xy_lattice,
@@ -18,8 +20,8 @@ from beamz.shared_kernels import (
     monitor_dft_window_weight,
     monitor_records_on_step,
     monitor_dft_sample_scale,
-    poynting_magnitude_2d,
-    poynting_magnitude_3d,
+    poynting_flux_2d,
+    poynting_flux_3d,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,12 +54,39 @@ def _plane_axes_for_normal_3d(axis: str) -> tuple[str, str]:
         raise ValueError(f"Unsupported plane normal {axis!r}.") from exc
 
 
+def _line_normal_2d(start, end) -> tuple[str, float] | None:
+    """Return the signed Cartesian normal for an axis-aligned 2D monitor line."""
+    if start is None or end is None:
+        return None
+    x0, y0 = float(start[0]), float(start[1])
+    x1, y1 = float(end[0]), float(end[1])
+    dx = x1 - x0
+    dy = y1 - y0
+    tol = 1e-12 * max(abs(dx), abs(dy), 1.0)
+    if abs(dx) <= tol and abs(dy) > tol:
+        return "x", 1.0 if dy >= 0.0 else -1.0
+    if abs(dy) <= tol and abs(dx) > tol:
+        return "y", -1.0 if dx >= 0.0 else 1.0
+    return None
+
+
+def _line_integral_scale_2d(normal_axis: str, dx: float, dy: float) -> float:
+    """Return the 2D line element for a monitor normal to `normal_axis`."""
+    axis = str(normal_axis).lower()
+    if axis == "x":
+        return float(dy)
+    if axis == "y":
+        return float(dx)
+    return float(0.5 * (float(dx) + float(dy)))
+
+
 @dataclass
 class _MonitorState:
     """Mutable runtime state kept separate from Monitor configuration."""
 
     fields: dict[str, list]
-    frequency_flux_spectrum: np.ndarray
+    power_spectrum: np.ndarray
+    _frequency_flux_spectrum_legacy: np.ndarray | None
     objective_value: Optional[float]
     power_accumulated: np.ndarray | None
     energy_history: list
@@ -76,7 +105,9 @@ class _MonitorState:
     _dft_base_dt: float | None
 
     @classmethod
-    def create(cls, *, dft_frequencies: np.ndarray, frequency_points: np.ndarray):
+    def create(
+        cls, *, dft_frequencies: np.ndarray, power_spectrum_frequencies: np.ndarray
+    ):
         fields = {
             "Ex": [],
             "Ey": [],
@@ -88,9 +119,10 @@ class _MonitorState:
         }
         return cls(
             fields=fields,
-            frequency_flux_spectrum=np.zeros(
-                frequency_points.shape, dtype=np.complex64
+            power_spectrum=np.zeros(
+                power_spectrum_frequencies.shape, dtype=np.complex64
             ),
+            _frequency_flux_spectrum_legacy=None,
             objective_value=None,
             power_accumulated=None,
             energy_history=[],
@@ -113,7 +145,8 @@ class _MonitorState:
 class Monitor:
     _RUNTIME_ATTRS = {
         "fields",
-        "frequency_flux_spectrum",
+        "power_spectrum",
+        "_frequency_flux_spectrum_legacy",
         "objective_value",
         "power_accumulated",
         "energy_history",
@@ -143,6 +176,53 @@ class Monitor:
             return
         object.__setattr__(self, name, value)
 
+    @property
+    def frequency_points(self):
+        warnings.warn(
+            "Monitor.frequency_points is deprecated; use "
+            "Monitor.power_spectrum_frequencies instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.power_spectrum_frequencies
+
+    @frequency_points.setter
+    def frequency_points(self, value):
+        warnings.warn(
+            "Monitor.frequency_points is deprecated; use "
+            "Monitor.power_spectrum_frequencies instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        self.power_spectrum_frequencies = np.asarray(value, dtype=np.float64).ravel()
+        self.accumulate_frequency = bool(self.power_spectrum_frequencies.size > 0)
+
+    @property
+    def frequency_flux_spectrum(self):
+        warnings.warn(
+            "Monitor.frequency_flux_spectrum is deprecated; use "
+            "Monitor.power_spectrum for the time-domain power spectrum, or "
+            "Monitor.get_dft_flux() for phasor DFT flux.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        legacy = getattr(self, "_frequency_flux_spectrum_legacy", None)
+        if legacy is not None:
+            return legacy
+        return self.power_spectrum
+
+    @frequency_flux_spectrum.setter
+    def frequency_flux_spectrum(self, value):
+        warnings.warn(
+            "Monitor.frequency_flux_spectrum is deprecated; use "
+            "Monitor.power_spectrum instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        arr = np.asarray(value, dtype=np.complex64)
+        self.power_spectrum = arr
+        self._frequency_flux_spectrum_legacy = arr
+
     def __init__(
         self,
         design=None,
@@ -170,6 +250,8 @@ class Monitor:
         name: Optional[str] = None,
         frequency_points=None,
         frequency_record_interval=1,
+        power_spectrum_frequencies=None,
+        power_spectrum_record_interval=None,
     ):
         self.design = design
         self.should_record_fields = record_fields
@@ -217,20 +299,39 @@ class Monitor:
             if dft_components is not None
             else None
         )
-        if frequency_points is None:
+        if power_spectrum_frequencies is not None and frequency_points is not None:
+            raise ValueError(
+                "Use either power_spectrum_frequencies or deprecated frequency_points, "
+                "not both."
+            )
+        if frequency_points is not None:
+            warnings.warn(
+                "Monitor(frequency_points=...) is deprecated; use "
+                "Monitor(power_spectrum_frequencies=...) instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            power_spectrum_frequencies = frequency_points
+        if power_spectrum_frequencies is None:
             freq_arr = np.zeros((0,), dtype=np.float64)
         else:
-            freq_arr = np.asarray(frequency_points, dtype=np.float64).ravel()
+            freq_arr = np.asarray(power_spectrum_frequencies, dtype=np.float64).ravel()
             if freq_arr.ndim != 1:
                 raise ValueError(
-                    "frequency_points must be a 1D sequence of frequencies in Hz"
+                    "power_spectrum_frequencies must be a 1D sequence of "
+                    "frequencies in Hz"
                 )
             if np.any(freq_arr < 0.0):
                 raise ValueError(
-                    "frequency_points must be non-negative frequencies in Hz"
+                    "power_spectrum_frequencies must be non-negative frequencies in Hz"
                 )
-        self.frequency_points = freq_arr
-        self.frequency_record_interval = max(1, int(frequency_record_interval))
+        self.power_spectrum_frequencies = freq_arr
+        if power_spectrum_record_interval is None:
+            power_spectrum_record_interval = frequency_record_interval
+        self.power_spectrum_record_interval = max(
+            1, int(power_spectrum_record_interval)
+        )
+        self.frequency_record_interval = self.power_spectrum_record_interval
         self.accumulate_frequency = bool(freq_arr.size > 0)
         self.objective_function = objective_function
         self.name = name
@@ -245,7 +346,7 @@ class Monitor:
         # Runtime recording state is kept separate from the monitor spec.
         self._state = _MonitorState.create(
             dft_frequencies=self.dft_frequencies,
-            frequency_points=self.frequency_points,
+            power_spectrum_frequencies=self.power_spectrum_frequencies,
         )
 
         self.update_interval = 10
@@ -1001,6 +1102,60 @@ class Monitor:
         ).reshape(nfreq, 1)
         return (2.0 / scale) * accum
 
+    def _normal_axis_and_sign(self) -> tuple[str, float]:
+        if self.is_3d:
+            return str(getattr(self, "plane_normal", "z")).lower(), 1.0
+        line_normal = _line_normal_2d(
+            getattr(self, "start", None),
+            getattr(self, "end", None),
+        )
+        snapped = self.get_snapped_region(
+            dx=self._resolution or 1.0,
+            dy=self._resolution or 1.0,
+        )
+        if snapped is not None:
+            axis = str(snapped.normal_axis).lower()
+            sign = (
+                float(line_normal[1])
+                if line_normal is not None and line_normal[0] == axis
+                else 1.0
+            )
+            return axis, sign
+        if line_normal is not None:
+            return line_normal
+        return "x", 1.0
+
+    def get_dft_flux(self) -> np.ndarray:
+        """Return phasor flux 0.5 Re integral n . (E(w) x H*(w)).
+
+        2D line monitors integrate over `dl`; 3D plane monitors integrate over
+        `dA`.
+        """
+        dx = float(self._resolution or 1.0)
+        axis, sign = self._normal_axis_and_sign()
+        if self.is_3d:
+            measure = dx * dx
+            ex = np.asarray(self.get_dft_component("Ex"), dtype=np.complex128)
+            ey = np.asarray(self.get_dft_component("Ey"), dtype=np.complex128)
+            ez = np.asarray(self.get_dft_component("Ez"), dtype=np.complex128)
+            hx = np.asarray(self.get_dft_component("Hx"), dtype=np.complex128)
+            hy = np.asarray(self.get_dft_component("Hy"), dtype=np.complex128)
+            hz = np.asarray(self.get_dft_component("Hz"), dtype=np.complex128)
+            sx = ey * np.conjugate(hz) - ez * np.conjugate(hy)
+            sy = ez * np.conjugate(hx) - ex * np.conjugate(hz)
+            sz = ex * np.conjugate(hy) - ey * np.conjugate(hx)
+            component = {"x": sx, "y": sy, "z": sz}.get(axis, sz)
+        else:
+            measure = _line_integral_scale_2d(axis, dx, dx)
+            ez = np.asarray(self.get_dft_component("Ez"), dtype=np.complex128)
+            if axis == "x":
+                hy = np.asarray(self.get_dft_component("Hy"), dtype=np.complex128)
+                component = -ez * np.conjugate(hy)
+            else:
+                hx = np.asarray(self.get_dft_component("Hx"), dtype=np.complex128)
+                component = ez * np.conjugate(hx)
+        return 0.5 * np.real(np.sum(sign * component, axis=1)) * measure
+
     def record_fields_2d(
         self, Ez, Hx, Hy, t, dx, dy, step=0, Ex=None, Ey=None, Hz=None
     ):
@@ -1076,23 +1231,80 @@ class Monitor:
                 else:
                     Hy_values.append(0.0)
 
+        def sample_xy_component(component, arr):
+            if arr is None:
+                return [0.0] * len(grid_points)
+            if line_coords is None:
+                return None
+            from beamz.simulation.yee import component_coordinates_2d_um
+
+            if Ex is not None and Ey is not None:
+                grid_shape = (int(Ex.shape[0]), int(Ey.shape[1]))
+            elif Ey is not None and Hz is not None:
+                grid_shape = (int(Hz.shape[0]) + 1, int(Ey.shape[1]))
+            elif Ex is not None and Hz is not None:
+                grid_shape = (int(Ex.shape[0]), int(Hz.shape[1]) + 1)
+            elif full_tm_xy:
+                grid_shape = (int(Ez.shape[0]) - 1, int(Ez.shape[1]) - 1)
+            else:
+                return None
+            coords = component_coordinates_2d_um(component, grid_shape, float(dx), "xy")
+            x_targets, y_targets = line_coords
+            try:
+                return self._sample_component_line_2d(
+                    arr,
+                    coords["x"],
+                    coords["y"],
+                    x_targets,
+                    y_targets,
+                ).tolist()
+            except Exception:
+                return None
+
+        sampled_ex = sample_xy_component("Ex", Ex)
+        sampled_ey = sample_xy_component("Ey", Ey)
+        sampled_hz = sample_xy_component("Hz", Hz)
+
         Ex_values, Ey_values, Hz_values = [], [], []
-        for x_idx, y_idx in grid_points:
-            if Ex is not None and 0 <= y_idx < Ex.shape[0] and 0 <= x_idx < Ex.shape[1]:
-                val = Ex[y_idx, x_idx]
-                Ex_values.append(complex(val) if np.iscomplexobj(val) else float(val))
-            else:
-                Ex_values.append(0.0)
-            if Ey is not None and 0 <= y_idx < Ey.shape[0] and 0 <= x_idx < Ey.shape[1]:
-                val = Ey[y_idx, x_idx]
-                Ey_values.append(complex(val) if np.iscomplexobj(val) else float(val))
-            else:
-                Ey_values.append(0.0)
-            if Hz is not None and 0 <= y_idx < Hz.shape[0] and 0 <= x_idx < Hz.shape[1]:
-                val = Hz[y_idx, x_idx]
-                Hz_values.append(complex(val) if np.iscomplexobj(val) else float(val))
-            else:
-                Hz_values.append(0.0)
+        if sampled_ex is not None and sampled_ey is not None and sampled_hz is not None:
+            Ex_values = sampled_ex
+            Ey_values = sampled_ey
+            Hz_values = sampled_hz
+        else:
+            for x_idx, y_idx in grid_points:
+                if (
+                    Ex is not None
+                    and 0 <= y_idx < Ex.shape[0]
+                    and 0 <= x_idx < Ex.shape[1]
+                ):
+                    val = Ex[y_idx, x_idx]
+                    Ex_values.append(
+                        complex(val) if np.iscomplexobj(val) else float(val)
+                    )
+                else:
+                    Ex_values.append(0.0)
+                if (
+                    Ey is not None
+                    and 0 <= y_idx < Ey.shape[0]
+                    and 0 <= x_idx < Ey.shape[1]
+                ):
+                    val = Ey[y_idx, x_idx]
+                    Ey_values.append(
+                        complex(val) if np.iscomplexobj(val) else float(val)
+                    )
+                else:
+                    Ey_values.append(0.0)
+                if (
+                    Hz is not None
+                    and 0 <= y_idx < Hz.shape[0]
+                    and 0 <= x_idx < Hz.shape[1]
+                ):
+                    val = Hz[y_idx, x_idx]
+                    Hz_values.append(
+                        complex(val) if np.iscomplexobj(val) else float(val)
+                    )
+                else:
+                    Hz_values.append(0.0)
 
         if do_record and self.should_record_fields:
             self.fields["Ex"].append(Ex_values)
@@ -1251,45 +1463,45 @@ class Monitor:
             self.record_fields_2d(*args, **kwargs)
 
     def _calculate_power_2d(self, Ez_values, Hx_values, Hy_values, t, dx, dy):
-        """Calculate Poynting vector and power for 2D fields.
+        """Calculate signed normal Poynting flux for 2D fields.
 
-        Power is computed as the integral of the Poynting vector magnitude
-        over the monitor line, properly normalized by grid cell area.
+        Power history stores the 2D line integral
+        P(t) = integral n . (E(t) x H(t)) dl.
         """
         Ez_array = np.array(Ez_values)
         Hx_array = np.array(Hx_values)
         Hy_array = np.array(Hy_values)
-        # Poynting vector S = E × H (units: W/m²)
-        power_mag = np.asarray(
-            poynting_magnitude_2d(Ez_array, Hx_array, Hy_array), dtype=np.complex128
+        axis, sign = self._normal_axis_and_sign()
+        flux = np.asarray(
+            poynting_flux_2d(Ez_array, Hx_array, Hy_array, axis, sign),
+            dtype=np.complex128,
         )
-        power_mag = np.real_if_close(power_mag)
-        # Total power = integral over monitor area (multiply by cell area for proper units)
-        total_power = np.sum(power_mag) * dx * dy
+        flux = np.real_if_close(flux)
+        total_power = np.sum(flux) * _line_integral_scale_2d(axis, dx, dy)
         if self.power_accumulated is None:
-            self.power_accumulated = power_mag
+            self.power_accumulated = flux
         else:
-            self.power_accumulated += power_mag
+            self.power_accumulated += flux
         self.power_history.append(total_power)
         self.power_timestamps.append(float(t))
         self.power_accumulation_count += 1
 
     def _calculate_power_3d(self, Ex, Ey, Ez, Hx, Hy, Hz, t, dx, dy):
-        """Calculate Poynting vector and power for 3D fields.
+        """Calculate signed normal Poynting flux for 3D fields.
 
-        Power is computed as the integral of the Poynting vector magnitude
-        over the monitor plane, properly normalized by grid cell area.
+        Power history stores P(t) = integral n . (E(t) x H(t)) dA.
         """
-        power_mag = np.asarray(
-            poynting_magnitude_3d(Ex, Ey, Ez, Hx, Hy, Hz), dtype=np.complex128
+        axis, sign = self._normal_axis_and_sign()
+        flux = np.asarray(
+            poynting_flux_3d(Ex, Ey, Ez, Hx, Hy, Hz, axis, sign),
+            dtype=np.complex128,
         )
-        power_mag = np.real_if_close(power_mag)
-        # Total power = integral over monitor area (multiply by cell area for proper units)
-        total_power = np.sum(power_mag) * dx * dy
+        flux = np.real_if_close(flux)
+        total_power = np.sum(flux) * dx * dy
         if self.power_accumulated is None:
-            self.power_accumulated = power_mag.copy()
+            self.power_accumulated = flux.copy()
         else:
-            self.power_accumulated += power_mag
+            self.power_accumulated += flux
         self.power_history.append(total_power)
         self.power_timestamps.append(float(t))
         self.power_accumulation_count += 1
@@ -1349,8 +1561,14 @@ class Monitor:
                 fields=self.fields,
                 power_history=self.power_history,
                 power_timestamps=self.power_timestamps,
-                frequency_points=self.frequency_points,
-                frequency_flux_spectrum=self.frequency_flux_spectrum,
+                power_spectrum_frequencies=self.power_spectrum_frequencies,
+                power_spectrum=self.power_spectrum,
+                frequency_points=self.power_spectrum_frequencies,
+                frequency_flux_spectrum=(
+                    self._frequency_flux_spectrum_legacy
+                    if self._frequency_flux_spectrum_legacy is not None
+                    else self.power_spectrum
+                ),
                 monitor_info={"type": self.monitor_type, "is_3d": self.is_3d},
             )
         else:
@@ -1365,12 +1583,23 @@ class Monitor:
             self.power_timestamps = list(data["power_timestamps"])
         else:
             self.power_timestamps = list(range(len(self.power_history)))
-        if "frequency_points" in data:
-            self.frequency_points = np.asarray(
+        if "power_spectrum_frequencies" in data:
+            self.power_spectrum_frequencies = np.asarray(
+                data["power_spectrum_frequencies"], dtype=np.float64
+            )
+        elif "frequency_points" in data:
+            self.power_spectrum_frequencies = np.asarray(
                 data["frequency_points"], dtype=np.float64
             )
+        self.accumulate_frequency = bool(self.power_spectrum_frequencies.size > 0)
+        if "power_spectrum" in data:
+            self.power_spectrum = np.asarray(data["power_spectrum"], dtype=np.complex64)
+        elif "frequency_flux_spectrum" in data:
+            self.power_spectrum = np.asarray(
+                data["frequency_flux_spectrum"], dtype=np.complex64
+            )
         if "frequency_flux_spectrum" in data:
-            self.frequency_flux_spectrum = np.asarray(
+            self._frequency_flux_spectrum_legacy = np.asarray(
                 data["frequency_flux_spectrum"], dtype=np.complex64
             )
 
@@ -1604,3 +1833,63 @@ class Monitor:
                 dft_normalization=self.dft_normalization,
                 dft_length_unit=self.dft_length_unit,
             )
+
+
+class ModeMonitor(Monitor):
+    """A monitor carrying modal-port metadata.
+
+    `direction` is the direction of a wave entering the simulated device at this
+    port. Pass `ModeMonitor` objects directly to modal S-parameter extraction to
+    avoid manually selecting `plus`/`minus` incident and scattered waves.
+    """
+
+    def __init__(
+        self,
+        *args,
+        direction,
+        polarization,
+        mode_index=0,
+        reference_monitor=None,
+        projection_direction=None,
+        dft_components=None,
+        dft_enabled=None,
+        **kwargs,
+    ):
+        self.direction = _normalize_direction(direction)
+        self.polarization = _normalize_polarization(polarization)
+        self.mode_index = int(mode_index)
+        self.reference_monitor = reference_monitor
+        self.projection_direction = (
+            None
+            if projection_direction is None
+            else _normalize_direction(projection_direction)
+        )
+        if dft_enabled is None:
+            dft_enabled = kwargs.get("dft_frequencies") is not None
+        if dft_components is None:
+            # Keep the first-class monitor robust across 2D/3D and TE/TM. Modal
+            # extraction will only consume the tangential components it needs.
+            dft_components = ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
+        super().__init__(
+            *args,
+            dft_enabled=bool(dft_enabled),
+            dft_components=dft_components,
+            **kwargs,
+        )
+
+    def to_port(self, *, name=None) -> Port:
+        port_name = self.name if name is None else name
+        if not port_name:
+            raise ValueError("ModeMonitor must have a name to be used as a Port.")
+        return Port(
+            name=str(port_name),
+            monitor=self,
+            direction=self.direction,
+            polarization=self.polarization,
+            mode_index=self.mode_index,
+            reference_monitor=self.reference_monitor,
+            projection_direction=self.projection_direction,
+        )
+
+    def to_portspec_dict(self) -> dict:
+        return self.to_port().to_portspec_dict()

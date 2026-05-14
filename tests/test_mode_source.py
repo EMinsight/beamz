@@ -1765,8 +1765,8 @@ class TestModeSourceDirectionality3D:
             f"explicit={explicit_db:.2f} dB."
         )
 
-    def test_reference_monitor_correction_does_not_amplify_straight_guide_s11_3d(self):
-        """Source correction should not increase apparent reflection in a straight guide."""
+    def test_reference_monitor_normalizes_without_source_scatter_subtraction_3d(self):
+        """Reference monitors normalize the source branch but do not alter S11."""
         wavelength = TEST_WAVELENGTH
         n_core = 2.0
         n_clad = 1.0
@@ -1885,26 +1885,28 @@ class TestModeSourceDirectionality3D:
             )
 
             waves = result["diagnostics"]["waves"]["o1"]
-            raw_s11 = complex(waves["a_plus"][0]) / complex(
+            reference_normalized_s11 = complex(waves["a_plus"][0]) / complex(
                 waves["a_incident_minus"][0]
             )
-            corrected_s11 = complex(result["s_matrix"][("o1", "o1")][0])
-            raw_db = 20.0 * np.log10(max(abs(raw_s11), 1e-12))
-            corrected_db = 20.0 * np.log10(max(abs(corrected_s11), 1e-12))
+            extracted_s11 = complex(result["s_matrix"][("o1", "o1")][0])
 
-            assert corrected_db <= raw_db + 0.5, (
-                "Reference-plane correction should not amplify the apparent "
-                "source-port reflection in a straight guide, got "
-                f"corrected={corrected_db:.2f} dB vs raw={raw_db:.2f} dB "
+            assert "source_scattered_correction" not in result["diagnostics"]
+            assert result["diagnostics"]["source_reference_normalization"] == {
+                "enabled": True,
+                "monitor": "o1_ref",
+                "incident_wave": "minus",
+                "scattered_wave": "plus",
+            }
+            assert np.isclose(
+                extracted_s11,
+                reference_normalized_s11,
+                rtol=1e-12,
+                atol=1e-12,
+            ), (
+                "Reference monitor extraction must be explicit normalization only; "
+                "the source-port scattered branch should not be reference-subtracted "
                 f"for clearances ref/main={ref_clear_lambda:.2f}/{main_clear_lambda:.2f} λ."
             )
-            if (ref_clear_lambda, main_clear_lambda) == (0.6, 0.8):
-                assert corrected_db <= raw_db - 1.0, (
-                    "Expected the reference-plane correction to remove at least part "
-                    "of the aligned source artifact in the tight-clearance straight "
-                    f"guide case, got corrected={corrected_db:.2f} dB vs "
-                    f"raw={raw_db:.2f} dB."
-                )
 
     def test_y_monitor_wave_labels_match_x_monitor_convention_3d(self):
         """y-normal 3D monitors should not invert the dominant transmitted branch."""

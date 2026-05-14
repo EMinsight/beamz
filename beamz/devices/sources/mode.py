@@ -6,6 +6,10 @@ import numpy as np
 
 from beamz.const import EPS_0, LIGHT_SPEED, MU_0
 from beamz.devices._placement import snap_centered_extent, snap_mode_source_region
+from beamz.devices.sources._materials import (
+    component_permeability_at,
+    component_permittivity_at,
+)
 from beamz.devices.sources.solve import solve_modes
 
 logger = logging.getLogger(__name__)
@@ -754,36 +758,55 @@ def _build_3d_x(
         z_center, height, resolution, nz
     )
 
+    ex_z, ex_y = _component_support_slices_3d(
+        "Ex", "x", z_start, z_end, y_start, y_end, Ex_s.shape
+    )
+    ey_z, ey_y = _component_support_slices_3d(
+        "Ey", "x", z_start, z_end, y_start, y_end, Ey_s.shape
+    )
+    ez_z, ez_y = _component_support_slices_3d(
+        "Ez", "x", z_start, z_end, y_start, y_end, Ez_s.shape
+    )
+    hx_z, hx_y = _component_support_slices_3d(
+        "Hx", "x", z_start, z_end, y_start, y_end, Hx_s.shape
+    )
+    hy_z, hy_y = _component_support_slices_3d(
+        "Hy", "x", z_start, z_end, y_start, y_end, Hy_s.shape
+    )
+    hz_z, hz_y = _component_support_slices_3d(
+        "Hz", "x", z_start, z_end, y_start, y_end, Hz_s.shape
+    )
+
     # --- indices  (z_slice, y_slice, x_index) ---
     indices = {
         "Ex": (
-            slice(z_start, min(z_end, Ex_s.shape[0], nz)),
-            slice(y_start, min(y_end, Ex_s.shape[1], ny)),
+            ex_z,
+            ex_y,
             offset_idx,
         ),
         "Ey": (
-            slice(z_start, min(z_end, Ey_s.shape[0], nz)),
-            slice(y_start, min(y_end, Ey_s.shape[1], ny - 1)),
+            ey_z,
+            ey_y,
             center_idx,
         ),
         "Ez": (
-            slice(z_start, min(z_end, Ez_s.shape[0], nz - 1)),
-            slice(y_start, min(y_end, Ez_s.shape[1], ny)),
+            ez_z,
+            ez_y,
             center_idx,
         ),
         "Hx": (
-            slice(z_start, min(z_end, Hx_s.shape[0], nz - 1)),
-            slice(y_start, min(y_end, Hx_s.shape[1], ny - 1)),
+            hx_z,
+            hx_y,
             center_idx,
         ),
         "Hy": (
-            slice(z_start, min(z_end, Hy_s.shape[0], nz - 1)),
-            slice(y_start, min(y_end, Hy_s.shape[1], ny)),
+            hy_z,
+            hy_y,
             offset_idx,
         ),
         "Hz": (
-            slice(z_start, min(z_end, Hz_s.shape[0], nz)),
-            slice(y_start, min(y_end, Hz_s.shape[1], ny - 1)),
+            hz_z,
+            hz_y,
             offset_idx,
         ),
     }
@@ -811,6 +834,7 @@ def _build_3d_x(
         dir_sign,
         use_jax=True,
         alpha=0.2,
+        axis="x",
     )
     d_area = float(resolution * resolution)
     profiles = _normalize_3d_profiles_by_flux(
@@ -867,37 +891,56 @@ def _build_3d_y(
         z_center, height, resolution, nz
     )
 
+    ex_z, ex_x = _component_support_slices_3d(
+        "Ex", "y", z_start, z_end, x_start, x_end, Ex_s.shape
+    )
+    ey_z, ey_x = _component_support_slices_3d(
+        "Ey", "y", z_start, z_end, x_start, x_end, Ey_s.shape
+    )
+    ez_z, ez_x = _component_support_slices_3d(
+        "Ez", "y", z_start, z_end, x_start, x_end, Ez_s.shape
+    )
+    hx_z, hx_x = _component_support_slices_3d(
+        "Hx", "y", z_start, z_end, x_start, x_end, Hx_s.shape
+    )
+    hy_z, hy_x = _component_support_slices_3d(
+        "Hy", "y", z_start, z_end, x_start, x_end, Hy_s.shape
+    )
+    hz_z, hz_x = _component_support_slices_3d(
+        "Hz", "y", z_start, z_end, x_start, x_end, Hz_s.shape
+    )
+
     # --- indices  (z_slice, y_index, x_slice) ---
     indices = {
         "Ex": (
-            slice(z_start, min(z_end, Ex_s.shape[0], nz)),
+            ex_z,
             center_idx,
-            slice(x_start, min(x_end, Ex_s.shape[1], nx - 1)),
+            ex_x,
         ),
         "Ey": (
-            slice(z_start, min(z_end, Ey_s.shape[0], nz)),
+            ey_z,
             offset_idx,
-            slice(x_start, min(x_end, Ey_s.shape[1], nx)),
+            ey_x,
         ),
         "Ez": (
-            slice(z_start, min(z_end, Ez_s.shape[0], nz - 1)),
+            ez_z,
             center_idx,
-            slice(x_start, min(x_end, Ez_s.shape[1], nx)),
+            ez_x,
         ),
         "Hx": (
-            slice(z_start, min(z_end, Hx_s.shape[0], nz - 1)),
+            hx_z,
             offset_idx,
-            slice(x_start, min(x_end, Hx_s.shape[1], nx)),
+            hx_x,
         ),
         "Hy": (
-            slice(z_start, min(z_end, Hy_s.shape[0], nz - 1)),
+            hy_z,
             center_idx,
-            slice(x_start, min(x_end, Hy_s.shape[1], nx - 1)),
+            hy_x,
         ),
         "Hz": (
-            slice(z_start, min(z_end, Hz_s.shape[0], nz)),
+            hz_z,
             offset_idx,
-            slice(x_start, min(x_end, Hz_s.shape[1], nx - 1)),
+            hz_x,
         ),
     }
 
@@ -924,6 +967,7 @@ def _build_3d_y(
         dir_sign,
         use_jax=False,
         alpha=0.2,
+        axis="y",
     )
     d_area = float(resolution * resolution)
     profiles = _normalize_3d_profiles_by_flux(
@@ -988,37 +1032,56 @@ def _build_3d_z(
     ez_z_idx = int(np.clip(center_idx, 0, max(nz - 2, 0)))
     hz_z_idx = int(np.clip(offset_idx, 0, nz - 1))
 
+    ex_y, ex_x = _component_support_slices_3d(
+        "Ex", "z", y_start, y_end, x_start, x_end, Ex_s.shape
+    )
+    ey_y, ey_x = _component_support_slices_3d(
+        "Ey", "z", y_start, y_end, x_start, x_end, Ey_s.shape
+    )
+    ez_y, ez_x = _component_support_slices_3d(
+        "Ez", "z", y_start, y_end, x_start, x_end, Ez_s.shape
+    )
+    hx_y, hx_x = _component_support_slices_3d(
+        "Hx", "z", y_start, y_end, x_start, x_end, Hx_s.shape
+    )
+    hy_y, hy_x = _component_support_slices_3d(
+        "Hy", "z", y_start, y_end, x_start, x_end, Hy_s.shape
+    )
+    hz_y, hz_x = _component_support_slices_3d(
+        "Hz", "z", y_start, y_end, x_start, x_end, Hz_s.shape
+    )
+
     # --- indices  (z_index, y_slice, x_slice) ---
     indices = {
         "Ex": (
             e_z_idx,
-            slice(y_start, min(y_end, Ex_s.shape[0], ny)),
-            slice(x_start, min(x_end, Ex_s.shape[1], nx - 1)),
+            ex_y,
+            ex_x,
         ),
         "Ey": (
             e_z_idx,
-            slice(y_start, min(y_end, Ey_s.shape[0], ny - 1)),
-            slice(x_start, min(x_end, Ey_s.shape[1], nx)),
+            ey_y,
+            ey_x,
         ),
         "Ez": (
             ez_z_idx,
-            slice(y_start, min(y_end, Ez_s.shape[0], ny)),
-            slice(x_start, min(x_end, Ez_s.shape[1], nx)),
+            ez_y,
+            ez_x,
         ),
         "Hx": (
             h_z_idx,
-            slice(y_start, min(y_end, Hx_s.shape[0], ny - 1)),
-            slice(x_start, min(x_end, Hx_s.shape[1], nx)),
+            hx_y,
+            hx_x,
         ),
         "Hy": (
             h_z_idx,
-            slice(y_start, min(y_end, Hy_s.shape[0], ny)),
-            slice(x_start, min(x_end, Hy_s.shape[1], nx - 1)),
+            hy_y,
+            hy_x,
         ),
         "Hz": (
             hz_z_idx,
-            slice(y_start, min(y_end, Hz_s.shape[0], ny - 1)),
-            slice(x_start, min(x_end, Hz_s.shape[1], nx - 1)),
+            hz_y,
+            hz_x,
         ),
     }
 
@@ -1045,6 +1108,7 @@ def _build_3d_z(
         dir_sign,
         use_jax=True,
         alpha=0.2,
+        axis="z",
     )
     d_area = float(resolution * resolution)
     profiles = _normalize_3d_profiles_by_flux(
@@ -1074,24 +1138,114 @@ def _crop_and_window_all(
     dir_sign,
     use_jax,
     alpha=0.3,
+    axis=None,
 ):
-    """Crop all six staggered profiles and multiply by a 2D Tukey window."""
-    ref = next(iter(staggered.values()))
-    pz_end = min(z_end, ref.shape[0])
-    pt_end = min(t_end, ref.shape[1])
-    h_cells = pz_end - z_start
-    w_cells = pt_end - t_start
-
-    window = _make_tukey_window_2d(h_cells, w_cells, alpha=alpha, use_jax=use_jax)
+    """Crop all six staggered profiles and multiply by 2D Tukey windows."""
+    row_axis, col_axis = _profile_transverse_axes_3d(axis) if axis else (None, None)
 
     profiles = {}
     for name, field in staggered.items():
-        fe = min(z_end, field.shape[0])
-        te = min(t_end, field.shape[1])
+        ze, te_end = z_end, t_end
+        if row_axis is not None and col_axis is not None:
+            ze, te_end = _component_support_stops_3d(
+                name,
+                row_axis=row_axis,
+                col_axis=col_axis,
+                row_start=z_start,
+                row_stop=z_end,
+                col_start=t_start,
+                col_stop=t_end,
+            )
+        fe = min(ze, field.shape[0])
+        te = min(te_end, field.shape[1])
+        h_cells = max(0, fe - z_start)
+        w_cells = max(0, te - t_start)
+        window = _make_tukey_window_2d(
+            h_cells, w_cells, alpha=alpha, use_jax=use_jax
+        )
         profiles[name] = dir_sign * _crop_and_window_2d(
             field, z_start, fe, t_start, te, window
         )
     return profiles
+
+
+def _profile_transverse_axes_3d(axis: str) -> tuple[str, str]:
+    """Return physical axes for row/column dimensions of a 3D source profile."""
+    mapping = {
+        "x": ("z", "y"),
+        "y": ("z", "x"),
+        "z": ("y", "x"),
+    }
+    try:
+        return mapping[str(axis)]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported 3D source axis {axis!r}") from exc
+
+
+def _support_stop_for_offset(start: int, stop: int, offset: float) -> int:
+    start = int(start)
+    stop = int(stop)
+    if float(offset) == 0.5 and (stop - start) > 1:
+        return stop - 1
+    return stop
+
+
+def _component_support_stops_3d(
+    component: str,
+    *,
+    row_axis: str,
+    col_axis: str,
+    row_start: int,
+    row_stop: int,
+    col_start: int,
+    col_stop: int,
+) -> tuple[int, int]:
+    offsets = _component_axis_offsets_3d(component)
+    return (
+        _support_stop_for_offset(row_start, row_stop, offsets[row_axis]),
+        _support_stop_for_offset(col_start, col_stop, offsets[col_axis]),
+    )
+
+
+def _component_axis_offsets_3d(component: str) -> dict[str, float]:
+    if component == "Ex":
+        return {"z": 0.0, "y": 0.0, "x": 0.5}
+    if component == "Ey":
+        return {"z": 0.0, "y": 0.5, "x": 0.0}
+    if component == "Ez":
+        return {"z": 0.5, "y": 0.0, "x": 0.0}
+    if component == "Hx":
+        return {"z": 0.5, "y": 0.5, "x": 0.0}
+    if component == "Hy":
+        return {"z": 0.5, "y": 0.0, "x": 0.5}
+    if component == "Hz":
+        return {"z": 0.0, "y": 0.5, "x": 0.5}
+    raise ValueError(f"Unsupported component {component!r}")
+
+
+def _component_support_slices_3d(
+    component: str,
+    axis: str,
+    row_start: int,
+    row_stop: int,
+    col_start: int,
+    col_stop: int,
+    field_shape: tuple[int, int],
+) -> tuple[slice, slice]:
+    row_axis, col_axis = _profile_transverse_axes_3d(axis)
+    row_stop, col_stop = _component_support_stops_3d(
+        component,
+        row_axis=row_axis,
+        col_axis=col_axis,
+        row_start=row_start,
+        row_stop=row_stop,
+        col_start=col_start,
+        col_stop=col_stop,
+    )
+    return (
+        slice(row_start, min(row_stop, int(field_shape[0]))),
+        slice(col_start, min(col_stop, int(field_shape[1]))),
+    )
 
 
 def _modal_power_3d_from_profiles(profiles, axis, d_area, direction_sign=1.0):
@@ -1372,7 +1526,7 @@ def _inject_e_component(
     if j_term is None:
         logger.debug("Shape mismatch injecting %s, skipping", comp)
         return
-    eps = fields.permittivity[idx]
+    eps = component_permittivity_at(fields, comp, idx)
     setattr(
         fields,
         comp,
@@ -2542,10 +2696,11 @@ class ModeSource:
         """Inject magnetic current into H-fields for 2D (after H update)."""
         if self.pol == "tm":
             if self._h_indices is not None and self._my_profile is not None:
-                if self._h_component == "Hx":
-                    mu_at_source = getattr(fields, "mu_tm_hx", 1.0)[self._h_indices]
-                else:
-                    mu_at_source = getattr(fields, "mu_tm_hy", 1.0)[self._h_indices]
+                mu_at_source = component_permeability_at(
+                    fields,
+                    self._h_component,
+                    self._h_indices,
+                )
                 my_term = self._my_profile * signal_h / resolution
                 h_injection = -my_term * dt / (MU_0 * mu_at_source)
                 if self._h_component == "Hx":
@@ -2555,8 +2710,7 @@ class ModeSource:
                 fields.apply_tm_xy_pec_masks()
         else:  # TE
             if self._hz_indices is not None and self._mz_profile is not None:
-                mu_val = getattr(fields, "permeability", None)
-                mu_at_source = mu_val[self._hz_indices] if mu_val is not None else 1.0
+                mu_at_source = component_permeability_at(fields, "Hz", self._hz_indices)
                 mz_term = self._mz_profile * signal_h / resolution
                 hz_injection = +mz_term * dt / (MU_0 * mu_at_source)
                 fields.Hz = fields.Hz.at[self._hz_indices].add(hz_injection)
@@ -2565,9 +2719,11 @@ class ModeSource:
         """Inject electric current into E-fields for 2D (after E update)."""
         if self.pol == "tm":
             if self._ez_indices is not None and self._jz_profile is not None:
-                eps_at_source = getattr(fields, "eps_tm_ez", fields.permittivity)[
-                    self._ez_indices
-                ]
+                eps_at_source = component_permittivity_at(
+                    fields,
+                    "Ez",
+                    self._ez_indices,
+                )
                 jz_term = self._jz_profile * signal_e / resolution
                 ez_injection = +jz_term * dt / (EPS_0 * eps_at_source)
                 fields.Ez = fields.Ez.at[self._ez_indices].add(ez_injection)
@@ -2578,7 +2734,11 @@ class ModeSource:
                     self._jx_profile if self._e_component == "Ex" else self._jy_profile
                 )
                 if j_profile is not None:
-                    eps_at_source = fields.permittivity[self._e_indices]
+                    eps_at_source = component_permittivity_at(
+                        fields,
+                        self._e_component,
+                        self._e_indices,
+                    )
                     j_term = j_profile * signal_e / resolution
                     e_injection = -j_term * dt / (EPS_0 * eps_at_source)
 

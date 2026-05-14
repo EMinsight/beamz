@@ -54,8 +54,8 @@ class Config:
     decay_ratio: float = 1e-4
     lookback_records: int = 20
     formulations: tuple[str, ...] = ("sigma", "cpml")
-    cpml_kappa_max: float = 3.0
-    cpml_alpha_max: float | None = 0.0
+    cpml_kappa_max: float = 2.0
+    cpml_alpha_max: float | None = None
 
     @property
     def wavelength_m(self) -> float:

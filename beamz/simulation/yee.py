@@ -123,7 +123,20 @@ def sample_voxel_grid_at_component_3d(
     stored_shape: tuple[int, int, int] | None = None,
     region: tuple[slice, slice, slice] | None = None,
 ):
-    """Sample a cell-centered 3D raster at the physical Yee locations of a component."""
+    """Sample a cell-centered 3D raster on a Yee component lattice.
+
+    Staggered E components use symmetric centered sampling. H components retain
+    owner-cell sampling because their material terms are already collocated with
+    the magnetic lattice convention used by the update.
+    """
+
+    if component in {"Ex", "Ey", "Ez"}:
+        return sample_voxel_grid_at_e_component_3d_centered(
+            grid,
+            component,
+            stored_shape=stored_shape,
+            region=region,
+        )
 
     z_idx, y_idx, x_idx = component_index_arrays_3d(
         component,
@@ -147,12 +160,12 @@ def sample_voxel_grid_at_e_component_3d_centered(
 ):
     """Sample a cell-centered 3D raster onto a staggered E site by symmetric averaging.
 
-    The underlying raster stores cell-centered material values. For staggered E-field
-    sites, owner-cell sampling introduces a directional bias because the physical Yee
-    location sits halfway between neighboring cell centers along the component axis.
-    This helper preserves the existing compact scalar material model while removing
-    that low-side bias by averaging the two adjacent cell-centered samples only along
-    the staggered E axis.
+    The underlying raster stores cell-centered material values. For each
+    Cartesian axis, an E component is either aligned with material cell centers
+    (offset 0.5) or halfway between two neighboring material centers (offset 0.0).
+    Owner-cell sampling on those half-between axes introduces a directional bias
+    at material edges, so this helper averages the bracketing cell-centered
+    samples on every half-between axis.
     """
 
     if component not in {"Ex", "Ey", "Ez"}:
@@ -168,29 +181,33 @@ def sample_voxel_grid_at_e_component_3d_centered(
     )
     offsets = _component_axis_offsets_3d(component)
     axes = ("z", "y", "x")
-    stagger_axis = component[-1].lower()
     region = region or (slice(None), slice(None), slice(None))
 
-    sampled_lo = jnp.asarray(grid)
-    sampled_hi = jnp.asarray(grid)
+    sampled = jnp.asarray(grid)
 
     for axis_index, (axis, dim, grid_dim, axis_region) in enumerate(
         zip(axes, shape, grid_shape, region, strict=False)
     ):
         coord = np.arange(dim, dtype=np.float64) + offsets[axis]
-        lo = np.floor(coord).astype(np.int32)
-        lo = np.clip(lo, 0, int(grid_dim) - 1)
-        if axis == stagger_axis:
-            hi = np.clip(lo + 1, 0, int(grid_dim) - 1)
+        if offsets[axis] == 0.0:
+            hi = np.floor(coord).astype(np.int32)
+            lo = hi - 1
+            lo = np.clip(lo, 0, int(grid_dim) - 1)
+            hi = np.clip(hi, 0, int(grid_dim) - 1)
+            lo = lo[axis_region]
+            hi = hi[axis_region]
+            sampled_lo = jnp.take(sampled, jnp.asarray(lo), axis=axis_index)
+            sampled_hi = jnp.take(sampled, jnp.asarray(hi), axis=axis_index)
+            sampled = 0.5 * (sampled_lo + sampled_hi)
+        elif offsets[axis] == 0.5:
+            idx = np.floor(coord).astype(np.int32)
+            idx = np.clip(idx, 0, int(grid_dim) - 1)
+            idx = idx[axis_region]
+            sampled = jnp.take(sampled, jnp.asarray(idx), axis=axis_index)
         else:
-            hi = lo
+            raise ValueError(f"Unsupported Yee offset {offsets[axis]!r}")
 
-        lo = lo[axis_region]
-        hi = hi[axis_region]
-        sampled_lo = jnp.take(sampled_lo, jnp.asarray(lo), axis=axis_index)
-        sampled_hi = jnp.take(sampled_hi, jnp.asarray(hi), axis=axis_index)
-
-    return 0.5 * (sampled_lo + sampled_hi)
+    return sampled
 
 
 def component_shape_2d(

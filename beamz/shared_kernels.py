@@ -32,6 +32,35 @@ class Cpml3DTerms:
     inv_kappa_e_terms: tuple[jnp.ndarray, ...]
 
 
+@dataclass(frozen=True)
+class CpmlDerivative3DSpec:
+    """A single split-field CPML derivative term on the Yee lattice."""
+
+    name: str
+    target_component: str
+    source_component: str
+    derivative_axis: str
+
+
+CPML_3D_H_DERIVATIVES: tuple[CpmlDerivative3DSpec, ...] = (
+    CpmlDerivative3DSpec("Hxy", "Hx", "Ez", "y"),
+    CpmlDerivative3DSpec("Hxz", "Hx", "Ey", "z"),
+    CpmlDerivative3DSpec("Hyz", "Hy", "Ex", "z"),
+    CpmlDerivative3DSpec("Hyx", "Hy", "Ez", "x"),
+    CpmlDerivative3DSpec("Hzx", "Hz", "Ey", "x"),
+    CpmlDerivative3DSpec("Hzy", "Hz", "Ex", "y"),
+)
+
+CPML_3D_E_DERIVATIVES: tuple[CpmlDerivative3DSpec, ...] = (
+    CpmlDerivative3DSpec("Exy", "Ex", "Hz", "y"),
+    CpmlDerivative3DSpec("Exz", "Ex", "Hy", "z"),
+    CpmlDerivative3DSpec("Eyz", "Ey", "Hx", "z"),
+    CpmlDerivative3DSpec("Eyx", "Ey", "Hz", "x"),
+    CpmlDerivative3DSpec("Ezx", "Ez", "Hy", "x"),
+    CpmlDerivative3DSpec("Ezy", "Ez", "Hx", "y"),
+)
+
+
 def full_tm_xy_component_to_centered_grid(component: str, values):
     """Project full-lattice TM samples onto centered monitor/sample points."""
     field = values
@@ -129,9 +158,7 @@ def build_tm_xy_cpml_terms(
         sigma_h_terms=embed_tm_xy_h_terms(sigma_hx, sigma_hy, ez_shape),
         kappa_h_aux_terms=embed_tm_xy_h_terms(kappa_hx, kappa_hy, ez_shape),
         alpha_h_terms=embed_tm_xy_h_terms(alpha_hx, alpha_hy, ez_shape),
-        kappa_h_direct_terms=embed_tm_xy_h_terms(
-            kappa_ez_y[:-1, :], kappa_ez_x[:, :-1], ez_shape
-        ),
+        kappa_h_direct_terms=embed_tm_xy_h_terms(kappa_hx, kappa_hy, ez_shape),
         sigma_e_terms=jnp.stack((sigma_ez_x, sigma_ez_y), axis=0),
         kappa_e_terms=jnp.stack((kappa_ez_x, kappa_ez_y), axis=0),
         alpha_e_terms=jnp.stack((alpha_ez_x, alpha_ez_y), axis=0),
@@ -145,54 +172,19 @@ def build_cpml_3d_terms(
 ) -> Cpml3DTerms | None:
     if pml_data is None:
         return None
-    sigma_h_terms = (
-        jnp.asarray(pml_data["cpml3d_Hxy_sigma"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Hxz_sigma"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Hyz_sigma"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Hyx_sigma"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Hzx_sigma"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Hzy_sigma"], dtype=jnp.float32),
-    )
-    kappa_h_terms = (
-        jnp.asarray(pml_data["cpml3d_Hxy_kappa"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Hxz_kappa"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Hyz_kappa"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Hyx_kappa"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Hzx_kappa"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Hzy_kappa"], dtype=jnp.float32),
-    )
-    alpha_h_terms = (
-        jnp.asarray(pml_data["cpml3d_Hxy_alpha"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Hxz_alpha"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Hyz_alpha"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Hyx_alpha"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Hzx_alpha"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Hzy_alpha"], dtype=jnp.float32),
-    )
-    sigma_e_terms = (
-        jnp.asarray(pml_data["cpml3d_Exy_sigma"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Exz_sigma"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Eyz_sigma"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Eyx_sigma"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Ezx_sigma"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Ezy_sigma"], dtype=jnp.float32),
-    )
-    kappa_e_terms = (
-        jnp.asarray(pml_data["cpml3d_Exy_kappa"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Exz_kappa"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Eyz_kappa"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Eyx_kappa"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Ezx_kappa"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Ezy_kappa"], dtype=jnp.float32),
-    )
-    alpha_e_terms = (
-        jnp.asarray(pml_data["cpml3d_Exy_alpha"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Exz_alpha"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Eyz_alpha"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Eyx_alpha"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Ezx_alpha"], dtype=jnp.float32),
-        jnp.asarray(pml_data["cpml3d_Ezy_alpha"], dtype=jnp.float32),
-    )
+
+    def read_terms(specs, suffix):
+        return tuple(
+            jnp.asarray(pml_data[f"cpml3d_{spec.name}_{suffix}"], dtype=jnp.float32)
+            for spec in specs
+        )
+
+    sigma_h_terms = read_terms(CPML_3D_H_DERIVATIVES, "sigma")
+    kappa_h_terms = read_terms(CPML_3D_H_DERIVATIVES, "kappa")
+    alpha_h_terms = read_terms(CPML_3D_H_DERIVATIVES, "alpha")
+    sigma_e_terms = read_terms(CPML_3D_E_DERIVATIVES, "sigma")
+    kappa_e_terms = read_terms(CPML_3D_E_DERIVATIVES, "kappa")
+    alpha_e_terms = read_terms(CPML_3D_E_DERIVATIVES, "alpha")
     a_h_terms, b_h_terms, inv_kappa_h_terms = cpml_precompute_native_terms(
         sigma_h_terms, kappa_h_terms, alpha_h_terms, dt
     )
@@ -216,12 +208,36 @@ def poynting_magnitude_2d(ez, hx, hy):
     return (sx * sx + sy * sy) ** 0.5
 
 
+def poynting_flux_2d(ez, hx, hy, normal_axis, normal_sign=1.0):
+    """Return n . (E x H) for 2D TM monitor samples."""
+    sx = -ez * hy
+    sy = ez * hx
+    axis = str(normal_axis).lower()
+    component = sx if axis == "x" else sy
+    return component * normal_sign
+
+
 def poynting_magnitude_3d(ex, ey, ez, hx, hy, hz):
     """Return |E x H| for 3D monitor samples."""
     sx = ey * hz - ez * hy
     sy = ez * hx - ex * hz
     sz = ex * hy - ey * hx
     return (sx * sx + sy * sy + sz * sz) ** 0.5
+
+
+def poynting_flux_3d(ex, ey, ez, hx, hy, hz, normal_axis, normal_sign=1.0):
+    """Return n . (E x H) for 3D monitor samples."""
+    sx = ey * hz - ez * hy
+    sy = ez * hx - ex * hz
+    sz = ex * hy - ey * hx
+    axis = str(normal_axis).lower()
+    if axis == "x":
+        component = sx
+    elif axis == "y":
+        component = sy
+    else:
+        component = sz
+    return component * normal_sign
 
 
 def physical_dft_sample_scale(weight, base_dt, record_interval, length_unit):

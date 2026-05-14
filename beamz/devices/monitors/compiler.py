@@ -10,7 +10,12 @@ import jax.numpy as jnp
 import numpy as np
 
 from beamz.const import µm
-from beamz.devices.monitors.monitors import Monitor, _plane_axes_for_normal_3d
+from beamz.devices.monitors.monitors import (
+    Monitor,
+    _line_integral_scale_2d,
+    _line_normal_2d,
+    _plane_axes_for_normal_3d,
+)
 
 
 @dataclass(frozen=True)
@@ -24,6 +29,7 @@ class CompiledMonitorSpec:
     accumulate_power: bool
     power_scale: float
     normal_axis: int = -1
+    normal_sign: float = 1.0
     accumulate_frequency: bool = False
     freq_record_interval: int = 1
     freq_count: int = 0
@@ -114,6 +120,7 @@ class BatchedMonitorData:
     hz_interp_weights: jnp.ndarray
     valid_mask: jnp.ndarray  # (n, max_points) float32
     normal_axes: jnp.ndarray  # (n,) int32; 0=x,1=y,2=z, -1=unknown
+    normal_signs: jnp.ndarray  # (n,) float32
     # Frequency-domain in-loop accumulation metadata
     freq_enabled: jnp.ndarray  # (n,) bool
     freq_record_intervals: jnp.ndarray  # (n,) int32
@@ -243,6 +250,7 @@ def compile_batched_monitor_data(
         hz_interp_weights=_pad_stack(all_weights["Hz"], np.float32),
         valid_mask=jnp.array(valid),
         normal_axes=jnp.array([int(s.normal_axis) for s in specs_3d], dtype=jnp.int32),
+        normal_signs=jnp.array([float(s.normal_sign) for s in specs_3d], dtype=jnp.float32),
         freq_enabled=jnp.array([bool(s.accumulate_frequency) for s in specs_3d]),
         freq_record_intervals=jnp.array(
             [max(1, int(s.freq_record_interval)) for s in specs_3d], dtype=jnp.int32
@@ -430,6 +438,70 @@ def sample_compiled_monitor_plane_component_3d(
     return sampled.reshape(int(dim0), int(dim1))
 
 
+def _monitor_normal_2d(monitor: Monitor, resolution: float) -> tuple[int, float]:
+    snapped = monitor.get_snapped_region(dx=resolution, dy=resolution)
+    line_normal = _line_normal_2d(
+        getattr(monitor, "start", None),
+        getattr(monitor, "end", None),
+    )
+    if snapped is not None:
+        axis = str(snapped.normal_axis).lower()
+        sign = (
+            float(line_normal[1])
+            if line_normal is not None and line_normal[0] == axis
+            else 1.0
+        )
+        return {"x": 0, "y": 1}.get(axis, -1), sign
+    if line_normal is None:
+        return -1, 1.0
+    axis, sign = line_normal
+    return {"x": 0, "y": 1}.get(axis, -1), float(sign)
+
+
+def _compile_monitor_2d_interpolation(
+    monitor: Monitor,
+    component: str,
+    fields,
+    resolution: float,
+) -> tuple[jnp.ndarray | None, jnp.ndarray | None]:
+    from beamz.simulation.yee import component_coordinates_2d_um
+
+    line_coords = monitor._line_sample_coords_2d(resolution, resolution)
+    if line_coords is None:
+        return None, None
+
+    plane = getattr(fields, "plane_2d", "xy")
+    coords = component_coordinates_2d_um(
+        component,
+        tuple(int(v) for v in fields.permittivity.shape),
+        float(resolution),
+        plane,
+    )
+    if "x" not in coords or "y" not in coords:
+        return None, None
+
+    src_x = np.asarray(coords["x"], dtype=np.float64)
+    src_y = np.asarray(coords["y"], dtype=np.float64)
+    dst_x = np.asarray(line_coords[0], dtype=np.float64).reshape(-1)
+    dst_y = np.asarray(line_coords[1], dtype=np.float64).reshape(-1)
+    if dst_x.size != dst_y.size:
+        return None, None
+
+    x0, x1, wx0, wx1 = _linear_interp_plan_1d(src_x, dst_x)
+    y0, y1, wy0, wy1 = _linear_interp_plan_1d(src_y, dst_y)
+    bits = np.asarray([(0, 0), (0, 1), (1, 0), (1, 1)], dtype=np.int32)
+    x_idx = np.where(bits[:, 1][None, :] == 0, x0[:, None], x1[:, None])
+    y_idx = np.where(bits[:, 0][None, :] == 0, y0[:, None], y1[:, None])
+    wx = np.where(bits[:, 1][None, :] == 0, wx0[:, None], wx1[:, None])
+    wy = np.where(bits[:, 0][None, :] == 0, wy0[:, None], wy1[:, None])
+    weights = (wx * wy).astype(np.float32)
+    flat_idx = np.ravel_multi_index(
+        (y_idx.astype(np.int32), x_idx.astype(np.int32)),
+        dims=tuple(int(v) for v in getattr(fields, component).shape),
+    ).astype(np.int32)
+    return jnp.asarray(flat_idx), jnp.asarray(weights)
+
+
 def compile_monitor_specs(
     monitors: list,
     fields,
@@ -467,31 +539,51 @@ def compile_monitor_specs(
             raise ValueError("Monitor dft_frequencies must be strictly positive")
 
         flux_freqs = np.asarray(
-            getattr(monitor, "frequency_points", np.zeros((0,))), dtype=np.float64
+            getattr(monitor, "power_spectrum_frequencies", np.zeros((0,))),
+            dtype=np.float64,
         ).ravel()
         if flux_freqs.size > 0 and not np.all(np.isfinite(flux_freqs)):
-            raise ValueError("Monitor frequency_points must be finite values in Hz")
-        if dft_enabled and dft_freqs.size > 0:
-            freq_points = dft_freqs
-            freq_interval = max(
-                1,
-                int(
-                    getattr(
-                        monitor,
-                        "dft_record_interval",
-                        (
-                            1
-                            if bool(getattr(monitor, "dft_record_every_step", True))
-                            else interval
-                        ),
-                    )
-                ),
+            raise ValueError(
+                "Monitor power_spectrum_frequencies must be finite values in Hz"
             )
+        dft_active = bool(dft_enabled and dft_freqs.size > 0)
+        dft_interval = max(
+            1,
+            int(
+                getattr(
+                    monitor,
+                    "dft_record_interval",
+                    (
+                        1
+                        if bool(getattr(monitor, "dft_record_every_step", True))
+                        else interval
+                    ),
+                )
+            ),
+        )
+        power_spectrum_interval = max(
+            1, int(getattr(monitor, "power_spectrum_record_interval", 1))
+        )
+        if dft_active and flux_freqs.size > 0:
+            if dft_freqs.shape != flux_freqs.shape or not np.allclose(
+                dft_freqs, flux_freqs, rtol=1e-12, atol=0.0
+            ):
+                raise ValueError(
+                    "A monitor cannot pack DFT component frequencies and "
+                    "power_spectrum_frequencies onto different grids. Use matching "
+                    "frequencies or separate monitors."
+                )
+            if dft_interval != power_spectrum_interval:
+                raise ValueError(
+                    "A monitor cannot use different DFT and power-spectrum record "
+                    "intervals. Use matching intervals or separate monitors."
+                )
+        if dft_active:
+            freq_points = dft_freqs
+            freq_interval = dft_interval
         else:
             freq_points = flux_freqs
-            freq_interval = max(
-                1, int(getattr(monitor, "frequency_record_interval", 1))
-            )
+            freq_interval = power_spectrum_interval
         theta = 2.0 * np.pi * freq_points * float(dt) * float(freq_interval)
         freq_rot_re = np.cos(theta).astype(np.float32, copy=False)
         freq_rot_im = np.sin(theta).astype(np.float32, copy=False)
@@ -544,6 +636,18 @@ def compile_monitor_specs(
             x_hx, y_hx, v_hx = _clip_indices(x_raw, y_raw, tuple(fields.Hx.shape))
             x_hy, y_hy, v_hy = _clip_indices(x_raw, y_raw, tuple(fields.Hy.shape))
             x_hz, y_hz, v_hz = _clip_indices(x_raw, y_raw, tuple(fields.Hz.shape))
+            interp_2d = {
+                name: _compile_monitor_2d_interpolation(
+                    monitor, name, fields, resolution
+                )
+                for name in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
+            }
+            normal_axis, normal_sign = _monitor_normal_2d(monitor, resolution)
+            power_scale = _line_integral_scale_2d(
+                "x" if normal_axis == 0 else "y",
+                resolution,
+                resolution,
+            )
 
             specs.append(
                 CompiledMonitorSpec(
@@ -552,9 +656,10 @@ def compile_monitor_specs(
                     is_3d=False,
                     record_interval=interval,
                     accumulate_power=bool(monitor.accumulate_power),
-                    power_scale=float(resolution * resolution),
-                    normal_axis=-1,
-                    accumulate_frequency=bool(freq_points.size > 0),
+                    power_scale=float(power_scale),
+                    normal_axis=normal_axis,
+                    normal_sign=normal_sign,
+                    accumulate_frequency=bool(flux_freqs.size > 0),
                     freq_record_interval=freq_interval,
                     freq_count=int(freq_points.size),
                     freq_hz=jnp.asarray(freq_points.astype(np.float32, copy=False)),
@@ -592,6 +697,18 @@ def compile_monitor_specs(
                     x_hz=jnp.asarray(x_hz),
                     y_hz=jnp.asarray(y_hz),
                     valid_hz=jnp.asarray(v_hz),
+                    ex_interp_flat_idx=interp_2d["Ex"][0],
+                    ex_interp_weights=interp_2d["Ex"][1],
+                    ey_interp_flat_idx=interp_2d["Ey"][0],
+                    ey_interp_weights=interp_2d["Ey"][1],
+                    ez_interp_flat_idx=interp_2d["Ez"][0],
+                    ez_interp_weights=interp_2d["Ez"][1],
+                    hx_interp_flat_idx=interp_2d["Hx"][0],
+                    hx_interp_weights=interp_2d["Hx"][1],
+                    hy_interp_flat_idx=interp_2d["Hy"][0],
+                    hy_interp_weights=interp_2d["Hy"][1],
+                    hz_interp_flat_idx=interp_2d["Hz"][0],
+                    hz_interp_weights=interp_2d["Hz"][1],
                 )
             )
         else:
@@ -635,7 +752,8 @@ def compile_monitor_specs(
                     normal_axis={"x": 0, "y": 1, "z": 2}.get(
                         str(getattr(monitor, "plane_normal", "z")).lower(), -1
                     ),
-                    accumulate_frequency=bool(freq_points.size > 0),
+                    normal_sign=1.0,
+                    accumulate_frequency=bool(flux_freqs.size > 0),
                     freq_record_interval=freq_interval,
                     freq_count=int(freq_points.size),
                     freq_hz=jnp.asarray(freq_points.astype(np.float32, copy=False)),

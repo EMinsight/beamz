@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
+from beamz.simulation.fields import Fields
 from beamz.simulation.yee import (
     component_coordinates_2d_um,
     component_coordinates_3d_um,
@@ -85,3 +85,43 @@ def test_xy_generic_h_coordinates_follow_native_tmz_offsets():
     hy = component_coordinates_2d_um("Hy", (24, 24), 0.125, "xy")
     np.testing.assert_allclose(hy["y"][0], 0.0)
     np.testing.assert_allclose(hy["x"][0], 0.0625)
+
+
+def test_fields_expose_component_material_arrays_for_3d():
+    grid = np.arange(3 * 4 * 5, dtype=np.float32).reshape(3, 4, 5) + 1.0
+    fields = Fields(
+        permittivity=grid,
+        conductivity=np.zeros_like(grid),
+        permeability=2.0 * grid,
+        resolution=0.1,
+    )
+
+    for component in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz"):
+        material = fields.material_for_component(component)
+        assert material.shape == getattr(fields, component).shape
+
+    assert fields.material_for_component("Ex") is fields.eps_x
+    assert fields.material_for_component("Ey") is fields.eps_y
+    assert fields.material_for_component("Ez") is fields.eps_z
+    assert fields.material_for_component("Hx") is fields.mu_hx
+    assert fields.material_for_component("Hy") is fields.mu_hy
+    assert fields.material_for_component("Hz") is fields.mu_hz
+
+
+def test_fields_expose_component_material_arrays_for_xy_2d():
+    grid = np.arange(4 * 5, dtype=np.float32).reshape(4, 5) + 1.0
+    fields = Fields(
+        permittivity=grid,
+        conductivity=np.zeros_like(grid),
+        permeability=2.0 * grid,
+        resolution=0.1,
+        plane_2d="xy",
+    )
+
+    for component in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz"):
+        material = fields.material_for_component(component)
+        assert material.shape == getattr(fields, component).shape
+
+    np.testing.assert_array_equal(fields.material_for_component("Ez"), fields.eps_z)
+    np.testing.assert_array_equal(fields.material_for_component("Hx"), fields.mu_hx)
+    np.testing.assert_array_equal(fields.material_for_component("Hy"), fields.mu_hy)

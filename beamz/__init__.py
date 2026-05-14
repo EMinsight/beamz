@@ -14,7 +14,7 @@ from beamz.const import (
     nm,
     um,
     µm,
-    μm,
+    μm,  # noqa: F811 - public alias using Greek mu codepoint
 )
 
 # Import design-related classes and functions
@@ -32,7 +32,8 @@ from beamz.design.structures import (
     Sphere,
     Taper,
 )
-from beamz.devices.monitors import Monitor
+from beamz.devices.monitors import ModeMonitor, Monitor
+from beamz.devices.ports import Port
 from beamz.devices.sources import GaussianSource, ModeSource
 from beamz.devices.sources.mode import solve_modes
 from beamz.devices.sources.signals import ramped_cosine, signal_plot_data
@@ -97,6 +98,8 @@ _exports = {
     "GaussianSource": GaussianSource,
     # Monitors
     "Monitor": Monitor,
+    "ModeMonitor": ModeMonitor,
+    "Port": Port,
     # Signals
     "ramped_cosine": ramped_cosine,
     "signal_plot_data": signal_plot_data,

@@ -43,11 +43,8 @@ from beamz.simulation.boundaries import (
     full_pec_curl_h_to_e_2d_xy,
     full_pec_curl_h_to_e_3d,
     full_tm_2d_xy_masks,
-    has_full_pec_2d_xy,
     has_full_pec_3d,
     initialize_full_pec_3d_state,
-    pec_curl_e_to_h_3d,
-    pec_curl_h_to_e_3d,
     resolve_metallic_edges,
     tm_xy_cpml_curl_e_to_h_2d,
     tm_xy_cpml_curl_h_to_e_2d,
@@ -77,6 +74,8 @@ from beamz.shared_kernels import (
     monitor_records_on_step,
     poynting_magnitude_2d,
     poynting_magnitude_3d,
+    poynting_flux_2d,
+    poynting_flux_3d,
     step_hits_interval,
 )
 from beamz.simulation.yee import (
@@ -348,6 +347,7 @@ class CompiledSimulation:
     cpml3d_a_e_terms: tuple[jnp.ndarray, ...]
     cpml3d_b_e_terms: tuple[jnp.ndarray, ...]
     cpml3d_inv_kappa_e_terms: tuple[jnp.ndarray, ...]
+    cpml3d_metallic_edges: frozenset[str]
     full_pec_3d: bool
     fp_h_decay_x: jnp.ndarray
     fp_h_source_x: jnp.ndarray
@@ -642,12 +642,52 @@ class CompiledSimulation:
         hy: jnp.ndarray,
     ) -> jnp.ndarray:
         power_scale = jnp.asarray(spec.power_scale, dtype=jnp.float32)
-        ez_vals = ez[spec.y_ez, spec.x_ez] * spec.valid_ez
-        hx_vals = hx[spec.y_hx, spec.x_hx] * spec.valid_hx
-        hy_vals = hy[spec.y_hy, spec.x_hy] * spec.valid_hy
+        ez_vals = self._sample_monitor_component_2d(
+            ez,
+            spec.ez_interp_flat_idx,
+            spec.ez_interp_weights,
+            spec.x_ez,
+            spec.y_ez,
+            spec.valid_ez,
+        )
+        hx_vals = self._sample_monitor_component_2d(
+            hx,
+            spec.hx_interp_flat_idx,
+            spec.hx_interp_weights,
+            spec.x_hx,
+            spec.y_hx,
+            spec.valid_hx,
+        )
+        hy_vals = self._sample_monitor_component_2d(
+            hy,
+            spec.hy_interp_flat_idx,
+            spec.hy_interp_weights,
+            spec.x_hy,
+            spec.y_hy,
+            spec.valid_hy,
+        )
 
+        axis_i = int(spec.normal_axis)
+        sign = jnp.asarray(spec.normal_sign, dtype=jnp.float32)
+        flux_x = poynting_flux_2d(ez_vals, hx_vals, hy_vals, "x", sign)
+        flux_y = poynting_flux_2d(ez_vals, hx_vals, hy_vals, "y", sign)
         mag = poynting_magnitude_2d(ez_vals, hx_vals, hy_vals)
-        return jnp.asarray(jnp.sum(mag), dtype=jnp.float32) * power_scale
+        flux = jnp.where(axis_i == 0, flux_x, jnp.where(axis_i == 1, flux_y, mag))
+        return jnp.asarray(jnp.sum(flux), dtype=jnp.float32) * power_scale
+
+    @staticmethod
+    def _sample_monitor_component_2d(
+        field: jnp.ndarray,
+        flat_idx: jnp.ndarray | None,
+        weights: jnp.ndarray | None,
+        x_idx: jnp.ndarray,
+        y_idx: jnp.ndarray,
+        valid: jnp.ndarray,
+    ) -> jnp.ndarray:
+        if flat_idx is not None and weights is not None:
+            gathered = field.reshape(-1)[flat_idx]
+            return jnp.sum(gathered * weights, axis=-1)
+        return field[y_idx, x_idx] * valid
 
     def _monitor_power_3d(
         self,
@@ -703,8 +743,18 @@ class CompiledSimulation:
             spec.min_dim1,
         )
 
+        axis_i = int(spec.normal_axis)
+        sign = jnp.asarray(spec.normal_sign, dtype=jnp.float32)
+        flux_x = poynting_flux_3d(exs, eys, ezs, hxs, hys, hzs, "x", sign)
+        flux_y = poynting_flux_3d(exs, eys, ezs, hxs, hys, hzs, "y", sign)
+        flux_z = poynting_flux_3d(exs, eys, ezs, hxs, hys, hzs, "z", sign)
         mag = poynting_magnitude_3d(exs, eys, ezs, hxs, hys, hzs)
-        return jnp.asarray(jnp.sum(mag), dtype=jnp.float32) * power_scale
+        flux = jnp.where(
+            axis_i == 0,
+            flux_x,
+            jnp.where(axis_i == 1, flux_y, jnp.where(axis_i == 2, flux_z, mag)),
+        )
+        return jnp.asarray(jnp.sum(flux), dtype=jnp.float32) * power_scale
 
     @staticmethod
     def _sample_monitor_component_3d(
@@ -788,9 +838,30 @@ class CompiledSimulation:
         tm_hx: jnp.ndarray | None = None,
         tm_hy: jnp.ndarray | None = None,
     ) -> jnp.ndarray:
-        ex_vals = ex[spec.y_ex, spec.x_ex] * spec.valid_ex
-        ey_vals = ey[spec.y_ey, spec.x_ey] * spec.valid_ey
-        hz_vals = hz[spec.y_hz, spec.x_hz] * spec.valid_hz
+        ex_vals = self._sample_monitor_component_2d(
+            ex,
+            spec.ex_interp_flat_idx,
+            spec.ex_interp_weights,
+            spec.x_ex,
+            spec.y_ex,
+            spec.valid_ex,
+        )
+        ey_vals = self._sample_monitor_component_2d(
+            ey,
+            spec.ey_interp_flat_idx,
+            spec.ey_interp_weights,
+            spec.x_ey,
+            spec.y_ey,
+            spec.valid_ey,
+        )
+        hz_vals = self._sample_monitor_component_2d(
+            hz,
+            spec.hz_interp_flat_idx,
+            spec.hz_interp_weights,
+            spec.x_hz,
+            spec.y_hz,
+            spec.valid_hz,
+        )
 
         if (
             spec.dft_normalization_code == 1
@@ -826,9 +897,30 @@ class CompiledSimulation:
                 self.config.resolution,
             )
         else:
-            ez_vals = ez[spec.y_ez, spec.x_ez] * spec.valid_ez
-            hx_vals = hx[spec.y_hx, spec.x_hx] * spec.valid_hx
-            hy_vals = hy[spec.y_hy, spec.x_hy] * spec.valid_hy
+            ez_vals = self._sample_monitor_component_2d(
+                ez,
+                spec.ez_interp_flat_idx,
+                spec.ez_interp_weights,
+                spec.x_ez,
+                spec.y_ez,
+                spec.valid_ez,
+            )
+            hx_vals = self._sample_monitor_component_2d(
+                hx,
+                spec.hx_interp_flat_idx,
+                spec.hx_interp_weights,
+                spec.x_hx,
+                spec.y_hx,
+                spec.valid_hx,
+            )
+            hy_vals = self._sample_monitor_component_2d(
+                hy,
+                spec.hy_interp_flat_idx,
+                spec.hy_interp_weights,
+                spec.x_hy,
+                spec.y_hy,
+                spec.valid_hy,
+            )
 
         return jnp.stack((ex_vals, ey_vals, ez_vals, hx_vals, hy_vals, hz_vals), axis=0)
 
@@ -936,13 +1028,14 @@ class CompiledSimulation:
                 axis_i = bm.normal_axes[i]
                 normal_flux = (
                     jnp.sum(jnp.where(axis_i == 0, sx, jnp.where(axis_i == 1, sy, sz)))
+                    * bm.normal_signs[i]
                     * bm.power_scales[i]
                 )
                 flux_sample = jnp.where(axis_i < 0, power_val, normal_flux)
 
                 slot = jnp.minimum(cnt[mi], max_records - 1)
                 pwr = pwr.at[mi, slot].set(
-                    jnp.where(do_record, power_val, pwr[mi, slot])
+                    jnp.where(do_record, flux_sample, pwr[mi, slot])
                 )
                 ts = ts.at[mi, slot].set(jnp.where(do_record, t_phys, ts[mi, slot]))
                 cnt = cnt.at[mi].set(cnt[mi] + jnp.where(do_record, 1, 0))
@@ -1719,6 +1812,7 @@ class CompiledSimulation:
                                     b_e_terms=self.cpml3d_b_e_terms,
                                     inv_kappa_e_terms=self.cpml3d_inv_kappa_e_terms,
                                     psi_e_terms=cpml3d_psi_e_terms,
+                                    metallic_edges=self.cpml3d_metallic_edges,
                                 )
                             )
                             ex = advance_e_from_coefficients(
@@ -2177,7 +2271,7 @@ class CompiledSimulation:
             dev.power_history = list(powers.tolist())
             dev.power_timestamps = list(ts.tolist())
             dev.power_accumulation_count = count
-            if spec.freq_count > 0:
+            if spec.accumulate_frequency and spec.freq_count > 0:
                 re = np.asarray(
                     monitor_state.freq_flux_re[spec.monitor_index, : spec.freq_count],
                     dtype=np.float32,
@@ -2186,9 +2280,10 @@ class CompiledSimulation:
                     monitor_state.freq_flux_im[spec.monitor_index, : spec.freq_count],
                     dtype=np.float32,
                 )
-                dev.frequency_flux_spectrum = (re + 1j * im).astype(np.complex64)
+                dev.power_spectrum = (re + 1j * im).astype(np.complex64)
             else:
-                dev.frequency_flux_spectrum = np.zeros((0,), dtype=np.complex64)
+                dev.power_spectrum = np.zeros((0,), dtype=np.complex64)
+            dev._frequency_flux_spectrum_legacy = dev.power_spectrum
 
             if spec.dft_enabled and spec.freq_count > 0 and spec.dft_point_count > 0:
                 comp_names = ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
@@ -2225,6 +2320,14 @@ class CompiledSimulation:
                         dtype=np.float64,
                     )
                     dev._dft_accum[comp_name] = re + 1j * im
+                try:
+                    phasor_flux = np.asarray(dev.get_dft_flux(), dtype=np.float64)
+                except ValueError:
+                    pass
+                else:
+                    dev._frequency_flux_spectrum_legacy = phasor_flux.astype(
+                        np.complex64
+                    )
             else:
                 dev._dft_weight_sum = np.zeros((0,), dtype=np.float64)
                 dev._dft_accum = {}
@@ -2503,7 +2606,9 @@ def compile_simulation(
     cpml3d_a_e_terms = _empty_cpml_3d_terms(jnp.float32)
     cpml3d_b_e_terms = _empty_cpml_3d_terms(jnp.float32)
     cpml3d_inv_kappa_e_terms = _empty_cpml_3d_terms(jnp.float32)
+    cpml3d_metallic_edges = frozenset()
     if bool(run_cfg.is_3d):
+        cpml3d_metallic_edges = frozenset(resolve_metallic_edges(boundaries, is_3d=True))
         use_cpml_3d = bool(
             getattr(fields, "has_cpml", False) and getattr(fields, "pml_data", None)
         )
@@ -2818,6 +2923,7 @@ def compile_simulation(
         cpml3d_a_e_terms=cpml3d_a_e_terms,
         cpml3d_b_e_terms=cpml3d_b_e_terms,
         cpml3d_inv_kappa_e_terms=cpml3d_inv_kappa_e_terms,
+        cpml3d_metallic_edges=cpml3d_metallic_edges,
         full_pec_3d=full_pec_3d,
         fp_h_decay_x=fp_h_decay_x,
         fp_h_source_x=fp_h_source_x,

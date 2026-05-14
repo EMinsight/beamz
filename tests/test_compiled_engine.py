@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from types import SimpleNamespace
 
 from beamz import (
     LIGHT_SPEED,
@@ -20,18 +21,17 @@ from beamz import (
 )
 from beamz.const import EPS_0
 from beamz.devices.monitors.compiler import CompiledMonitorSpec
-from beamz.devices.sources.compiler import _as_slab_spec, _sample_waveform
-from beamz.simulation.boundaries import (
-    cpml_curl_e_to_h_3d,
-    cpml_curl_h_to_e_3d,
-    initialize_full_pec_3d_state,
+from beamz.devices.sources.compiler import (
+    _as_slab_spec,
+    _compile_mode_source_3d,
+    _sample_waveform,
 )
+from beamz.simulation.boundaries import initialize_full_pec_3d_state
 from beamz.simulation.compiled import (
     CompiledRunConfig,
     CompiledSimulation,
     EngineState,
     MonitorState,
-    batch_slab_specs,
 )
 
 pytestmark = [pytest.mark.compiled, pytest.mark.component]
@@ -652,8 +652,8 @@ def test_compiled_frequency_monitor_matches_direct_sum(small_sim_params):
         start=(domain * 0.35, domain * 0.35),
         end=(domain * 0.35, domain * 0.65),
         record_interval=1,
-        frequency_points=[freq],
-        frequency_record_interval=1,
+        power_spectrum_frequencies=[freq],
+        power_spectrum_record_interval=1,
     )
 
     sim = Simulation(
@@ -666,14 +666,14 @@ def test_compiled_frequency_monitor_matches_direct_sum(small_sim_params):
     )
     sim.run_compiled(num_steps=60, progress=False)
 
-    assert monitor.frequency_flux_spectrum.shape == (1,)
-    assert np.isfinite(monitor.frequency_flux_spectrum).all()
+    assert monitor.power_spectrum.shape == (1,)
+    assert np.isfinite(monitor.power_spectrum).all()
 
     power = np.asarray(monitor.power_history, dtype=np.float64)
     ts = np.asarray(monitor.power_timestamps, dtype=np.float64)
     direct = np.sum(power * np.exp(-1j * 2.0 * np.pi * freq * ts)) * dt
     assert np.allclose(
-        monitor.frequency_flux_spectrum[0],
+        monitor.power_spectrum[0],
         direct,
         rtol=5e-3,
         atol=5e-6,
@@ -692,8 +692,8 @@ def test_compiled_frequency_monitor_accumulates_across_chunks(small_sim_params):
         start=(domain * 0.35, domain * 0.35),
         end=(domain * 0.35, domain * 0.65),
         record_interval=2,
-        frequency_points=freqs,
-        frequency_record_interval=1,
+        power_spectrum_frequencies=freqs,
+        power_spectrum_record_interval=1,
     )
     sim_full = Simulation(
         design=design.copy(),
@@ -711,8 +711,8 @@ def test_compiled_frequency_monitor_accumulates_across_chunks(small_sim_params):
         start=(domain * 0.35, domain * 0.35),
         end=(domain * 0.35, domain * 0.65),
         record_interval=2,
-        frequency_points=freqs,
-        frequency_record_interval=1,
+        power_spectrum_frequencies=freqs,
+        power_spectrum_record_interval=1,
     )
     sim_chunked = Simulation(
         design=design.copy(),
@@ -731,8 +731,8 @@ def test_compiled_frequency_monitor_accumulates_across_chunks(small_sim_params):
         progress=False,
     )
 
-    s_full = np.asarray(monitor_a.frequency_flux_spectrum)
-    s_chunked = np.asarray(monitor_b.frequency_flux_spectrum)
+    s_full = np.asarray(monitor_a.power_spectrum)
+    s_chunked = np.asarray(monitor_b.power_spectrum)
     assert s_full.shape == (2,)
     assert s_chunked.shape == s_full.shape
     assert np.allclose(s_chunked, s_full, rtol=5e-3, atol=5e-6)
@@ -773,8 +773,8 @@ def test_compiled_frequency_monitor_3d_populated():
         plane_position=domain * 0.65,
         size=(domain * 0.6, depth * 0.6),
         record_interval=2,
-        frequency_points=[freq],
-        frequency_record_interval=1,
+        power_spectrum_frequencies=[freq],
+        power_spectrum_record_interval=1,
         record_fields=False,
     )
     sim = Simulation(
@@ -787,7 +787,7 @@ def test_compiled_frequency_monitor_3d_populated():
     )
     sim.run_compiled(num_steps=12, progress=False)
 
-    spec = np.asarray(monitor.frequency_flux_spectrum)
+    spec = np.asarray(monitor.power_spectrum)
     assert spec.shape == (1,)
     assert np.isfinite(spec).all()
     assert len(monitor.power_history) > 0
@@ -833,6 +833,8 @@ def test_compiled_dft_component_monitor_populated(small_sim_params):
     assert np.isfinite(hy_dft).all()
     assert np.max(np.abs(ez_dft)) > 0.0
     assert np.max(np.abs(hy_dft)) > 0.0
+    np.testing.assert_allclose(monitor.power_spectrum, np.zeros((0,), dtype=np.complex64))
+    assert np.isfinite(monitor.get_dft_flux()).all()
 
 
 def test_compiled_static_monitor_dft_uses_current_sample_phase():
@@ -1192,6 +1194,57 @@ def test_compile_mode_source_builds_e_and_h_specs():
 
     sim.run_compiled(num_steps=20, progress=False)
     assert np.isfinite(np.asarray(sim.fields.Ez)).all()
+
+
+def test_compile_3d_mode_source_scales_e_terms_by_component_eps():
+    fields = SimpleNamespace(
+        permittivity=jnp.full((2, 2, 2), 99.0),
+        permeability=jnp.ones((2, 2, 2)),
+        Ex=jnp.zeros((2, 2, 1)),
+        Ey=jnp.zeros((2, 1, 2)),
+        Ez=jnp.zeros((1, 2, 2)),
+        Hx=jnp.zeros((1, 1, 2)),
+        Hy=jnp.zeros((1, 2, 1)),
+        Hz=jnp.zeros((2, 1, 1)),
+        eps_x=jnp.full((2, 2, 1), 2.0),
+        eps_y=jnp.full((2, 1, 2), 3.0),
+        eps_z=jnp.full((1, 2, 2), 4.0),
+    )
+    one = np.ones((1, 1, 1), dtype=np.float32)
+    source = SimpleNamespace(
+        _axis="z",
+        pol="te",
+        _direction_sign=1.0,
+        _Ex_profile=one,
+        _Ey_profile=one,
+        _Ez_profile=None,
+        _Hx_profile=one,
+        _Hy_profile=one,
+        _Hz_profile=None,
+        _Ex_indices=(slice(0, 1), slice(0, 1), slice(0, 1)),
+        _Ey_indices=(slice(0, 1), slice(0, 1), slice(0, 1)),
+        _Ez_indices=None,
+        _Hx_indices=(slice(0, 1), slice(0, 1), slice(0, 1)),
+        _Hy_indices=(slice(0, 1), slice(0, 1), slice(0, 1)),
+        _Hz_indices=None,
+    )
+
+    specs = _compile_mode_source_3d(
+        source,
+        fields,
+        dt=5.0,
+        resolution=7.0,
+        h_waveform=jnp.ones((1,), dtype=jnp.float32),
+        e_waveform=jnp.ones((1,), dtype=jnp.float32),
+    )
+    e_specs = {spec.component: spec for spec in specs if spec.timing == "e"}
+
+    assert np.asarray(e_specs["Ex"].coeff).item() == pytest.approx(
+        -5.0 / (EPS_0 * 2.0 * 7.0)
+    )
+    assert np.asarray(e_specs["Ey"].coeff).item() == pytest.approx(
+        5.0 / (EPS_0 * 3.0 * 7.0)
+    )
 
 
 def test_cache_reuse_across_equal_chunks(small_sim_params):

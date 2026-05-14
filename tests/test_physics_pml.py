@@ -10,16 +10,11 @@ import numpy as np
 import pytest
 
 from beamz import (
-    EPS_0,
     LIGHT_SPEED,
     PML,
-    Design,
     GaussianSource,
-    Material,
     Simulation,
-    calc_optimal_fdtd_params,
     ramped_cosine,
-    um,
 )
 from beamz.simulation.boundaries import (
     _cpml_ab_from_profiles,
@@ -27,9 +22,9 @@ from beamz.simulation.boundaries import (
     cpml_curl_h_to_e_3d,
     tm_xy_curl_h_to_e_2d,
 )
+from beamz.shared_kernels import build_tm_xy_cpml_terms
 
-# Import utilities
-from tests.utils import TEST_WAVELENGTH, compute_field_energy
+from tests.utils import compute_field_energy
 
 
 @pytest.mark.simulation
@@ -57,7 +52,7 @@ class TestPMLAbsorption:
         for key in ("sigma_x", "sigma_y", "kappa_x", "kappa_y", "alpha_x", "alpha_y"):
             assert key in sim.pml_data
 
-    def test_cpml_keeps_material_updates_free_of_pml_sigma(self, vacuum_domain_small):
+    def test_cpml_contributes_loss_to_material_updates(self, vacuum_domain_small):
         design = vacuum_domain_small["design"]
         dx = vacuum_domain_small["dx"]
         dt = vacuum_domain_small["dt"]
@@ -77,7 +72,8 @@ class TestPMLAbsorption:
         total_sigma = np.asarray(sim.fields.total_conductivity, dtype=np.float64)
 
         assert float(np.max(sigma_shell)) > 0.0
-        np.testing.assert_allclose(total_sigma, np.asarray(sim.fields.conductivity))
+        assert float(np.max(total_sigma)) >= float(np.max(sigma_shell))
+        assert float(np.max(total_sigma)) > float(np.max(sim.fields.conductivity))
 
     def test_sponge_absorber_still_contributes_loss_in_material_updates(
         self, vacuum_domain_small
@@ -160,6 +156,14 @@ class TestPMLAbsorption:
         assert np.asarray(tm_xy["Ez_y_kappa"], dtype=np.float64)[
             cy, cx
         ] == pytest.approx(1.0)
+
+        terms = build_tm_xy_cpml_terms(tm_xy, ez_shape=sim.fields.Ez.shape)
+        np.testing.assert_allclose(
+            np.asarray(terms.kappa_h_direct_terms),
+            np.asarray(terms.kappa_h_aux_terms),
+            rtol=0.0,
+            atol=0.0,
+        )
 
     def test_cpml_full_tm_profiles_follow_discrete_yee_staggering(self):
         pml = PML(thickness=1.0, formulation="cpml", sigma_max=10.0, alpha_max=1.0)
@@ -370,6 +374,9 @@ class TestPMLAbsorption:
             b_e_terms=b_e_mixed,
             inv_kappa_e_terms=inv_kappa_e_mixed,
             psi_e_terms=psi_e,
+            metallic_edges=frozenset(
+                {"left", "right", "bottom", "top", "front", "back"}
+            ),
         )
 
         d_terms_e = (

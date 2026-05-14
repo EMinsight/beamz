@@ -90,8 +90,8 @@ class SweepConfig:
     pulse_sigma_periods: float = 1.5
     pulse_center_sigmas: float = 4.0
     reference_extra_width_wl: float = 12.0
-    cpml_kappa_max: float = 3.0
-    cpml_alpha_max: float | None = 0.0
+    cpml_kappa_max: float = 2.0
+    cpml_alpha_max: float | None = None
     pml_formulations: tuple[str, ...] = ("sigma", "cpml")
     pml_thicknesses_wl: tuple[float, ...] = (0.5, 1.0, 1.5, 2.0)
 
@@ -191,13 +191,6 @@ def _simulate_probe(
     incident_center = t0 + (x_probe - x_src) / LIGHT_SPEED
     reflected_center = t0 + right_travel / LIGHT_SPEED
     window_half = 2.5 * sigma_t
-    incident_mask = (times >= incident_center - window_half) & (times <= incident_center + window_half)
-    reflected_mask = (times >= reflected_center - window_half) & (times <= reflected_center + window_half)
-
-    incident_peak = float(np.max(np.abs(probe[incident_mask]))) if np.any(incident_mask) else 0.0
-    reflected_peak = float(np.max(np.abs(probe[reflected_mask]))) if np.any(reflected_mask) else 0.0
-    reflection_ratio = reflected_peak / max(incident_peak, 1e-30)
-
     return {
         "probe": probe,
         "times_s": times,

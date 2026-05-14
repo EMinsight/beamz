@@ -12,6 +12,7 @@ import numpy as np
 from beamz.const import LIGHT_SPEED, µm
 from beamz.design.core import Design
 from beamz.devices.monitors.monitors import Monitor
+from beamz.devices.ports import Port
 from beamz.devices.sources.compiler import (
     apply_compiled_source_specs,
     compile_source_specs,
@@ -22,20 +23,18 @@ from beamz.devices.sources.mode import (
     _enforce_componentwise_parity,
     _make_3d_mode_basis_profiles,
     _modal_overlap_3d_profiles,
-    _runtime_3d_profiles,
-    _select_core_confined_mode_index,
+    _numeric_phase_delay,
+    _select_core_confined_mode_index,  # noqa: F401 - compatibility monkeypatch hook
+    _solve_numeric_k_axis,
 )
 from beamz.devices.sources.solve import solve_modes
 from beamz.simulation.boundaries import (
     PML,
     Boundary,
-    build_h_boundary_views_for_e_3d,
     create_metallic_boundary_masks,
     has_full_pec_3d,
     initialize_full_pec_3d_state,
     normalize_boundaries,
-    pec_curl_e_to_h_3d,
-    pec_curl_h_to_e_3d,
     sync_full_pec_3d_from_compact,
 )
 from beamz.simulation.compiled import (
@@ -130,6 +129,13 @@ def _projection_solver_direction_3d(direction: str, axis: str) -> str:
 
 @dataclass(frozen=True)
 class PortSpec:
+    """Modal extraction metadata for one named port.
+
+    ``reference_monitor`` selects an alternate incident-wave normalization plane.
+    Scattered waves are still read from ``monitor_name``; no reference-plane
+    subtraction is applied implicitly.
+    """
+
     name: str
     monitor_name: str
     direction: Literal["+x", "-x", "+y", "-y", "+z", "-z"]
@@ -148,6 +154,7 @@ class MonitorResults:
     fields: dict[str, tuple[Any, ...]]
     power_history: np.ndarray
     power_timestamps: np.ndarray
+    power_spectrum: np.ndarray
     frequency_flux_spectrum: np.ndarray
     objective_value: float | None = None
 
@@ -157,6 +164,17 @@ class MonitorResults:
             name: tuple(values)
             for name, values in getattr(monitor, "fields", {}).items()
         }
+        power_spectrum = np.asarray(
+            getattr(monitor, "power_spectrum", ()), dtype=np.complex64
+        )
+        state = getattr(monitor, "_state", None)
+        legacy_flux = (
+            getattr(state, "_frequency_flux_spectrum_legacy", None)
+            if state is not None
+            else None
+        )
+        if legacy_flux is None:
+            legacy_flux = power_spectrum
         return cls(
             monitor=monitor,
             fields=fields,
@@ -166,9 +184,8 @@ class MonitorResults:
             power_timestamps=np.asarray(
                 getattr(monitor, "power_timestamps", ()), dtype=float
             ),
-            frequency_flux_spectrum=np.asarray(
-                getattr(monitor, "frequency_flux_spectrum", ()), dtype=np.complex64
-            ),
+            power_spectrum=power_spectrum,
+            frequency_flux_spectrum=np.asarray(legacy_flux, dtype=np.complex64),
             objective_value=getattr(monitor, "objective_value", None),
         )
 
@@ -1334,101 +1351,30 @@ class Simulation:
         return s_matrix
 
     @staticmethod
-    def _monitor_axis_center(monitor, axis):
-        axis_idx = {"x": 0, "y": 1, "z": 2}[str(axis)]
-        start = tuple(float(v) for v in getattr(monitor, "start", ()))
-        end = getattr(monitor, "end", None)
-        if end is not None:
-            end = tuple(float(v) for v in end)
-            if len(start) > axis_idx and len(end) > axis_idx:
-                return 0.5 * (start[axis_idx] + end[axis_idx])
-        if len(start) > axis_idx:
-            return start[axis_idx]
-        return 0.0
+    def _port_name(port):
+        if isinstance(port, str):
+            return port
+        if isinstance(port, (PortSpec, Port)):
+            return str(port.name)
+        if isinstance(port, Mapping):
+            return str(port["name"])
+        if hasattr(port, "to_port"):
+            return str(port.to_port().name)
+        name = getattr(port, "name", None)
+        if name:
+            return str(name)
+        raise ValueError(f"Cannot infer port name from {port!r}.")
 
-    def _source_scattered_correction(
-        self,
-        *,
-        source_spec,
-        source_waves,
-        monitor_by_name,
-        frequencies,
-        scattered_selector=None,
-    ):
-        ref_name = getattr(source_spec, "reference_monitor", None)
-        if not ref_name:
-            return None
-
-        main_monitor = monitor_by_name.get(source_spec.monitor_name)
-        ref_monitor = monitor_by_name.get(ref_name)
-        if main_monitor is None or ref_monitor is None:
-            return None
-
-        axis = str(source_spec.direction)[1]
-        delta_s = self._monitor_axis_center(
-            main_monitor, axis
-        ) - self._monitor_axis_center(ref_monitor, axis)
-        if abs(float(delta_s)) <= 1e-30:
-            return None
-
-        neff_main = np.asarray(source_waves.get("mode_neff", []), dtype=float)
-        neff_ref = np.asarray(source_waves.get("reference_mode_neff", []), dtype=float)
-        if neff_main.size == 0 and neff_ref.size == 0:
-            return None
-        if neff_main.size == 0:
-            neff = neff_ref
-        elif neff_ref.size == 0:
-            neff = neff_main
+    @classmethod
+    def _normalize_output_port_names(cls, output_ports, port_map):
+        if output_ports is None:
+            names = list(port_map.keys())
         else:
-            neff = np.where(
-                np.isfinite(neff_main) & (neff_main > 1e-6),
-                neff_main,
-                neff_ref,
-            )
-        neff = np.asarray(neff, dtype=float)
-        if neff.size == 0:
-            return None
-
-        freqs = np.atleast_1d(np.asarray(frequencies, dtype=float))
-        if neff.size != freqs.size:
-            if neff.size == 1:
-                neff = np.full(freqs.shape, float(neff[0]), dtype=float)
-            else:
-                return None
-
-        ref_scattered = np.asarray(
-            self._select_wave_component(
-                source_waves,
-                selector=(
-                    scattered_selector
-                    if scattered_selector is not None
-                    else source_spec.scattered_wave
-                ),
-                use_reference=True,
-            ),
-            dtype=np.complex128,
-        )
-        phase = np.exp(-1j * 2.0 * np.pi * freqs * neff * float(delta_s) / LIGHT_SPEED)
-        propagated = phase * ref_scattered
-        main_scattered = np.asarray(
-            self._select_wave_component(
-                source_waves,
-                selector=(
-                    scattered_selector
-                    if scattered_selector is not None
-                    else source_spec.scattered_wave
-                ),
-                use_reference=False,
-            ),
-            dtype=np.complex128,
-        )
-        # The source-plane correction is only meant to remove the source's own
-        # backward-wave contamination. If the propagated reference term is
-        # phase-opposed to the main scattered branch, subtracting it would
-        # amplify the apparent reflection instead of canceling it.
-        alignment = np.real(main_scattered * np.conjugate(propagated))
-        sign = np.where(alignment >= 0.0, 1.0 + 0.0j, -1.0 + 0.0j)
-        return propagated * sign
+            names = [cls._port_name(item) for item in output_ports]
+        missing = [name for name in names if name not in port_map]
+        if missing:
+            raise ValueError(f"output_ports contains unknown ports: {missing}")
+        return names
 
     @staticmethod
     def _normalize_portspecs(ports):
@@ -1443,17 +1389,25 @@ class Simulation:
         for item in values:
             if isinstance(item, PortSpec):
                 spec = item
+            elif isinstance(item, Port):
+                spec = PortSpec(**item.to_portspec_dict())
+            elif hasattr(item, "to_portspec_dict"):
+                spec = PortSpec(**item.to_portspec_dict())
             else:
-                spec = PortSpec(
-                    name=item["name"],
-                    monitor_name=item["monitor_name"],
-                    direction=item["direction"],
-                    polarization=item["polarization"],
-                    mode_index=int(item.get("mode_index", 0)),
-                    reference_monitor=item.get("reference_monitor"),
-                    incident_wave=str(item.get("incident_wave", "plus")).lower(),
-                    scattered_wave=str(item.get("scattered_wave", "minus")).lower(),
-                )
+                item = dict(item)
+                if "monitor" in item or "projection_direction" in item:
+                    spec = PortSpec(**Port.from_mapping(item).to_portspec_dict())
+                else:
+                    spec = PortSpec(
+                        name=item["name"],
+                        monitor_name=item["monitor_name"],
+                        direction=item["direction"],
+                        polarization=item["polarization"],
+                        mode_index=int(item.get("mode_index", 0)),
+                        reference_monitor=item.get("reference_monitor"),
+                        incident_wave=str(item.get("incident_wave", "plus")).lower(),
+                        scattered_wave=str(item.get("scattered_wave", "minus")).lower(),
+                    )
             if spec.direction not in {"+x", "-x", "+y", "-y", "+z", "-z"}:
                 raise ValueError(f"Unsupported port direction '{spec.direction}'.")
             pol = str(spec.polarization).lower()
@@ -1609,20 +1563,76 @@ class Simulation:
 
     @staticmethod
     def _monitor_projection_phase(component, frequencies, dt):
-        """Phase-align sampled monitor spectra to the modal projection convention.
+        """Phase-align raw monitor phasors to the E-field sample time.
 
-        Monitors are recorded after the E update. Empirically, the source-port
-        modal coefficients line up with the local-mode basis when E components
-        are advanced by one full step and H components are delayed by one full
-        step before projection.
+        BeamZ's DFT uses the phasor convention
+
+            f(t) = Re{F exp(-i omega t)}
+            F ~= 2 sum_t f(t) exp(+i omega t) / sum_t 1
+
+        Monitors are sampled after the E update at timestamp T = t + dt. At
+        that instant E is stored at T, while the leapfrog H fields are stored at
+        T - dt/2. If a component is actually sampled at T + tau but accumulated
+        with exp(+i omega T), the accumulator returns F exp(-i omega tau). To
+        recover the common-time modal phasor F, multiply by exp(+i omega tau).
+        Therefore E has tau = 0 and H has tau = -dt/2.
         """
         freq_arr = np.atleast_1d(np.asarray(frequencies, dtype=float))
         comp = str(component)
-        if comp.startswith("E"):
-            return np.exp(1j * 2.0 * np.pi * freq_arr * float(dt))
         if comp.startswith("H"):
-            return np.exp(-1j * 2.0 * np.pi * freq_arr * float(dt))
+            return np.exp(-1j * np.pi * freq_arr * float(dt))
         return np.ones_like(freq_arr, dtype=np.complex128)
+
+    @staticmethod
+    def _modal_projection_spatial_phase(component, frequencies, plane_delay_s):
+        """Phase-align E components from their Yee plane to the H-referenced mode.
+
+        Mode profiles are gauged to the dominant H component, matching the
+        ModeSource launch convention. After the temporal Yee correction, E
+        samples still need the spatial propagation phase from the E Yee plane
+        to that H reference plane.
+        """
+        freq_arr = np.atleast_1d(np.asarray(frequencies, dtype=float))
+        comp = str(component)
+        delay = float(plane_delay_s)
+        if comp.startswith("E") and delay != 0.0:
+            return np.exp(1j * 2.0 * np.pi * freq_arr * delay)
+        return np.ones_like(freq_arr, dtype=np.complex128)
+
+    def _modal_projection_plane_delay_s(self, spec, frequency, mode_neff):
+        """Return the E-to-H modal-plane delay used by S-parameter projection."""
+        if getattr(self, "is_3d", False):
+            # 3D monitors interpolate every recorded component onto the same
+            # physical analysis plane. There is no remaining normal-direction
+            # Yee half-cell offset to compensate during modal extraction.
+            return 0.0
+        freq = float(frequency)
+        neff = float(np.real(np.asarray(mode_neff)))
+        if (not np.isfinite(freq)) or freq <= 0.0:
+            return 0.0
+        if (not np.isfinite(neff)) or neff <= 0.0:
+            return 0.0
+        d_axis = float(getattr(self, "resolution", 0.0) or 0.0)
+        if (not np.isfinite(d_axis)) or d_axis <= 0.0:
+            return 0.0
+
+        direction_sign = +1.0 if str(spec.direction).startswith("+") else -1.0
+        delta_s = direction_sign * 0.5 * d_axis
+        if getattr(self, "is_3d", False) and hasattr(self, "dt") and self.dt is not None:
+            omega = 2.0 * np.pi * freq
+            k_num = _solve_numeric_k_axis(omega, float(self.dt), d_axis, neff)
+            return _numeric_phase_delay(omega, k_num, delta_s)
+        return float(delta_s * neff / LIGHT_SPEED)
+
+    def _apply_modal_projection_spatial_phase(
+        self, component, values, frequency, projection
+    ):
+        phase = self._modal_projection_spatial_phase(
+            component,
+            np.asarray([float(frequency)], dtype=float),
+            float(projection.get("modal_plane_delay_s", 0.0)),
+        )[0]
+        return np.asarray(values, dtype=np.complex128) * phase
 
     def _sample_monitor_component_dft(self, monitor, component, frequencies):
         if not hasattr(monitor, "get_dft_component"):
@@ -2779,6 +2789,11 @@ class Simulation:
                 },
                 "pair_score": float(best_pair_score),
             }
+            projection["modal_plane_delay_s"] = self._modal_projection_plane_delay_s(
+                spec,
+                frequency,
+                projection["mode_neff"],
+            )
             if analysis_coords0 is not None and analysis_coords1 is not None:
                 projection["analysis_coords0"] = np.asarray(
                     analysis_coords0, dtype=np.float64
@@ -2818,6 +2833,11 @@ class Simulation:
             "pinv": np.linalg.pinv(mode_matrix),
             "mode_neff": float(candidate["mode_neff"]),
         }
+        projection["modal_plane_delay_s"] = self._modal_projection_plane_delay_s(
+            spec,
+            frequency,
+            projection["mode_neff"],
+        )
         cache[key] = projection
         return projection
 
@@ -3052,9 +3072,11 @@ class Simulation:
                 )
                 if self.is_3d:
                     raw_field_components = {
-                        comp: np.asarray(
+                        comp: self._apply_modal_projection_spatial_phase(
+                            comp,
                             spectrum_cache[(main_monitor.name, comp)][idx],
-                            dtype=np.complex128,
+                            f,
+                            proj,
                         )
                         for comp in proj_components
                     }
@@ -3068,7 +3090,12 @@ class Simulation:
                 else:
                     field_vec = np.concatenate(
                         [
-                            spectrum_cache[(main_monitor.name, comp)][idx]
+                            self._apply_modal_projection_spatial_phase(
+                                comp,
+                                spectrum_cache[(main_monitor.name, comp)][idx],
+                                f,
+                                proj,
+                            )
                             for comp in proj_components
                         ]
                     )
@@ -3133,9 +3160,11 @@ class Simulation:
                     )
                     if self.is_3d:
                         raw_field_components = {
-                            comp: np.asarray(
+                            comp: self._apply_modal_projection_spatial_phase(
+                                comp,
                                 spectrum_cache[(ref_monitor.name, comp)][idx],
-                                dtype=np.complex128,
+                                f,
+                                proj,
                             )
                             for comp in proj_components
                         }
@@ -3153,7 +3182,12 @@ class Simulation:
                     else:
                         field_vec = np.concatenate(
                             [
-                                spectrum_cache[(ref_monitor.name, comp)][idx]
+                                self._apply_modal_projection_spatial_phase(
+                                    comp,
+                                    spectrum_cache[(ref_monitor.name, comp)][idx],
+                                    f,
+                                    proj,
+                                )
                                 for comp in proj_components
                             ]
                         )
@@ -3281,9 +3315,11 @@ class Simulation:
                 )
                 if self.is_3d:
                     raw_field_components = {
-                        comp: np.asarray(
+                        comp: self._apply_modal_projection_spatial_phase(
+                            comp,
                             dft_cache[(main_monitor.name, comp)][idx],
-                            dtype=np.complex128,
+                            f,
+                            proj,
                         )
                         for comp in proj_components
                     }
@@ -3297,7 +3333,12 @@ class Simulation:
                 else:
                     field_vec = np.concatenate(
                         [
-                            dft_cache[(main_monitor.name, comp)][idx]
+                            self._apply_modal_projection_spatial_phase(
+                                comp,
+                                dft_cache[(main_monitor.name, comp)][idx],
+                                f,
+                                proj,
+                            )
                             for comp in proj_components
                         ]
                     )
@@ -3375,9 +3416,11 @@ class Simulation:
                     )
                     if self.is_3d:
                         raw_field_components = {
-                            comp: np.asarray(
+                            comp: self._apply_modal_projection_spatial_phase(
+                                comp,
                                 dft_cache[(ref_monitor.name, comp)][idx],
-                                dtype=np.complex128,
+                                f,
+                                proj,
                             )
                             for comp in proj_components
                         }
@@ -3395,7 +3438,12 @@ class Simulation:
                     else:
                         field_vec = np.concatenate(
                             [
-                                dft_cache[(ref_monitor.name, comp)][idx]
+                                self._apply_modal_projection_spatial_phase(
+                                    comp,
+                                    dft_cache[(ref_monitor.name, comp)][idx],
+                                    f,
+                                    proj,
+                                )
                                 for comp in proj_components
                             ]
                         )
@@ -3428,6 +3476,7 @@ class Simulation:
     ):
         """Broadband modal S extraction from in-simulation DFT monitor accumulators."""
         port_map = self._normalize_portspecs(ports)
+        source_port = self._port_name(source_port)
         if source_port not in port_map:
             raise ValueError(f"source_port '{source_port}' not found in ports.")
 
@@ -3448,13 +3497,7 @@ class Simulation:
             return_power=True,
         )
 
-        if output_ports is None:
-            output_ports = list(port_map.keys())
-        else:
-            output_ports = list(output_ports)
-        missing = [name for name in output_ports if name not in port_map]
-        if missing:
-            raise ValueError(f"output_ports contains unknown ports: {missing}")
+        output_ports = self._normalize_output_port_names(output_ports, port_map)
 
         source_spec = port_map[source_port]
         source_incident_selector, source_scattered_selector = (
@@ -3475,17 +3518,7 @@ class Simulation:
         abs_floor = max(1e-18, rel_floor)
         valid_mask = np.abs(a_incident) >= abs_floor
 
-        corrected_scattered = {}
-        source_scattered_correction = self._source_scattered_correction(
-            source_spec=source_spec,
-            source_waves=waves[source_port],
-            monitor_by_name=monitor_by_name,
-            frequencies=frequencies,
-            scattered_selector=source_scattered_selector,
-        )
-        applied_source_scattered_correction = np.zeros_like(
-            a_incident, dtype=np.complex128
-        )
+        scattered_waves = {}
         s_matrix = {}
         for out_port in output_ports:
             out_spec = port_map[out_port]
@@ -3500,27 +3533,7 @@ class Simulation:
                 use_reference=False,
             )
             b_out = np.asarray(b_out, dtype=np.complex128)
-            if out_port == source_port and source_scattered_correction is not None:
-                corr = np.asarray(source_scattered_correction, dtype=np.complex128)
-                corr_power = np.abs(corr) ** 2
-                alpha = np.zeros_like(corr_power, dtype=float)
-                valid_corr = corr_power > 1e-18
-                if np.any(valid_corr):
-                    alpha_valid = (
-                        np.real(b_out[valid_corr] * np.conjugate(corr[valid_corr]))
-                        / corr_power[valid_corr]
-                    )
-                    alpha[valid_corr] = np.clip(alpha_valid, 0.0, 1.0)
-                applied = corr * alpha
-                corrected = b_out - applied
-                improve_mask = np.abs(corrected) < np.abs(b_out)
-                applied_source_scattered_correction = np.where(
-                    improve_mask,
-                    applied,
-                    0.0 + 0.0j,
-                )
-                b_out = np.where(improve_mask, corrected, b_out)
-            corrected_scattered[out_port] = b_out
+            scattered_waves[out_port] = b_out
             ratio = self._safe_ratio(b_out, a_incident)
             ratio = np.where(valid_mask, ratio, 0.0 + 0.0j)
             s_matrix[(out_port, source_port)] = ratio
@@ -3534,7 +3547,7 @@ class Simulation:
         p_in = np.abs(a_incident) ** 2
         p_guided_out = np.zeros_like(p_in, dtype=float)
         for out_port in output_ports:
-            p_guided_out += np.abs(corrected_scattered[out_port]) ** 2
+            p_guided_out += np.abs(scattered_waves[out_port]) ** 2
         power_sum = p_guided_out / np.maximum(p_in, 1e-18)
         loss_est = 1.0 - power_sum
         power_sum = np.where(valid_mask, power_sum, np.nan)
@@ -3561,10 +3574,13 @@ class Simulation:
                 }
                 for name, data in waves.items()
             },
-            "source_scattered_correction": (
-                np.asarray(applied_source_scattered_correction, dtype=np.complex128)
-            ),
-            "corrected_scattered": corrected_scattered,
+            "source_reference_normalization": {
+                "enabled": bool(source_spec.reference_monitor),
+                "monitor": source_spec.reference_monitor,
+                "incident_wave": source_incident_selector,
+                "scattered_wave": source_scattered_selector,
+            },
+            "scattered_waves": scattered_waves,
         }
         return {"s_matrix": s_output, "diagnostics": diagnostics}
 
@@ -3635,6 +3651,12 @@ class Simulation:
                 avg_cycles=avg_cycles,
                 window=window,
             )
+            e_main = self._apply_modal_projection_spatial_phase(
+                parts["e_component"], e_main, f, proj
+            )
+            h_main = self._apply_modal_projection_spatial_phase(
+                parts["h_component"], h_main, f, proj
+            )
             coeff = proj["pinv"] @ np.concatenate([e_main, h_main])
             a_plus = np.complex128(coeff[0])
             a_minus = np.complex128(coeff[1])
@@ -3666,6 +3688,12 @@ class Simulation:
                     t_start=steady_start_time,
                     avg_cycles=avg_cycles,
                     window=window,
+                )
+                e_ref = self._apply_modal_projection_spatial_phase(
+                    parts["e_component"], e_ref, f, ref_proj
+                )
+                h_ref = self._apply_modal_projection_spatial_phase(
+                    parts["h_component"], h_ref, f, ref_proj
                 )
                 ref_coeff = ref_proj["pinv"] @ np.concatenate([e_ref, h_ref])
                 a_incident_plus = np.complex128(ref_coeff[0])
@@ -3699,6 +3727,7 @@ class Simulation:
         passivity/loss checks, prefer get_S_matrix_modal_cw(...).
         """
         port_map = self._normalize_portspecs(ports)
+        source_port = self._port_name(source_port)
         if source_port not in port_map:
             raise ValueError(f"source_port '{source_port}' not found in ports.")
 
@@ -3724,13 +3753,7 @@ class Simulation:
             return_power=True,
         )
 
-        if output_ports is None:
-            output_ports = list(port_map.keys())
-        else:
-            output_ports = list(output_ports)
-        missing = [name for name in output_ports if name not in port_map]
-        if missing:
-            raise ValueError(f"output_ports contains unknown ports: {missing}")
+        output_ports = self._normalize_output_port_names(output_ports, port_map)
 
         source_spec = port_map[source_port]
         source_incident_selector, _source_scattered_selector = (
@@ -3795,6 +3818,12 @@ class Simulation:
             "P_guided_out": p_guided_out,
             "power_sum": power_sum,
             "loss_est": 1.0 - power_sum,
+            "source_reference_normalization": {
+                "enabled": bool(source_spec.reference_monitor),
+                "monitor": source_spec.reference_monitor,
+                "incident_wave": source_incident_selector,
+                "scattered_wave": _source_scattered_selector,
+            },
         }
         return {"s_matrix": s_output, "diagnostics": diagnostics}
 
@@ -3819,6 +3848,7 @@ class Simulation:
             raise ValueError("frequency is required for get_S_matrix_modal_cw.")
 
         port_map = self._normalize_portspecs(ports)
+        source_port = self._port_name(source_port)
         if source_port not in port_map:
             raise ValueError(f"source_port '{source_port}' not found in ports.")
 
@@ -3832,13 +3862,7 @@ class Simulation:
             return_power=True,
         )
 
-        if output_ports is None:
-            output_ports = list(port_map.keys())
-        else:
-            output_ports = list(output_ports)
-        missing = [name for name in output_ports if name not in port_map]
-        if missing:
-            raise ValueError(f"output_ports contains unknown ports: {missing}")
+        output_ports = self._normalize_output_port_names(output_ports, port_map)
 
         source_spec = port_map[source_port]
         source_incident_selector, _source_scattered_selector = (
@@ -3909,6 +3933,12 @@ class Simulation:
             "P_guided_out": p_guided_out,
             "power_sum": power_sum,
             "loss_est": 1.0 - power_sum,
+            "source_reference_normalization": {
+                "enabled": bool(source_spec.reference_monitor),
+                "monitor": source_spec.reference_monitor,
+                "incident_wave": source_incident_selector,
+                "scattered_wave": _source_scattered_selector,
+            },
         }
         return {"s_matrix": s_output, "diagnostics": diagnostics}
 

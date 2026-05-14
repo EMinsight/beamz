@@ -5,7 +5,9 @@ import pytest
 
 from beamz import (
     LIGHT_SPEED,
+    ModeMonitor,
     Monitor,
+    Port,
     PortSpec,
     Simulation,
     calc_optimal_fdtd_params,
@@ -59,6 +61,130 @@ def test_get_S_matrix_proxy_raises_and_points_to_modal_api():
         sim.get_S_matrix(input_ports=["o1"], output_ports=["o1"], source_port="o1")
     with pytest.raises(RuntimeError, match="get_s_matrix_modal"):
         sim.get_s_matrix(input_ports=["o1"], output_ports=["o1"], source_port="o1")
+
+
+def test_port_abstraction_derives_wave_selectors_from_incoming_direction():
+    source = Port(name="o1", monitor="m1", direction="+x", polarization="tm")
+    output = Port(name="o2", monitor="m2", direction="-x", polarization="tm")
+    cross = Port(name="o3", monitor="m3", direction="+y", polarization="tm")
+
+    specs = Simulation._normalize_portspecs([source, output, cross])
+
+    assert specs["o1"].monitor_name == "m1"
+    assert specs["o1"].direction == "+x"
+    assert specs["o1"].incident_wave == "minus"
+    assert specs["o1"].scattered_wave == "plus"
+    assert specs["o2"].monitor_name == "m2"
+    assert specs["o2"].direction == "-x"
+    assert specs["o2"].incident_wave == "minus"
+    assert specs["o2"].scattered_wave == "plus"
+    assert specs["o3"].monitor_name == "m3"
+    assert specs["o3"].direction == "+y"
+    assert specs["o3"].incident_wave == "minus"
+    assert specs["o3"].scattered_wave == "plus"
+
+
+def test_mode_monitor_is_first_class_port_metadata():
+    freqs = np.array([1.0], dtype=float)
+    mon = ModeMonitor(
+        start=(0.0, 0.0),
+        end=(0.0, 1.0),
+        name="o2",
+        direction="-x",
+        polarization="tm",
+        dft_frequencies=freqs,
+        record_fields=False,
+    )
+
+    assert mon.dft_enabled
+    assert set(mon.dft_components) == {"Ex", "Ey", "Ez", "Hx", "Hy", "Hz"}
+    spec = Simulation._normalize_portspecs([mon])["o2"]
+    assert spec.monitor_name == "o2"
+    assert spec.direction == "-x"
+    assert spec.incident_wave == "minus"
+    assert spec.scattered_wave == "plus"
+
+
+def test_get_s_matrix_modal_dft_accepts_mode_monitor_ports(monkeypatch):
+    freqs = np.array([1.0], dtype=float)
+    src = ModeMonitor(
+        start=(0.0, 0.0),
+        end=(0.0, 1.0),
+        name="o1",
+        direction="+x",
+        polarization="tm",
+        reference_monitor="o1_ref",
+        dft_frequencies=freqs,
+        record_fields=False,
+    )
+    out = ModeMonitor(
+        start=(1.0, 0.0),
+        end=(1.0, 1.0),
+        name="o2",
+        direction="-x",
+        polarization="tm",
+        dft_frequencies=freqs,
+        record_fields=False,
+    )
+
+    waves = {
+        "o1": {
+            "a_plus": np.array([0.05], dtype=np.complex128),
+            "a_minus": np.array([0.01], dtype=np.complex128),
+            "a_incident_plus": np.array([0.0], dtype=np.complex128),
+            "a_incident_minus": np.array([2.0], dtype=np.complex128),
+        },
+        "o2": {
+            "a_plus": np.array([1.4], dtype=np.complex128),
+            "a_minus": np.array([0.2], dtype=np.complex128),
+        },
+    }
+
+    def fake_extract(
+        self,
+        ports,
+        frequencies,
+        min_incident_db=-40.0,
+        return_power=True,
+    ):
+        del self, min_incident_db, return_power
+        np.testing.assert_allclose(frequencies, freqs)
+        by_name = {p.name: p for p in ports}
+        assert by_name["o1"].reference_monitor == "o1_ref"
+        assert by_name["o1"].incident_wave == "minus"
+        assert by_name["o1"].scattered_wave == "plus"
+        assert by_name["o2"].incident_wave == "minus"
+        assert by_name["o2"].scattered_wave == "plus"
+        return waves
+
+    sim = Simulation.__new__(Simulation)
+    sim.sources = []
+    sim.monitors = [src, Monitor(start=(0.0, 0.0), end=(0.0, 1.0), name="o1_ref"), out]
+    sim.is_3d = False
+    sim.plane_2d = "xy"
+    monkeypatch.setattr(Simulation, "extract_port_waves_dft", fake_extract)
+
+    result = sim.get_S_matrix_modal_dft(
+        source_port=src,
+        ports=[src, out],
+        output_ports=[out],
+        frequencies=freqs,
+        as_sax=False,
+        return_diagnostics=True,
+    )
+
+    np.testing.assert_allclose(
+        result["s_matrix"][("o2", "o1")],
+        np.array([0.7], dtype=np.complex128),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    assert result["diagnostics"]["source_reference_normalization"] == {
+        "enabled": True,
+        "monitor": "o1_ref",
+        "incident_wave": "minus",
+        "scattered_wave": "plus",
+    }
 
 
 def test_extract_port_waves_modal_coefficients_synthetic(monkeypatch):
@@ -477,6 +603,69 @@ def test_monitor_get_dft_component_physical_mode_returns_raw_accumulator():
     np.testing.assert_allclose(dft, raw.reshape(2, 6), rtol=1e-12, atol=1e-12)
 
 
+def test_monitor_power_history_records_signed_normal_flux():
+    forward = Monitor(start=(0.0, 0.0), end=(0.0, 2.0), record_fields=False)
+    forward._calculate_power_2d(
+        [2.0, 2.0, 2.0],
+        [0.0, 0.0, 0.0],
+        [-3.0, -3.0, -3.0],
+        t=0.0,
+        dx=2.0,
+        dy=3.0,
+    )
+    assert forward.power_history[-1] == pytest.approx(54.0)
+
+    reverse = Monitor(start=(0.0, 2.0), end=(0.0, 0.0), record_fields=False)
+    reverse._calculate_power_2d(
+        [2.0, 2.0, 2.0],
+        [0.0, 0.0, 0.0],
+        [-3.0, -3.0, -3.0],
+        t=0.0,
+        dx=2.0,
+        dy=3.0,
+    )
+    assert reverse.power_history[-1] == pytest.approx(-54.0)
+
+
+def test_monitor_get_dft_flux_uses_phasor_poynting_product():
+    mon = Monitor(
+        start=(0.0, 0.0),
+        end=(0.0, 1.0),
+        record_fields=False,
+        dft_enabled=True,
+        dft_frequencies=np.array([1.0], dtype=float),
+        dft_components=("Ez", "Hy"),
+        dft_normalization="physical",
+    )
+    mon._resolution = 2.0
+    ez = np.array([[2.0 + 1.0j, 1.0 - 0.5j]], dtype=np.complex128)
+    hy = np.array([[-3.0 + 0.5j, -2.0 - 1.0j]], dtype=np.complex128)
+    mon._dft_accum["Ez"] = ez
+    mon._dft_accum["Hy"] = hy
+    mon._dft_weight_sum = np.ones((1,), dtype=float)
+
+    expected = 0.5 * np.real(np.sum(-ez * np.conjugate(hy), axis=1)) * 2.0
+    np.testing.assert_allclose(mon.get_dft_flux(), expected, rtol=1e-12, atol=1e-12)
+
+
+def test_monitor_frequency_points_aliases_are_deprecated():
+    with pytest.warns(DeprecationWarning, match="frequency_points"):
+        mon = Monitor(
+            start=(0.0, 0.0),
+            end=(0.0, 1.0),
+            frequency_points=[1.0, 2.0],
+            record_fields=False,
+        )
+    np.testing.assert_allclose(mon.power_spectrum_frequencies, [1.0, 2.0])
+
+    with pytest.warns(DeprecationWarning, match="frequency_points"):
+        np.testing.assert_allclose(mon.frequency_points, [1.0, 2.0])
+
+    mon.power_spectrum = np.array([1.0 + 0.0j, 2.0 + 0.0j], dtype=np.complex64)
+    with pytest.warns(DeprecationWarning, match="frequency_flux_spectrum"):
+        np.testing.assert_allclose(mon.frequency_flux_spectrum, mon.power_spectrum)
+
+
 def test_monitor_physical_dft_accum_matches_direct_sum():
     n = 512
     dt = 1e-15
@@ -538,6 +727,100 @@ def test_resample_complex_matrix_flattens_trailing_spatial_dims():
     out = Simulation._resample_complex_matrix(freq_src, src, freq_dst)
     assert out.shape == (2, 6)
     np.testing.assert_allclose(out, src.reshape(2, 6), rtol=1e-12, atol=1e-12)
+
+
+def test_monitor_projection_phase_uses_yee_half_step_h_lag():
+    dt = 2.0e-15
+    freqs = np.array([1.0e12, 4.0e12], dtype=float)
+
+    np.testing.assert_allclose(
+        Simulation._monitor_projection_phase("Ez", freqs, dt),
+        np.ones_like(freqs, dtype=np.complex128),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        Simulation._monitor_projection_phase("Hy", freqs, dt),
+        np.exp(-1j * np.pi * freqs * dt),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+
+def test_modal_projection_spatial_phase_advances_e_to_h_reference_plane():
+    freqs = np.array([1.0e12, 4.0e12], dtype=float)
+    plane_delay_s = 0.25e-15
+
+    np.testing.assert_allclose(
+        Simulation._modal_projection_spatial_phase("Ez", freqs, plane_delay_s),
+        np.exp(1j * 2.0 * np.pi * freqs * plane_delay_s),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        Simulation._modal_projection_spatial_phase("Hy", freqs, plane_delay_s),
+        np.ones_like(freqs, dtype=np.complex128),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+
+def test_modal_projection_plane_delay_matches_2d_yee_half_cell_delay():
+    sim = Simulation.__new__(Simulation)
+    sim.is_3d = False
+    sim.resolution = 80e-9
+    spec = PortSpec(name="o1", monitor_name="m", direction="+x", polarization="tm")
+    delay = sim._modal_projection_plane_delay_s(spec, 193.4e12, 1.8)
+    assert delay == pytest.approx(0.5 * sim.resolution * 1.8 / LIGHT_SPEED)
+
+    spec_back = PortSpec(name="o2", monitor_name="m", direction="-x", polarization="tm")
+    delay_back = sim._modal_projection_plane_delay_s(spec_back, 193.4e12, 1.8)
+    assert delay_back == pytest.approx(-delay)
+
+
+def test_modal_projection_plane_delay_is_zero_for_3d_colocated_monitors():
+    sim = Simulation.__new__(Simulation)
+    sim.is_3d = True
+    sim.resolution = 80e-9
+    sim.dt = 0.1e-15
+    spec = PortSpec(name="o1", monitor_name="m", direction="+y", polarization="te")
+
+    delay = sim._modal_projection_plane_delay_s(spec, 193.4e12, 2.4)
+
+    assert delay == pytest.approx(0.0)
+
+
+def test_sample_monitor_component_dft_applies_yee_phase_to_h_only():
+    dt = 2.0e-15
+    freqs = np.array([1.0e12, 3.0e12], dtype=float)
+    sim = Simulation.__new__(Simulation)
+    sim.dt = dt
+    mon = Monitor(
+        start=(0.0, 0.0),
+        end=(0.0, 0.0),
+        name="m_yee_phase",
+        record_fields=False,
+        dft_enabled=True,
+        dft_frequencies=freqs,
+        dft_components=("Ez", "Hy"),
+        dft_normalization="physical",
+    )
+    raw_e = np.array([[1.0 + 0.25j], [0.5 - 0.75j]], dtype=np.complex128)
+    raw_h = np.array([[0.25 - 1.0j], [-0.75 + 0.5j]], dtype=np.complex128)
+    mon._dft_accum["Ez"] = raw_e
+    mon._dft_accum["Hy"] = raw_h
+    mon._dft_weight_sum = np.ones(freqs.shape, dtype=float)
+
+    _, sampled_e = sim._sample_monitor_component_dft(mon, "Ez", freqs)
+    _, sampled_h = sim._sample_monitor_component_dft(mon, "Hy", freqs)
+
+    np.testing.assert_allclose(sampled_e, raw_e, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(
+        sampled_h,
+        raw_h * np.exp(-1j * np.pi * freqs * dt)[:, None],
+        rtol=1e-12,
+        atol=1e-12,
+    )
 
 
 def test_project_modal_coefficients_3d_recovers_forward_backward_modes():

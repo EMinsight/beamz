@@ -10,6 +10,10 @@ import jax.numpy as jnp
 import numpy as np
 
 from beamz.const import EPS_0, MU_0
+from beamz.devices.sources._materials import (
+    component_permeability_at,
+    component_permittivity_at,
+)
 from beamz.devices.sources.gaussian import GaussianSource
 from beamz.devices.sources.mode import (
     ModeSource,
@@ -310,11 +314,7 @@ def _compile_gaussian_source(
         )
 
     idx = device._grid_indices
-    eps_region = np.asarray(
-        fields.eps_tm_ez[idx]
-        if getattr(fields, "plane_2d", None) == "xy" and not is_3d
-        else fields.permittivity[idx]
-    )
+    eps_region = np.asarray(component_permittivity_at(fields, "Ez", idx))
     profile = np.asarray(device._spatial_profile_ez)
 
     coeff = -profile * dt / (EPS_0 * eps_region)
@@ -425,7 +425,7 @@ def _compile_mode_source_2d(
             comp = src._h_component
             idx = src._h_indices
             target = np.asarray(getattr(fields, comp)[idx])
-            mu = np.asarray(fields.permeability[idx])
+            mu = np.asarray(component_permeability_at(fields, comp, idx))
             coeff = _build_coeff(
                 profile=-np.asarray(src._my_profile),
                 target=target,
@@ -446,7 +446,7 @@ def _compile_mode_source_2d(
         if src._ez_indices is not None and src._jz_profile is not None:
             idx = src._ez_indices
             target = np.asarray(fields.Ez[idx])
-            eps = np.asarray(fields.permittivity[idx])
+            eps = np.asarray(component_permittivity_at(fields, "Ez", idx))
             coeff = _build_coeff(
                 profile=np.asarray(src._jz_profile),
                 target=target,
@@ -467,7 +467,7 @@ def _compile_mode_source_2d(
         if src._hz_indices is not None and src._mz_profile is not None:
             idx = src._hz_indices
             target = np.asarray(fields.Hz[idx])
-            mu = np.asarray(fields.permeability[idx])
+            mu = np.asarray(component_permeability_at(fields, "Hz", idx))
             coeff = _build_coeff(
                 profile=np.asarray(src._mz_profile),
                 target=target,
@@ -491,7 +491,7 @@ def _compile_mode_source_2d(
             if prof is not None:
                 idx = src._e_indices
                 target = np.asarray(getattr(fields, comp)[idx])
-                eps = np.asarray(fields.permittivity[idx])
+                eps = np.asarray(component_permittivity_at(fields, comp, idx))
                 coeff = _build_coeff(
                     profile=-np.asarray(prof),
                     target=target,
@@ -531,7 +531,7 @@ def _compile_mode_source_3d(
         if idx is None or prof is None:
             continue
         target = np.asarray(getattr(fields, h_comp)[idx])
-        mu = np.asarray(fields.permeability[idx])
+        mu = np.asarray(component_permeability_at(fields, h_comp, idx))
         coeff = _build_coeff(
             profile=sign * np.asarray(prof),
             target=target,
@@ -555,7 +555,7 @@ def _compile_mode_source_3d(
         if idx is None or prof is None:
             continue
         target = np.asarray(getattr(fields, e_comp)[idx])
-        eps = np.asarray(fields.permittivity[idx])
+        eps = np.asarray(component_permittivity_at(fields, e_comp, idx))
         coeff = _build_coeff(
             profile=sign * np.asarray(prof),
             target=target,

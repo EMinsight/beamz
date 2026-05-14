@@ -5,9 +5,7 @@ import numpy as np
 import pytest
 
 from beamz import (
-    EPS_0,
     LIGHT_SPEED,
-    MU_0,
     Design,
     Material,
     ModeSource,
@@ -23,7 +21,6 @@ from beamz.devices.sources.mode import (
     _build_3d_profiles,
     _detect_transverse_symmetry_axes,
     _enforce_componentwise_parity,
-    _get_3d_huygens_terms,
     _make_3d_mode_basis_profiles,
     _match_shape,
     _modal_overlap_3d_profiles,
@@ -44,6 +41,7 @@ from beamz.simulation.boundaries import (
     sync_full_pec_3d_from_compact,
 )
 from beamz.simulation.yee import (
+    component_axis_offsets_3d,
     sample_voxel_grid_at_component_3d,
     sample_voxel_grid_at_e_component_3d_centered,
 )
@@ -297,6 +295,45 @@ def _build_tiny_straight_guide_sim(
 def _mirror_residual(arr: np.ndarray, axis: int) -> float:
     lhs = np.asarray(arr, dtype=float)
     rhs = np.flip(lhs, axis=axis)
+    denom = max(float(np.linalg.norm(lhs.ravel())), 1e-30)
+    return float(np.linalg.norm((lhs - rhs).ravel()) / denom)
+
+
+def _physical_component_mirror_residual(
+    arr: np.ndarray,
+    *,
+    component: str,
+    grid_shape: tuple[int, int, int],
+    axis: int,
+    global_axis: int | None = None,
+    global_indices: np.ndarray | None = None,
+) -> float:
+    axes = ("z", "y", "x")
+    global_axis = int(axis if global_axis is None else global_axis)
+    indices = (
+        np.arange(np.asarray(arr).shape[axis], dtype=int)
+        if global_indices is None
+        else np.asarray(global_indices, dtype=int)
+    )
+    offset = component_axis_offsets_3d(component)[axes[global_axis]]
+    grid_dim = int(grid_shape[global_axis])
+    mirrored = np.rint(grid_dim - (indices + offset) - offset).astype(int)
+    index_to_local = {int(index): pos for pos, index in enumerate(indices)}
+
+    lhs_pos: list[int] = []
+    rhs_pos: list[int] = []
+    for pos, mirror_index in enumerate(mirrored):
+        mirror_pos = index_to_local.get(int(mirror_index))
+        if mirror_pos is not None:
+            lhs_pos.append(pos)
+            rhs_pos.append(mirror_pos)
+
+    if not lhs_pos:
+        return 0.0
+
+    moved = np.moveaxis(np.asarray(arr, dtype=float), axis, 0)
+    lhs = np.take(moved, lhs_pos, axis=0)
+    rhs = np.take(moved, rhs_pos, axis=0)
     denom = max(float(np.linalg.norm(lhs.ravel())), 1e-30)
     return float(np.linalg.norm((lhs - rhs).ravel()) / denom)
 
@@ -1879,12 +1916,83 @@ def test_centered_3d_e_sampling_restores_mirror_symmetry():
         sample_voxel_grid_at_e_component_3d_centered(eps, "Ez"), dtype=float
     )
 
-    assert _mirror_residual(eps_x, axis=1) == 0.0
-    assert _mirror_residual(eps_x, axis=0) == 0.0
-    assert _mirror_residual(eps_y, axis=1) == 0.0
-    assert _mirror_residual(eps_y, axis=0) == 0.0
-    assert _mirror_residual(eps_z, axis=1) == 0.0
-    assert _mirror_residual(eps_z, axis=0) == 0.0
+    assert (
+        _physical_component_mirror_residual(
+            eps_x, component="Ex", grid_shape=eps.shape, axis=1
+        )
+        == 0.0
+    )
+    assert (
+        _physical_component_mirror_residual(
+            eps_x, component="Ex", grid_shape=eps.shape, axis=0
+        )
+        == 0.0
+    )
+    assert (
+        _physical_component_mirror_residual(
+            eps_y, component="Ey", grid_shape=eps.shape, axis=1
+        )
+        == 0.0
+    )
+    assert (
+        _physical_component_mirror_residual(
+            eps_y, component="Ey", grid_shape=eps.shape, axis=0
+        )
+        == 0.0
+    )
+    assert (
+        _physical_component_mirror_residual(
+            eps_z, component="Ez", grid_shape=eps.shape, axis=1
+        )
+        == 0.0
+    )
+    assert (
+        _physical_component_mirror_residual(
+            eps_z, component="Ez", grid_shape=eps.shape, axis=0
+        )
+        == 0.0
+    )
+
+
+def test_runtime_3d_e_material_sampling_preserves_mirror_symmetry():
+    sim = _build_centered_straight_guide_sim(ppw=6)
+
+    grid_shape = tuple(np.asarray(sim.fields.permittivity).shape)
+    for component, eps_comp in (
+        ("Ex", sim.fields.eps_ex),
+        ("Ey", sim.fields.eps_ey),
+        ("Ez", sim.fields.eps_ez),
+    ):
+        arr = np.asarray(eps_comp, dtype=float)
+        assert (
+            _physical_component_mirror_residual(
+                arr, component=component, grid_shape=grid_shape, axis=1
+            )
+            == 0.0
+        )
+        assert (
+            _physical_component_mirror_residual(
+                arr, component=component, grid_shape=grid_shape, axis=0
+            )
+            == 0.0
+        )
+
+
+def test_generic_3d_component_sampler_uses_centered_e_mapping():
+    sim = _build_centered_straight_guide_sim(ppw=6)
+    eps = np.asarray(sim.fields.permittivity, dtype=float)
+
+    for component, runtime_eps in (
+        ("Ex", sim.fields.eps_ex),
+        ("Ey", sim.fields.eps_ey),
+        ("Ez", sim.fields.eps_ez),
+    ):
+        np.testing.assert_allclose(
+            np.asarray(sample_voxel_grid_at_component_3d(eps, component), dtype=float),
+            np.asarray(runtime_eps, dtype=float),
+            rtol=0.0,
+            atol=0.0,
+        )
 
 
 def test_one_step_uniform_medium_keeps_small_transverse_e_asymmetry():
@@ -1917,7 +2025,7 @@ def test_one_step_uniform_medium_keeps_small_transverse_e_asymmetry():
     assert post_ex_z < 1e-6
 
 
-def test_one_step_straight_guide_update_creates_large_transverse_e_asymmetry():
+def test_one_step_straight_guide_update_has_staggered_ex_support_residual():
     sim = _build_centered_straight_guide_sim(ppw=6)
     source, _dx = _build_test_source(sim)
 
@@ -2055,7 +2163,7 @@ def _longitudinal_e_support_axis0_parity_after_one_update(
 
 @pytest.mark.parametrize("direction", ("+x", "-x", "+y", "-y"))
 @pytest.mark.parametrize("pol", ("te", "tm"))
-def test_one_step_lateral_guide_update_breaks_longitudinal_e_axis0_parity(
+def test_one_step_lateral_guide_update_has_staggered_longitudinal_e_support_residual(
     direction: str,
     pol: str,
 ):
@@ -2075,7 +2183,7 @@ def test_one_step_lateral_guide_update_breaks_longitudinal_e_axis0_parity(
     assert post_broken > 0.15
 
 
-def test_tiny_straight_guide_manual_substep_update_keeps_ex_parity_with_padded_aperture():
+def test_tiny_straight_guide_manual_substep_update_has_staggered_ex_support_residual():
     sim, source_spans = _build_tiny_straight_guide_sim(
         ppw=6,
         axis="x",
@@ -2116,11 +2224,11 @@ def test_tiny_straight_guide_manual_substep_update_keeps_ex_parity_with_padded_a
     assert axis0 < 1e-6
     assert axis1 < 1e-6
     assert float(np.linalg.norm(ex_support.ravel())) > 0.0
-    assert post_ex_axis0 < 1e-6
-    assert post_ex_axis1 < 1e-6
+    assert post_ex_axis0 > 0.2
+    assert post_ex_axis1 > 0.2
 
 
-def test_zeroing_longitudinal_h_branch_removes_tiny_x_guide_ex_axis0_defect():
+def test_zeroing_longitudinal_h_branch_does_not_remove_tiny_x_guide_ex_axis0_residual():
     sim, source_spans = _build_tiny_straight_guide_sim(
         ppw=6,
         axis="x",
@@ -2156,10 +2264,10 @@ def test_zeroing_longitudinal_h_branch_removes_tiny_x_guide_ex_axis0_defect():
         "_Ex_indices",
         axis=0,
     )
-    assert post_axis0 < 1e-6
+    assert post_axis0 > 0.2
 
 
-def test_zeroing_longitudinal_h_branch_removes_y_guide_ey_axis0_defect():
+def test_zeroing_longitudinal_h_branch_does_not_remove_y_guide_ey_axis0_residual():
     sim = _build_centered_straight_guide_sim(ppw=6, axis="y")
     source, _dx = _build_test_source(sim, direction="+y", pol="te")
     source.inject_h(
@@ -2180,7 +2288,7 @@ def test_zeroing_longitudinal_h_branch_removes_y_guide_ey_axis0_defect():
         "_Ey_indices",
         axis=0,
     )
-    assert post_axis0 < 1e-6
+    assert post_axis0 > 0.2
 
 
 def test_tiny_discrete_3d_h_source_matches_commutator_residual():
@@ -2405,9 +2513,9 @@ test_lateral_rectangular_guide_secondary_pair_grows_during_profile_build.__test_
 test_secondary_h_pair_is_specific_to_doubly_confined_lateral_guides.__test__ = False
 test_mode_source_runtime_profiles_are_transversely_parity_clean_for_all_3d_axes_and_polarizations.__test__ = False
 test_one_step_uniform_medium_keeps_small_transverse_e_asymmetry.__test__ = False
-test_one_step_straight_guide_update_creates_large_transverse_e_asymmetry.__test__ = False
+test_one_step_straight_guide_update_has_staggered_ex_support_residual.__test__ = False
 test_one_step_guide_curl_hx_source_branches_remain_individually_symmetric.__test__ = False
-test_one_step_lateral_guide_update_breaks_longitudinal_e_axis0_parity.__test__ = False
-test_tiny_straight_guide_manual_substep_update_keeps_ex_parity_with_padded_aperture.__test__ = False
-test_zeroing_longitudinal_h_branch_removes_tiny_x_guide_ex_axis0_defect.__test__ = False
-test_zeroing_longitudinal_h_branch_removes_y_guide_ey_axis0_defect.__test__ = False
+test_one_step_lateral_guide_update_has_staggered_longitudinal_e_support_residual.__test__ = False
+test_tiny_straight_guide_manual_substep_update_has_staggered_ex_support_residual.__test__ = False
+test_zeroing_longitudinal_h_branch_does_not_remove_tiny_x_guide_ex_axis0_residual.__test__ = False
+test_zeroing_longitudinal_h_branch_does_not_remove_y_guide_ey_axis0_residual.__test__ = False

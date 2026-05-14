@@ -140,3 +140,47 @@ def test_cpml_curl_h_to_e_3d_updates_psi_terms():
     assert curl_ey.shape == term_shapes[2]
     assert curl_ez.shape == term_shapes[4]
     assert any(not jnp.allclose(term, 0.0) for term in psi_updated)
+
+
+def test_cpml_curl_h_to_e_3d_uses_open_ghosts_on_nonmetal_edges():
+    hx = jnp.zeros((2, 3, 5), dtype=jnp.float32)
+    hy = jnp.zeros((2, 4, 4), dtype=jnp.float32)
+    hz = jnp.ones((3, 3, 4), dtype=jnp.float32)
+    term_shapes = (
+        (3, 4, 4),
+        (3, 4, 4),
+        (3, 3, 5),
+        (3, 3, 5),
+        (2, 4, 5),
+        (2, 4, 5),
+    )
+    zeros = tuple(jnp.zeros(shape, dtype=jnp.float32) for shape in term_shapes)
+    ones = tuple(jnp.ones(shape, dtype=jnp.float32) for shape in term_shapes)
+
+    curl_open, _, _, _ = cpml_curl_h_to_e_3d(
+        hx,
+        hy,
+        hz,
+        resolution=0.5,
+        a_e_terms=zeros,
+        b_e_terms=ones,
+        inv_kappa_e_terms=ones,
+        psi_e_terms=zeros,
+        metallic_edges=frozenset(),
+    )
+    curl_pec, _, _, _ = cpml_curl_h_to_e_3d(
+        hx,
+        hy,
+        hz,
+        resolution=0.5,
+        a_e_terms=zeros,
+        b_e_terms=ones,
+        inv_kappa_e_terms=ones,
+        psi_e_terms=zeros,
+        metallic_edges=frozenset({"bottom", "top"}),
+    )
+
+    assert jnp.allclose(curl_open[:, 0, :], 0.0)
+    assert jnp.allclose(curl_open[:, -1, :], 0.0)
+    assert jnp.all(curl_pec[:, 0, :] > 0.0)
+    assert jnp.all(curl_pec[:, -1, :] < 0.0)
