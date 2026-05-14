@@ -1,7 +1,7 @@
-"""Physics validation tests for PML (Perfectly Matched Layer) boundaries.
+"""Physics validation tests for absorbing-layer and CPML boundaries.
 
 Tests verify:
-1. PML absorbs outgoing waves with minimal reflection
+1. The graded absorber reduces outgoing-wave reflections
 2. Energy decays monotonically after source stops
 """
 
@@ -79,7 +79,7 @@ class TestPMLAbsorption:
         assert float(np.max(sigma_shell)) > 0.0
         np.testing.assert_allclose(total_sigma, np.asarray(sim.fields.conductivity))
 
-    def test_sigma_pml_still_contributes_loss_in_material_updates(
+    def test_sponge_absorber_still_contributes_loss_in_material_updates(
         self, vacuum_domain_small
     ):
         design = vacuum_domain_small["design"]
@@ -90,7 +90,7 @@ class TestPMLAbsorption:
         sim = Simulation(
             design=design,
             sources=[],
-            boundaries=[PML(thickness=wavelength, formulation="sigma")],
+            boundaries=[PML(thickness=wavelength, formulation="sponge")],
             time=np.array([0.0, dt], dtype=float),
             resolution=dx,
         )
@@ -102,6 +102,7 @@ class TestPMLAbsorption:
 
         assert float(np.max(sigma_shell)) > 0.0
         assert float(np.max(total_sigma)) >= float(np.max(sigma_shell))
+        assert sim.pml_data["formulation"] == "sponge"
 
     def test_cpml_default_alpha_is_nonzero_when_omitted(self, vacuum_domain_small):
         design = vacuum_domain_small["design"]

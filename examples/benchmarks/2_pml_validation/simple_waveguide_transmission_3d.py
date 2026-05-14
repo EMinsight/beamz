@@ -282,7 +282,7 @@ def _plot(results: list[Result], out_dir: Path) -> Path:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", type=Path, default=SCRIPT_DIR / "results_simple_waveguide_transmission_3d")
-    parser.add_argument("--formulations", type=str, default="sigma,cpml")
+    parser.add_argument("--formulations", type=str, default="sponge,cpml")
     args = parser.parse_args()
 
     cfg = Config(formulations=tuple(tok.strip() for tok in args.formulations.split(",") if tok.strip()))

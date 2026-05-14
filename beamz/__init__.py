@@ -42,7 +42,7 @@ from beamz.optimization.topology import (
     compute_overlap_gradient,
     create_optimization_mask,
 )
-from beamz.simulation.boundaries import PEC, PML, Boundary
+from beamz.simulation.boundaries import AbsorbingLayer, PEC, PML, Boundary
 from beamz.simulation.compiled import (
     CompiledRunConfig,
     CompiledSimulation,
@@ -116,6 +116,7 @@ _exports = {
     "compile_simulation": compile_simulation,
     # Boundaries
     "Boundary": Boundary,
+    "AbsorbingLayer": AbsorbingLayer,
     "PML": PML,
     "PEC": PEC,
     # Optimization

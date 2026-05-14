@@ -455,7 +455,7 @@ def main() -> None:
     parser.add_argument(
         "--formulation",
         type=str,
-        default="sigma",
+        default="sponge",
         choices=("sigma", "cpml"),
         help="Boundary absorber formulation to benchmark.",
     )

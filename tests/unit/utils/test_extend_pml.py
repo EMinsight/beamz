@@ -1,7 +1,7 @@
-"""BeamZ-native equivalent of low-level PML material coupling tests.
+"""BeamZ-native equivalent of low-level absorber/PML material coupling tests.
 
 BeamZ does not copy material tensors into a separate PML extension region. Its
-equivalent contract is how PML conductivity shells merge into
+equivalent contract is how the graded absorbing shell merges into
 ``Fields.total_conductivity`` while CPML leaves the base material update
 conductivity unchanged.
 """
@@ -9,7 +9,7 @@ conductivity unchanged.
 import numpy as np
 import pytest
 
-from beamz import Design, Material, PML
+from beamz import AbsorbingLayer, Design, Material, PML
 from beamz.simulation.fields import Fields
 
 pytestmark = pytest.mark.unit
@@ -47,10 +47,10 @@ def _attach_pml(fields, pml, design, *, resolution=0.1, dt=1e-15):
     return payload
 
 
-def test_sigma_pml_merges_left_shell_into_total_conductivity():
+def test_absorbing_layer_merges_left_shell_into_total_conductivity():
     fields = _make_fields()
     design = _make_design()
-    pml = PML(edges=["left"], thickness=0.2, sigma_max=6.0, formulation="sigma")
+    pml = AbsorbingLayer(edges=["left"], thickness=0.2, sigma_max=6.0)
 
     payload = _attach_pml(fields, pml, design)
     total_sigma = np.asarray(fields.total_conductivity, dtype=np.float64)
@@ -64,10 +64,10 @@ def test_sigma_pml_merges_left_shell_into_total_conductivity():
     assert float(np.max(total_sigma[:, -1])) == pytest.approx(0.0)
 
 
-def test_sigma_pml_merges_right_shell_into_total_conductivity():
+def test_absorbing_layer_merges_right_shell_into_total_conductivity():
     fields = _make_fields()
     design = _make_design()
-    pml = PML(edges=["right"], thickness=0.2, sigma_max=6.0, formulation="sigma")
+    pml = AbsorbingLayer(edges=["right"], thickness=0.2, sigma_max=6.0)
 
     payload = _attach_pml(fields, pml, design)
     total_sigma = np.asarray(fields.total_conductivity, dtype=np.float64)
@@ -79,11 +79,11 @@ def test_sigma_pml_merges_right_shell_into_total_conductivity():
     assert float(np.max(total_sigma[:, 0])) == pytest.approx(0.0)
 
 
-def test_sigma_pml_preserves_larger_base_conductivity():
+def test_absorbing_layer_preserves_larger_base_conductivity():
     fields = _make_fields(base_sigma=0.0)
     design = _make_design()
     fields.conductivity = fields.conductivity.at[3, 4].set(9.0)
-    pml = PML(edges=["left"], thickness=0.2, sigma_max=4.0, formulation="sigma")
+    pml = AbsorbingLayer(edges=["left"], thickness=0.2, sigma_max=4.0)
 
     _attach_pml(fields, pml, design)
     total_sigma = np.asarray(fields.total_conductivity, dtype=np.float64)
@@ -108,3 +108,13 @@ def test_cpml_auxiliary_profiles_do_not_modify_total_conductivity():
         np.asarray(fields.total_conductivity, dtype=np.float64),
         np.asarray(fields.conductivity, dtype=np.float64),
     )
+
+
+def test_sigma_alias_still_builds_absorbing_shell():
+    fields = _make_fields()
+    design = _make_design()
+    pml = PML(edges=["left"], thickness=0.2, sigma_max=6.0, formulation="sigma")
+
+    payload = _attach_pml(fields, pml, design)
+
+    assert payload["formulation"] == "sponge"

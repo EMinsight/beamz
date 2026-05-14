@@ -517,8 +517,8 @@ def run_case(
         sources=[source],
         monitors=[monitor],
         boundaries=[
-            PML(edges=["left", "right", "top", "bottom"], thickness=cfg.pml_m, formulation="sigma"),
-            PML(edges=["front", "back"], thickness=cfg.pml_m, formulation="sigma"),
+            PML(edges=["left", "right", "top", "bottom"], thickness=cfg.pml_m, formulation="sponge"),
+            PML(edges=["front", "back"], thickness=cfg.pml_m, formulation="sponge"),
         ],
         time=time,
         resolution=dx,

@@ -185,7 +185,7 @@ def _plot_energy_trace(debug: dict, out_dir: Path, *, formulation: str, thicknes
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sweep radiating-source residual energy versus absorber thickness.")
     parser.add_argument("--output-dir", type=Path, default=SCRIPT_DIR / "results_radiating_source_pml_sweep")
-    parser.add_argument("--formulations", type=str, default="sigma,cpml")
+    parser.add_argument("--formulations", type=str, default="sponge,cpml")
     parser.add_argument("--pml-thicknesses-wl", type=str, default="0.5,1.0,1.5,2.0")
     parser.add_argument("--cpml-kappa-max", type=float, default=SweepConfig().cpml_kappa_max)
     parser.add_argument("--cpml-alpha-max", type=float, default=SweepConfig().cpml_alpha_max)

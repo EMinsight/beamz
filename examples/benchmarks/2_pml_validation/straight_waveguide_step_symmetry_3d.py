@@ -101,8 +101,8 @@ def _run_history_case(cfg: HistoryConfig) -> dict[str, object]:
         sources=[source],
         monitors=[],
         boundaries=[
-            PML(edges=["left", "right", "top", "bottom"], thickness=base_cfg.pml_m, formulation="sigma"),
-            PML(edges=["front", "back"], thickness=base_cfg.pml_m, formulation="sigma"),
+            PML(edges=["left", "right", "top", "bottom"], thickness=base_cfg.pml_m, formulation="sponge"),
+            PML(edges=["front", "back"], thickness=base_cfg.pml_m, formulation="sponge"),
         ],
         time=time,
         resolution=dx,

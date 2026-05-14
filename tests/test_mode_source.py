@@ -1708,7 +1708,7 @@ class TestModeSourceDirectionality3D:
             design=design,
             sources=[source],
             monitors=monitors,
-            boundaries=[PML(thickness=0.8 * wavelength, formulation="sigma")],
+            boundaries=[PML(thickness=0.8 * wavelength, formulation="sponge")],
             time=time,
             resolution=dx,
         )
@@ -1859,7 +1859,7 @@ class TestModeSourceDirectionality3D:
                 design=design,
                 sources=[source],
                 monitors=monitors,
-                boundaries=[PML(thickness=pml, formulation="sigma")],
+                boundaries=[PML(thickness=pml, formulation="sponge")],
                 time=time,
                 resolution=dx,
             )
