@@ -1,95 +1,28 @@
 # Adapted from FDTDx by Yannik Mahlau
 from collections import namedtuple
-from types import SimpleNamespace
-from typing import List, Literal, Tuple, Union
+from typing import Literal, Tuple, Union
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-# Lazy import of tidy3d to allow package to work without it
-tidy3d = None
-_compute_modes = None
+# Lazy import of micromode to allow package to work without it
+micromode = None
 
 
-def _ensure_tidy3d():
-    """Lazily import tidy3d when needed."""
-    global tidy3d, _compute_modes
-    if tidy3d is None:
+def _ensure_micromode():
+    """Lazily import micromode when needed."""
+    global micromode
+    if micromode is None:
         try:
-            import tidy3d as _tidy3d
-            from tidy3d.components.mode.solver import compute_modes as _cm
+            import micromode as _micromode
 
-            tidy3d = _tidy3d
-            _compute_modes = _cm
-
-            # Monkey-patch tidy3d derivatives to avoid scipy FutureWarning:
-            # "Input has data type int64, but the output has been cast to float64"
-            _apply_tidy3d_diags_patch()
+            micromode = _micromode
         except ImportError:
             raise ImportError(
-                "tidy3d is required for mode solving. "
-                "Install it with: pip install tidy3d"
+                "micromode is required for mode solving. "
+                "Install it with: pip install micromode"
             )
-
-
-def _apply_tidy3d_diags_patch():
-    """Patch tidy3d's derivatives to use float diagonals in sp.diags (avoids scipy FutureWarning)."""
-    import scipy.sparse as sp
-    import tidy3d.components.mode.derivatives as _deriv
-
-    def _make_dxf(dls, shape, pmc):
-        Nx, Ny = shape
-        if Nx == 1:
-            return sp.csr_matrix((Ny, Ny))
-        dxf = sp.csr_matrix(sp.diags([-1.0, 1.0], [0, 1], shape=(Nx, Nx)))
-        if not pmc:
-            dxf[0, 0] = 0.0
-        dxf = sp.diags(1 / dls).dot(dxf)
-        dxf = sp.kron(dxf, sp.eye(Ny))
-        return dxf
-
-    def _make_dxb(dls, shape, pmc):
-        Nx, Ny = shape
-        if Nx == 1:
-            return sp.csr_matrix((Ny, Ny))
-        dxb = sp.csr_matrix(sp.diags([1.0, -1.0], [0, -1], shape=(Nx, Nx)))
-        if pmc:
-            dxb[0, 0] = 2.0
-        else:
-            dxb[0, 0] = 0.0
-        dxb = sp.diags(1 / dls).dot(dxb)
-        dxb = sp.kron(dxb, sp.eye(Ny))
-        return dxb
-
-    def _make_dyf(dls, shape, pmc):
-        Nx, Ny = shape
-        if Ny == 1:
-            return sp.csr_matrix((Nx, Nx))
-        dyf = sp.csr_matrix(sp.diags([-1.0, 1.0], [0, 1], shape=(Ny, Ny)))
-        if not pmc:
-            dyf[0, 0] = 0.0
-        dyf = sp.diags(1 / dls).dot(dyf)
-        dyf = sp.kron(sp.eye(Nx), dyf)
-        return dyf
-
-    def _make_dyb(dls, shape, pmc):
-        Nx, Ny = shape
-        if Ny == 1:
-            return sp.csr_matrix((Nx, Nx))
-        dyb = sp.csr_matrix(sp.diags([1.0, -1.0], [0, -1], shape=(Ny, Ny)))
-        if pmc:
-            dyb[0, 0] = 2.0
-        else:
-            dyb[0, 0] = 0.0
-        dyb = sp.diags(1 / dls).dot(dyb)
-        dyb = sp.kron(sp.eye(Nx), dyb)
-        return dyb
-
-    _deriv.make_dxf = _make_dxf
-    _deriv.make_dxb = _make_dxb
-    _deriv.make_dyf = _make_dyf
-    _deriv.make_dyb = _make_dyb
 
 
 ModeTupleType = namedtuple("Mode", ["neff", "Ex", "Ey", "Ez", "Hx", "Hy", "Hz"])
@@ -119,6 +52,14 @@ def compute_mode_polarization_fraction(
 
     denominator = np.sum(np.abs(E1) ** 2 + np.abs(E2) ** 2) + 1e-18
     return numerator / denominator
+
+
+def _field_plane(data_array, normal_axis: int, mode_index: int) -> np.ndarray:
+    """Extract a BeamZ transverse field plane from a micromode field component."""
+    normal_dim = ("x", "y", "z")[normal_axis]
+    selected = data_array.isel(f=0, mode_index=mode_index)
+    normal_position = selected.dims.index(normal_dim)
+    return np.take(np.asarray(selected.values), indices=0, axis=normal_position)
 
 
 def sort_modes(
@@ -156,7 +97,7 @@ def compute_mode(
     filter_pol: Union[Literal["te", "tm"], None] = None,
     target_neff: Union[float, None] = None,
 ) -> tuple[np.ndarray, np.ndarray, complex, int]:
-    _ensure_tidy3d()  # Lazy import tidy3d
+    _ensure_micromode()  # Lazy import micromode
     inv_permittivities = np.asarray(inv_permittivities, dtype=np.complex128)
     if inv_permittivities.ndim == 1:
         inv_permittivities = inv_permittivities[np.newaxis, :, np.newaxis]
@@ -192,6 +133,7 @@ def compute_mode(
     cross_axes = [ax for ax in range(inv_permittivities.ndim) if ax != propagation_axis]
     if not cross_axes:
         raise ValueError("Need at least one transverse axis for mode computation")
+    is_1d_profile = len(singleton_axes) >= 2
 
     permittivities = 1 / inv_permittivities
     coords = [
@@ -210,22 +152,35 @@ def compute_mode(
     else:
         permeability_squeezed = 1 / inv_permeabilities.item()
 
-    # The mode solver returns fields in a local basis where the first two E
-    # components correspond to the tangential pair used for TE/TM filtering.
-    # Keep TE/TM ranking consistent with the global conventions used by
-    # ModeSource setup (e.g. +x: TE~Ey/Hz, TM~Ez/Hy).
-    tangential_axes_map = {0: (0, 1), 1: (0, 1), 2: (0, 1)}
+    if np.ndim(permeability_squeezed) == 0:
+        mu_xx = np.full_like(permittivity_squeezed, permeability_squeezed)
+    else:
+        mu_xx = np.asarray(permeability_squeezed, dtype=np.complex128)
 
-    modes = tidy3d_mode_computation_wrapper(
-        frequency=frequency,
-        permittivity_cross_section=permittivity_squeezed,
-        permeability_cross_section=permeability_squeezed,
-        coords=coords,
+    result = micromode.solve_grid(
+        eps_xx=permittivity_squeezed,
+        mu_xx=mu_xx,
+        x_edges=coords[0],
+        y_edges=coords[1],
+        freqs=[frequency],
         direction=direction,
         num_modes=2 * (mode_index + 1) + 5,
         target_neff=target_neff,
+        normal_axis=propagation_axis,
     )
-    tangential_axes = tangential_axes_map.get(propagation_axis, (0, 1))
+    modes = [
+        ModeTupleType(
+            neff=result.n_complex.values[0, idx],
+            Ex=_field_plane(result.field_components["Ex"], propagation_axis, idx),
+            Ey=_field_plane(result.field_components["Ey"], propagation_axis, idx),
+            Ez=_field_plane(result.field_components["Ez"], propagation_axis, idx),
+            Hx=_field_plane(result.field_components["Hx"], propagation_axis, idx),
+            Hy=_field_plane(result.field_components["Hy"], propagation_axis, idx),
+            Hz=_field_plane(result.field_components["Hz"], propagation_axis, idx),
+        )
+        for idx in range(result.n_complex.shape[1])
+    ]
+    tangential_axes = tuple(ax for ax in range(3) if ax != propagation_axis)
     modes = sort_modes(modes, filter_pol, tangential_axes)
     if mode_index >= len(modes):
         raise ValueError(
@@ -234,15 +189,13 @@ def compute_mode(
 
     mode = modes[mode_index]
 
-    if propagation_axis == 0:
-        E = np.stack([mode.Ez, mode.Ex, mode.Ey], axis=0).astype(np.complex128)
-        H = np.stack([mode.Hz, mode.Hx, mode.Hy], axis=0).astype(np.complex128)
-    elif propagation_axis == 1:
-        E = np.stack([mode.Ex, mode.Ez, mode.Ey], axis=0).astype(np.complex128)
-        H = -np.stack([mode.Hx, mode.Hz, mode.Hy], axis=0).astype(np.complex128)
-    else:
-        E = np.stack([mode.Ex, mode.Ey, mode.Ez], axis=0).astype(np.complex128)
-        H = np.stack([mode.Hx, mode.Hy, mode.Hz], axis=0).astype(np.complex128)
+    E = np.stack([mode.Ex, mode.Ey, mode.Ez], axis=0).astype(np.complex128)
+    H = np.stack([mode.Hx, mode.Hy, mode.Hz], axis=0).astype(np.complex128)
+    if propagation_axis == 1:
+        H = -H
+    if is_1d_profile:
+        E = E[..., 0]
+        H = H[..., 0]
 
     E_norm, H_norm = _normalize_by_poynting_flux(E, H, axis=propagation_axis)
     return E_norm, H_norm, np.asarray(mode.neff, dtype=np.complex128), propagation_axis
@@ -343,69 +296,6 @@ def solve_modes(
     return neff_array, np.column_stack(mode_vectors)
 
 
-def tidy3d_mode_computation_wrapper(
-    frequency: float,
-    permittivity_cross_section: np.ndarray,
-    coords: List[np.ndarray],
-    direction: Literal["+", "-"],
-    permeability_cross_section: Union[np.ndarray, None] = None,
-    target_neff: Union[float, None] = None,
-    angle_theta: float = 0.0,
-    angle_phi: float = 0.0,
-    num_modes: int = 10,
-    precision: Literal["single", "double"] = "double",
-) -> List[ModeTupleType]:
-    _ensure_tidy3d()  # Lazy import tidy3d
-    mode_spec = SimpleNamespace(
-        num_modes=num_modes,
-        target_neff=target_neff,
-        num_pml=(0, 0),
-        angle_theta=angle_theta,
-        angle_phi=angle_phi,
-        bend_radius=None,
-        bend_axis=None,
-        precision=precision,
-        track_freq="central",
-        group_index_step=False,
-    )
-    od = np.zeros_like(permittivity_cross_section)
-    eps_cross = [permittivity_cross_section if i in {0, 4, 8} else od for i in range(9)]
-    mu_cross = None
-    if permeability_cross_section is not None:
-        mu_cross = [
-            permeability_cross_section if i in {0, 4, 8} else od for i in range(9)
-        ]
-
-    EH, neffs, _ = _compute_modes(
-        eps_cross=eps_cross,
-        coords=coords,
-        freq=frequency,
-        precision=precision,
-        mode_spec=mode_spec,
-        direction=direction,
-        mu_cross=mu_cross,
-    )
-    (Ex, Ey, Ez), (Hx, Hy, Hz) = EH.squeeze()
-
-    if num_modes == 1:
-        return [
-            ModeTupleType(Ex=Ex, Ey=Ey, Ez=Ez, Hx=Hx, Hy=Hy, Hz=Hz, neff=complex(neffs))
-        ]
-
-    return [
-        ModeTupleType(
-            Ex=Ex[..., i],
-            Ey=Ey[..., i],
-            Ez=Ez[..., i],
-            Hx=Hx[..., i],
-            Hy=Hy[..., i],
-            Hz=Hz[..., i],
-            neff=neffs[i],
-        )
-        for i in range(min(num_modes, Ex.shape[-1]))
-    ]
-
-
 def _normalize_by_poynting_flux(
     E: np.ndarray, H: np.ndarray, axis: int
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -450,7 +340,7 @@ def solve_modes_differentiable(
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """JAX-compatible wrapper for mode solving with custom gradients.
 
-    This function wraps the tidy3d-based mode solver to enable gradient computation
+    This function wraps the micromode-based mode solver to enable gradient computation
     via finite differences. The forward pass calls the numpy-based solve_modes,
     and the backward pass computes gradients for omega (wavelength) using finite differences.
 
@@ -465,7 +355,7 @@ def solve_modes_differentiable(
     Returns:
         Tuple of (neff_array, E_fields, H_fields) as JAX arrays
     """
-    # Convert JAX array to numpy for tidy3d
+    # Convert JAX array to numpy for micromode
     eps_np = np.asarray(eps)
 
     # Call the numpy-based solver
@@ -499,7 +389,7 @@ def solve_modes_jax(
 
     This function enables gradient computation through the mode solver
     with respect to omega (and thus wavelength). Uses finite differences
-    for the backward pass since tidy3d is not JAX-compatible.
+    for the backward pass since micromode is not JAX-compatible.
 
     Args:
         omega: Angular frequency (differentiable parameter)
