@@ -75,7 +75,18 @@ class _GDSFactoryNamespace:
         if gf is None:
             import gdsfactory as gf
 
-        if hasattr(gf, "gpdk") and hasattr(gf.gpdk, "PDK"):
+        try:
+            from gdsfactory.pdk import get_active_pdk
+
+            active_pdk = get_active_pdk()
+            if active_pdk is not None:
+                return gf
+        except Exception:
+            pass
+
+        if hasattr(gf, "gpdk") and hasattr(gf.gpdk, "get_generic_pdk"):
+            gf.gpdk.get_generic_pdk().activate()
+        elif hasattr(gf, "gpdk") and hasattr(gf.gpdk, "PDK"):
             gf.gpdk.PDK.activate()
         else:
             try:
