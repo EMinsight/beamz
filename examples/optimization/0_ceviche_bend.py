@@ -163,8 +163,10 @@ for step in range(STEPS):
     # Compute Gradient (overlap of fwd and adj fields)
     grad_eps = compute_overlap_gradient(fwd_ez_history, adj_ez_history)
 
-    # Ensure grad_eps is a NumPy array (not JAX array)
-    grad_eps = np.array(grad_eps)
+    # Ez is stored on the full TMz Yee lattice, which has one high-side sample
+    # more than the material grid on each axis. Fold that padding back before
+    # applying design-mask penalties and optimizer updates.
+    grad_eps = opt.gradient_to_design_grid(grad_eps)
 
     # Measure Material Usage (Relative core material amount)
     # phys_density is 0 (cladding) to 1 (core)

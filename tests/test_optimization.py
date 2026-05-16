@@ -22,7 +22,11 @@ from beamz.optimization.autodiff import (
     smoothed_heaviside,
     transform_density,
 )
-from beamz.optimization.topology import TopologyManager, compute_overlap_gradient
+from beamz.optimization.topology import (
+    TopologyManager,
+    compute_overlap_gradient,
+    fold_high_side_yee_padding_to_shape,
+)
 
 
 @pytest.mark.optimization
@@ -223,6 +227,24 @@ class TestGradientComputation:
         assert np.allclose(
             grad, expected_value
         ), f"Forward-start gating incorrect: got {grad[0,0]}, expected {expected_value}"
+
+    def test_fold_high_side_yee_padding_to_material_grid(self):
+        """High-side full-Yee planes should accumulate onto the last material cell."""
+        grad = np.arange(12, dtype=float).reshape(3, 4)
+
+        folded = fold_high_side_yee_padding_to_shape(grad, (2, 3))
+
+        expected = np.array(
+            [
+                [0.0, 1.0, 2.0 + 3.0],
+                [
+                    4.0 + 8.0,
+                    5.0 + 9.0,
+                    6.0 + 10.0 + 7.0 + 11.0,
+                ],
+            ]
+        )
+        np.testing.assert_array_equal(folded, expected)
 
     def test_vjp_gradient_vs_finite_difference(self):
         """VJP gradient should match finite difference approximation."""
