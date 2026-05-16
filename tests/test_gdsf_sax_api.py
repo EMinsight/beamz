@@ -55,6 +55,29 @@ def test_gdsf_loader_mmi1x2_returns_materialized_design_and_ports():
         assert 0 <= cy <= loaded_design.height
 
 
+@pytest.mark.skipif(
+    importlib.util.find_spec("gdsfactory") is None,
+    reason="gdsfactory not installed",
+)
+def test_gdsf_prepare_component_resolves_generic_crossing_fallback():
+    prepared = design.io.gdsf.prepare_component(
+        "crossing_linear_taper",
+        layer=(1, 0),
+        n_core=3.47,
+        n_clad=1.44,
+        core_thickness=0.22e-6,
+        clad_below=0.50e-6,
+        clad_above=0.50e-6,
+        xy_padding=1.0e-6,
+        z_padding=0.50e-6,
+        extension=1.0e-6,
+    )
+
+    assert prepared["component_label"].startswith("gf.get_component")
+    assert {"o1", "o2", "o3", "o4"}.issubset(prepared["ports"])
+    assert prepared["design"].depth > 0
+
+
 def test_get_S_matrix_proxy_raises_and_points_to_modal_api():
     sim = Simulation.__new__(Simulation)
     with pytest.raises(RuntimeError, match="get_S_matrix_modal"):

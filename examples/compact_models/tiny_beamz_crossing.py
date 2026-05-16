@@ -34,8 +34,9 @@ from beamz.devices.sources.signals import gaussian_band_pulse
 # source-port spacing from the local #106 benchmark harness.
 OUT_DIR = Path("benchmarks/results/tiny_beamz_crossing")
 COMPONENT_NAME = "ebeam_crossing4"
-NUM_FREQS = 16
-PPW = 8
+FALLBACK_COMPONENT_NAME = "crossing_linear_taper"
+NUM_FREQS = 11
+PPW = 5
 WL0, WL_MIN, WL_MAX = 1550.0e-9, 1530.0e-9, 1570.0e-9
 N_CORE, N_CLAD = 3.47, 1.44
 LAYER = (1, 0)
@@ -261,11 +262,25 @@ try:
         port_overlap=PORT_OVERLAP,
     )
 except ValueError as exc:
+    if "Could not resolve gdsfactory/PDK component" not in str(exc):
+        raise
     print(
-        f"{exc} Install or activate the matching gdsfactory PDK before running "
-        f"{Path(__file__).name}."
+        f"{exc} Falling back to generic gdsfactory component "
+        f"'{FALLBACK_COMPONENT_NAME}'."
     )
-    raise SystemExit(0) from exc
+    prepared = gdsf.prepare_component(
+        FALLBACK_COMPONENT_NAME,
+        layer=LAYER,
+        n_core=N_CORE,
+        n_clad=N_CLAD,
+        core_thickness=CORE_T,
+        clad_below=CLAD_BELOW,
+        clad_above=CLAD_ABOVE,
+        xy_padding=EXTENSION,
+        z_padding=Z_PADDING + PML_Z,
+        extension=EXTENSION,
+        port_overlap=PORT_OVERLAP,
+    )
 design, ports = prepared["design"], prepared["ports"]
 world_origin = tuple(float(v) for v in prepared.get("world_origin", (0.0, 0.0, 0.0)))
 source_port, output_ports = "o1", ["o2", "o3", "o4"]

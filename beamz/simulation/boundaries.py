@@ -9,7 +9,6 @@ from beamz.shared_kernels import CPML_3D_E_DERIVATIVES, CPML_3D_H_DERIVATIVES
 from beamz.simulation.yee import (
     component_axis_offsets_3d,
     sample_voxel_grid_at_component_3d,
-    sample_voxel_grid_at_e_component_3d_centered,
     sample_voxel_grid_at_tm_xy_full_component_2d,
 )
 
@@ -839,6 +838,54 @@ def _full_pec_mask_for_component(
     return jnp.asarray(mask)
 
 
+def _sample_full_pec_e_region_material_3d(
+    grid,
+    component: str,
+    *,
+    stored_shape: tuple[int, int, int],
+    region: tuple[slice, slice, slice],
+) -> jnp.ndarray:
+    """Sample material on the full-PEC E update region.
+
+    The full-PEC state updates only the component-owned axis through the PEC
+    walls. The two transverse axes are sliced to unconstrained planes first, so
+    their material coefficients are sampled directly at those interior planes.
+    Along the component axis, average the two adjacent cell-centered voxels.
+    """
+
+    if component not in {"Ex", "Ey", "Ez"}:
+        raise ValueError(f"Unsupported E component {component!r}")
+
+    grid_shape = tuple(int(v) for v in np.asarray(grid).shape)
+    offsets = component_axis_offsets_3d(component)
+    sampled = jnp.asarray(grid)
+
+    for axis_index, (axis, dim, grid_dim, axis_region) in enumerate(
+        zip(
+            ("z", "y", "x"),
+            stored_shape,
+            grid_shape,
+            region,
+            strict=False,
+        )
+    ):
+        coord = np.arange(int(dim), dtype=np.float64)
+        if offsets[axis] == 0.5:
+            lo = np.clip(coord.astype(np.int32), 0, int(grid_dim) - 1)
+            hi = np.clip(lo + 1, 0, int(grid_dim) - 1)
+            lo = lo[axis_region]
+            hi = hi[axis_region]
+            sampled_lo = jnp.take(sampled, jnp.asarray(lo), axis=axis_index)
+            sampled_hi = jnp.take(sampled, jnp.asarray(hi), axis=axis_index)
+            sampled = 0.5 * (sampled_lo + sampled_hi)
+        else:
+            idx = np.clip(coord.astype(np.int32), 0, int(grid_dim) - 1)
+            idx = idx[axis_region]
+            sampled = jnp.take(sampled, jnp.asarray(idx), axis=axis_index)
+
+    return sampled
+
+
 def initialize_full_pec_3d_state(fields) -> FullPec3DState:
     full_shapes = {
         component: tuple(int(v) + 1 for v in getattr(fields, component).shape)
@@ -871,37 +918,37 @@ def initialize_full_pec_3d_state(fields) -> FullPec3DState:
         Hx=_full("Hx"),
         Hy=_full("Hy"),
         Hz=_full("Hz"),
-        eps_x_region=sample_voxel_grid_at_e_component_3d_centered(
+        eps_x_region=_sample_full_pec_e_region_material_3d(
             fields.permittivity,
             "Ex",
             stored_shape=full_shapes["Ex"],
             region=region_x,
         ),
-        sig_x_region=sample_voxel_grid_at_e_component_3d_centered(
+        sig_x_region=_sample_full_pec_e_region_material_3d(
             total_sigma,
             "Ex",
             stored_shape=full_shapes["Ex"],
             region=region_x,
         ),
-        eps_y_region=sample_voxel_grid_at_e_component_3d_centered(
+        eps_y_region=_sample_full_pec_e_region_material_3d(
             fields.permittivity,
             "Ey",
             stored_shape=full_shapes["Ey"],
             region=region_y,
         ),
-        sig_y_region=sample_voxel_grid_at_e_component_3d_centered(
+        sig_y_region=_sample_full_pec_e_region_material_3d(
             total_sigma,
             "Ey",
             stored_shape=full_shapes["Ey"],
             region=region_y,
         ),
-        eps_z_region=sample_voxel_grid_at_e_component_3d_centered(
+        eps_z_region=_sample_full_pec_e_region_material_3d(
             fields.permittivity,
             "Ez",
             stored_shape=full_shapes["Ez"],
             region=region_z,
         ),
-        sig_z_region=sample_voxel_grid_at_e_component_3d_centered(
+        sig_z_region=_sample_full_pec_e_region_material_3d(
             total_sigma,
             "Ez",
             stored_shape=full_shapes["Ez"],

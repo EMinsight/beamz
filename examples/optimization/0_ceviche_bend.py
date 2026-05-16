@@ -20,6 +20,21 @@ MAT_PENALTY = 0.3      # Target core material fraction (0.0 to 1.0)
 PENALTY_STRENGTH = 1 # Scaling factor for the penalty gradient
 PML_FORMULATION_2D = "sponge"
 
+
+def monitor_energy(monitor, dt):
+    """Return integrated flux magnitude from a signed monitor trace."""
+
+    trace = np.real_if_close(np.asarray(monitor.power_history, dtype=np.complex128))
+    return abs(float(np.real(np.sum(trace))) * dt)
+
+
+def transmission_percent(input_monitor, output_monitor, dt):
+    input_energy = monitor_energy(input_monitor, dt)
+    if input_energy <= 0.0:
+        return 0.0
+    return monitor_energy(output_monitor, dt) / input_energy * 100.0
+
+
 # Design & Materials
 design = Design(width=W, height=H, material=Material(permittivity=N_CLAD**2))
 design += Rectangle(position=(0, H/2-WG_W/2), width=W/2, height=WG_W, material=Material(permittivity=N_CORE**2))
@@ -109,11 +124,7 @@ for step in range(STEPS):
     
     # Extract field history and ensure NumPy arrays
     fwd_ez_history = [np.array(field) for field in results['fields']['Ez']] if results and 'fields' in results else []
-    measured_input_energy = np.sum(monitor_input_flux.power_history) * DT
-    measured_output_energy = np.sum(output_monitor_fwd.power_history) * DT
-    if measured_input_energy <= 0:
-        measured_input_energy = 1.0
-    transmission_fwd = (np.abs(measured_output_energy) / np.abs(measured_input_energy) * 100.0)
+    transmission_fwd = transmission_percent(monitor_input_flux, output_monitor_fwd, DT)
     
     # Backward Simulation (with backward monitor at input location)
     src_adj.grid = grid
@@ -147,11 +158,7 @@ for step in range(STEPS):
     
     adj_results = sim_adj.run(save_fields=['Ez'], field_subsample=2)
     adj_ez_history = [np.array(field) for field in adj_results['fields']['Ez']] if adj_results and 'fields' in adj_results else []
-    measured_input_energy_back = np.sum(monitor_back_flux.power_history) * DT
-    if measured_input_energy_back <= 0:
-        measured_input_energy_back = 1.0
-    output_energy_back = np.sum(backward_monitor.power_history) * DT
-    transmission_back = (np.abs(output_energy_back) / np.abs(measured_input_energy_back) * 100.0)
+    transmission_back = transmission_percent(monitor_back_flux, backward_monitor, DT)
     
     # Average bidirectional transmission
     transmission_pct = (transmission_fwd + transmission_back) / 2.0
@@ -163,8 +170,10 @@ for step in range(STEPS):
     # Compute Gradient (overlap of fwd and adj fields)
     grad_eps = compute_overlap_gradient(fwd_ez_history, adj_ez_history)
 
-    # Ensure grad_eps is a NumPy array (not JAX array)
-    grad_eps = np.array(grad_eps)
+    # Ez is stored on the full TMz Yee lattice, which has one high-side sample
+    # more than the material grid on each axis. Fold that padding back before
+    # applying design-mask penalties and optimizer updates.
+    grad_eps = opt.gradient_to_design_grid(grad_eps)
 
     # Measure Material Usage (Relative core material amount)
     # phys_density is 0 (cladding) to 1 (core)
@@ -270,9 +279,7 @@ for i, wl_val in enumerate(wavelengths):
     
     # Run (no field saving needed for sweep, faster)
     sim_sweep.run(save_fields=[], field_subsample=10)
-    in_E = np.sum(mon_in.power_history) * DT
-    out_E = np.sum(mon_out.power_history) * DT
-    trans = (np.abs(out_E) / np.abs(in_E) * 100.0) if np.abs(in_E) > 0 else 0.0
+    trans = transmission_percent(mon_in, mon_out, DT)
     sweep_transmission.append(trans)
 
 print(f"\nSweep Complete.")
@@ -319,9 +326,7 @@ sim_final = Simulation(
 )
 results_final = sim_final.run(save_fields=['Ez', 'Hx', 'Hy'], field_subsample=1)
 
-in_E = np.sum(mon_in_final.power_history) * DT
-out_E = np.sum(mon_out_final.power_history) * DT
-trans_final = (np.abs(out_E) / np.abs(in_E) * 100.0) if np.abs(in_E) > 0 else 0.0
+trans_final = transmission_percent(mon_in_final, mon_out_final, DT)
 
 print("Calculating energy flow...")
 Ez_t = np.array(results_final['fields']['Ez'])
