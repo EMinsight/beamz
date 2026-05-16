@@ -15,6 +15,21 @@ marked by contract, not just by subsystem.
 - `pdk`: Tests that depend on an external PDK or design-kit install.
 - `slow`: Tests that are too expensive for the default fast feedback loop.
 
+## Running tests
+
+The pull-request CI gate intentionally runs a marked fast slice:
+
+```bash
+pytest tests/ -m "(unit or component or optimization) and not slow and not characterization and not pdk"
+```
+
+The full suite, including coverage, is still the release-quality signal and runs
+on the weekly/manual GitHub workflow:
+
+```bash
+pytest tests/ --cov=beamz --cov-report=term-missing --cov-report=xml
+```
+
 ## Placement guidance
 
 - Keep API normalization and validation tests in focused files such as

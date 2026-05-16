@@ -79,7 +79,7 @@ multi_line_output = 3
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v --cov=beamz --cov-report=term-missing"
+addopts = "-v"
 
 [tool.hatch.build.targets.wheel]
 packages = ["beamz"]

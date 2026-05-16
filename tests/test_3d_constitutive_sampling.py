@@ -2025,7 +2025,7 @@ def test_one_step_uniform_medium_keeps_small_transverse_e_asymmetry():
     assert post_ex_z < 1e-6
 
 
-def test_one_step_straight_guide_update_has_staggered_ex_support_residual():
+def test_one_step_straight_guide_update_has_no_staggered_ex_support_residual():
     sim = _build_centered_straight_guide_sim(ppw=6)
     source, _dx = _build_test_source(sim)
 
@@ -2052,7 +2052,7 @@ def test_one_step_straight_guide_update_has_staggered_ex_support_residual():
     )
 
     assert pre_h_z < 1e-6
-    assert post_ex_z > 0.2
+    assert post_ex_z < 1e-6
 
 
 def test_one_step_guide_curl_hx_source_branches_remain_individually_symmetric():
@@ -2163,7 +2163,7 @@ def _longitudinal_e_support_axis0_parity_after_one_update(
 
 @pytest.mark.parametrize("direction", ("+x", "-x", "+y", "-y"))
 @pytest.mark.parametrize("pol", ("te", "tm"))
-def test_one_step_lateral_guide_update_has_staggered_longitudinal_e_support_residual(
+def test_one_step_lateral_guide_update_has_no_staggered_longitudinal_e_support_residual(
     direction: str,
     pol: str,
 ):
@@ -2180,10 +2180,10 @@ def test_one_step_lateral_guide_update_has_staggered_longitudinal_e_support_resi
     assert pre_h_axis0 < 1e-6
     broken_axis = 0 if pol == "te" else 1
     post_broken = post_axis0 if broken_axis == 0 else post_axis1
-    assert post_broken > 0.15
+    assert post_broken < 1e-6
 
 
-def test_tiny_straight_guide_manual_substep_update_has_staggered_ex_support_residual():
+def test_tiny_straight_guide_manual_substep_update_has_no_staggered_ex_support_residual():
     sim, source_spans = _build_tiny_straight_guide_sim(
         ppw=6,
         axis="x",
@@ -2224,11 +2224,11 @@ def test_tiny_straight_guide_manual_substep_update_has_staggered_ex_support_resi
     assert axis0 < 1e-6
     assert axis1 < 1e-6
     assert float(np.linalg.norm(ex_support.ravel())) > 0.0
-    assert post_ex_axis0 > 0.2
-    assert post_ex_axis1 > 0.2
+    assert post_ex_axis0 < 1e-6
+    assert post_ex_axis1 < 1e-6
 
 
-def test_zeroing_longitudinal_h_branch_does_not_remove_tiny_x_guide_ex_axis0_residual():
+def test_zeroing_longitudinal_h_branch_preserves_tiny_x_guide_ex_axis0_symmetry():
     sim, source_spans = _build_tiny_straight_guide_sim(
         ppw=6,
         axis="x",
@@ -2264,10 +2264,10 @@ def test_zeroing_longitudinal_h_branch_does_not_remove_tiny_x_guide_ex_axis0_res
         "_Ex_indices",
         axis=0,
     )
-    assert post_axis0 > 0.2
+    assert post_axis0 < 1e-6
 
 
-def test_zeroing_longitudinal_h_branch_does_not_remove_y_guide_ey_axis0_residual():
+def test_zeroing_longitudinal_h_branch_preserves_y_guide_ey_axis0_symmetry():
     sim = _build_centered_straight_guide_sim(ppw=6, axis="y")
     source, _dx = _build_test_source(sim, direction="+y", pol="te")
     source.inject_h(
@@ -2288,7 +2288,7 @@ def test_zeroing_longitudinal_h_branch_does_not_remove_y_guide_ey_axis0_residual
         "_Ey_indices",
         axis=0,
     )
-    assert post_axis0 > 0.2
+    assert post_axis0 < 1e-6
 
 
 def test_tiny_discrete_3d_h_source_matches_commutator_residual():
@@ -2513,9 +2513,9 @@ test_lateral_rectangular_guide_secondary_pair_grows_during_profile_build.__test_
 test_secondary_h_pair_is_specific_to_doubly_confined_lateral_guides.__test__ = False
 test_mode_source_runtime_profiles_are_transversely_parity_clean_for_all_3d_axes_and_polarizations.__test__ = False
 test_one_step_uniform_medium_keeps_small_transverse_e_asymmetry.__test__ = False
-test_one_step_straight_guide_update_has_staggered_ex_support_residual.__test__ = False
+test_one_step_straight_guide_update_has_no_staggered_ex_support_residual.__test__ = False
 test_one_step_guide_curl_hx_source_branches_remain_individually_symmetric.__test__ = False
-test_one_step_lateral_guide_update_has_staggered_longitudinal_e_support_residual.__test__ = False
-test_tiny_straight_guide_manual_substep_update_has_staggered_ex_support_residual.__test__ = False
-test_zeroing_longitudinal_h_branch_does_not_remove_tiny_x_guide_ex_axis0_residual.__test__ = False
-test_zeroing_longitudinal_h_branch_does_not_remove_y_guide_ey_axis0_residual.__test__ = False
+test_one_step_lateral_guide_update_has_no_staggered_longitudinal_e_support_residual.__test__ = False
+test_tiny_straight_guide_manual_substep_update_has_no_staggered_ex_support_residual.__test__ = False
+test_zeroing_longitudinal_h_branch_preserves_tiny_x_guide_ex_axis0_symmetry.__test__ = False
+test_zeroing_longitudinal_h_branch_preserves_y_guide_ey_axis0_symmetry.__test__ = False
