@@ -68,6 +68,10 @@ RUN_AFTER_SOURCES_UOC = 90.0
 DECAY_RATIO = 1e-4
 LOOKBACK_RECORDS = 20
 PML_FORMULATION = "sigma"
+# Keep this compact regression on vertical sidewalls. The full UBC stack's
+# sloped sidewalls make the sponge PML terminal waveguides harder to absorb
+# cleanly and reintroduce a measurable top/bottom imbalance.
+USE_PDK_LAYER_STACK = False
 
 
 def ubcpdk_crossing_gds_available(cell: str = COMPONENT_NAME) -> bool:
@@ -317,49 +321,6 @@ def port_mode_geometry(port: dict) -> tuple[float, float, float]:
     return span, float(MONITOR_Z_SPAN), float(port["z_center"])
 
 
-def enable_cpml_material_extrusion(design, *, pml_xy: float, pml_z: float) -> None:
-    """Extrude rasterized material through CPML without changing geometry."""
-    get_material_grids = design.get_material_grids
-
-    def _copy_shell(arr: np.ndarray, axis: int, count: int) -> np.ndarray:
-        if count <= 0 or count >= arr.shape[axis]:
-            return arr
-        low = [slice(None)] * arr.ndim
-        low[axis] = slice(0, count)
-        low_ref = [slice(None)] * arr.ndim
-        low_ref[axis] = count
-        arr[tuple(low)] = np.expand_dims(arr[tuple(low_ref)], axis=axis)
-
-        high = [slice(None)] * arr.ndim
-        high[axis] = slice(arr.shape[axis] - count, arr.shape[axis])
-        high_ref = [slice(None)] * arr.ndim
-        high_ref[axis] = arr.shape[axis] - count - 1
-        arr[tuple(high)] = np.expand_dims(arr[tuple(high_ref)], axis=axis)
-        return arr
-
-    def _extruded_material_grids(resolution):
-        grids = get_material_grids(resolution)
-        pml_counts = {
-            "x": int(np.ceil(float(pml_xy) / float(resolution))),
-            "y": int(np.ceil(float(pml_xy) / float(resolution))),
-            "z": int(np.ceil(float(pml_z) / float(resolution))),
-        }
-        out = []
-        for grid_arr in grids:
-            arr = np.array(grid_arr, copy=True)
-            if arr.ndim == 3:
-                arr = _copy_shell(arr, axis=2, count=pml_counts["x"])
-                arr = _copy_shell(arr, axis=1, count=pml_counts["y"])
-                arr = _copy_shell(arr, axis=0, count=pml_counts["z"])
-            elif arr.ndim == 2:
-                arr = _copy_shell(arr, axis=1, count=pml_counts["x"])
-                arr = _copy_shell(arr, axis=0, count=pml_counts["y"])
-            out.append(arr)
-        return tuple(out)
-
-    design.get_material_grids = _extruded_material_grids
-
-
 def plot_simulation_overview(
     out_path: Path,
     eps_grid: np.ndarray,
@@ -509,6 +470,7 @@ try:
         z_padding=Z_PADDING + PML_Z,
         extension=EXTENSION,
         port_overlap=PORT_OVERLAP,
+        use_pdk_layer_stack=USE_PDK_LAYER_STACK,
     )
 except (ImportError, ValueError) as exc:
     if not isinstance(exc, ImportError) and (
@@ -527,8 +489,6 @@ world_origin = tuple(float(v) for v in prepared.get("world_origin", (0.0, 0.0, 0
 source_port, output_ports = "o1", ["o2", "o3", "o4"]
 port_names = (source_port, *output_ports)
 grid = design.rasterize(resolution=dx)
-if PML_FORMULATION == "cpml":
-    enable_cpml_material_extrusion(design, pml_xy=PML_XY, pml_z=PML_Z)
 freqs = np.linspace(LIGHT_SPEED / WL_MAX, LIGHT_SPEED / WL_MIN, NUM_FREQS, dtype=np.float32)
 wl_um = LIGHT_SPEED / freqs / µm
 
@@ -574,6 +534,11 @@ crossing_center = (
     0.5 * float(design.width),
     0.5 * float(design.height),
     float(source_z_center),
+)
+print(
+    "Source alignment to crossing center (um): "
+    f"dx={(source_center[0] - crossing_center[0]) / µm:.6e}, "
+    f"dy={(source_center[1] - crossing_center[1]) / µm:.6e}"
 )
 y_output_ports = [
     name for name in output_ports if str(ports[name]["direction"]).endswith("y")
@@ -684,7 +649,7 @@ source = ModeSource(
     signal=pulse.signal,
     direction=source_direction,
 )
-source.initialize(grid.permittivity, dx)
+source.initialize(grid.permittivity, dx, dt=dt)
 monitor_cfg = dict(
     record_fields=False,
     dft_enabled=True,
