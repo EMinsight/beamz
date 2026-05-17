@@ -12,6 +12,8 @@ Workflow:
 
 from __future__ import annotations
 import importlib.util
+import importlib.metadata
+import math
 import shutil
 import subprocess
 import sys
@@ -19,18 +21,20 @@ import time as pytime
 from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
+import beamz.simulation.core as simulation_core
 from beamz import (
     LIGHT_SPEED,
     ModeMonitor,
     ModeSource,
     Monitor,
     PML,
+    PortSpec,
     Simulation,
     dxdt,
     µm,
 )
 from beamz.design.io import gdsf
-from beamz.devices._placement import mirror_lock_plane_pair_regions
+from beamz.devices._placement import snap_plane_region
 from beamz.devices.sources.signals import gaussian_band_pulse
 
 # Fixed example hyperparameters. Match the gsim/meep reference geometry and
@@ -48,19 +52,18 @@ CORE_T = 0.22 * µm
 CLAD_BELOW = 0.50 * µm
 CLAD_ABOVE = 0.50 * µm
 PML_XY, PML_Z = 1.0 * µm, 1.0 * µm
-XY_MARGIN = 0.50 * µm
+# For the y-directed weak ports, deeper planes look cleaner visually but snap
+# to a less symmetric pair of Yee slices at 8 PPW. Keep the outputs near the
+# imported port planes so o2/o4 stay mirror-locked on the raster grid.
+OUTPUT_MONITOR_OFFSET = 0.05 * µm
+MONITOR_TO_PML_SPACING = 1.00 * µm
 Z_PADDING = 0.50 * µm
-EXTENSION = XY_MARGIN + PML_XY
 PORT_OVERLAP = 0.0 * µm
 PORT_MARGIN = 0.50 * µm
 MODE_PLANE_SIZE_SCALE = 1.8
 MONITOR_Z_SPAN = MODE_PLANE_SIZE_SCALE * (CORE_T + 2.0 * PORT_MARGIN)
 SOURCE_PORT_OFFSET = 0.10 * µm
 DISTANCE_SOURCE_TO_MONITORS = 0.40 * µm
-# For the y-directed weak ports, deeper planes look cleaner visually but snap
-# to a less symmetric pair of Yee slices at 8 PPW. Keep the outputs near the
-# imported port planes so o2/o4 stay mirror-locked on the raster grid.
-OUTPUT_MONITOR_OFFSET = 0.05 * µm
 RUN_AFTER_SOURCES_UOC = 90.0
 DECAY_RATIO = 1e-4
 LOOKBACK_RECORDS = 20
@@ -121,6 +124,66 @@ def ensure_ubcpdk_available(requirement: str = UBC_PDK_REQUIREMENT) -> None:
         )
 
 
+def micromode_has_right_handed_y_basis() -> bool:
+    """Return whether installed micromode has the y-normal basis fix."""
+    try:
+        raw_version = importlib.metadata.version("micromode")
+    except importlib.metadata.PackageNotFoundError:
+        return False
+
+    if raw_version.startswith("0.1.0a"):
+        suffix = raw_version.split("0.1.0a", 1)[1]
+        digits = ""
+        for char in suffix:
+            if not char.isdigit():
+                break
+            digits += char
+        if digits:
+            return int(digits) >= 4
+    return raw_version not in {"0.1.0a1", "0.1.0a2", "0.1.0a3"}
+
+
+def use_fixed_micromode_y_projection_convention() -> None:
+    """Keep this example compatible with micromode's corrected y-normal basis."""
+    if not micromode_has_right_handed_y_basis():
+        return
+
+    def projection_solver_direction(direction: str, axis: str) -> str:
+        direction = str(direction).lower()
+        axis = str(axis).lower()
+        if axis == "x":
+            return ("-" if direction.startswith("+") else "+") + axis
+        if axis == "y":
+            return direction
+        return direction
+
+    simulation_core._projection_solver_direction_3d = projection_solver_direction
+    print("Using fixed micromode y projection branch convention.")
+
+
+def ubcpdk_gds_layer_span(cell: str, layer: tuple[int, int]) -> tuple[float, float]:
+    """Return the GDS layer bbox span in meters without touching gdsfactory state."""
+    import gdspy
+
+    spec = importlib.util.find_spec("ubcpdk")
+    if spec is None or not spec.submodule_search_locations:
+        raise ImportError("ubcpdk is not installed.")
+    package_dir = Path(next(iter(spec.submodule_search_locations)))
+    gdspath = package_dir / "gds" / f"{cell}.gds"
+    if not gdspath.exists():
+        raise FileNotFoundError(f"Could not find '{gdspath.name}' in ubcpdk gds data.")
+
+    lib = gdspy.GdsLibrary(infile=str(gdspath))
+    polygons = []
+    for top_cell in lib.top_level():
+        polygons.extend(top_cell.get_polygons(by_spec=True).get(tuple(layer), []))
+    if not polygons:
+        raise ValueError(f"Layer {tuple(layer)} not found in '{gdspath.name}'.")
+    points = np.vstack([np.asarray(poly)[:, :2] for poly in polygons])
+    span_um = np.max(points, axis=0) - np.min(points, axis=0)
+    return float(span_um[0]) * µm, float(span_um[1]) * µm
+
+
 def move_along(center: tuple[float, float], direction: str, distance: float):
     x, y = center
     return {
@@ -150,6 +213,102 @@ def port_plane(
 def line_center(line):
     a, b = line
     return tuple(0.5 * (float(a[i]) + float(b[i])) for i in range(len(a)))
+
+
+def reflect_plane_y(line, *, mirror_y: float):
+    """Reflect a monitor plane across a horizontal symmetry line."""
+    reflected = []
+    for point in line:
+        reflected.append(
+            (
+                float(point[0]),
+                2.0 * float(mirror_y) - float(point[1]),
+                float(point[2]),
+            )
+        )
+    return tuple(reflected)
+
+
+def signed_port_plane_offset(line, port: dict) -> float:
+    center = line_center(line)
+    port_center = port["center"]
+    direction = str(port["direction"])
+    if direction == "+x":
+        return float(center[0]) - float(port_center[0])
+    if direction == "-x":
+        return float(port_center[0]) - float(center[0])
+    if direction == "+y":
+        return float(center[1]) - float(port_center[1])
+    if direction == "-y":
+        return float(port_center[1]) - float(center[1])
+    raise ValueError(f"Unsupported port direction {direction!r}.")
+
+
+def mirror_error_y(line_a, line_b, *, mirror_y: float) -> float:
+    ca = line_center(line_a)
+    cb = line_center(line_b)
+    return max(
+        abs(float(ca[0]) - float(cb[0])),
+        abs(float(ca[1]) + float(cb[1]) - 2.0 * float(mirror_y)),
+        abs(float(ca[2]) - float(cb[2])),
+    )
+
+
+def pml_clearances_xy(
+    line,
+    *,
+    width: float,
+    height: float,
+    pml_xy: float,
+) -> dict[str, float]:
+    (x0, y0, _), (x1, y1, _) = line
+    xmin, xmax = min(float(x0), float(x1)), max(float(x0), float(x1))
+    ymin, ymax = min(float(y0), float(y1)), max(float(y0), float(y1))
+    return {
+        "left": xmin - float(pml_xy),
+        "right": float(width) - float(pml_xy) - xmax,
+        "bottom": ymin - float(pml_xy),
+        "top": float(height) - float(pml_xy) - ymax,
+    }
+
+
+def pml_clearance_for_port(
+    line,
+    port: dict,
+    *,
+    width: float,
+    height: float,
+    pml_xy: float,
+) -> float:
+    clearances = pml_clearances_xy(line, width=width, height=height, pml_xy=pml_xy)
+    return {
+        "+x": clearances["left"],
+        "-x": clearances["right"],
+        "+y": clearances["bottom"],
+        "-y": clearances["top"],
+    }[str(port["direction"])]
+
+
+def cell_aligned_xy_padding(
+    imported_width: float,
+    imported_height: float,
+    *,
+    dx: float,
+) -> tuple[float, int, float]:
+    """Return symmetric XY padding whose domain size lands on the Yee lattice."""
+    imported_span = max(float(imported_width), float(imported_height))
+    snap_allowance = 0.5 * float(dx)
+    min_margin = (
+        float(MONITOR_TO_PML_SPACING)
+        - float(OUTPUT_MONITOR_OFFSET)
+        + snap_allowance
+    )
+    min_padding = float(PML_XY) + min_margin
+    min_domain = imported_span + 2.0 * min_padding
+    cells = max(1, int(math.ceil(min_domain / float(dx) - 1e-12)))
+    domain_size = float(cells) * float(dx)
+    padding = 0.5 * (domain_size - imported_span)
+    return padding, cells, domain_size
 
 
 def port_mode_geometry(port: dict) -> tuple[float, float, float]:
@@ -308,6 +467,36 @@ def format_duration(seconds: float) -> str:
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 ensure_ubcpdk_available()
 try:
+    import micromode
+
+    print(
+        "Using micromode "
+        f"{importlib.metadata.version('micromode')} from {micromode.__file__} "
+        f"(right-handed y basis={micromode_has_right_handed_y_basis()})"
+    )
+except Exception as exc:
+    print(f"Could not report micromode runtime details: {exc}")
+use_fixed_micromode_y_projection_convention()
+dx, dt = dxdt(
+    WL0,
+    n_max=N_CORE,
+    dims=3,
+    safety_factor=0.999,
+    points_per_wavelength=PPW,
+)
+imported_width, imported_height = ubcpdk_gds_layer_span(COMPONENT_NAME, LAYER)
+EXTENSION, xy_cells, xy_domain_size = cell_aligned_xy_padding(
+    imported_width,
+    imported_height,
+    dx=dx,
+)
+XY_MARGIN = EXTENSION - PML_XY
+print(
+    "XY domain: "
+    f"{xy_domain_size / µm:.3f} um = {xy_cells} cells, "
+    f"monitor-to-PML target >= {MONITOR_TO_PML_SPACING / µm:.2f} um"
+)
+try:
     prepared = gdsf.prepare_component(
         COMPONENT_NAME,
         layer=LAYER,
@@ -337,7 +526,6 @@ design, ports = prepared["design"], prepared["ports"]
 world_origin = tuple(float(v) for v in prepared.get("world_origin", (0.0, 0.0, 0.0)))
 source_port, output_ports = "o1", ["o2", "o3", "o4"]
 port_names = (source_port, *output_ports)
-dx, dt = dxdt(WL0, n_max=N_CORE, dims=3, safety_factor=0.999, points_per_wavelength=PPW)
 grid = design.rasterize(resolution=dx)
 if PML_FORMULATION == "cpml":
     enable_cpml_material_extrusion(design, pml_xy=PML_XY, pml_z=PML_Z)
@@ -382,25 +570,94 @@ for port_name in output_ports:
         z_center=z_center,
         offset=monitor_offsets[port_name],
     )
-o2_region, o4_region = mirror_lock_plane_pair_regions(
-    start_a=monitor_planes["o2"][0],
-    end_a=monitor_planes["o2"][1],
-    start_b=monitor_planes["o4"][0],
-    end_b=monitor_planes["o4"][1],
-    plane_normal="y",
-    size_a=None,
-    size_b=None,
-    dx=dx,
-    dy=dx,
-    dz=dx,
-    shape=tuple(np.asarray(grid.permittivity).shape),
+crossing_center = (
+    0.5 * float(design.width),
+    0.5 * float(design.height),
+    float(source_z_center),
 )
-monitor_planes["o2"] = (o2_region.start, o2_region.end)
-monitor_planes["o4"] = (o4_region.start, o4_region.end)
+y_output_ports = [
+    name for name in output_ports if str(ports[name]["direction"]).endswith("y")
+]
+if len(y_output_ports) == 2:
+    top_port = next(
+        name for name in y_output_ports if str(ports[name]["direction"]) == "-y"
+    )
+    bottom_port = next(
+        name for name in y_output_ports if str(ports[name]["direction"]) == "+y"
+    )
+    top_region = snap_plane_region(
+        start=monitor_planes[top_port][0],
+        end=monitor_planes[top_port][1],
+        plane_normal="y",
+        size=None,
+        dx=dx,
+        dy=dx,
+        dz=dx,
+        shape=tuple(np.asarray(grid.permittivity).shape),
+    )
+    monitor_planes[top_port] = (top_region.start, top_region.end)
+    monitor_planes[bottom_port] = reflect_plane_y(
+        monitor_planes[top_port],
+        mirror_y=crossing_center[1],
+    )
+    y_pair_error = mirror_error_y(
+        monitor_planes[top_port],
+        monitor_planes[bottom_port],
+        mirror_y=crossing_center[1],
+    )
+    if y_pair_error > 1e-15:
+        raise RuntimeError(
+            f"Y-port monitor planes are not exactly mirrored: "
+            f"error={y_pair_error / µm:.6e} um."
+        )
+    print(f"Y-port monitor mirror error: {y_pair_error / µm:.6e} um")
 print("Plane positions relative to imported ports (um):")
 print(f"  source: {SOURCE_PORT_OFFSET / µm:.2f}")
 for port_name in port_names:
-    print(f"  {port_name}: {monitor_offsets[port_name] / µm:.2f}")
+    actual_offset = signed_port_plane_offset(monitor_planes[port_name], ports[port_name])
+    print(
+        f"  {port_name}: requested={monitor_offsets[port_name] / µm:.2f}, "
+        f"final={actual_offset / µm:.6f}"
+    )
+print("Monitor clearances to inner XY PML boundary (um):")
+for port_name in port_names:
+    normal_clearance = pml_clearance_for_port(
+        monitor_planes[port_name],
+        ports[port_name],
+        width=design.width,
+        height=design.height,
+        pml_xy=PML_XY,
+    )
+    clearances = pml_clearances_xy(
+        monitor_planes[port_name],
+        width=design.width,
+        height=design.height,
+        pml_xy=PML_XY,
+    )
+    print(
+        f"  {port_name}: normal={normal_clearance / µm:.6f}, "
+        f"top={clearances['top'] / µm:.6f}, "
+        f"bottom={clearances['bottom'] / µm:.6f}"
+    )
+    if (
+        port_name in output_ports
+        and normal_clearance < MONITOR_TO_PML_SPACING - 1e-12
+    ):
+        raise RuntimeError(
+            f"Monitor {port_name} is only {normal_clearance / µm:.3f} um from "
+            f"the inner PML boundary; expected at least "
+            f"{MONITOR_TO_PML_SPACING / µm:.3f} um."
+        )
+    if (
+        min(clearances["top"], clearances["bottom"])
+        < MONITOR_TO_PML_SPACING - 1e-12
+    ):
+        raise RuntimeError(
+            f"Monitor {port_name} has top/bottom PML clearance below "
+            f"{MONITOR_TO_PML_SPACING / µm:.3f} um: "
+            f"top={clearances['top'] / µm:.3f} um, "
+            f"bottom={clearances['bottom'] / µm:.3f} um."
+        )
 runtime_output_distance_um = 0.0
 for port_name in output_ports:
     c_out = line_center(monitor_planes[port_name])
@@ -449,7 +706,40 @@ monitors = [
     for p in port_names
 ]
 mode_monitors = {m.name: m for m in monitors}
-modal_ports = [mode_monitors[name] for name in port_names]
+
+
+def crossing_port_spec(name: str) -> PortSpec:
+    """Build explicit modal wave selectors for this crossing benchmark."""
+    monitor = mode_monitors[name]
+    direction = str(ports[name]["direction"])
+    if direction.endswith("y") and micromode_has_right_handed_y_basis():
+        incident_wave = "minus"
+        scattered_wave = "plus"
+    else:
+        port = monitor.to_port()
+        incident_wave = port.incident_wave
+        scattered_wave = port.scattered_wave
+    return PortSpec(
+        name=name,
+        monitor_name=name,
+        direction=direction,
+        polarization="te",
+        mode_index=int(getattr(monitor, "mode_index", 0)),
+        reference_monitor="o1_ref" if name == source_port else None,
+        incident_wave=incident_wave,
+        scattered_wave=scattered_wave,
+    )
+
+
+modal_ports = [crossing_port_spec(name) for name in port_names]
+port_specs = {spec.name: spec for spec in modal_ports}
+print("Port wave selectors:")
+for name in port_names:
+    port = port_specs[name]
+    print(
+        f"  {name}: direction={port.direction}, "
+        f"incident={port.incident_wave}, scattered={port.scattered_wave}"
+    )
 reference_monitor = Monitor(
     start=source_plane[0],
     end=source_plane[1],
@@ -523,12 +813,10 @@ print(
     f"wall={wall_s:.2f}s, step_rate={executed_steps / wall_s:.2f} steps/s, MCUPS={num_voxels * executed_steps / wall_s / 1e6:.2f}"
 )
 
-# 7. Extract the broadband S-matrix directly from the first-class modal
-# monitors. Each ModeMonitor carries the port direction and derives the modal
-# wave selectors used by the projection code.
-port_specs = {name: mode_monitors[name].to_port() for name in port_names}
+# 7. Extract the broadband S-matrix with explicit modal wave selectors. The y
+# ports need the corrected micromode y-basis convention when using 0.1.0a4+.
 result = sim.get_S_matrix_modal_dft(
-    source_port=mode_monitors[source_port],
+    source_port=port_specs[source_port],
     ports=modal_ports,
     output_ports=modal_ports,
     frequencies=freqs,
