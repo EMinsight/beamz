@@ -11,6 +11,10 @@ Workflow:
 """
 
 from __future__ import annotations
+import importlib.util
+import shutil
+import subprocess
+import sys
 import time as pytime
 from pathlib import Path
 import matplotlib.pyplot as plt
@@ -34,9 +38,9 @@ from beamz.devices.sources.signals import gaussian_band_pulse
 # source-port spacing from the local #106 benchmark harness.
 OUT_DIR = Path("benchmarks/results/tiny_beamz_crossing")
 COMPONENT_NAME = "ebeam_crossing4"
-FALLBACK_COMPONENT_NAME = "crossing_linear_taper"
-NUM_FREQS = 11
-PPW = 5
+UBC_PDK_REQUIREMENT = "ubcpdk==2.7.0"
+NUM_FREQS = 16
+PPW = 8
 WL0, WL_MIN, WL_MAX = 1550.0e-9, 1530.0e-9, 1570.0e-9
 N_CORE, N_CLAD = 3.47, 1.44
 LAYER = (1, 0)
@@ -61,6 +65,61 @@ RUN_AFTER_SOURCES_UOC = 90.0
 DECAY_RATIO = 1e-4
 LOOKBACK_RECORDS = 20
 PML_FORMULATION = "sigma"
+
+
+def ubcpdk_crossing_gds_available(cell: str = COMPONENT_NAME) -> bool:
+    spec = importlib.util.find_spec("ubcpdk")
+    if spec is None or not spec.submodule_search_locations:
+        return False
+    package_dir = Path(next(iter(spec.submodule_search_locations)))
+    return (package_dir / "gds" / f"{cell}.gds").exists()
+
+
+def ensure_ubcpdk_available(requirement: str = UBC_PDK_REQUIREMENT) -> None:
+    """Install the compatible optional UBC PDK into the active Python env."""
+    if ubcpdk_crossing_gds_available():
+        return
+
+    print(f"Installing compatible UBC PDK dependency: {requirement}")
+    install_commands = []
+    if importlib.util.find_spec("pip") is not None:
+        install_commands.append([sys.executable, "-m", "pip", "install", requirement])
+    uv = shutil.which("uv")
+    if uv is not None:
+        install_commands.append(
+            [uv, "pip", "install", "--python", sys.executable, requirement]
+        )
+    if not install_commands:
+        raise RuntimeError(
+            "Could not find `pip` or `uv` to install the UBC PDK. Install it "
+            f"manually with `uv pip install --python {sys.executable} "
+            f"'{requirement}'` and rerun this example."
+        )
+
+    errors = []
+    for command in install_commands:
+        try:
+            subprocess.check_call(command)
+            break
+        except subprocess.CalledProcessError as exc:
+            errors.append(f"{' '.join(command)} -> exit {exc.returncode}")
+    else:
+        raise RuntimeError(
+            "Failed to install the UBC PDK. Tried:\n  "
+            + "\n  ".join(errors)
+            + "\nInstall it manually with "
+            f"`uv pip install --python {sys.executable} '{requirement}'` and "
+            "rerun this example."
+        )
+
+    importlib.invalidate_caches()
+    if not ubcpdk_crossing_gds_available():
+        raise RuntimeError(
+            "The UBC PDK install command completed, but the packaged "
+            f"`gds/{COMPONENT_NAME}.gds` file is still not available from this "
+            "Python environment."
+        )
+
 
 def move_along(center: tuple[float, float], direction: str, distance: float):
     x, y = center
@@ -247,6 +306,7 @@ def format_duration(seconds: float) -> str:
 # 1. Import the GDSFactory/PDK component, extrude it to 3D, pad the domain,
 # and extend the ports into uniform straight sections.
 OUT_DIR.mkdir(parents=True, exist_ok=True)
+ensure_ubcpdk_available()
 try:
     prepared = gdsf.prepare_component(
         COMPONENT_NAME,
@@ -261,26 +321,18 @@ try:
         extension=EXTENSION,
         port_overlap=PORT_OVERLAP,
     )
-except ValueError as exc:
-    if "Could not resolve gdsfactory/PDK component" not in str(exc):
+except (ImportError, ValueError) as exc:
+    if not isinstance(exc, ImportError) and (
+        "Could not resolve gdsfactory/PDK component" not in str(exc)
+    ):
         raise
-    print(
-        f"{exc} Falling back to generic gdsfactory component "
-        f"'{FALLBACK_COMPONENT_NAME}'."
-    )
-    prepared = gdsf.prepare_component(
-        FALLBACK_COMPONENT_NAME,
-        layer=LAYER,
-        n_core=N_CORE,
-        n_clad=N_CLAD,
-        core_thickness=CORE_T,
-        clad_below=CLAD_BELOW,
-        clad_above=CLAD_ABOVE,
-        xy_padding=EXTENSION,
-        z_padding=Z_PADDING + PML_Z,
-        extension=EXTENSION,
-        port_overlap=PORT_OVERLAP,
-    )
+    raise RuntimeError(
+        f"Could not load the UBC PDK crossing '{COMPONENT_NAME}'. Install the "
+        "compatible UBC PDK in the same Python environment, for example with "
+        f"`uv pip install --python {sys.executable} '{UBC_PDK_REQUIREMENT}'`, "
+        "then rerun this example."
+    ) from exc
+print(f"Loaded crossing component: {prepared['component_label']}")
 design, ports = prepared["design"], prepared["ports"]
 world_origin = tuple(float(v) for v in prepared.get("world_origin", (0.0, 0.0, 0.0)))
 source_port, output_ports = "o1", ["o2", "o3", "o4"]

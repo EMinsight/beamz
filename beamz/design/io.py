@@ -283,6 +283,7 @@ class _GDSFactoryNamespace:
 
         pin_layer = (1, 10)
         waveguide_layer = kf.kdb.LayerInfo(1, 0)
+        waveguide_layer_tuple = (1, 0)
         for shape in component.shapes(pin_layer).each(kf.kdb.Shapes.SPaths):
             path = shape.path
             points = list(path.each_point())
@@ -299,13 +300,25 @@ class _GDSFactoryNamespace:
             else:
                 orientation = 270.0
             center = path.bbox().center()
-            component.create_port(
-                width=float(path.width) * 1e-3,
-                center=(float(center.x) * 1e-3, float(center.y) * 1e-3),
-                orientation=orientation,
-                layer_info=waveguide_layer,
-                port_type="optical",
-            )
+            width_um = float(path.width) * 1e-3
+            center_um = (float(center.x) * 1e-3, float(center.y) * 1e-3)
+            try:
+                component.add_port(
+                    name=None,
+                    width=width_um,
+                    center=center_um,
+                    orientation=orientation,
+                    layer=waveguide_layer_tuple,
+                    port_type="optical",
+                )
+            except TypeError:
+                component.create_port(
+                    width=width_um,
+                    center=center_um,
+                    orientation=orientation,
+                    layer_info=waveguide_layer,
+                    port_type="optical",
+                )
         if component.ports:
             component.auto_rename_ports()
         return component, f"ubcpdk.gds.{cell}"

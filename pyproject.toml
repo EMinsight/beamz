@@ -60,6 +60,9 @@ dev = [
 gpu = [
     "torch>=2.6.0",
 ]
+ubc = [
+    "ubcpdk==2.7.0",
+]
 test = [ # Adding a 'test' extra that includes pytest and pytest-cov for convenience
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
