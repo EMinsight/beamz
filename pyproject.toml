@@ -35,7 +35,7 @@ dependencies = [
     "gdsfactory",
     "jaxlib>=0.4.0",
     "optax>=0.1.0",
-    "micromode>=0.1.0a1",
+    "micromode>=0.1.0a4",
     "traitlets>=5.14.0",
     "matplotlib>=3.8.0",
     "scikit-image>=0.21.0",
@@ -59,6 +59,9 @@ dev = [
 ]
 gpu = [
     "torch>=2.6.0",
+]
+ubc = [
+    "ubcpdk==2.7.0",
 ]
 test = [ # Adding a 'test' extra that includes pytest and pytest-cov for convenience
     "pytest>=7.0.0",
