@@ -67,6 +67,12 @@ from beamz.visual.helpers import (
     dxdt,
     get_si_scale_and_label,
 )
+from beamz.visual.mpl import (
+    plot_simulation_field,
+    plot_simulation_permittivity,
+    plot_source_signal,
+    plot_source_spectrum,
+)
 
 # Prepare a dictionary of all our exports
 _exports = {
@@ -104,6 +110,8 @@ _exports = {
     "ramped_cosine": ramped_cosine,
     "signal_plot_data": signal_plot_data,
     "plot_signal": plot_signal,
+    "plot_source_signal": plot_source_signal,
+    "plot_source_spectrum": plot_source_spectrum,
     # Mode calculations
     "solve_modes": solve_modes,
     # Simulation
@@ -112,6 +120,8 @@ _exports = {
     "PortSpec": PortSpec,
     "MonitorResults": MonitorResults,
     "SimulationResults": SimulationResults,
+    "plot_simulation_field": plot_simulation_field,
+    "plot_simulation_permittivity": plot_simulation_permittivity,
     "CompiledRunConfig": CompiledRunConfig,
     "CompiledSimulation": CompiledSimulation,
     "EngineState": EngineState,

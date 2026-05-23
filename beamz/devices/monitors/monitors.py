@@ -1527,7 +1527,7 @@ class Monitor:
         """Display the latest recorded field with matplotlib.
 
         This compatibility hook no longer installs a persistent live updater. Use
-        ``Simulation.run(..., animate_live=...)`` for streamed simulation updates.
+        ``Simulation.animate(...)`` for streamed simulation updates.
         """
         return self.show(field=field_component)
 
