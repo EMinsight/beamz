@@ -41,6 +41,7 @@ from beamz.simulation.compiled import (
     EngineState,
     MonitorState,
     compile_simulation,
+    monitor_dft_accumulator_dtype,
     monitor_dft_point_size,
     monitor_frequency_size,
     monitor_state_size,
@@ -1208,6 +1209,7 @@ class Simulation:
                     )
                     max_freq = monitor_frequency_size(program.monitor_specs)
                     max_points = monitor_dft_point_size(program.monitor_specs)
+                    dft_dtype = monitor_dft_accumulator_dtype()
                     monitor_state = MonitorState(
                         powers=jnp.zeros(
                             (len(program.monitor_specs), max_records), dtype=jnp.float32
@@ -1232,17 +1234,18 @@ class Simulation:
                         ),
                         dft_vec_re=jnp.zeros(
                             (len(program.monitor_specs), 6, max_freq, max_points),
-                            dtype=jnp.float32,
+                            dtype=dft_dtype,
                         ),
                         dft_vec_im=jnp.zeros(
                             (len(program.monitor_specs), 6, max_freq, max_points),
-                            dtype=jnp.float32,
+                            dtype=dft_dtype,
                         ),
                         dft_weight_sum=jnp.zeros(
-                            (len(program.monitor_specs), max_freq), dtype=jnp.float32
+                            (len(program.monitor_specs), max_freq), dtype=dft_dtype
                         ),
                     )
                 else:
+                    dft_dtype = monitor_dft_accumulator_dtype()
                     monitor_state = MonitorState(
                         powers=jnp.zeros((0, 0), dtype=jnp.float32),
                         timestamps=jnp.zeros((0, 0), dtype=jnp.float32),
@@ -1251,9 +1254,9 @@ class Simulation:
                         freq_flux_im=jnp.zeros((0, 0), dtype=jnp.float32),
                         freq_phase_re=jnp.zeros((0, 0), dtype=jnp.float32),
                         freq_phase_im=jnp.zeros((0, 0), dtype=jnp.float32),
-                        dft_vec_re=jnp.zeros((0, 0, 0, 0), dtype=jnp.float32),
-                        dft_vec_im=jnp.zeros((0, 0, 0, 0), dtype=jnp.float32),
-                        dft_weight_sum=jnp.zeros((0, 0), dtype=jnp.float32),
+                        dft_vec_re=jnp.zeros((0, 0, 0, 0), dtype=dft_dtype),
+                        dft_vec_im=jnp.zeros((0, 0, 0, 0), dtype=dft_dtype),
+                        dft_weight_sum=jnp.zeros((0, 0), dtype=dft_dtype),
                     )
             self._compiled_monitor_state = monitor_state
 
