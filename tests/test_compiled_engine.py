@@ -22,6 +22,7 @@ from beamz import (
 from beamz.const import EPS_0
 from beamz.devices.monitors.compiler import CompiledMonitorSpec
 from beamz.devices.sources.compiler import (
+    _analytic_subband_waveforms,
     _as_slab_spec,
     _compile_mode_source_3d,
     _sample_waveform,
@@ -1213,6 +1214,25 @@ def test_mode_source_uses_explicit_signal_quadrature():
 
     np.testing.assert_allclose(source._get_signal_quadrature(), [4.0, 5.0, 6.0])
     assert source._get_signal_quadrature_value(1.0, 1.0) == 5.0
+
+
+def test_analytic_subband_waveforms_reconstruct_input():
+    dt = 1e-15
+    t = np.arange(256, dtype=float) * dt
+    analytic = (
+        0.8 * np.exp(2j * np.pi * 120e12 * t)
+        + 0.2 * np.exp(2j * np.pi * 210e12 * t)
+    )
+
+    nodes, subbands = _analytic_subband_waveforms(
+        analytic,
+        dt=dt,
+        profile_frequencies=np.asarray([100e12, 180e12, 240e12]),
+    )
+
+    assert nodes.shape == (3,)
+    assert subbands.shape == (3, analytic.size)
+    np.testing.assert_allclose(np.sum(subbands, axis=0), analytic, rtol=1e-12, atol=1e-12)
 
 
 def test_compile_3d_mode_source_uses_discrete_phasor_residual_slabs():

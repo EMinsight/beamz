@@ -1713,6 +1713,7 @@ class ModeSource:
         direction="+x",
         height=None,
         signal_quadrature=None,
+        profile_frequencies=None,
     ):
         self.grid = grid
         self.center = (
@@ -1726,6 +1727,7 @@ class ModeSource:
             raise ValueError(f"pol must be 'te' or 'tm', got {pol!r}")
         self.signal = signal
         self.signal_quadrature = signal_quadrature
+        self.profile_frequencies = profile_frequencies
         self._signal_quadrature = None
         self._signal_quadrature_signature = None
         self.direction, self._direction_axis, self._direction_sign = _parse_direction(
