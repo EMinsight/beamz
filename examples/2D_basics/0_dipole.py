@@ -10,7 +10,6 @@ for path in (REPO_ROOT, EXAMPLES_ROOT):
         sys.path.insert(0, path_str)
 
 from beamz import *
-import matplotlib.pyplot as plt
 import numpy as np
 
 WL = 0.6 * µm  # wavelength of the source
@@ -42,10 +41,7 @@ sim = Simulation(
     resolution=DX,
 )
 
-source_ds = source.to_xarray(t=time_steps)
-source_ds["signal"].plot()
-plt.show()
+source.show_signal(t=time_steps)
 
 results = sim.run(save_fields=["Ez"], field_subsample=1, progress=False)
-results.fields["Ez"].isel(t=10).plot(x="x", y="y", cmap="RdBu")
-plt.show()
+results.show(field="Ez", frame=10, cmap="RdBu")

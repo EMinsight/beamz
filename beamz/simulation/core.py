@@ -160,6 +160,56 @@ class MonitorResults:
     data: Any = None
 
     def _plot_proxy(self):
+        if self.data is not None and hasattr(self.data, "data_vars"):
+            fields: dict[str, list[Any]] = {}
+            for name, da in self.data.data_vars.items():
+                if str(name) not in {
+                    "power",
+                    "power_spectrum",
+                    "frequency_flux_spectrum",
+                }:
+                    if "t" in da.dims:
+                        fields.setdefault(
+                            "t", list(np.asarray(da.coords["t"], dtype=float))
+                        )
+                        fields[str(name)] = [
+                            np.asarray(da.isel(t=idx)) for idx in range(da.sizes["t"])
+                        ]
+                    elif "frame" in da.dims:
+                        fields[str(name)] = [
+                            np.asarray(da.isel(frame=idx))
+                            for idx in range(da.sizes["frame"])
+                        ]
+            power = (
+                np.asarray(self.data["power"])
+                if "power" in self.data.data_vars
+                else np.asarray(self.power_history, dtype=float)
+            )
+            power_timestamps = (
+                np.asarray(self.data["power"].coords.get("t", ()), dtype=float)
+                if "power" in self.data.data_vars and "t" in self.data["power"].coords
+                else np.asarray(self.power_timestamps, dtype=float)
+            )
+            power_spectrum = (
+                np.asarray(self.data["power_spectrum"])
+                if "power_spectrum" in self.data.data_vars
+                else np.asarray(self.power_spectrum)
+            )
+            return SimpleNamespace(
+                fields=fields
+                or {name: list(values) for name, values in self.fields.items()},
+                power_history=list(power),
+                power_timestamps=list(power_timestamps),
+                power_spectrum=power_spectrum,
+                power_spectrum_frequencies=np.asarray(
+                    getattr(self.monitor, "power_spectrum_frequencies", ())
+                ),
+                monitor_type=getattr(self.monitor, "monitor_type", "line"),
+                start=getattr(self.monitor, "start", (0.0, 0.0)),
+                end=getattr(self.monitor, "end", (0.0, 0.0)),
+                size=getattr(self.monitor, "size", (0.0, 0.0)),
+                name=getattr(self.monitor, "name", None),
+            )
         return SimpleNamespace(
             fields={name: list(values) for name, values in self.fields.items()},
             power_history=list(np.asarray(self.power_history, dtype=float)),
@@ -396,9 +446,7 @@ class SimulationResults(Mapping[str, Any]):
             simulation=simulation,
             fields=fields_dataset,
             field_times=(
-                None
-                if field_times is None
-                else np.asarray(field_times, dtype=float)
+                None if field_times is None else np.asarray(field_times, dtype=float)
             ),
             field_steps=(
                 None if field_steps is None else np.asarray(field_steps, dtype=int)
@@ -2096,11 +2144,16 @@ class Simulation:
     ) -> tuple[np.ndarray, np.ndarray]:
         if hasattr(monitor, "get_analysis_plane_coords_3d"):
             try:
-                return monitor.get_analysis_plane_coords_3d(
+                coord0, coord1 = monitor.get_analysis_plane_coords_3d(
                     dx=self.resolution,
                     dy=self.resolution,
                     dz=self.resolution,
                     field_shape=tuple(np.asarray(self.fields.permittivity).shape),
+                )
+                common0, common1 = self._monitor_common_plane_shape_3d(monitor)
+                return (
+                    np.asarray(coord0, dtype=np.float64)[:common0],
+                    np.asarray(coord1, dtype=np.float64)[:common1],
                 )
             except Exception:
                 pass
@@ -2120,18 +2173,14 @@ class Simulation:
             raise ValueError(
                 f"Monitor '{monitor.name}' is missing tangential intervals for axis '{axis}'."
             )
-        return (
-            (
-                np.arange(int(interval0.start), int(interval0.stop), dtype=np.float64)
-                + 0.5
-            )
-            * float(self.resolution),
-            (
-                np.arange(int(interval1.start), int(interval1.stop), dtype=np.float64)
-                + 0.5
-            )
-            * float(self.resolution),
-        )
+        coord0 = (
+            np.arange(int(interval0.start), int(interval0.stop), dtype=np.float64) + 0.5
+        ) * float(self.resolution)
+        coord1 = (
+            np.arange(int(interval1.start), int(interval1.stop), dtype=np.float64) + 0.5
+        ) * float(self.resolution)
+        common0, common1 = self._monitor_common_plane_shape_3d(monitor)
+        return coord0[:common0], coord1[:common1]
 
     def _monitor_component_plane_coords_3d(
         self,
@@ -2141,11 +2190,16 @@ class Simulation:
     ) -> tuple[np.ndarray, np.ndarray]:
         if hasattr(monitor, "get_analysis_plane_coords_3d"):
             try:
-                return monitor.get_analysis_plane_coords_3d(
+                coord0, coord1 = monitor.get_analysis_plane_coords_3d(
                     dx=self.resolution,
                     dy=self.resolution,
                     dz=self.resolution,
                     field_shape=tuple(np.asarray(self.fields.permittivity).shape),
+                )
+                common0, common1 = self._monitor_common_plane_shape_3d(monitor)
+                return (
+                    np.asarray(coord0, dtype=np.float64)[:common0],
+                    np.asarray(coord1, dtype=np.float64)[:common1],
                 )
             except Exception:
                 pass

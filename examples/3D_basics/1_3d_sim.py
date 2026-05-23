@@ -50,7 +50,7 @@ signal = ramped_cosine(
 source = GaussianSource(
     position=(2.5 * µm, 3 * µm, 1.2 * µm), width=WL / 6, signal=signal
 )
-source.to_xarray(t=time_steps)["signal"].plot()
+source.show_signal(t=time_steps)
 
 # Add source, monitor, and PML boundaries to the simulation.
 sim = Simulation(

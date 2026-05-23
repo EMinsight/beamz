@@ -37,6 +37,7 @@ from beamz.devices.ports import Port
 from beamz.devices.sources import GaussianSource, ModeSource
 from beamz.devices.sources.mode import solve_modes
 from beamz.devices.sources.signals import plot_signal, ramped_cosine, signal_plot_data
+from beamz.data import colocate_dataset, field_intensity, poynting_vector
 from beamz.optimization.autodiff import transform_density
 from beamz.optimization.topology import (
     TopologyManager,
@@ -72,6 +73,9 @@ from beamz.visual.mpl import (
     plot_simulation_permittivity,
     plot_source_signal,
     plot_source_spectrum,
+    plot_tidy3d_cross_sections,
+    plot_tidy3d_field_frame,
+    plot_tidy3d_mode_components,
 )
 
 # Prepare a dictionary of all our exports
@@ -120,8 +124,14 @@ _exports = {
     "PortSpec": PortSpec,
     "MonitorResults": MonitorResults,
     "SimulationResults": SimulationResults,
+    "colocate_dataset": colocate_dataset,
+    "field_intensity": field_intensity,
+    "poynting_vector": poynting_vector,
     "plot_simulation_field": plot_simulation_field,
     "plot_simulation_permittivity": plot_simulation_permittivity,
+    "plot_tidy3d_cross_sections": plot_tidy3d_cross_sections,
+    "plot_tidy3d_field_frame": plot_tidy3d_field_frame,
+    "plot_tidy3d_mode_components": plot_tidy3d_mode_components,
     "CompiledRunConfig": CompiledRunConfig,
     "CompiledSimulation": CompiledSimulation,
     "EngineState": EngineState,

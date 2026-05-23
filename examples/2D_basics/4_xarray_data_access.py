@@ -22,6 +22,7 @@ from beamz import (
     Rectangle,
     Simulation,
     calc_optimal_fdtd_params,
+    field_intensity,
     ramped_cosine,
     µm,
 )
@@ -68,18 +69,25 @@ sim = Simulation(
     resolution=DX,
 )
 
-source_ds = source.to_xarray(t=time)
-source_ds["signal"].plot()
+source.show_signal(t=time)
 
 results = sim.run(save_fields=["Ez"], field_subsample=5, progress=False)
+results.show(field="Ez", cmap="RdBu")
+
 field_ds = results.fields
 
 last_ez = field_ds["Ez"].isel(t=-1)
+plt.figure()
 last_ez.plot(x="x", y="y", cmap="RdBu")
 
 center_ez = field_ds["Ez"].sel(y=2.0 * µm, method="nearest")
+plt.figure()
 center_ez.plot(x="x", y="t", cmap="RdBu")
 
+plt.figure()
+field_intensity(field_ds).isel(t=-1).plot(x="x", y="y", cmap="magma")
+
 monitor_ds = results.monitor_results["output_line"].data
+plt.figure()
 monitor_ds["power"].plot()
 plt.show()

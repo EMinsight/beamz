@@ -1,7 +1,16 @@
 import numpy as np
 import xarray as xr
 
-from beamz import Design, GaussianSource, Material, Monitor, Simulation, um
+from beamz import (
+    Design,
+    GaussianSource,
+    Material,
+    Monitor,
+    Simulation,
+    field_intensity,
+    poynting_vector,
+    um,
+)
 from beamz.devices.sources.mode import ModeSource
 from beamz.simulation.core import MonitorResults, SimulationResults
 
@@ -39,6 +48,19 @@ def test_simulation_results_fields_are_xarray_by_default():
     assert results.to_xarray() is results.fields
 
 
+def test_simulation_results_use_yee_component_coordinates():
+    sim = _sim()
+    ez = SimulationResults(simulation=sim, fields={"Ez": np.zeros((1, 5, 9))}).fields
+    hx = SimulationResults(simulation=sim, fields={"Hx": np.zeros((1, 4, 9))}).fields
+    hy = SimulationResults(simulation=sim, fields={"Hy": np.zeros((1, 5, 8))}).fields
+
+    dx = float(ez["Ez"].coords["x"][1] - ez["Ez"].coords["x"][0])
+    dy = float(ez["Ez"].coords["y"][1] - ez["Ez"].coords["y"][0])
+    np.testing.assert_allclose(ez["Ez"].coords["x"][:2], [0.0, dx])
+    np.testing.assert_allclose(hx["Hx"].coords["y"][:2], [0.5 * dy, 1.5 * dy])
+    np.testing.assert_allclose(hy["Hy"].coords["x"][:2], [0.5 * dx, 1.5 * dx])
+
+
 def test_monitor_to_xarray_labels_fields_and_power():
     monitor = Monitor(start=(0.0, 0.0), end=(1.0, 0.0), name="m")
     monitor.fields["t"].extend([0.0, 1e-15])
@@ -67,6 +89,25 @@ def test_monitor_results_to_xarray_uses_snapshot_data():
     assert ds["Ez"].dims == ("t", "s")
     assert ds["power"].dims == ("t",)
     assert result.to_xarray() is result.data
+
+
+def test_monitor_to_xarray_exposes_dft_components():
+    monitor = Monitor(
+        start=(0.0, 0.0),
+        end=(1.0 * um, 0.0),
+        name="m",
+        dft_enabled=True,
+        dft_frequencies=[2.0e14, 2.1e14],
+        dft_components=("Ez",),
+    )
+    monitor._dft_accum["Ez"] = np.ones((2, 3), dtype=np.complex128)
+    monitor._dft_weight_sum = np.ones((2,), dtype=float)
+
+    ds = monitor.to_xarray()
+
+    assert ds["dft_Ez"].dims == ("f", "s")
+    np.testing.assert_allclose(ds["dft_Ez"].coords["f"], [2.0e14, 2.1e14])
+    np.testing.assert_allclose(ds["dft_Ez"].coords["s"], [0.0, 0.5 * um, 1.0 * um])
 
 
 def test_source_to_xarray_labels_signal_time():
@@ -99,3 +140,24 @@ def test_mode_source_to_xarray_contains_profile_and_signal():
     assert ds["amplitude"].dims == ("s",)
     assert ds["signal"].dims == ("sample",)
     assert ds["profile"].attrs["neff"] == 2.4
+
+
+def test_field_intensity_and_poynting_vector_use_xarray_fields():
+    sim = _sim()
+    shape = (1, 4, 8)
+    fields = {
+        "Ex": np.ones(shape),
+        "Ey": np.zeros(shape),
+        "Ez": np.zeros(shape),
+        "Hx": np.zeros(shape),
+        "Hy": np.ones(shape),
+        "Hz": np.zeros(shape),
+    }
+    results = SimulationResults(simulation=sim, fields=fields)
+
+    intensity = field_intensity(results)
+    poynting = poynting_vector(results)
+
+    assert intensity.name == "intensity"
+    assert set(poynting.data_vars) == {"Sx", "Sy", "Sz"}
+    np.testing.assert_allclose(poynting["Sz"], 1.0)

@@ -92,6 +92,7 @@ source.initialize(grid.permittivity, DX)
 source.show()
 mode_ds = source.to_xarray(t=time_steps)
 mode_ds["amplitude"].plot()
+plt.show()
 
 # 4. Add Monitors
 # XY plane monitor in the middle of the waveguide thickness

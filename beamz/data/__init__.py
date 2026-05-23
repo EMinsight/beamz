@@ -1,9 +1,12 @@
 """Data conversion helpers for BeamZ result objects."""
 
 from beamz.data.xarray import (
+    colocate_dataset,
     field_data_array,
+    field_intensity,
     mode_dataset,
     monitor_dataset,
+    poynting_vector,
     simulation_dataset,
     simulation_fields_dataset,
     source_dataset,
@@ -11,9 +14,12 @@ from beamz.data.xarray import (
 )
 
 __all__ = [
+    "colocate_dataset",
     "field_data_array",
+    "field_intensity",
     "mode_dataset",
     "monitor_dataset",
+    "poynting_vector",
     "simulation_dataset",
     "simulation_fields_dataset",
     "source_dataset",

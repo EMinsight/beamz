@@ -2,7 +2,6 @@ import sys
 from pathlib import Path
 
 from beamz import *
-import matplotlib.pyplot as plt
 import numpy as np
 from beamz import calc_optimal_fdtd_params
 
@@ -51,7 +50,7 @@ source = ModeSource(
     signal=signal,
     direction="+x",
 )
-source.to_xarray(t=time_steps)["signal"].plot()
+source.show_signal(t=time_steps)
 
 # Run the simulation
 sim = Simulation(
@@ -62,5 +61,4 @@ sim = Simulation(
     resolution=DX,
 )
 results = sim.run(save_fields=["Ez"], field_subsample=20, progress=False)
-results.fields["Ez"].isel(t=-1).plot(x="x", y="y", cmap="RdBu")
-plt.show()
+results.show(field="Ez", cmap="RdBu")

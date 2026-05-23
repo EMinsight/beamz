@@ -2,7 +2,6 @@ import sys
 from pathlib import Path
 
 from beamz import *
-import matplotlib.pyplot as plt
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -53,7 +52,7 @@ source = ModeSource(
     signal=signal,
     direction="+x",
 )
-source.to_xarray(t=time_steps)["signal"].plot()
+source.show_signal(t=time_steps)
 
 # Run the simulation
 sim = Simulation(
@@ -72,5 +71,4 @@ results = sim.save_video(
     save_fields=["Ez"],
     field_subsample=15,
 )
-results.fields["Ez"].isel(t=-1).plot(x="x", y="y", cmap="RdBu")
-plt.show()
+results.show(field="Ez", cmap="RdBu")

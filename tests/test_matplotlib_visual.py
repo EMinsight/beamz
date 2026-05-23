@@ -12,6 +12,8 @@ from beamz import (
     Monitor,
     Rectangle,
     Simulation,
+    plot_tidy3d_cross_sections,
+    plot_tidy3d_field_frame,
     plot_signal,
     um,
 )
@@ -278,3 +280,95 @@ def test_simulation_results_plot_field_uses_stored_fields():
     assert fig is ax.figure
     assert ax.get_title() == "Ez frame -1"
     assert len(ax.patches) >= 1
+
+
+def test_simulation_results_plot_field_selects_physical_coordinate():
+    design = Design(width=2 * um, height=1 * um, depth=1 * um, material=Material(1.0))
+    sim = Simulation(
+        design=design,
+        sources=[],
+        monitors=[],
+        time=np.array([0.0, 1e-15]),
+        resolution=0.25 * um,
+    )
+    fields = {"Ez": np.ones((2, 4, 4, 8))}
+    results = SimulationResults(simulation=sim, fields=fields)
+
+    fig, ax = _close(
+        results.plot_field(field="Ez", plane="z", index=0.5 * um, show=False)
+    )
+
+    assert fig is ax.figure
+    assert "z=" in ax.get_title()
+
+
+def test_tidy3d_cross_sections_plot_grid_slices():
+    design = Design(
+        width=2 * um,
+        height=1 * um,
+        depth=1 * um,
+        material=Material(1.0),
+    )
+    design += Rectangle(
+        position=(0.0, 0.0, 0.0),
+        width=2 * um,
+        height=1 * um,
+        depth=0.5 * um,
+        material=Material(2.25),
+    )
+    design += Rectangle(
+        position=(0.0, 0.4 * um, 0.5 * um),
+        width=2 * um,
+        height=0.2 * um,
+        depth=0.2 * um,
+        material=Material(12.0),
+    )
+    grid = design.rasterize(resolution=0.25 * um)
+
+    fig, axes = plot_tidy3d_cross_sections(
+        grid,
+        z=0.5 * um,
+        y=0.5 * um,
+        origin=(1 * um, 0.5 * um, 0.5 * um),
+        substrate_z=0.25 * um,
+        pml_thickness=0.25 * um,
+        xy_markers=({"x": 0.5, "span": (-0.4, 0.4), "color": "orange"},),
+        show=False,
+    )
+    plt.close(fig)
+
+    assert len(axes) == 2
+    assert axes[0].get_title() == "cross section at z=0.00 (um)"
+    assert axes[1].get_title() == "cross section at y=0.00 (um)"
+
+
+def test_tidy3d_field_frame_uses_xarray_results():
+    design = Design(
+        width=2 * um,
+        height=1 * um,
+        depth=1 * um,
+        material=Material(1.0),
+    )
+    sim = Simulation(
+        design=design,
+        sources=[],
+        monitors=[],
+        time=np.array([0.0, 1e-15]),
+        resolution=0.25 * um,
+    )
+    fields = {"Ez": np.ones((2, 4, 4, 8))}
+    results = SimulationResults(simulation=sim, fields=fields)
+
+    fig, ax = _close(
+        plot_tidy3d_field_frame(
+            results,
+            field="Ez",
+            plane="z",
+            index=0.5 * um,
+            origin=(1 * um, 0.5 * um, 0.5 * um),
+            show=False,
+        )
+    )
+
+    assert fig is ax.figure
+    assert ax.get_title() == "cross section at z=0.00 (um)"

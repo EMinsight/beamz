@@ -7,7 +7,6 @@ other library.
 
 from __future__ import annotations
 
-from typing import Any
 
 import numpy as np
 
@@ -567,7 +566,9 @@ def source_signal_plot_data(source, t=None):
         raise RuntimeError(f"{type(source).__name__} has no signal attribute.")
     if callable(signal):
         if t is None:
-            raise ValueError("t must be provided when plotting a callable source signal.")
+            raise ValueError(
+                "t must be provided when plotting a callable source signal."
+            )
         t_arr = np.asarray(t, dtype=float)
         values = np.asarray([signal(float(ti)) for ti in t_arr])
     else:
@@ -810,13 +811,97 @@ def _slice_2d(values, *, plane="z", index=None):
     return arr[:, :, index], plane_label, index
 
 
+def _coord_edges(values):
+    coord = np.asarray(values, dtype=float)
+    if coord.size == 0:
+        return (0.0, 1.0)
+    if coord.size == 1:
+        width = 1.0
+        return (float(coord[0] - 0.5 * width), float(coord[0] + 0.5 * width))
+    deltas = np.diff(coord)
+    return (float(coord[0] - 0.5 * deltas[0]), float(coord[-1] + 0.5 * deltas[-1]))
+
+
+def _plane_axis_and_label(plane):
+    plane_key = str(plane).lower()
+    if plane_key in {"xy", "z"}:
+        return "z", "xy"
+    if plane_key in {"xz", "y"}:
+        return "y", "xz"
+    if plane_key in {"yz", "x"}:
+        return "x", "yz"
+    raise ValueError("plane must be one of 'xy'/'z', 'xz'/'y', or 'yz'/'x'.")
+
+
+def _select_xarray_frame(da, *, time_index=-1, t=None, frame=None, method="nearest"):
+    if t is not None and "t" in da.dims:
+        selected = da.sel(t=float(t), method=method)
+        return selected, float(selected.coords["t"]), "t"
+    frame_dim = "t" if "t" in da.dims else "frame" if "frame" in da.dims else None
+    if frame_dim is None:
+        return da, None, None
+    idx = int(frame if frame is not None else time_index)
+    selected = da.isel({frame_dim: idx})
+    if frame_dim == "frame" and frame is None:
+        value = idx
+    elif frame_dim in selected.coords:
+        try:
+            value = float(selected.coords[frame_dim])
+        except Exception:
+            value = idx
+    else:
+        value = idx
+    return selected, value, frame_dim
+
+
+def _select_xarray_plane(da, *, plane="z", index=None, method="nearest"):
+    axis, plane_label = _plane_axis_and_label(plane)
+    if axis not in da.dims:
+        if da.ndim == 2:
+            return da, "xy", None
+        raise ValueError(f"Cannot select {plane_label} plane from dims {da.dims}.")
+    coord = np.asarray(da.coords[axis], dtype=float) if axis in da.coords else None
+    if index is None:
+        value = (
+            float(coord[coord.size // 2])
+            if coord is not None and coord.size
+            else da.sizes[axis] // 2
+        )
+    else:
+        value = float(index)
+    if coord is not None:
+        selected = da.sel({axis: value}, method=method)
+        actual = float(selected.coords[axis])
+    else:
+        selected = da.isel({axis: int(value)})
+        actual = int(value)
+    return selected, plane_label, actual
+
+
+def _xarray_2d_extent(da):
+    dims = tuple(da.dims)
+    if len(dims) != 2:
+        raise ValueError(f"Expected 2D field after slicing, got dims {dims}.")
+    y_dim, x_dim = dims
+    x0, x1 = (
+        _coord_edges(da.coords[x_dim]) if x_dim in da.coords else (0.0, da.sizes[x_dim])
+    )
+    y0, y1 = (
+        _coord_edges(da.coords[y_dim]) if y_dim in da.coords else (0.0, da.sizes[y_dim])
+    )
+    return (x0, x1, y0, y1), x_dim, y_dim
+
+
 def simulation_field_plot_data(
     results,
     *,
     field="Ez",
     time_index=-1,
+    t=None,
+    frame=None,
     plane="z",
     index=None,
+    method="nearest",
 ):
     """Serialize stored simulation field data into a 2D plot payload."""
     if results.fields is None or field not in results.fields:
@@ -825,9 +910,47 @@ def simulation_field_plot_data(
             f"Field '{field}' is not stored. Available stored fields: {available}"
         )
 
-    frame, selected_time = _select_field_frame(
-        results.fields[field], time_index=time_index
-    )
+    source = results.fields[field]
+    if hasattr(source, "dims") and hasattr(source, "coords"):
+        frame_da, selected_time, time_dim = _select_xarray_frame(
+            source,
+            time_index=time_index,
+            t=t,
+            frame=frame,
+            method=method,
+        )
+        plane_da, plane_label, selected_index = _select_xarray_plane(
+            frame_da,
+            plane=plane,
+            index=index,
+            method=method,
+        )
+        extent, xlabel, ylabel = _xarray_2d_extent(plane_da)
+        scale, unit = get_si_scale_and_label(
+            max(abs(extent[1] - extent[0]), abs(extent[3] - extent[2]), 1e-30)
+        )
+        title = f"{field}"
+        if selected_time is not None:
+            title += f" {time_dim or 'frame'} {selected_time:g}"
+        if selected_index is not None:
+            axis, _ = _plane_axis_and_label(plane)
+            title += f" ({plane_label}, {axis}={selected_index * scale:g} {unit})"
+        return {
+            "kind": "simulation_field",
+            "field": field,
+            "array": np.asarray(plane_da).copy(),
+            "plane": plane_label,
+            "slice_index": selected_index,
+            "time_index": selected_time,
+            "extent": tuple(float(v * scale) for v in extent),
+            "scale_factor": float(scale),
+            "scale_unit": unit,
+            "xlabel": f"{xlabel} ({unit})",
+            "ylabel": f"{ylabel} ({unit})",
+            "title": title,
+        }
+
+    frame, selected_time = _select_field_frame(source, time_index=time_index)
     field_2d, plane_label, selected_index = _slice_2d(
         frame,
         plane=plane,
