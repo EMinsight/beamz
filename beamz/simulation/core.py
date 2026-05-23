@@ -3971,46 +3971,93 @@ class Simulation:
             - snapshot_interval: emit every N steps
             - snapshot_callback: callable receiving each snapshot payload
             - store_snapshots: include emitted snapshots in the returned results
+            - animate_live / save_video: matplotlib rendering conveniences
             - save_fields / field_subsample / progress
         """
         removed_visual_keys = (
-            "animate_live",
-            "save_video",
             "jupyter_live",
-            "video_field",
-            "video_fps",
-            "video_dpi",
-            "cmap",
             "axis_scale",
-            "clean_visualization",
             "wavelength",
             "line_color",
             "line_opacity",
-            "interpolation",
             "store_animation",
         )
         removed = [key for key in removed_visual_keys if key in kwargs]
         if removed:
             raise TypeError(
-                "Matplotlib-backed simulation rendering was removed from beamz. "
+                "These legacy visualization kwargs are no longer supported. "
                 f"Unsupported kwargs: {removed}. "
-                "Use snapshot_field/snapshot_callback and render in examples."
+                "Use animate_live, save_video, or snapshot_field/snapshot_callback."
             )
 
         save_fields = kwargs.get("save_fields")
         field_subsample = int(kwargs.get("field_subsample", 1))
         progress = bool(kwargs.get("progress", False))
         record_interval = field_subsample if save_fields else None
-        return self.run_compiled(
+        animate_live = kwargs.get("animate_live")
+        save_video = kwargs.get("save_video")
+        video_field = kwargs.get("video_field")
+        snapshot_field = kwargs.get("snapshot_field")
+        if snapshot_field is None:
+            snapshot_field = video_field or animate_live
+        if snapshot_field is not None:
+            snapshot_field = str(snapshot_field)
+
+        snapshot_interval = kwargs.get(
+            "snapshot_interval", kwargs.get("animation_interval", 10)
+        )
+        user_callback = kwargs.get("snapshot_callback")
+        callback = user_callback
+        if animate_live and save_video is None:
+            from beamz.visual import mpl as mpl_backend
+
+            context = {"fig": None, "ax": None}
+            cmap = kwargs.get("cmap", "twilight_zero")
+            clean_visualization = bool(kwargs.get("clean_visualization", False))
+            interpolation = kwargs.get("interpolation", "bicubic")
+            pause = float(kwargs.get("pause", 0.001))
+
+            def callback(snapshot):
+                if user_callback is not None:
+                    user_callback(snapshot)
+                fig, ax = mpl_backend.snapshot_figure(
+                    snapshot,
+                    cmap=cmap,
+                    clean_visualization=clean_visualization,
+                    interpolation=interpolation,
+                    figure=context["fig"],
+                    axes=context["ax"],
+                )
+                context["fig"], context["ax"] = fig, ax
+                mpl_backend._pyplot().show(block=False)
+                mpl_backend._pyplot().pause(pause)
+
+        store_snapshots_default = save_video is not None or bool(
+            kwargs.get("store_snapshots", True)
+        )
+        results = self.run_compiled(
             num_steps=None,
             record_interval=record_interval,
             record_fields=save_fields,
             progress=progress,
-            snapshot_field=kwargs.get("snapshot_field"),
-            snapshot_interval=kwargs.get("snapshot_interval", 10),
-            snapshot_callback=kwargs.get("snapshot_callback"),
-            store_snapshots=bool(kwargs.get("store_snapshots", True)),
+            snapshot_field=snapshot_field,
+            snapshot_interval=snapshot_interval,
+            snapshot_callback=callback,
+            store_snapshots=store_snapshots_default,
         )
+        if save_video is not None and results is not None and results.snapshots:
+            from beamz.visual.mpl import save_snapshot_video
+
+            save_snapshot_video(
+                results.snapshots,
+                filename=save_video,
+                fps=int(kwargs.get("video_fps", 30)),
+                dpi=int(kwargs.get("video_dpi", 150)),
+                cmap=kwargs.get("cmap", "twilight_zero"),
+                clean_visualization=bool(kwargs.get("clean_visualization", False)),
+                interpolation=kwargs.get("interpolation", "bicubic"),
+            )
+        return results
 
     def to_scene(self):
         """Build a 3D scene representation of the simulation setup."""

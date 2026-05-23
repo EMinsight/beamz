@@ -103,3 +103,43 @@ def test_import_beamz_does_not_import_pyplot():
     )
 
     assert result.stdout.strip() == "False"
+
+
+def test_simulation_run_accepts_animate_live_kwargs(monkeypatch):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from beamz.visual import mpl as mpl_backend
+
+    rendered_steps = []
+
+    def fake_snapshot_figure(snapshot, **kwargs):
+        rendered_steps.append(snapshot["step"])
+        fig, ax = plt.subplots()
+        return fig, ax
+
+    class FakePyplot:
+        @staticmethod
+        def show(*args, **kwargs):
+            return None
+
+        @staticmethod
+        def pause(*args, **kwargs):
+            return None
+
+    monkeypatch.setattr(mpl_backend, "snapshot_figure", fake_snapshot_figure)
+    monkeypatch.setattr(mpl_backend, "_pyplot", lambda: FakePyplot)
+
+    sim = _make_snapshot_sim()
+    results = sim.run(
+        animate_live="Ez",
+        animation_interval=4,
+        store_snapshots=False,
+        progress=False,
+    )
+
+    assert results is None
+    assert rendered_steps == [4, 8, 12]
+    plt.close("all")
