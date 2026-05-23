@@ -1694,13 +1694,25 @@ class ModeSource:
         if name in self._RUNTIME_ATTRS and "_state" in self.__dict__:
             setattr(self._state, name, value)
             return
-        if name == "signal" and "_signal_quadrature" in self.__dict__:
+        if (
+            name in {"signal", "signal_quadrature"}
+            and "_signal_quadrature" in self.__dict__
+        ):
             object.__setattr__(self, "_signal_quadrature", None)
             object.__setattr__(self, "_signal_quadrature_signature", None)
         object.__setattr__(self, name, value)
 
     def __init__(
-        self, grid, center, width, wavelength, pol, signal, direction="+x", height=None
+        self,
+        grid,
+        center,
+        width,
+        wavelength,
+        pol,
+        signal,
+        direction="+x",
+        height=None,
+        signal_quadrature=None,
     ):
         self.grid = grid
         self.center = (
@@ -1713,6 +1725,7 @@ class ModeSource:
         if self.pol not in {"te", "tm"}:
             raise ValueError(f"pol must be 'te' or 'tm', got {pol!r}")
         self.signal = signal
+        self.signal_quadrature = signal_quadrature
         self._signal_quadrature = None
         self._signal_quadrature_signature = None
         self.direction, self._direction_axis, self._direction_sign = _parse_direction(
@@ -2349,6 +2362,17 @@ class ModeSource:
         return _interpolate_time_signal(self.signal, time, dt)
 
     def _get_signal_quadrature(self):
+        explicit = getattr(self, "signal_quadrature", None)
+        if explicit is not None:
+            signal = np.asarray(self.signal, dtype=np.float64).reshape(-1)
+            quadrature = np.asarray(explicit, dtype=np.float64).reshape(-1)
+            if quadrature.shape != signal.shape:
+                raise ValueError(
+                    "signal_quadrature must have the same shape as signal; "
+                    f"got {quadrature.shape} and {signal.shape}"
+                )
+            return quadrature
+
         signal = np.asarray(self.signal, dtype=np.float64).reshape(-1)
         signature = (id(self.signal), signal.shape, str(signal.dtype))
         if (

@@ -1734,10 +1734,146 @@ def save_snapshot_video(
     return output
 
 
+def _modal_dft_x_values(frequencies, x_axis):
+    freqs = np.atleast_1d(np.asarray(frequencies, dtype=float))
+    axis = str(x_axis).lower()
+    if axis in {"wavelength", "wavelength_um", "lambda", "lambda_um"}:
+        return LIGHT_SPEED / freqs / µm, "Wavelength (um)", True
+    if axis in {"frequency", "freq", "hz"}:
+        return freqs, "Frequency (Hz)", False
+    if axis in {"frequency_thz", "freq_thz", "thz"}:
+        return freqs / 1e12, "Frequency (THz)", False
+    raise ValueError("x_axis must be 'wavelength', 'frequency', or 'frequency_thz'.")
+
+
+def _modal_dft_port_sort_key(name):
+    text = str(name)
+    if "_m" in text:
+        prefix, suffix = text.rsplit("_m", 1)
+        try:
+            return prefix, int(suffix)
+        except ValueError:
+            return text, 0
+    return text, 0
+
+
+def plot_modal_dft_diagnostics(
+    result,
+    *,
+    source_port=None,
+    output_ports=None,
+    x_axis="wavelength",
+    include_sum=True,
+    title="Mode decomposition",
+    residual_port=None,
+    show=True,
+):
+    """Plot modal DFT S-parameter powers with projection diagnostics.
+
+    Parameters
+    ----------
+    result : dict
+        Return value from ``Simulation.get_S_matrix_modal_dft(..., as_sax=False,
+        return_diagnostics=True)``.
+    source_port : str, optional
+        Source port name. Defaults to the source recorded in diagnostics.
+    output_ports : sequence[str], optional
+        Output modal port names. Defaults to diagnostics output ports.
+    x_axis : {"wavelength", "frequency", "frequency_thz"}
+        Horizontal axis.
+    include_sum : bool
+        Plot the sum of all selected output ports on the power axis.
+    title : str
+        Title for the modal-power subplot.
+    residual_port : str, optional
+        Port whose projection residual and rejected branch are shown. Defaults
+        to the first output port.
+    show : bool
+        Call ``plt.show()`` before returning.
+
+    Returns
+    -------
+    fig, axes
+        Matplotlib figure and the two axes.
+    """
+    plt = _pyplot()
+    diagnostics = result.get("diagnostics", {})
+    s_matrix = result.get("s_matrix", {})
+    frequencies = np.asarray(diagnostics.get("frequencies", []), dtype=float)
+    if frequencies.size == 0:
+        raise ValueError("Modal DFT diagnostics are missing the frequency axis.")
+    source = source_port or diagnostics.get("source_port")
+    if source is None:
+        raise ValueError("source_port is required when diagnostics omit it.")
+    ports = list(output_ports or diagnostics.get("output_ports", ()))
+    if not ports:
+        ports = [key[0] for key in s_matrix if isinstance(key, tuple) and key[1] == source]
+    ports = sorted(ports, key=_modal_dft_port_sort_key)
+    if not ports:
+        raise ValueError("No output ports available to plot.")
+
+    x_values, x_label, invert_x = _modal_dft_x_values(frequencies, x_axis)
+    powers = []
+    for port in ports:
+        key = (port, source)
+        if key not in s_matrix:
+            continue
+        values = np.asarray(s_matrix[key], dtype=np.complex128)
+        if values.size == frequencies.size:
+            powers.append((port, np.abs(values) ** 2))
+    if not powers:
+        raise ValueError("No modal S-matrix powers matched the requested ports.")
+
+    fig, axes = plt.subplots(2, 1, figsize=(6.4, 6.0), sharex=True)
+    ax_power, ax_diag = axes
+    colors = ["#ff7f0e", "#8d99ae", "#ff4f81", "#9467bd", "#17becf", "#bcbd22"]
+    if include_sum and len(powers) > 1:
+        total = np.sum([power for _, power in powers], axis=0)
+        ax_power.plot(x_values, total, color="#1b7837", label="Mode sum")
+    for idx, (port, power) in enumerate(powers):
+        _, mode_index = _modal_dft_port_sort_key(port)
+        ax_power.plot(
+            x_values,
+            power,
+            color=colors[idx % len(colors)],
+            label=f"Mode {mode_index}",
+        )
+    ax_power.set_ylabel("Power in mode (W)")
+    ax_power.set_title(title)
+    ax_power.legend()
+
+    diag_port = residual_port or powers[0][0]
+    wave = diagnostics.get("waves", {}).get(diag_port, {})
+    residual = np.asarray(wave.get("projection_residual", []), dtype=float)
+    if residual.size == frequencies.size:
+        ax_diag.plot(x_values, residual, color="#4c78a8", label="Projection residual")
+    p_in = np.asarray(diagnostics.get("P_in", []), dtype=float)
+    checks = diagnostics.get("monitor_flux_checks", {}).get(diag_port, {})
+    rejected = np.asarray(checks.get("P_rejected", []), dtype=float)
+    if rejected.size == frequencies.size and p_in.size == frequencies.size:
+        rejected_norm = rejected / np.maximum(p_in, 1e-18)
+        ax_diag.plot(x_values, rejected_norm, color="#f58518", label="Rejected branch")
+    neff = np.asarray(wave.get("mode_neff", []), dtype=float)
+    if neff.size == frequencies.size and np.nanmax(neff) > np.nanmin(neff):
+        ax_neff = ax_diag.twinx()
+        ax_neff.plot(x_values, neff, color="#54a24b", alpha=0.7, label="n_eff")
+        ax_neff.set_ylabel("n_eff")
+    ax_diag.set_xlabel(x_label)
+    ax_diag.set_ylabel("Diagnostic value")
+    ax_diag.legend(loc="best")
+    if invert_x:
+        ax_diag.set_xlim(float(np.nanmax(x_values)), float(np.nanmin(x_values)))
+    fig.tight_layout()
+    if show:
+        plt.show()
+    return fig, axes
+
+
 __all__ = [
     "animate_monitor_fields",
     "get_twilight_zero_cmap",
     "mode_field_component_pairs",
+    "plot_modal_dft_diagnostics",
     "plot_design",
     "plot_grid",
     "plot_mode_fields",

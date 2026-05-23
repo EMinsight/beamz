@@ -1204,6 +1204,17 @@ def test_analytic_signal_quadrature_matches_periodic_sine():
     np.testing.assert_allclose(quadrature, np.sin(phase), atol=1e-12, rtol=1e-12)
 
 
+def test_mode_source_uses_explicit_signal_quadrature():
+    source = ModeSource.__new__(ModeSource)
+    source.signal = np.asarray([1.0, 2.0, 3.0], dtype=float)
+    source.signal_quadrature = np.asarray([4.0, 5.0, 6.0], dtype=float)
+    source._signal_quadrature = None
+    source._signal_quadrature_signature = None
+
+    np.testing.assert_allclose(source._get_signal_quadrature(), [4.0, 5.0, 6.0])
+    assert source._get_signal_quadrature_value(1.0, 1.0) == 5.0
+
+
 def test_compile_3d_mode_source_uses_discrete_phasor_residual_slabs():
     fields = SimpleNamespace(
         permittivity=jnp.ones((2, 2, 2)),
