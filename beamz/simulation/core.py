@@ -1702,13 +1702,13 @@ class Simulation:
             raise ValueError(f"Invalid dt inferred from monitor '{monitor.name}'.")
         if np.iscomplexobj(values):
             freq_bins = np.fft.fftfreq(n, d=dt)
-            spec_bins = np.fft.fft(values, axis=0)
+            spec_bins = np.fft.ifft(values, axis=0) * n
             keep = freq_bins >= 0
             freq_bins = freq_bins[keep]
             spec_bins = spec_bins[keep]
         else:
             freq_bins = np.fft.rfftfreq(n, d=dt)
-            spec_bins = np.fft.rfft(values, axis=0)
+            spec_bins = np.conjugate(np.fft.rfft(values, axis=0))
 
         if frequencies is None:
             phase = self._monitor_projection_phase(component, freq_bins, dt)
@@ -1946,7 +1946,7 @@ class Simulation:
         else:
             raise ValueError(f"Unsupported window '{window}'.")
 
-        carrier = np.exp(-1j * 2.0 * np.pi * f0 * t_sel)[:, None]
+        carrier = np.exp(1j * 2.0 * np.pi * f0 * t_sel)[:, None]
         denom = max(float(np.sum(w)), 1e-18)
         demod = (2.0 / denom) * np.sum((w[:, None] * v_sel) * carrier, axis=0)
         if hasattr(self, "dt") and self.dt is not None:
@@ -2226,10 +2226,9 @@ class Simulation:
                     dz=self.resolution,
                     field_shape=tuple(np.asarray(self.fields.permittivity).shape),
                 )
-                common0, common1 = self._monitor_common_plane_shape_3d(monitor)
                 return (
-                    np.asarray(coord0, dtype=np.float64)[:common0],
-                    np.asarray(coord1, dtype=np.float64)[:common1],
+                    np.asarray(coord0, dtype=np.float64),
+                    np.asarray(coord1, dtype=np.float64),
                 )
             except Exception:
                 pass
@@ -2272,10 +2271,9 @@ class Simulation:
                     dz=self.resolution,
                     field_shape=tuple(np.asarray(self.fields.permittivity).shape),
                 )
-                common0, common1 = self._monitor_common_plane_shape_3d(monitor)
                 return (
-                    np.asarray(coord0, dtype=np.float64)[:common0],
-                    np.asarray(coord1, dtype=np.float64)[:common1],
+                    np.asarray(coord0, dtype=np.float64),
+                    np.asarray(coord1, dtype=np.float64),
                 )
             except Exception:
                 pass
@@ -2721,13 +2719,20 @@ class Simulation:
                         dims1.append(max(d1, 1))
                     mon_dim0 = min(dims0)
                     mon_dim1 = min(dims1)
+                    if analysis_coords0 is not None and analysis_coords1 is not None:
+                        mon_dim0 = int(np.asarray(analysis_coords0).size)
+                        mon_dim1 = int(np.asarray(analysis_coords1).size)
                 except Exception:
-                    mon_dim0 = min(
-                        int(comp_full[c].shape[0]) for c in proj_components_local
-                    )
-                    mon_dim1 = min(
-                        int(comp_full[c].shape[1]) for c in proj_components_local
-                    )
+                    if analysis_coords0 is not None and analysis_coords1 is not None:
+                        mon_dim0 = int(np.asarray(analysis_coords0).size)
+                        mon_dim1 = int(np.asarray(analysis_coords1).size)
+                    else:
+                        mon_dim0 = min(
+                            int(comp_full[c].shape[0]) for c in proj_components_local
+                        )
+                        mon_dim1 = min(
+                            int(comp_full[c].shape[1]) for c in proj_components_local
+                        )
 
                 try:
                     n_monitor = min(

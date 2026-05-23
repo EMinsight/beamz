@@ -758,11 +758,19 @@ def compile_monitor_specs(
             base_shape_3d = tuple(
                 max(shape[axis] for shape in shape_3d.values()) for axis in range(3)
             )
-            idx_map, min_dim0, min_dim1 = _compile_monitor_3d_indices(
+            idx_map, _slice_dim0, _slice_dim1 = _compile_monitor_3d_indices(
                 monitor,
                 resolution,
                 shape_3d,
             )
+            target0, target1 = monitor.get_analysis_plane_coords_3d(
+                dx=resolution,
+                dy=resolution,
+                dz=resolution,
+                field_shape=base_shape_3d,
+            )
+            min_dim0 = int(np.asarray(target0).size)
+            min_dim1 = int(np.asarray(target1).size)
             interp_map = {}
             interp_dims = {}
             for name, shape in shape_3d.items():
@@ -775,8 +783,6 @@ def compile_monitor_specs(
                 )
                 interp_map[name] = (flat_idx, weights)
                 interp_dims[name] = (dim0, dim1)
-                min_dim0 = min(min_dim0, dim0)
-                min_dim1 = min(min_dim1, dim1)
             for name, (flat_idx, weights) in interp_map.items():
                 dim0, dim1 = interp_dims[name]
                 flat_idx, weights = _crop_monitor_3d_interpolation(
@@ -788,15 +794,9 @@ def compile_monitor_specs(
                     min_dim1,
                 )
                 interp_map[name] = (jnp.asarray(flat_idx), jnp.asarray(weights))
-            target0, target1 = monitor.get_analysis_plane_coords_3d(
-                dx=resolution,
-                dy=resolution,
-                dz=resolution,
-                field_shape=base_shape_3d,
-            )
             power_scale = _analysis_plane_sample_area(
-                np.asarray(target0, dtype=np.float64)[:min_dim0],
-                np.asarray(target1, dtype=np.float64)[:min_dim1],
+                np.asarray(target0, dtype=np.float64),
+                np.asarray(target1, dtype=np.float64),
                 float(resolution),
             )
 

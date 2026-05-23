@@ -420,12 +420,21 @@ def _compile_mode_source(
     resolution: float,
     total_steps: int | None = None,
 ) -> tuple[CompiledSourceSpec, ...]:
-    if (
+    needs_initialize = (
         (not getattr(device, "_initialized", False))
         or (getattr(device, "_grid_shape", None) != fields.permittivity.shape)
         or (getattr(device, "_resolution", None) is None)
         or (not np.isclose(getattr(device, "_resolution", 0.0), resolution))
-    ):
+    )
+    if not needs_initialize and bool(getattr(device, "_is_3d", False)):
+        launch_dt = getattr(device, "_launch_dt", None)
+        needs_initialize = (
+            launch_dt is None
+            or (not np.isclose(float(launch_dt), float(dt)))
+            or (getattr(device, "_k_num_axis", None) is None)
+            or (getattr(device, "_omega_launch", None) is None)
+        )
+    if needs_initialize:
         device.initialize(fields.permittivity, resolution, dt=dt)
 
     is_3d = bool(getattr(device, "_is_3d", False))
