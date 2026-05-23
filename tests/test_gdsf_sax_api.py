@@ -169,8 +169,9 @@ def test_get_s_matrix_modal_dft_accepts_mode_monitor_ports(monkeypatch):
         frequencies,
         min_incident_db=-40.0,
         return_power=True,
+        mode_strategy="per_frequency",
     ):
-        del self, min_incident_db, return_power
+        del self, min_incident_db, return_power, mode_strategy
         np.testing.assert_allclose(frequencies, freqs)
         by_name = {p.name: p for p in ports}
         assert by_name["o1"].reference_monitor == "o1_ref"
@@ -1725,12 +1726,25 @@ def test_extract_port_waves_dft_modal_coefficients_synthetic(monkeypatch):
         assert np.allclose(frequencies, freqs)
         return np.asarray(frequencies, dtype=float), dft_map[(monitor.name, component)]
 
-    def fake_projection(self, spec, monitor, frequency, cache, mode_pad_cells=6):
+    projection_frequencies = []
+
+    def fake_projection(
+        self,
+        spec,
+        monitor,
+        frequency,
+        cache,
+        mode_pad_cells=6,
+        previous_projection=None,
+    ):
+        del previous_projection
+        projection_frequencies.append(float(frequency))
         return {
             "e_component": "Ez",
             "h_component": "Hy",
             "pinv": pinv,
             "condition_number": 1.0,
+            "mode_neff": 2.0,
         }
 
     monkeypatch.setattr(Simulation, "_sample_monitor_component_dft", fake_sample)
@@ -1782,6 +1796,18 @@ def test_extract_port_waves_dft_modal_coefficients_synthetic(monkeypatch):
     np.testing.assert_allclose(waves["o2"]["a_plus"], a_out, rtol=1e-9, atol=1e-9)
     np.testing.assert_allclose(waves["o2"]["a_minus"], b_out, rtol=1e-9, atol=1e-9)
 
+    projection_frequencies.clear()
+    sim.extract_port_waves_dft(
+        ports=ports,
+        frequencies=freqs,
+        mode_strategy="single",
+    )
+    assert projection_frequencies
+    np.testing.assert_allclose(
+        projection_frequencies,
+        np.full(len(projection_frequencies), np.median(freqs)),
+    )
+
 
 def test_get_S_matrix_modal_dft_keys_shapes_and_valid_mask(monkeypatch):
     sim = Simulation.__new__(Simulation)
@@ -1805,7 +1831,12 @@ def test_get_S_matrix_modal_dft_keys_shapes_and_valid_mask(monkeypatch):
     }
 
     def fake_extract(
-        self, ports, frequencies, min_incident_db=-40.0, return_power=True
+        self,
+        ports,
+        frequencies,
+        min_incident_db=-40.0,
+        return_power=True,
+        mode_strategy="per_frequency",
     ):
         assert np.allclose(frequencies, freqs)
         return waves
@@ -1864,9 +1895,14 @@ def test_get_S_matrix_modal_dft_respects_wave_selectors(monkeypatch):
     }
 
     def fake_extract(
-        self, ports, frequencies, min_incident_db=-40.0, return_power=True
+        self,
+        ports,
+        frequencies,
+        min_incident_db=-40.0,
+        return_power=True,
+        mode_strategy="per_frequency",
     ):
-        del ports, min_incident_db, return_power
+        del ports, min_incident_db, return_power, mode_strategy
         assert np.allclose(frequencies, freqs)
         return waves
 
@@ -1927,9 +1963,14 @@ def test_get_S_matrix_modal_dft_auto_selectors_prefer_band_dominant_source_wave(
     }
 
     def fake_extract(
-        self, ports, frequencies, min_incident_db=-40.0, return_power=True
+        self,
+        ports,
+        frequencies,
+        min_incident_db=-40.0,
+        return_power=True,
+        mode_strategy="per_frequency",
     ):
-        del ports, min_incident_db, return_power
+        del ports, min_incident_db, return_power, mode_strategy
         assert np.allclose(frequencies, freqs)
         return waves
 

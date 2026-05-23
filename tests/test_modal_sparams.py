@@ -50,6 +50,7 @@ def _run_modal_dft_column(
         frequencies,
         min_incident_db=-40.0,
         return_power=True,
+        mode_strategy="per_frequency",
     ):
         return waves
 
@@ -331,8 +332,9 @@ def test_dft_reference_monitor_normalizes_but_does_not_subtract_source_scatter()
         frequencies,
         min_incident_db=-40.0,
         return_power=True,
+        mode_strategy="per_frequency",
     ):
-        del self, ports, min_incident_db, return_power
+        del self, ports, min_incident_db, return_power, mode_strategy
         np.testing.assert_allclose(frequencies, freqs)
         return waves
 

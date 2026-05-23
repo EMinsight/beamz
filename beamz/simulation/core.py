@@ -3464,6 +3464,7 @@ class Simulation:
         frequencies,
         min_incident_db=-40.0,
         return_power=True,
+        mode_strategy="per_frequency",
     ):
         """Extract modal port waves from in-simulation DFT monitor accumulators."""
         del min_incident_db  # Used in get_S_matrix_modal_dft validity masking.
@@ -3478,6 +3479,13 @@ class Simulation:
             raise ValueError("frequencies must contain at least one value.")
         if np.any(freqs <= 0):
             raise ValueError("frequencies must be strictly positive.")
+        strategy = str(mode_strategy).lower()
+        if strategy not in {"per_frequency", "single", "single_frequency", "center"}:
+            raise ValueError(
+                f"Unsupported mode_strategy '{mode_strategy}'. "
+                "Use 'per_frequency' or 'single'."
+            )
+        single_freq = float(np.median(freqs))
 
         monitor_by_name = self._named_monitors()
         for spec in port_map.values():
@@ -3537,6 +3545,7 @@ class Simulation:
             last_valid_proj = None
             last_tracked_proj = None
             for idx, f in enumerate(freqs):
+                f_mode = float(f if strategy == "per_frequency" else single_freq)
                 seed_proj = last_tracked_proj
                 if seed_proj is None and sibling_seed_key is not None:
                     seed_proj = sibling_projection_cache.get((idx, sibling_seed_key))
@@ -3544,14 +3553,14 @@ class Simulation:
                     proj = self._build_port_projection(
                         spec,
                         main_monitor,
-                        float(f),
+                        f_mode,
                         projection_cache,
                     )
                 else:
                     proj = self._build_port_projection(
                         spec,
                         main_monitor,
-                        float(f),
+                        f_mode,
                         projection_cache,
                         previous_projection=seed_proj,
                     )
@@ -3632,6 +3641,7 @@ class Simulation:
                 last_valid_ref_proj = None
                 last_tracked_ref_proj = None
                 for idx, f in enumerate(freqs):
+                    f_mode = float(f if strategy == "per_frequency" else single_freq)
                     ref_seed_proj = last_tracked_ref_proj
                     if ref_seed_proj is None and sibling_ref_seed_key is not None:
                         ref_seed_proj = sibling_reference_projection_cache.get(
@@ -3641,14 +3651,14 @@ class Simulation:
                         proj = self._build_port_projection(
                             spec,
                             ref_monitor,
-                            float(f),
+                            f_mode,
                             projection_cache,
                         )
                     else:
                         proj = self._build_port_projection(
                             spec,
                             ref_monitor,
-                            float(f),
+                            f_mode,
                             projection_cache,
                             previous_projection=ref_seed_proj,
                         )
@@ -3727,6 +3737,7 @@ class Simulation:
         as_sax=True,
         return_diagnostics=True,
         min_incident_db=-40.0,
+        mode_strategy="per_frequency",
     ):
         """Broadband modal S extraction from in-simulation DFT monitor accumulators."""
         port_map = self._normalize_portspecs(ports)
@@ -3749,6 +3760,7 @@ class Simulation:
             frequencies=frequencies,
             min_incident_db=min_incident_db,
             return_power=True,
+            mode_strategy=mode_strategy,
         )
 
         output_ports = self._normalize_output_port_names(output_ports, port_map)
@@ -3811,6 +3823,7 @@ class Simulation:
             "frequencies": np.asarray(frequencies, dtype=float),
             "source_port": source_port,
             "output_ports": output_ports,
+            "mode_strategy": str(mode_strategy).lower(),
             "waves": waves,
             "P_in": p_in,
             "P_guided_out": p_guided_out,
