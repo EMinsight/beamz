@@ -1295,6 +1295,61 @@ def test_compile_3d_multifrequency_mode_source_uses_temporary_profile_sources(
     assert [item[2] for item in seen] == [None, None, None]
 
 
+def test_compile_3d_mode_source_reinitializes_missing_launch_dt(monkeypatch):
+    dt = 1e-15
+    source = ModeSource(
+        grid=SimpleNamespace(),
+        center=(0.0, 0.0, 0.0),
+        width=1.0,
+        height=1.0,
+        wavelength=LIGHT_SPEED / 200e12,
+        pol="te",
+        signal=np.ones(64, dtype=float),
+        direction="+x",
+    )
+    source._initialized = True
+    source._is_3d = True
+    source._grid_shape = (3, 3, 3)
+    source._resolution = 1.0
+    source._launch_dt = None
+    source._k_num_axis = None
+    source._omega_launch = 2.0 * np.pi * LIGHT_SPEED / source.wavelength
+    fields = SimpleNamespace(permittivity=jnp.ones((3, 3, 3), dtype=jnp.float32))
+    seen_dt: list[float | None] = []
+
+    def fake_initialize(self, permittivity, resolution, dt=None):
+        seen_dt.append(dt)
+        self._initialized = True
+        self._is_3d = True
+        self._grid_shape = tuple(np.asarray(permittivity).shape)
+        self._resolution = float(resolution)
+        self._launch_dt = None if dt is None else float(dt)
+        self._k_num_axis = 1.0
+        self._omega_launch = 2.0 * np.pi * LIGHT_SPEED / self.wavelength
+
+    def fake_compile(profile_src, *_args, **_kwargs):
+        assert profile_src is source
+        assert np.isclose(profile_src._launch_dt, dt)
+        assert profile_src._k_num_axis is not None
+        return ()
+
+    monkeypatch.setattr(ModeSource, "initialize", fake_initialize)
+    monkeypatch.setattr(source_compiler, "_compile_mode_source_3d", fake_compile)
+
+    specs = source_compiler._compile_mode_source(
+        source,
+        fields,
+        dt=dt,
+        num_steps=16,
+        t0=0.0,
+        resolution=1.0,
+        total_steps=64,
+    )
+
+    assert specs == ()
+    assert seen_dt == [dt]
+
+
 def test_compile_3d_mode_source_uses_discrete_phasor_residual_slabs():
     fields = SimpleNamespace(
         permittivity=jnp.ones((2, 2, 2)),

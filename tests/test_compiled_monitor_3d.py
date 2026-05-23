@@ -206,7 +206,7 @@ def test_compiled_monitor_3d_plane_sampling_matches_offline_record_fields(normal
         )
 
 
-def test_compiled_monitor_3d_crops_staggered_component_planes_to_common_shape():
+def test_compiled_monitor_3d_uses_full_canonical_analysis_plane():
     sim = _build_centered_straight_guide_sim_steps(
         ppw=6,
         axis="x",
