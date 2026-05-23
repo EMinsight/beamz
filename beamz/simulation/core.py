@@ -3815,9 +3815,71 @@ class Simulation:
                 "incident_wave": source_incident_selector,
                 "scattered_wave": source_scattered_selector,
             },
+            "monitor_flux_checks": self._modal_dft_flux_diagnostics(
+                port_map, monitor_by_name, waves, frequencies
+            ),
             "scattered_waves": scattered_waves,
         }
         return {"s_matrix": s_output, "diagnostics": diagnostics}
+
+    @staticmethod
+    def _resample_real_vector(freq_src, values_src, freq_dst):
+        freq_src = np.atleast_1d(np.asarray(freq_src, dtype=float))
+        values = np.atleast_1d(np.asarray(values_src, dtype=float))
+        freq_dst = np.atleast_1d(np.asarray(freq_dst, dtype=float))
+        if freq_src.size == 0 or values.size == 0:
+            return np.full(freq_dst.shape, np.nan, dtype=float)
+        n = min(freq_src.size, values.size)
+        freq_src = freq_src[:n]
+        values = values[:n]
+        if n == freq_dst.size and np.allclose(freq_src, freq_dst, rtol=1e-9, atol=0.0):
+            return values.astype(float, copy=True)
+        return np.interp(freq_dst, freq_src, values, left=np.nan, right=np.nan)
+
+    def _modal_dft_flux_diagnostics(self, port_map, monitor_by_name, waves, frequencies):
+        """Compare raw DFT flux monitors with modal overlap power."""
+
+        freqs = np.atleast_1d(np.asarray(frequencies, dtype=float))
+        diagnostics = {}
+        for name, spec in port_map.items():
+            wave = waves.get(name, {})
+            p_plus = np.asarray(wave.get("P_plus", []), dtype=float)
+            p_minus = np.asarray(wave.get("P_minus", []), dtype=float)
+            if p_plus.size != freqs.size:
+                p_plus = np.full(freqs.shape, np.nan, dtype=float)
+            if p_minus.size != freqs.size:
+                p_minus = np.full(freqs.shape, np.nan, dtype=float)
+            modal_sum = p_plus + p_minus
+            modal_net = p_plus - p_minus
+
+            def _flux_for_monitor(monitor_name):
+                monitor = monitor_by_name.get(monitor_name)
+                if monitor is None or not hasattr(monitor, "get_dft_flux"):
+                    return np.full(freqs.shape, np.nan, dtype=float)
+                try:
+                    flux = monitor.get_dft_flux()
+                    mon_freqs = monitor.get_dft_frequencies()
+                except ValueError:
+                    return np.full(freqs.shape, np.nan, dtype=float)
+                return self._resample_real_vector(mon_freqs, flux, freqs)
+
+            monitor_flux = _flux_for_monitor(spec.monitor_name)
+            entry = {
+                "monitor": spec.monitor_name,
+                "monitor_flux": monitor_flux,
+                "P_plus": p_plus,
+                "P_minus": p_minus,
+                "P_modal_sum": modal_sum,
+                "P_modal_net": modal_net,
+                "flux_minus_modal_net": monitor_flux - modal_net,
+                "abs_flux_minus_modal_sum": np.abs(monitor_flux) - modal_sum,
+            }
+            if spec.reference_monitor:
+                reference_flux = _flux_for_monitor(spec.reference_monitor)
+                entry["reference_monitor"] = spec.reference_monitor
+                entry["reference_monitor_flux"] = reference_flux
+            diagnostics[name] = entry
+        return diagnostics
 
     def extract_port_waves_cw(
         self,
