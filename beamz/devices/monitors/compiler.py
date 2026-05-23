@@ -440,6 +440,23 @@ def sample_compiled_monitor_plane_component_3d(
     return sampled.reshape(int(dim0), int(dim1))
 
 
+def _analysis_plane_sample_area(
+    coord0: np.ndarray,
+    coord1: np.ndarray,
+    fallback_step: float,
+) -> float:
+    def _axis_step(coord):
+        arr = np.asarray(coord, dtype=np.float64).reshape(-1)
+        if arr.size > 1:
+            diffs = np.diff(arr)
+            step = float(np.median(np.abs(diffs)))
+            if np.isfinite(step) and step > 0.0:
+                return step
+        return float(fallback_step)
+
+    return float(_axis_step(coord0) * _axis_step(coord1))
+
+
 def _crop_monitor_3d_interpolation(
     flat_idx: np.ndarray,
     weights: np.ndarray,
@@ -771,6 +788,17 @@ def compile_monitor_specs(
                     min_dim1,
                 )
                 interp_map[name] = (jnp.asarray(flat_idx), jnp.asarray(weights))
+            target0, target1 = monitor.get_analysis_plane_coords_3d(
+                dx=resolution,
+                dy=resolution,
+                dz=resolution,
+                field_shape=base_shape_3d,
+            )
+            power_scale = _analysis_plane_sample_area(
+                np.asarray(target0, dtype=np.float64)[:min_dim0],
+                np.asarray(target1, dtype=np.float64)[:min_dim1],
+                float(resolution),
+            )
 
             specs.append(
                 CompiledMonitorSpec(
@@ -779,7 +807,7 @@ def compile_monitor_specs(
                     is_3d=True,
                     record_interval=interval,
                     accumulate_power=bool(monitor.accumulate_power),
-                    power_scale=float(resolution * resolution),
+                    power_scale=float(power_scale),
                     normal_axis={"x": 0, "y": 1, "z": 2}.get(
                         str(getattr(monitor, "plane_normal", "z")).lower(), -1
                     ),

@@ -2104,6 +2104,19 @@ class Simulation:
             raise ValueError(f"Unsupported port axis {axis!r}.") from exc
 
     @staticmethod
+    def _analysis_plane_sample_area(coord0, coord1, fallback_step: float) -> float:
+        def _axis_step(coord):
+            arr = np.asarray(coord, dtype=np.float64).reshape(-1)
+            if arr.size > 1:
+                diffs = np.diff(arr)
+                step = float(np.median(np.abs(diffs)))
+                if np.isfinite(step) and step > 0.0:
+                    return step
+            return float(fallback_step)
+
+        return float(_axis_step(coord0) * _axis_step(coord1))
+
+    @staticmethod
     def _clamp_monitor_grid_index(idx, limit):
         if isinstance(idx, slice):
             start = 0 if idx.start is None else int(idx.start)
@@ -2456,6 +2469,12 @@ class Simulation:
         eps_profile, local_idx, dl = self._monitor_profile_slice(
             monitor, parts["axis"], mode_pad_cells
         )
+        if self.is_3d and analysis_coords0 is not None and analysis_coords1 is not None:
+            dl = self._analysis_plane_sample_area(
+                analysis_coords0,
+                analysis_coords1,
+                float(self.resolution),
+            )
         solver_direction = spec.direction
         basis_direction = solver_direction
         backward_direction = self._opposite_port_direction(spec.direction)
