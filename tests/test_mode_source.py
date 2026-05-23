@@ -27,7 +27,11 @@ from beamz import (
     um,
 )
 from beamz.devices.sources import mode as mode_module
-from beamz.devices.sources.solve import solve_modes
+from beamz.devices.sources.solve import (
+    ModeTupleType,
+    _remap_mode_tuple_to_global,
+    solve_modes,
+)
 from tests.utils import TEST_WAVELENGTH, compute_field_energy
 
 
@@ -103,7 +107,7 @@ def _profile_correlation(profile_a, profile_b):
 
 
 def _best_parity_residual(profile, axis):
-    arr = np.asarray(profile, dtype=float)
+    arr = np.real(np.asarray(profile))
     if arr.ndim < 2:
         return 0.0
     flipped = np.flip(arr, axis=axis)
@@ -2109,6 +2113,27 @@ class TestModeSourceDirectionality3D:
 @pytest.mark.component
 class TestModeSolver:
     """Direct tests of the mode solver function."""
+
+    def test_local_mode_components_are_remapped_to_global_axes(self):
+        """The solver adapter should expose global Cartesian component order."""
+        local_mode = ModeTupleType(
+            neff=2.0,
+            Ex=np.asarray([[1.0]]),
+            Ey=np.asarray([[2.0]]),
+            Ez=np.asarray([[3.0]]),
+            Hx=np.asarray([[4.0]]),
+            Hy=np.asarray([[5.0]]),
+            Hz=np.asarray([[6.0]]),
+        )
+
+        global_mode = _remap_mode_tuple_to_global(local_mode, (0, 2, 1))
+
+        assert np.asarray(global_mode.Ex).item() == 1.0
+        assert np.asarray(global_mode.Ey).item() == 3.0
+        assert np.asarray(global_mode.Ez).item() == 2.0
+        assert np.asarray(global_mode.Hx).item() == -4.0
+        assert np.asarray(global_mode.Hy).item() == -6.0
+        assert np.asarray(global_mode.Hz).item() == -5.0
 
     def test_solve_modes_returns_valid_neff(self, waveguide_domain):
         """solve_modes should return valid effective indices."""

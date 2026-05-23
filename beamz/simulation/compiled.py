@@ -2297,6 +2297,14 @@ class CompiledSimulation:
                     dtype=np.float64,
                 )
                 dev._dft_weight_sum = weight_sum
+                if spec.is_3d:
+                    dev._compiled_dft_shape_3d = (int(spec.min_dim0), int(spec.min_dim1))
+                    axis = str(getattr(dev, "plane_normal", "z")).lower()
+                    dev._compiled_dft_plane_axes = {
+                        "x": ("z", "y"),
+                        "y": ("z", "x"),
+                        "z": ("y", "x"),
+                    }.get(axis, ("y", "x"))
                 dev._dft_accum = {}
                 for comp_i, comp_name in enumerate(comp_names):
                     if comp_mask[comp_i] <= 0.0:

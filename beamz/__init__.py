@@ -69,11 +69,14 @@ from beamz.visual.helpers import (
     get_si_scale_and_label,
 )
 from beamz.visual.mpl import (
+    mode_field_component_pairs,
+    plot_mode_fields,
     plot_simulation_field,
     plot_simulation_permittivity,
     plot_source_signal,
     plot_source_spectrum,
     plot_tidy3d_cross_sections,
+    plot_tidy3d_dft_field,
     plot_tidy3d_field_frame,
     plot_tidy3d_mode_components,
 )
@@ -129,7 +132,10 @@ _exports = {
     "poynting_vector": poynting_vector,
     "plot_simulation_field": plot_simulation_field,
     "plot_simulation_permittivity": plot_simulation_permittivity,
+    "mode_field_component_pairs": mode_field_component_pairs,
+    "plot_mode_fields": plot_mode_fields,
     "plot_tidy3d_cross_sections": plot_tidy3d_cross_sections,
+    "plot_tidy3d_dft_field": plot_tidy3d_dft_field,
     "plot_tidy3d_field_frame": plot_tidy3d_field_frame,
     "plot_tidy3d_mode_components": plot_tidy3d_mode_components,
     "CompiledRunConfig": CompiledRunConfig,

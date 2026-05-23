@@ -477,6 +477,9 @@ def plot_tidy3d_cross_sections(
     xz_markers=(),
     figsize=(11, 4),
     width_ratios=None,
+    xlim=None,
+    ylim=None,
+    zlim=None,
     show=True,
 ):
     """Plot Tidy3D-like ``xy`` and ``xz`` permittivity cross sections.
@@ -507,19 +510,28 @@ def plot_tidy3d_cross_sections(
         substrate_permittivity=substrate_permittivity,
     )
     if substrate_z is not None and da.ndim == 3:
-        sub_index = _nearest_coord_index(da.coords["z"], float(substrate_z))
-        xy_sub = _material_category_array(
-            da.isel(z=sub_index).values,
-            core_permittivity=core_permittivity,
-            substrate_permittivity=substrate_permittivity,
-        )
-        xy = np.maximum(xy, xy_sub)
+        # Tidy3D displays material boxes inclusively at their upper boundary.
+        # For a slice on the substrate top, show the substrate across the xy
+        # plane while preserving any higher-index structure in the selected
+        # slice. Keep this to the interface itself so silica does not appear
+        # above the waveguide bottom in nearby slices.
+        z_tol = 0.5 * float(getattr(grid, "resolution", 0.0) or 0.0)
+        if abs(float(z) - float(substrate_z)) <= z_tol:
+            xy = np.where(xy >= 2, xy, 1)
 
     xz = _material_category_array(
         da.isel(y=y_index).values,
         core_permittivity=core_permittivity,
         substrate_permittivity=substrate_permittivity,
     )
+    if substrate_z is not None and da.ndim == 3:
+        z_coords = np.asarray(da.coords["z"], dtype=float)
+        above_substrate = z_coords > float(substrate_z)
+        if np.any(above_substrate):
+            xz = np.where(above_substrate[:, None] & (xz == 1), 0, xz)
+        substrate_mask = z_coords <= float(substrate_z)
+        if np.any(substrate_mask):
+            xz = np.where(substrate_mask[:, None] & (xz == 0), 1, xz)
 
     cmap, norm = _tidy3d_material_cmap()
     if width_ratios is None:
@@ -590,12 +602,32 @@ def plot_tidy3d_cross_sections(
     axes[1].set_ylabel("z (um)")
     for ax in axes:
         ax.set_xlim(xy_extent[0], xy_extent[1])
+    if xlim is not None:
+        axes[0].set_xlim(*xlim)
+        axes[1].set_xlim(*xlim)
+    if ylim is not None:
+        axes[0].set_ylim(*ylim)
+    if zlim is not None:
+        axes[1].set_ylim(*zlim)
     fig.tight_layout()
     _maybe_show(fig, show=show)
     return fig, axes
 
 
-def plot_tidy3d_mode_components(
+def mode_field_component_pairs(
+    components=("Ey", "Ez"),
+    *,
+    direction="-x",
+    display_components=None,
+):
+    """Return ``(display_label, solver_component)`` pairs for physical mode fields."""
+    if display_components is not None:
+        return list(display_components)
+    del direction
+    return [(name, name) for name in components]
+
+
+def plot_mode_fields(
     grid,
     *,
     plane_x,
@@ -611,7 +643,7 @@ def plot_tidy3d_mode_components(
     figsize=(12, 12),
     show=True,
 ):
-    """Solve and plot Tidy3D-like mode field component grids."""
+    """Solve and plot mode field components using physical Cartesian labels."""
     from beamz.devices.sources.solve import solve_modes
 
     plt = _pyplot()
@@ -630,8 +662,11 @@ def plot_tidy3d_mode_components(
         return_fields=True,
     )
     comp_map = {"Ex": 0, "Ey": 1, "Ez": 2}
-    if display_components is None:
-        display_components = [(name, name) for name in components]
+    display_components = mode_field_component_pairs(
+        components,
+        direction=direction,
+        display_components=display_components,
+    )
     if origin is None:
         design = getattr(grid, "design", None)
         origin = (
@@ -676,9 +711,21 @@ def plot_tidy3d_mode_components(
             ax.set_title(f"{display_name}, mode_index={mode_index}", fontsize=9)
             ax.set_xlabel("y (um)")
             ax.set_ylabel("z (um)")
-            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.02)
+            fig.colorbar(
+                im,
+                ax=ax,
+                fraction=0.046,
+                pad=0.02,
+                extend="both",
+                label=f"|{display_name}|",
+            )
     _maybe_show(fig, show=show)
     return fig, axes, neffs
+
+
+def plot_tidy3d_mode_components(*args, **kwargs):
+    """Compatibility wrapper for :func:`plot_mode_fields`."""
+    return plot_mode_fields(*args, **kwargs)
 
 
 def plot_tidy3d_field_frame(
@@ -746,6 +793,179 @@ def plot_tidy3d_field_frame(
         ax.set_title(f"cross section at z={z_value / µm:.2f} (um)")
     else:
         ax.set_title(f"cross section at {plane}")
+    fig.tight_layout()
+    _maybe_show(fig, show=show)
+    return fig, ax
+
+
+def plot_tidy3d_dft_field(
+    simulation,
+    monitor,
+    *,
+    field="Ey",
+    display_field=None,
+    frequency=None,
+    frequency_index=0,
+    val="real",
+    origin=None,
+    percentile=99.5,
+    ax=None,
+    figsize=(6, 4),
+    cmap="RdBu",
+    overlay_core=True,
+    core_permittivity=None,
+    xlim=None,
+    ylim=None,
+    show=True,
+):
+    """Plot a Tidy3D-like frequency-domain field from a DFT plane monitor."""
+
+    if not getattr(monitor, "is_3d", False):
+        raise ValueError("plot_tidy3d_dft_field expects a 3D plane monitor.")
+    axis = str(getattr(monitor, "plane_normal", "z")).lower()
+    if axis != "z":
+        raise ValueError("Only z-normal in-plane DFT field plots are currently supported.")
+
+    freqs = np.asarray(monitor.get_dft_frequencies(), dtype=float)
+    if freqs.size == 0:
+        raise ValueError(f"Monitor '{getattr(monitor, 'name', None)}' has no DFT frequencies.")
+    if frequency is None:
+        f_idx = int(frequency_index)
+    else:
+        f_idx = int(np.argmin(np.abs(freqs - float(frequency))))
+    f_idx = int(np.clip(f_idx, 0, freqs.size - 1))
+
+    dft = np.asarray(monitor.get_dft_component(field), dtype=np.complex128)
+    plane_shape = getattr(monitor, "_compiled_dft_shape_3d", None)
+    if plane_shape is None:
+        fields = getattr(simulation, "fields", None)
+        base_shape = tuple(int(v) for v in np.asarray(fields.permittivity).shape)
+        target0, target1 = monitor.get_analysis_plane_coords_3d(
+            dx=float(simulation.resolution),
+            dy=float(simulation.resolution),
+            dz=float(simulation.resolution),
+            field_shape=base_shape,
+        )
+        plane_shape = (int(target0.size), int(target1.size))
+    else:
+        fields = getattr(simulation, "fields", None)
+        base_shape = tuple(int(v) for v in np.asarray(fields.permittivity).shape)
+        target0, target1 = monitor.get_analysis_plane_coords_3d(
+            dx=float(simulation.resolution),
+            dy=float(simulation.resolution),
+            dz=float(simulation.resolution),
+            field_shape=base_shape,
+        )
+        target0 = np.asarray(target0, dtype=float)[: int(plane_shape[0])]
+        target1 = np.asarray(target1, dtype=float)[: int(plane_shape[1])]
+
+    arr = dft[f_idx].reshape(tuple(int(v) for v in plane_shape))
+    val_key = str(val).lower()
+    if val_key in {"real", "re"}:
+        plot_arr = np.real(arr)
+        label_prefix = "Re"
+    elif val_key in {"imag", "imaginary", "im"}:
+        plot_arr = np.imag(arr)
+        label_prefix = "Im"
+    elif val_key in {"abs", "magnitude"}:
+        plot_arr = np.abs(arr)
+        label_prefix = "|"
+    else:
+        raise ValueError("val must be one of 'real', 'imag', or 'abs'.")
+
+    design = getattr(simulation, "design", None)
+    if origin is None:
+        origin = (
+            0.5 * float(getattr(design, "width", 0.0)),
+            0.5 * float(getattr(design, "height", 0.0)),
+            0.0,
+        )
+    ox, oy, oz = (float(v) for v in origin)
+    x_coords = np.asarray(target1, dtype=float)
+    y_coords = np.asarray(target0, dtype=float)
+    dx = float(np.mean(np.diff(x_coords))) if x_coords.size > 1 else float(simulation.resolution)
+    dy = float(np.mean(np.diff(y_coords))) if y_coords.size > 1 else float(simulation.resolution)
+    extent = [
+        (float(x_coords[0]) - 0.5 * dx - ox) / µm,
+        (float(x_coords[-1]) + 0.5 * dx - ox) / µm,
+        (float(y_coords[0]) - 0.5 * dy - oy) / µm,
+        (float(y_coords[-1]) + 0.5 * dy - oy) / µm,
+    ]
+
+    vmax = np.nanpercentile(np.abs(plot_arr), float(percentile))
+    vmax = vmax if np.isfinite(vmax) and vmax > 0 else 1.0
+    fig, ax = _figure_axes(ax, figsize=figsize)
+    if val_key in {"abs", "magnitude"}:
+        im = ax.imshow(
+            plot_arr,
+            origin="lower",
+            extent=extent,
+            cmap=cmap,
+            vmin=0.0,
+            vmax=vmax,
+            aspect="equal",
+            interpolation="nearest",
+        )
+    else:
+        im = ax.imshow(
+            plot_arr,
+            origin="lower",
+            extent=extent,
+            cmap=cmap,
+            vmin=-vmax,
+            vmax=vmax,
+            aspect="equal",
+            interpolation="nearest",
+        )
+
+    if overlay_core:
+        eps = np.asarray(getattr(getattr(simulation, "fields", None), "permittivity", ()))
+        if eps.ndim == 3:
+            z_idx = int(
+                np.clip(
+                    round(float(getattr(monitor, "plane_position", 0.0)) / float(simulation.resolution)),
+                    0,
+                    eps.shape[0] - 1,
+                )
+            )
+            eps_xy = eps[z_idx]
+            if core_permittivity is None:
+                finite = eps_xy[np.isfinite(eps_xy)]
+                core_permittivity = float(np.nanmax(finite)) if finite.size else None
+            if core_permittivity is not None:
+                core = eps_xy >= 0.5 * float(core_permittivity)
+                if np.any(core):
+                    ax.imshow(
+                        np.where(core, 1.0, np.nan),
+                        origin="lower",
+                        extent=[
+                            (0.0 - ox) / µm,
+                            (float(getattr(design, "width", eps_xy.shape[1] * simulation.resolution)) - ox) / µm,
+                            (0.0 - oy) / µm,
+                            (float(getattr(design, "height", eps_xy.shape[0] * simulation.resolution)) - oy) / µm,
+                        ],
+                        cmap="Greys",
+                        vmin=0.0,
+                        vmax=1.0,
+                        alpha=0.28,
+                        aspect="equal",
+                        interpolation="nearest",
+                    )
+
+    label = display_field or field
+    if label_prefix == "|":
+        cbar_label = f"|{label}|"
+    else:
+        cbar_label = f"{label_prefix}({label})"
+    fig.colorbar(im, ax=ax, label=cbar_label, extend="both" if val_key != "abs" else "max")
+    ax.set_xlabel("x (um)")
+    ax.set_ylabel("y (um)")
+    z_value = float(getattr(monitor, "plane_position", 0.0)) - oz
+    ax.set_title(f"cross section at z={z_value / µm:.2f} (um)")
+    if xlim is not None:
+        ax.set_xlim(*xlim)
+    if ylim is not None:
+        ax.set_ylim(*ylim)
     fig.tight_layout()
     _maybe_show(fig, show=show)
     return fig, ax
@@ -1517,8 +1737,10 @@ def save_snapshot_video(
 __all__ = [
     "animate_monitor_fields",
     "get_twilight_zero_cmap",
+    "mode_field_component_pairs",
     "plot_design",
     "plot_grid",
+    "plot_mode_fields",
     "plot_mode_permittivity",
     "plot_mode_profile",
     "plot_monitor_field",
@@ -1530,6 +1752,7 @@ __all__ = [
     "plot_source_signal",
     "plot_source_spectrum",
     "plot_tidy3d_cross_sections",
+    "plot_tidy3d_dft_field",
     "plot_tidy3d_field_frame",
     "plot_tidy3d_mode_components",
     "resolve_cmap_limits",

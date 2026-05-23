@@ -12,6 +12,7 @@ from beamz import (
     Monitor,
     Rectangle,
     Simulation,
+    mode_field_component_pairs,
     plot_tidy3d_cross_sections,
     plot_tidy3d_field_frame,
     plot_signal,
@@ -228,6 +229,19 @@ def test_plot_signal_returns_matplotlib_handles():
     assert ax.get_title() == "Signal"
 
 
+def test_mode_field_component_pairs_are_physical_labels():
+    assert mode_field_component_pairs(("Ey", "Ez"), direction="-x") == [
+        ("Ey", "Ey"),
+        ("Ez", "Ez"),
+    ]
+    assert mode_field_component_pairs(("Ey", "Ez"), direction="+y") == [
+        ("Ey", "Ey"),
+        ("Ez", "Ez"),
+    ]
+    explicit = [("E major", "Ez")]
+    assert mode_field_component_pairs(display_components=explicit) == explicit
+
+
 def test_simulation_results_show_uses_stored_snapshots():
     design = Design(width=2 * um, height=1 * um, material=Material(1.0))
     sim = Simulation(
@@ -330,7 +344,7 @@ def test_tidy3d_cross_sections_plot_grid_slices():
         z=0.5 * um,
         y=0.5 * um,
         origin=(1 * um, 0.5 * um, 0.5 * um),
-        substrate_z=0.25 * um,
+        substrate_z=0.5 * um,
         pml_thickness=0.25 * um,
         xy_markers=({"x": 0.5, "span": (-0.4, 0.4), "color": "orange"},),
         show=False,
@@ -340,6 +354,8 @@ def test_tidy3d_cross_sections_plot_grid_slices():
     assert len(axes) == 2
     assert axes[0].get_title() == "cross section at z=0.00 (um)"
     assert axes[1].get_title() == "cross section at y=0.00 (um)"
+    xy = np.asarray(axes[0].images[0].get_array())
+    assert np.count_nonzero(xy == 1) > np.count_nonzero(xy == 0)
 
 
 def test_tidy3d_field_frame_uses_xarray_results():

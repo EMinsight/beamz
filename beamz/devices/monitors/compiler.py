@@ -250,7 +250,9 @@ def compile_batched_monitor_data(
         hz_interp_weights=_pad_stack(all_weights["Hz"], np.float32),
         valid_mask=jnp.array(valid),
         normal_axes=jnp.array([int(s.normal_axis) for s in specs_3d], dtype=jnp.int32),
-        normal_signs=jnp.array([float(s.normal_sign) for s in specs_3d], dtype=jnp.float32),
+        normal_signs=jnp.array(
+            [float(s.normal_sign) for s in specs_3d], dtype=jnp.float32
+        ),
         freq_enabled=jnp.array([bool(s.accumulate_frequency) for s in specs_3d]),
         freq_record_intervals=jnp.array(
             [max(1, int(s.freq_record_interval)) for s in specs_3d], dtype=jnp.int32
@@ -436,6 +438,22 @@ def sample_compiled_monitor_plane_component_3d(
     w = np.asarray(weights, dtype=np.float32).reshape(-1, 8)
     sampled = np.sum(flat[idx] * w.astype(np.complex128), axis=1)
     return sampled.reshape(int(dim0), int(dim1))
+
+
+def _crop_monitor_3d_interpolation(
+    flat_idx: np.ndarray,
+    weights: np.ndarray,
+    dim0: int,
+    dim1: int,
+    target_dim0: int,
+    target_dim1: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Crop a component interpolation plan to the common monitor-plane shape."""
+    flat_arr = np.asarray(flat_idx, dtype=np.int32).reshape(int(dim0), int(dim1), 8)
+    weight_arr = np.asarray(weights, dtype=np.float32).reshape(int(dim0), int(dim1), 8)
+    flat_arr = flat_arr[: int(target_dim0), : int(target_dim1), :]
+    weight_arr = weight_arr[: int(target_dim0), : int(target_dim1), :]
+    return flat_arr.reshape(-1, 8), weight_arr.reshape(-1, 8)
 
 
 def _monitor_normal_2d(monitor: Monitor, resolution: float) -> tuple[int, float]:
@@ -729,6 +747,7 @@ def compile_monitor_specs(
                 shape_3d,
             )
             interp_map = {}
+            interp_dims = {}
             for name, shape in shape_3d.items():
                 flat_idx, weights, dim0, dim1 = _compile_monitor_3d_interpolation(
                     monitor,
@@ -737,9 +756,21 @@ def compile_monitor_specs(
                     base_shape_3d,
                     shape,
                 )
-                interp_map[name] = (jnp.asarray(flat_idx), jnp.asarray(weights))
+                interp_map[name] = (flat_idx, weights)
+                interp_dims[name] = (dim0, dim1)
                 min_dim0 = min(min_dim0, dim0)
                 min_dim1 = min(min_dim1, dim1)
+            for name, (flat_idx, weights) in interp_map.items():
+                dim0, dim1 = interp_dims[name]
+                flat_idx, weights = _crop_monitor_3d_interpolation(
+                    flat_idx,
+                    weights,
+                    dim0,
+                    dim1,
+                    min_dim0,
+                    min_dim1,
+                )
+                interp_map[name] = (jnp.asarray(flat_idx), jnp.asarray(weights))
 
             specs.append(
                 CompiledMonitorSpec(

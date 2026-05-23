@@ -26,6 +26,7 @@ from beamz.devices.sources.compiler import (
     _compile_mode_source_3d,
     _sample_waveform,
 )
+from beamz.devices.sources.mode import _analytic_signal_quadrature
 from beamz.simulation.boundaries import initialize_full_pec_3d_state
 from beamz.simulation.compiled import (
     CompiledRunConfig,
@@ -1196,9 +1197,16 @@ def test_compile_mode_source_builds_e_and_h_specs():
     assert np.isfinite(np.asarray(sim.fields.Ez)).all()
 
 
-def test_compile_3d_mode_source_scales_e_terms_by_component_eps():
+def test_analytic_signal_quadrature_matches_periodic_sine():
+    phase = 2.0 * np.pi * 5.0 * np.arange(64, dtype=float) / 64.0
+    quadrature = _analytic_signal_quadrature(np.cos(phase))
+
+    np.testing.assert_allclose(quadrature, np.sin(phase), atol=1e-12, rtol=1e-12)
+
+
+def test_compile_3d_mode_source_uses_discrete_phasor_residual_slabs():
     fields = SimpleNamespace(
-        permittivity=jnp.full((2, 2, 2), 99.0),
+        permittivity=jnp.ones((2, 2, 2)),
         permeability=jnp.ones((2, 2, 2)),
         Ex=jnp.zeros((2, 2, 1)),
         Ey=jnp.zeros((2, 1, 2)),
@@ -1210,41 +1218,64 @@ def test_compile_3d_mode_source_scales_e_terms_by_component_eps():
         eps_y=jnp.full((2, 1, 2), 3.0),
         eps_z=jnp.full((1, 2, 2), 4.0),
     )
-    one = np.ones((1, 1, 1), dtype=np.float32)
+
+    def h_delta(_fields, *, dt):
+        del _fields, dt
+        return {
+            "Hx": np.zeros((1, 1, 2), dtype=np.float32),
+            "Hy": np.asarray([[[1.0 + 2.0j], [0.0]]], dtype=np.complex128),
+            "Hz": np.zeros((2, 1, 1), dtype=np.float32),
+        }
+
+    def e_delta(_fields, *, dt):
+        del _fields, dt
+        return {
+            "Ex": np.asarray(
+                [[[0.0], [3.0 - 4.0j]], [[0.0], [0.0]]],
+                dtype=np.complex128,
+            ),
+            "Ey": np.zeros((2, 1, 2), dtype=np.float32),
+            "Ez": np.zeros((1, 2, 2), dtype=np.float32),
+        }
+
     source = SimpleNamespace(
         _axis="z",
         pol="te",
         _direction_sign=1.0,
-        _Ex_profile=one,
-        _Ey_profile=one,
-        _Ez_profile=None,
-        _Hx_profile=one,
-        _Hy_profile=one,
-        _Hz_profile=None,
-        _Ex_indices=(slice(0, 1), slice(0, 1), slice(0, 1)),
-        _Ey_indices=(slice(0, 1), slice(0, 1), slice(0, 1)),
-        _Ez_indices=None,
-        _Hx_indices=(slice(0, 1), slice(0, 1), slice(0, 1)),
-        _Hy_indices=(slice(0, 1), slice(0, 1), slice(0, 1)),
-        _Hz_indices=None,
+        _compute_discrete_3d_h_phasor_delta=h_delta,
+        _compute_discrete_3d_e_phasor_delta=e_delta,
     )
+    waveform = jnp.asarray([2.0, 3.0], dtype=jnp.float32)
+    quadrature = jnp.asarray([5.0, 7.0], dtype=jnp.float32)
 
     specs = _compile_mode_source_3d(
         source,
         fields,
-        dt=5.0,
+        dt=0.25,
         resolution=7.0,
-        h_waveform=jnp.ones((1,), dtype=jnp.float32),
-        e_waveform=jnp.ones((1,), dtype=jnp.float32),
+        h_waveform=waveform,
+        e_waveform=waveform,
+        h_quadrature_waveform=quadrature,
+        e_quadrature_waveform=quadrature,
+        t0=1.0,
     )
-    e_specs = {spec.component: spec for spec in specs if spec.timing == "e"}
 
-    assert np.asarray(e_specs["Ex"].coeff).item() == pytest.approx(
-        -5.0 / (EPS_0 * 2.0 * 7.0)
-    )
-    assert np.asarray(e_specs["Ey"].coeff).item() == pytest.approx(
-        5.0 / (EPS_0 * 3.0 * 7.0)
-    )
+    hy_specs = [spec for spec in specs if spec.component == "Hy"]
+    ex_specs = [spec for spec in specs if spec.component == "Ex"]
+    assert len(hy_specs) == 2
+    assert len(ex_specs) == 2
+    assert hy_specs[0].timing == "h"
+    assert hy_specs[0].slab_starts == (0, 0, 0)
+    assert hy_specs[0].slab_sizes == (1, 1, 1)
+    np.testing.assert_allclose(np.asarray(hy_specs[0].coeff).reshape(()), 1.0)
+    np.testing.assert_allclose(np.asarray(hy_specs[1].coeff).reshape(()), -2.0)
+    assert ex_specs[0].timing == "e"
+    assert ex_specs[0].slab_starts == (0, 1, 0)
+    assert ex_specs[0].slab_sizes == (1, 1, 1)
+    np.testing.assert_allclose(np.asarray(ex_specs[0].coeff).reshape(()), 3.0)
+    np.testing.assert_allclose(np.asarray(ex_specs[1].coeff).reshape(()), 4.0)
+    np.testing.assert_allclose(np.asarray(hy_specs[0].waveform), np.asarray(waveform))
+    np.testing.assert_allclose(np.asarray(hy_specs[1].waveform), np.asarray(quadrature))
 
 
 def test_cache_reuse_across_equal_chunks(small_sim_params):
