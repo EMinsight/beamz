@@ -114,4 +114,4 @@ sim = Simulation(
 sim.show()
 
 # Stream snapshots using the matplotlib-backed live view.
-# sim.run(animate_live="Ez", animation_interval=15)
+# sim.animate("Ez", animation_interval=15)

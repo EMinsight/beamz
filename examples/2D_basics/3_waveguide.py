@@ -59,8 +59,8 @@ sim = Simulation(
     time=time_steps,
     resolution=DX,
 )
-sim.run(
-    animate_live="Ez",
+sim.animate(
+    "Ez",
     animation_interval=20,
     cmap="twilight_zero",
     clean_visualization=True,

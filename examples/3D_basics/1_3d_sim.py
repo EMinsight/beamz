@@ -63,4 +63,4 @@ sim = Simulation(
 sim.show()
 
 # The simulation can stream fields with the matplotlib-backed live view.
-# sim.run(animate_live="Hy", animation_interval=2)
+# sim.animate("Hy", animation_interval=2)

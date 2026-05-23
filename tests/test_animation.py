@@ -223,3 +223,28 @@ def test_simulation_run_dynamic_live_cmap_limits_are_default(monkeypatch):
 
     assert rendered_limits == [(None, None), (None, None), (None, None)]
     plt.close("all")
+
+
+def test_simulation_animation_convenience_methods_forward_kwargs(monkeypatch):
+    calls = []
+    sim = _make_snapshot_sim()
+
+    def fake_run(**kwargs):
+        calls.append(kwargs)
+        return "result"
+
+    monkeypatch.setattr(sim, "run", fake_run)
+
+    assert sim.animate("Hy", animation_interval=2, cmap_limits=(-1.0, 1.0)) == "result"
+    assert sim.save_video("out.mp4", field="Ez", video_fps=24) == "result"
+
+    assert calls[0] == {
+        "animation_interval": 2,
+        "cmap_limits": (-1.0, 1.0),
+        "animate_live": "Hy",
+    }
+    assert calls[1] == {
+        "video_fps": 24,
+        "save_video": "out.mp4",
+        "video_field": "Ez",
+    }

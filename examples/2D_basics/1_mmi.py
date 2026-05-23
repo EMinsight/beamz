@@ -108,4 +108,4 @@ sim = Simulation(
     time=time_steps,
     resolution=DX,
 )
-sim.run(animate_live="Ez", animation_interval=15, clean_visualization=True)
+sim.animate("Ez", animation_interval=15, clean_visualization=True)

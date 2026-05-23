@@ -61,10 +61,10 @@ sim = Simulation(
     time=time_steps,
     resolution=DX,
 )
-sim.run(
-    animate_live="Ez",
+sim.save_video(
+    "resring.mp4",
+    field="Ez",
     animation_interval=15,
-    save_video="resring.mp4",
     video_fps=40,
     cmap="twilight_zero",
 )
