@@ -44,7 +44,8 @@ sim = Simulation(
 
 source_ds = source.to_xarray(t=time_steps)
 source_ds["signal"].plot()
+plt.show()
 
-results = sim.run(save_fields=["Ez"], field_subsample=4, progress=False)
-results.fields["Ez"].isel(t=-1).plot(x="x", y="y", cmap="RdBu")
+results = sim.run(save_fields=["Ez"], field_subsample=1, progress=False)
+results.fields["Ez"].isel(t=10).plot(x="x", y="y", cmap="RdBu")
 plt.show()
