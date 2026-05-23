@@ -3172,21 +3172,103 @@ class Simulation:
         mode_matrix,
         coeff,
     ):
+        return Simulation._modal_projection_reconstruction_diagnostics_from_matrix(
+            field_vec,
+            mode_matrix,
+            coeff,
+        )["residual"]
+
+    @staticmethod
+    def _modal_projection_reconstruction_diagnostics_from_matrix(
+        field_vec,
+        mode_matrix,
+        coeff,
+        component_slices=(),
+    ):
         matrix = np.asarray(mode_matrix, dtype=np.complex128)
+        empty = {
+            "residual": np.nan,
+            "residual_e": np.nan,
+            "residual_h": np.nan,
+            "residual_balanced": np.nan,
+            "e_scale": np.nan + 0.0j,
+            "h_scale": np.nan + 0.0j,
+        }
         if matrix.ndim != 2 or matrix.shape[0] <= 0 or matrix.shape[1] <= 0:
-            return np.nan
+            return empty
         field = np.asarray(field_vec, dtype=np.complex128).reshape(-1)
         coeff_arr = np.asarray(coeff, dtype=np.complex128).reshape(-1)
         n = int(min(field.size, matrix.shape[0]))
         m = int(min(coeff_arr.size, matrix.shape[1]))
         if n <= 0 or m <= 0:
-            return np.nan
+            return empty
         target = field[:n]
         recon = matrix[:n, :m] @ coeff_arr[:m]
-        denom = float(np.linalg.norm(target))
-        if denom <= 1e-30 or not np.isfinite(denom):
-            return np.nan
-        return float(np.linalg.norm(target - recon) / denom)
+
+        def _residual(mask):
+            if mask.size <= 0:
+                return np.nan
+            denom = float(np.linalg.norm(target[mask]))
+            if denom <= 1e-30 or not np.isfinite(denom):
+                return np.nan
+            return float(np.linalg.norm(target[mask] - recon[mask]) / denom)
+
+        def _scale_and_residual(mask):
+            if mask.size <= 0:
+                return np.nan + 0.0j, np.nan
+            target_part = target[mask]
+            recon_part = recon[mask]
+            denom = np.vdot(recon_part, recon_part)
+            if abs(denom) <= 1e-30 or not np.isfinite(abs(denom)):
+                return np.nan + 0.0j, np.nan
+            scale = np.vdot(recon_part, target_part) / denom
+            target_norm = float(np.linalg.norm(target_part))
+            if target_norm <= 1e-30 or not np.isfinite(target_norm):
+                return scale, np.nan
+            residual = float(
+                np.linalg.norm(target_part - scale * recon_part) / target_norm
+            )
+            return np.complex128(scale), residual
+
+        all_mask = np.arange(n, dtype=int)
+        e_parts = []
+        h_parts = []
+        for name, start, stop in component_slices:
+            lo = max(0, min(int(start), n))
+            hi = max(lo, min(int(stop), n))
+            if hi <= lo:
+                continue
+            part = np.arange(lo, hi, dtype=int)
+            if str(name).startswith("E"):
+                e_parts.append(part)
+            elif str(name).startswith("H"):
+                h_parts.append(part)
+        e_mask = np.concatenate(e_parts) if e_parts else np.asarray([], dtype=int)
+        h_mask = np.concatenate(h_parts) if h_parts else np.asarray([], dtype=int)
+
+        e_scale, e_resid_scaled = _scale_and_residual(e_mask)
+        h_scale, h_resid_scaled = _scale_and_residual(h_mask)
+        balanced_recon = recon.copy()
+        if e_mask.size and np.isfinite(abs(e_scale)):
+            balanced_recon[e_mask] *= e_scale
+        if h_mask.size and np.isfinite(abs(h_scale)):
+            balanced_recon[h_mask] *= h_scale
+        balanced_denom = float(np.linalg.norm(target))
+        balanced = (
+            float(np.linalg.norm(target - balanced_recon) / balanced_denom)
+            if balanced_denom > 1e-30 and np.isfinite(balanced_denom)
+            else np.nan
+        )
+        return {
+            "residual": _residual(all_mask),
+            "residual_e": _residual(e_mask),
+            "residual_h": _residual(h_mask),
+            "residual_balanced": balanced,
+            "residual_e_scaled": e_resid_scaled,
+            "residual_h_scaled": h_resid_scaled,
+            "e_scale": e_scale,
+            "h_scale": h_scale,
+        }
 
     @staticmethod
     def _project_modal_coefficients_3d(
@@ -3279,7 +3361,7 @@ class Simulation:
         """Project one 3D monitor field onto a coupled forward/backward mode set."""
         projections = tuple(projections)
         if not projections:
-            return [], np.nan, np.nan
+            return [], np.nan, np.nan, {}
 
         first = projections[0]
         components = tuple(first.get("components", ()))
@@ -3356,12 +3438,17 @@ class Simulation:
         else:
             coeff = np.linalg.pinv(system) @ rhs
 
-        field_vec = np.concatenate(
-            [
-                np.asarray(field_components[name], dtype=np.complex128).reshape(-1)
-                for name in components
-            ]
-        )
+        field_parts = [
+            np.asarray(field_components[name], dtype=np.complex128).reshape(-1)
+            for name in components
+        ]
+        component_slices = []
+        offset = 0
+        for name, part in zip(components, field_parts):
+            next_offset = offset + int(part.size)
+            component_slices.append((name, offset, next_offset))
+            offset = next_offset
+        field_vec = np.concatenate(field_parts)
         mode_matrix = np.column_stack(
             [
                 np.concatenate(
@@ -3373,11 +3460,15 @@ class Simulation:
                 for mode in basis
             ]
         )
-        residual = Simulation._modal_projection_reconstruction_residual_from_matrix(
-            field_vec,
-            mode_matrix,
-            coeff,
+        diagnostics = (
+            Simulation._modal_projection_reconstruction_diagnostics_from_matrix(
+                field_vec,
+                mode_matrix,
+                coeff,
+                component_slices=component_slices,
+            )
         )
+        residual = diagnostics["residual"]
         return (
             [
                 (np.complex128(coeff[2 * idx]), np.complex128(coeff[2 * idx + 1]))
@@ -3385,6 +3476,7 @@ class Simulation:
             ],
             residual,
             cond,
+            diagnostics,
         )
 
     def extract_port_waves(
@@ -3778,9 +3870,11 @@ class Simulation:
                 raw_field_components,
                 proj,
             )
-            coeffs, residual, group_cond = self._project_modal_coefficients_3d_group(
-                field_components,
-                projections,
+            coeffs, residual, group_cond, projection_diag = (
+                self._project_modal_coefficients_3d_group(
+                    field_components,
+                    projections,
+                )
             )
             cond_values = [
                 float(projection.get("condition_number", np.nan))
@@ -3797,6 +3891,7 @@ class Simulation:
                 residual,
                 cond,
                 float(proj.get("mode_neff", np.nan)),
+                projection_diag,
             )
 
         for spec in port_map.values():
@@ -3828,6 +3923,11 @@ class Simulation:
             cond_main = np.zeros(freqs.size, dtype=float)
             neff_main = np.full(freqs.size, np.nan, dtype=float)
             residual_main = np.full(freqs.size, np.nan, dtype=float)
+            residual_e_main = np.full(freqs.size, np.nan, dtype=float)
+            residual_h_main = np.full(freqs.size, np.nan, dtype=float)
+            residual_balanced_main = np.full(freqs.size, np.nan, dtype=float)
+            e_scale_main = np.full(freqs.size, np.nan + 0.0j, dtype=np.complex128)
+            h_scale_main = np.full(freqs.size, np.nan + 0.0j, dtype=np.complex128)
             last_valid_proj = None
             last_tracked_proj = None
             for idx, f in enumerate(freqs):
@@ -3863,18 +3963,35 @@ class Simulation:
                     proj.get("components", (proj["e_component"], proj["h_component"]))
                 )
                 if self.is_3d:
-                    coeff, residual, cond, neff = _project_3d_group_at_monitor(
-                        spec,
-                        main_monitor,
-                        idx,
-                        f,
-                        f_mode,
-                        reference=False,
+                    coeff, residual, cond, neff, projection_diag = (
+                        _project_3d_group_at_monitor(
+                            spec,
+                            main_monitor,
+                            idx,
+                            f,
+                            f_mode,
+                            reference=False,
+                        )
                     )
                     a_plus[idx], a_minus[idx] = coeff[0], coeff[1]
                     residual_main[idx] = residual
                     cond_main[idx] = cond
                     neff_main[idx] = neff
+                    residual_e_main[idx] = float(
+                        projection_diag.get("residual_e", np.nan)
+                    )
+                    residual_h_main[idx] = float(
+                        projection_diag.get("residual_h", np.nan)
+                    )
+                    residual_balanced_main[idx] = float(
+                        projection_diag.get("residual_balanced", np.nan)
+                    )
+                    e_scale_main[idx] = np.complex128(
+                        projection_diag.get("e_scale", np.nan + 0.0j)
+                    )
+                    h_scale_main[idx] = np.complex128(
+                        projection_diag.get("h_scale", np.nan + 0.0j)
+                    )
                 else:
                     field_vec = np.concatenate(
                         [
@@ -3903,6 +4020,11 @@ class Simulation:
                 "condition_number": cond_main,
                 "mode_neff": neff_main,
                 "projection_residual": residual_main,
+                "projection_residual_e": residual_e_main,
+                "projection_residual_h": residual_h_main,
+                "projection_residual_balanced": residual_balanced_main,
+                "projection_e_scale": e_scale_main,
+                "projection_h_scale": h_scale_main,
             }
             if return_power:
                 port_waves["P_plus"] = np.abs(a_plus) ** 2
@@ -3927,6 +4049,11 @@ class Simulation:
                 cond_ref = np.zeros(freqs.size, dtype=float)
                 neff_ref = np.full(freqs.size, np.nan, dtype=float)
                 residual_ref = np.full(freqs.size, np.nan, dtype=float)
+                residual_e_ref = np.full(freqs.size, np.nan, dtype=float)
+                residual_h_ref = np.full(freqs.size, np.nan, dtype=float)
+                residual_balanced_ref = np.full(freqs.size, np.nan, dtype=float)
+                e_scale_ref = np.full(freqs.size, np.nan + 0.0j, dtype=np.complex128)
+                h_scale_ref = np.full(freqs.size, np.nan + 0.0j, dtype=np.complex128)
                 last_valid_ref_proj = None
                 last_tracked_ref_proj = None
                 for idx, f in enumerate(freqs):
@@ -3968,18 +4095,35 @@ class Simulation:
                         )
                     )
                     if self.is_3d:
-                        coeff, residual, cond, neff = _project_3d_group_at_monitor(
-                            spec,
-                            ref_monitor,
-                            idx,
-                            f,
-                            f_mode,
-                            reference=True,
+                        coeff, residual, cond, neff, projection_diag = (
+                            _project_3d_group_at_monitor(
+                                spec,
+                                ref_monitor,
+                                idx,
+                                f,
+                                f_mode,
+                                reference=True,
+                            )
                         )
                         a_incident_plus[idx], a_incident_minus[idx] = coeff[0], coeff[1]
                         residual_ref[idx] = residual
                         cond_ref[idx] = cond
                         neff_ref[idx] = neff
+                        residual_e_ref[idx] = float(
+                            projection_diag.get("residual_e", np.nan)
+                        )
+                        residual_h_ref[idx] = float(
+                            projection_diag.get("residual_h", np.nan)
+                        )
+                        residual_balanced_ref[idx] = float(
+                            projection_diag.get("residual_balanced", np.nan)
+                        )
+                        e_scale_ref[idx] = np.complex128(
+                            projection_diag.get("e_scale", np.nan + 0.0j)
+                        )
+                        h_scale_ref[idx] = np.complex128(
+                            projection_diag.get("h_scale", np.nan + 0.0j)
+                        )
                     else:
                         field_vec = np.concatenate(
                             [
@@ -4009,6 +4153,13 @@ class Simulation:
                 port_waves["reference_condition_number"] = cond_ref
                 port_waves["reference_mode_neff"] = neff_ref
                 port_waves["reference_projection_residual"] = residual_ref
+                port_waves["reference_projection_residual_e"] = residual_e_ref
+                port_waves["reference_projection_residual_h"] = residual_h_ref
+                port_waves["reference_projection_residual_balanced"] = (
+                    residual_balanced_ref
+                )
+                port_waves["reference_projection_e_scale"] = e_scale_ref
+                port_waves["reference_projection_h_scale"] = h_scale_ref
                 if return_power:
                     port_waves["P_incident"] = np.abs(a_incident_plus) ** 2
                     port_waves["P_incident_plus"] = np.abs(a_incident_plus) ** 2

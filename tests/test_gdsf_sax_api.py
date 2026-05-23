@@ -1054,13 +1054,17 @@ def test_project_modal_coefficients_3d_group_recovers_multiple_modes():
             + coeff_true[1][1] * mode1_bwd[name]
         )
 
-    coeff, residual, cond = Simulation._project_modal_coefficients_3d_group(
-        field,
-        projections,
+    coeff, residual, cond, diagnostics = (
+        Simulation._project_modal_coefficients_3d_group(
+            field,
+            projections,
+        )
     )
 
     assert cond < 10.0
     assert residual < 1e-12
+    assert diagnostics["residual_e"] < 1e-12
+    assert diagnostics["residual_h"] < 1e-12
     for actual, expected in zip(coeff, coeff_true):
         np.testing.assert_allclose(actual[0], expected[0], rtol=1e-10, atol=1e-10)
         np.testing.assert_allclose(actual[1], expected[1], rtol=1e-10, atol=1e-10)
