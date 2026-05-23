@@ -739,6 +739,7 @@ def show_snapshots(
     clean_visualization=False,
     interpolation="bicubic",
     pause=0.001,
+    show=True,
 ):
     """Show a sequence of stored snapshot payloads."""
     if not snapshots:
@@ -755,8 +756,9 @@ def show_snapshots(
             axes=context["ax"],
         )
         context["fig"], context["ax"] = fig, ax
-        plt.show(block=False)
-        plt.pause(pause)
+        if show:
+            plt.show(block=False)
+            plt.pause(pause)
     return context["fig"], context["ax"]
 
 

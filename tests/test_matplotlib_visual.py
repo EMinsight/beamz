@@ -7,6 +7,7 @@ import numpy as np
 
 from beamz import Design, Material, Monitor, Rectangle, Simulation, plot_signal, um
 from beamz.devices.sources.mode import ModeSource
+from beamz.simulation.core import SimulationResults
 
 
 def _close(fig_ax):
@@ -98,3 +99,32 @@ def test_plot_signal_returns_matplotlib_handles():
 
     assert fig is ax.figure
     assert ax.get_title() == "Signal"
+
+
+def test_simulation_results_show_uses_stored_snapshots():
+    design = Design(width=2 * um, height=1 * um, material=Material(1.0))
+    sim = Simulation(
+        design=design,
+        sources=[],
+        monitors=[],
+        time=np.array([0.0, 1e-15]),
+        resolution=0.25 * um,
+    )
+    snapshot = {
+        "kind": "simulation_snapshot",
+        "field": np.zeros((2, 2)),
+        "field_name": "Ez",
+        "time": 0.0,
+        "step": 1,
+        "num_steps": 1,
+        "extent": (0.0, 2 * um, 0.0, 1 * um),
+        "units": "V/um",
+        "plane_2d": "xy",
+        "layout": sim.to_plot_data(),
+    }
+    results = SimulationResults(simulation=sim, snapshots=(snapshot,))
+
+    fig, ax = _close(results.show(clean_visualization=False, show=False))
+
+    assert fig is ax.figure
+    assert "Ez at t" in ax.get_title()

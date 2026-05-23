@@ -224,6 +224,22 @@ class SimulationResults(Mapping[str, Any]):
             payload["snapshots"] = list(self.snapshots)
         return payload
 
+    def show(self, **kwargs):
+        """Display stored simulation snapshots with the matplotlib backend."""
+        if not self.snapshots:
+            raise RuntimeError("No snapshots available. Run with snapshot_field first.")
+        from beamz.visual.mpl import show_snapshots
+
+        return show_snapshots(self.snapshots, **kwargs)
+
+    def save_video(self, filename, **kwargs):
+        """Save stored simulation snapshots as a video with the matplotlib backend."""
+        if not self.snapshots:
+            raise RuntimeError("No snapshots available. Run with snapshot_field first.")
+        from beamz.visual.mpl import save_snapshot_video
+
+        return save_snapshot_video(self.snapshots, filename=filename, **kwargs)
+
     @classmethod
     def from_run(
         cls,
@@ -598,7 +614,9 @@ class Simulation:
             device for device in self.sources if source_supports_compiled_specs(device)
         ]
         self._imperative_step_sources = [
-            device for device in self.sources if not source_supports_compiled_specs(device)
+            device
+            for device in self.sources
+            if not source_supports_compiled_specs(device)
         ]
         grouped = {
             "pre_e": {"Ex": [], "Ey": [], "Ez": []},
@@ -633,7 +651,9 @@ class Simulation:
     def _sync_full_pec_after_source_mutation(self):
         if self.is_3d and has_full_pec_3d(self.boundaries):
             if self.fields.full_pec_3d_state is None:
-                self.fields.full_pec_3d_state = initialize_full_pec_3d_state(self.fields)
+                self.fields.full_pec_3d_state = initialize_full_pec_3d_state(
+                    self.fields
+                )
             else:
                 sync_full_pec_3d_from_compact(
                     self.fields,
@@ -1618,7 +1638,11 @@ class Simulation:
 
         direction_sign = +1.0 if str(spec.direction).startswith("+") else -1.0
         delta_s = direction_sign * 0.5 * d_axis
-        if getattr(self, "is_3d", False) and hasattr(self, "dt") and self.dt is not None:
+        if (
+            getattr(self, "is_3d", False)
+            and hasattr(self, "dt")
+            and self.dt is not None
+        ):
             omega = 2.0 * np.pi * freq
             k_num = _solve_numeric_k_axis(omega, float(self.dt), d_axis, neff)
             return _numeric_phase_delay(omega, k_num, delta_s)
