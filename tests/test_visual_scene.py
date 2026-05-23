@@ -287,7 +287,7 @@ def test_simulation_to_scene_preserves_monitor_center_for_legacy_plane_monitors(
     assert monitor_object.geometry["normal"] == [0.0, 0.0, 1.0]
 
 
-def test_simulation_show_delegates_to_view3d(monkeypatch):
+def test_simulation_show3d_delegates_to_view3d(monkeypatch):
     sim = _make_simulation()
     captured = {}
 
@@ -298,7 +298,7 @@ def test_simulation_show_delegates_to_view3d(monkeypatch):
 
     monkeypatch.setattr("beamz.visual.scene.view3d", fake_view3d)
 
-    result = sim.show(mode="browser", open_browser=False)
+    result = sim.show3d(mode="browser", open_browser=False)
 
     assert result == "scene-view"
     assert isinstance(captured["value"], SceneSpec)

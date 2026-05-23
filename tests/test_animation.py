@@ -76,12 +76,30 @@ def test_signal_plot_data_scales_picoseconds():
     assert np.allclose(payload["t_scaled"], np.array([0.0, 2.0]))
 
 
-def test_beamz_source_tree_contains_no_matplotlib_imports():
+def test_matplotlib_backend_isolated_to_visual_mpl():
     root = Path(__file__).resolve().parents[1] / "beamz"
     offenders = []
     for path in root.rglob("*.py"):
+        rel = path.relative_to(root).as_posix()
+        if rel == "visual/mpl.py":
+            continue
         text = path.read_text()
         if "import matplotlib" in text or "from matplotlib" in text:
-            offenders.append(path.relative_to(root).as_posix())
+            offenders.append(rel)
 
     assert offenders == []
+
+
+def test_import_beamz_does_not_import_pyplot():
+    import subprocess
+    import sys
+
+    code = "import sys, beamz; print('matplotlib.pyplot' in sys.modules)"
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.strip() == "False"
