@@ -22,7 +22,7 @@ from beamz.visual.data import (
 from beamz.visual.helpers import (
     calc_optimal_fdtd_params,
     check_fdtd_stability,
-    create_rich_progress,
+    create_plain_progress,
     display_status,
     dxdt,
     get_si_scale_and_label,
@@ -72,7 +72,7 @@ __all__ = [
     "source_spectrum_plot_data",
     "structure_plot_data",
     "display_status",
-    "create_rich_progress",
+    "create_plain_progress",
     "get_si_scale_and_label",
     "check_fdtd_stability",
     "calc_optimal_fdtd_params",

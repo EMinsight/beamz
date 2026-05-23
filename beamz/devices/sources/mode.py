@@ -2664,9 +2664,11 @@ class ModeSource:
         if has_full_pec_3d(boundaries):
             fp_state = initialize_full_pec_3d_state(fields)
             for comp in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz"):
-                full = getattr(fp_state, comp)
-                full = full.at[:-1, :-1, :-1].set(jnp.asarray(state[comp]))
-                setattr(fp_state, comp, jnp.where(fp_state.masks[comp], 0.0, full))
+                compact = jnp.asarray(state[comp])
+                full = jnp.asarray(getattr(fp_state, comp), dtype=compact.dtype)
+                full = full.at[:-1, :-1, :-1].set(compact)
+                zero = jnp.asarray(0.0, dtype=full.dtype)
+                setattr(fp_state, comp, jnp.where(fp_state.masks[comp], zero, full))
             curl_hx, curl_hy, curl_hz = pec_curl_e_to_h_3d(
                 fp_state.Ex,
                 fp_state.Ey,
@@ -2679,9 +2681,15 @@ class ModeSource:
             hx_next = ops.advance_h_field(fp_state.Hx, curl_hx, fp_state.sigma_m_hx, dt)
             hy_next = ops.advance_h_field(fp_state.Hy, curl_hy, fp_state.sigma_m_hy, dt)
             hz_next = ops.advance_h_field(fp_state.Hz, curl_hz, fp_state.sigma_m_hz, dt)
-            hx_next = jnp.where(fp_state.masks["Hx"], 0.0, hx_next)
-            hy_next = jnp.where(fp_state.masks["Hy"], 0.0, hy_next)
-            hz_next = jnp.where(fp_state.masks["Hz"], 0.0, hz_next)
+            hx_next = jnp.where(
+                fp_state.masks["Hx"], jnp.asarray(0.0, dtype=hx_next.dtype), hx_next
+            )
+            hy_next = jnp.where(
+                fp_state.masks["Hy"], jnp.asarray(0.0, dtype=hy_next.dtype), hy_next
+            )
+            hz_next = jnp.where(
+                fp_state.masks["Hz"], jnp.asarray(0.0, dtype=hz_next.dtype), hz_next
+            )
             return {
                 "Hx": np.asarray(hx_next[:-1, :-1, :-1]),
                 "Hy": np.asarray(hy_next[:-1, :-1, :-1]),
@@ -2722,13 +2730,17 @@ class ModeSource:
         if has_full_pec_3d(boundaries):
             fp_state = initialize_full_pec_3d_state(fields)
             for comp in ("Ex", "Ey", "Ez"):
-                full = getattr(fp_state, comp)
-                full = full.at[:-1, :-1, :-1].set(jnp.asarray(state[comp]))
-                setattr(fp_state, comp, jnp.where(fp_state.masks[comp], 0.0, full))
+                compact = jnp.asarray(state[comp])
+                full = jnp.asarray(getattr(fp_state, comp), dtype=compact.dtype)
+                full = full.at[:-1, :-1, :-1].set(compact)
+                zero = jnp.asarray(0.0, dtype=full.dtype)
+                setattr(fp_state, comp, jnp.where(fp_state.masks[comp], zero, full))
             for comp, arr in (("Hx", hx), ("Hy", hy), ("Hz", hz)):
-                full = getattr(fp_state, comp)
-                full = full.at[:-1, :-1, :-1].set(arr)
-                setattr(fp_state, comp, jnp.where(fp_state.masks[comp], 0.0, full))
+                compact = jnp.asarray(arr)
+                full = jnp.asarray(getattr(fp_state, comp), dtype=compact.dtype)
+                full = full.at[:-1, :-1, :-1].set(compact)
+                zero = jnp.asarray(0.0, dtype=full.dtype)
+                setattr(fp_state, comp, jnp.where(fp_state.masks[comp], zero, full))
             curl_hx, curl_hy, curl_hz = full_pec_curl_h_to_e_3d(
                 fp_state.Hx,
                 fp_state.Hy,
@@ -2765,9 +2777,15 @@ class ModeSource:
                 dt,
                 region_z,
             )
-            ex_next = jnp.where(fp_state.masks["Ex"], 0.0, ex_next)
-            ey_next = jnp.where(fp_state.masks["Ey"], 0.0, ey_next)
-            ez_next = jnp.where(fp_state.masks["Ez"], 0.0, ez_next)
+            ex_next = jnp.where(
+                fp_state.masks["Ex"], jnp.asarray(0.0, dtype=ex_next.dtype), ex_next
+            )
+            ey_next = jnp.where(
+                fp_state.masks["Ey"], jnp.asarray(0.0, dtype=ey_next.dtype), ey_next
+            )
+            ez_next = jnp.where(
+                fp_state.masks["Ez"], jnp.asarray(0.0, dtype=ez_next.dtype), ez_next
+            )
             return {
                 "Ex": np.asarray(ex_next[:-1, :-1, :-1]),
                 "Ey": np.asarray(ey_next[:-1, :-1, :-1]),

@@ -1434,9 +1434,6 @@ class Monitor:
             target1=target1,
         )
 
-        # print(f"● Monitor record step {step}: Ez_slice max={np.max(np.abs(Ez_slice)):.2e}")
-        # print(f"● Monitor record step {step}: Ez_slice max={np.max(np.abs(Ez_slice)):.2e}")
-
         if do_record and self.should_record_fields:
             self.fields["Ex"].append(Ex_slice)
             self.fields["Ey"].append(Ey_slice)

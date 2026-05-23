@@ -49,6 +49,7 @@ from beamz.simulation.compiled import (
 from beamz.simulation.fields import Fields
 from beamz.simulation.step_sequence import run_step_sequence
 from beamz.simulation.yee import component_coordinates_3d_um
+from beamz.visual.helpers import _finish_inline_progress, _print_inline_progress
 
 
 def _pml_merge_mode(key: str) -> str:
@@ -777,15 +778,10 @@ class Simulation:
                 or steps_done == 1
                 or (steps_done % progress_stride) == 0
             ):
-                pct = 100.0 * steps_done / max(num_steps, 1)
-                print(
-                    f"\r● Progress: {pct:.0f}% ({steps_done}/{num_steps} steps)",
-                    end="",
-                    flush=True,
-                )
+                _print_inline_progress(steps_done, num_steps)
 
         if progress:
-            print()
+            _finish_inline_progress()
 
         fields_result = None
         if field_history is not None:
@@ -1113,7 +1109,9 @@ class Simulation:
 
             if progress and steps_done == 0 and program.compile_count == 0:
                 print(
-                    "● JIT compiling v0.3 packed FDTD program...", end=" ", flush=True
+                    "● JIT compiling v0.3 packed FDTD program...",
+                    end=" ",
+                    flush=True,
                 )
 
             if (
@@ -1323,15 +1321,10 @@ class Simulation:
             steps_remaining -= this_chunk
 
             if progress and num_steps > 0:
-                pct = 100.0 * steps_done / num_steps
-                print(
-                    f"\r● Progress: {pct:.0f}% ({steps_done}/{num_steps} steps)",
-                    end="",
-                    flush=True,
-                )
+                _print_inline_progress(steps_done, num_steps)
 
         if progress:
-            print()
+            _finish_inline_progress()
 
         if monitor_state is not None:
             program.apply_monitor_state(monitor_state)
@@ -1394,12 +1387,7 @@ class Simulation:
                 )
 
             if progress:
-                pct = 100.0 * steps_done / max(total_steps, 1)
-                print(
-                    f"\r● Progress: {pct:.0f}% ({steps_done}/{total_steps} steps)",
-                    end="",
-                    flush=True,
-                )
+                _print_inline_progress(steps_done, total_steps)
 
             if (
                 steps_done >= min_steps
@@ -1410,7 +1398,7 @@ class Simulation:
                 break
 
         if progress:
-            print()
+            _finish_inline_progress()
         return steps_done
 
     def run_fast(

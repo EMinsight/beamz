@@ -9,7 +9,7 @@ from shapely.prepared import prep
 
 from beamz.design.structures import Rectangle
 from beamz.visual.helpers import (
-    create_rich_progress,
+    create_plain_progress,
     display_status,
 )
 
@@ -374,7 +374,7 @@ class RegularGrid(BaseMeshGrid):
                 grids.fill_all(self._get_all_material_props(background.material))
 
         # Process remaining structures
-        with create_rich_progress() as progress:
+        with create_plain_progress() as progress:
             task = progress.add_task(
                 "Rasterizing structures...", total=len(self.design.structures)
             )
@@ -1009,7 +1009,7 @@ class RegularGrid3D(BaseMeshGrid):
         fallback_count = 0
 
         t_struct_start = time.perf_counter()
-        with create_rich_progress() as progress:
+        with create_plain_progress() as progress:
             task = progress.add_task(
                 "Rasterizing 3D structures...", total=len(self.design.structures)
             )
@@ -1165,7 +1165,7 @@ class RegularGrid3D(BaseMeshGrid):
         if not hasattr(self.design, "boundaries") or not self.design.boundaries:
             return
 
-        with create_rich_progress() as progress:
+        with create_plain_progress() as progress:
             task = progress.add_task(
                 "Processing 3D PML boundaries...", total=len(self.design.boundaries)
             )

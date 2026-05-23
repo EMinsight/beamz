@@ -20,6 +20,7 @@ from beamz import (
     um,
 )
 from beamz.const import EPS_0
+from beamz.devices.sources import compiler as source_compiler
 from beamz.devices.monitors.compiler import CompiledMonitorSpec
 from beamz.devices.sources.compiler import (
     _analytic_subband_waveforms,
@@ -1233,6 +1234,65 @@ def test_analytic_subband_waveforms_reconstruct_input():
     assert nodes.shape == (3,)
     assert subbands.shape == (3, analytic.size)
     np.testing.assert_allclose(np.sum(subbands, axis=0), analytic, rtol=1e-12, atol=1e-12)
+
+
+def test_compile_3d_multifrequency_mode_source_uses_temporary_profile_sources(
+    monkeypatch,
+):
+    dt = 1e-15
+    source = ModeSource(
+        grid=SimpleNamespace(),
+        center=(0.0, 0.0, 0.0),
+        width=1.0,
+        height=1.0,
+        wavelength=LIGHT_SPEED / 200e12,
+        pol="te",
+        signal=np.ones(64, dtype=float),
+        direction="+x",
+        profile_frequencies=np.asarray([230e12, 170e12, 210e12]),
+    )
+    fields = SimpleNamespace(permittivity=jnp.ones((3, 3, 3), dtype=jnp.float32))
+    seen: list[tuple[bool, float, object]] = []
+
+    def fake_initialize(self, permittivity, resolution, dt=None):
+        del dt
+        self._initialized = True
+        self._is_3d = True
+        self._grid_shape = tuple(np.asarray(permittivity).shape)
+        self._resolution = float(resolution)
+
+    def fake_compile(profile_src, *_args, **_kwargs):
+        seen.append(
+            (
+                profile_src is source,
+                float(LIGHT_SPEED / profile_src.wavelength),
+                profile_src.profile_frequencies,
+            )
+        )
+        return ()
+
+    monkeypatch.setattr(ModeSource, "initialize", fake_initialize)
+    monkeypatch.setattr(source_compiler, "_compile_mode_source_3d", fake_compile)
+
+    specs = source_compiler._compile_mode_source(
+        source,
+        fields,
+        dt=dt,
+        num_steps=16,
+        t0=0.0,
+        resolution=1.0,
+        total_steps=64,
+    )
+
+    assert specs == ()
+    assert [item[0] for item in seen] == [False, False, False]
+    np.testing.assert_allclose(
+        [item[1] for item in seen],
+        [170e12, 210e12, 230e12],
+        rtol=1e-15,
+        atol=0.0,
+    )
+    assert [item[2] for item in seen] == [None, None, None]
 
 
 def test_compile_3d_mode_source_uses_discrete_phasor_residual_slabs():

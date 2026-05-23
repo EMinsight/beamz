@@ -63,7 +63,7 @@ from beamz.simulation.core import (
 # Import UI helpers
 from beamz.visual.helpers import (
     calc_optimal_fdtd_params,
-    create_rich_progress,
+    create_plain_progress,
     display_status,
     dxdt,
     get_si_scale_and_label,
@@ -156,7 +156,7 @@ _exports = {
     "transform_density": transform_density,
     # UI helpers
     "display_status": display_status,
-    "create_rich_progress": create_rich_progress,
+    "create_plain_progress": create_plain_progress,
     "get_si_scale_and_label": get_si_scale_and_label,
     "calc_optimal_fdtd_params": calc_optimal_fdtd_params,
     "dxdt": dxdt,
