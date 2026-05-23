@@ -9,17 +9,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from beamz.const import EPS_0, MU_0
+from beamz.const import EPS_0, LIGHT_SPEED, MU_0
 from beamz.devices.sources._materials import (
     component_permeability_at,
     component_permittivity_at,
 )
 from beamz.devices.sources.gaussian import GaussianSource
-from beamz.devices.sources.mode import (
-    ModeSource,
-    _get_3d_huygens_terms,
-    _runtime_3d_profiles,
-)
+from beamz.devices.sources.mode import ModeSource
 
 
 @dataclass(frozen=True)
@@ -199,6 +195,103 @@ def _sample_waveform(
     return jnp.asarray(vals)
 
 
+def _analytic_waveform_samples(
+    device: ModeSource,
+    *,
+    t0: float,
+    dt: float,
+    num_steps: int,
+    total_steps: int | None = None,
+) -> np.ndarray:
+    n = int(total_steps if total_steps is not None else num_steps)
+    start = float(t0)
+    vals = np.zeros((n,), dtype=np.complex128)
+    for i in range(n):
+        t = start + i * float(dt)
+        vals[i] = complex(
+            device._get_signal_value(t, dt),
+            device._get_signal_quadrature_value(t, dt),
+        )
+    return vals
+
+
+def _partition_weights_by_frequency(
+    fft_frequencies: np.ndarray,
+    profile_frequencies: np.ndarray,
+) -> np.ndarray:
+    """Return a smooth frequency partition for broadband modal source profiles."""
+    nodes = np.sort(np.unique(np.asarray(profile_frequencies, dtype=float).reshape(-1)))
+    if nodes.size == 0:
+        raise ValueError("profile_frequencies must contain at least one frequency.")
+    if np.any(nodes <= 0.0):
+        raise ValueError("profile_frequencies must be strictly positive.")
+    abs_freq = np.abs(np.asarray(fft_frequencies, dtype=float).reshape(-1))
+    weights = np.zeros((nodes.size, abs_freq.size), dtype=np.float64)
+    if nodes.size == 1:
+        weights[0, :] = 1.0
+        return weights
+
+    for idx, freq in enumerate(nodes):
+        if idx == 0:
+            right = nodes[idx + 1]
+            mask = abs_freq <= right
+            weights[idx, mask] = np.where(
+                abs_freq[mask] <= freq,
+                1.0,
+                (right - abs_freq[mask]) / max(right - freq, 1e-30),
+            )
+            continue
+        if idx == nodes.size - 1:
+            left = nodes[idx - 1]
+            mask = abs_freq >= left
+            weights[idx, mask] = np.where(
+                abs_freq[mask] >= freq,
+                1.0,
+                (abs_freq[mask] - left) / max(freq - left, 1e-30),
+            )
+            continue
+        left = nodes[idx - 1]
+        right = nodes[idx + 1]
+        left_mask = (abs_freq >= left) & (abs_freq <= freq)
+        right_mask = (abs_freq >= freq) & (abs_freq <= right)
+        weights[idx, left_mask] = (abs_freq[left_mask] - left) / max(
+            freq - left, 1e-30
+        )
+        weights[idx, right_mask] = (right - abs_freq[right_mask]) / max(
+            right - freq, 1e-30
+        )
+
+    total = np.sum(weights, axis=0)
+    empty = total <= 1e-30
+    if np.any(empty):
+        nearest = np.argmin(np.abs(abs_freq[empty, None] - nodes[None, :]), axis=1)
+        weights[:, empty] = 0.0
+        weights[nearest, np.where(empty)[0]] = 1.0
+        total = np.sum(weights, axis=0)
+    return weights / np.maximum(total, 1e-30)
+
+
+def _analytic_subband_waveforms(
+    analytic_waveform: np.ndarray,
+    *,
+    dt: float,
+    profile_frequencies: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Split an analytic source waveform into profile-frequency subbands."""
+    waveform = np.asarray(analytic_waveform, dtype=np.complex128).reshape(-1)
+    if waveform.size == 0:
+        return (
+            np.asarray(profile_frequencies, dtype=float).reshape(-1),
+            np.zeros((0, 0), dtype=np.complex128),
+        )
+    nodes = np.sort(np.unique(np.asarray(profile_frequencies, dtype=float).reshape(-1)))
+    spectrum = np.fft.fft(waveform)
+    fft_freqs = np.fft.fftfreq(waveform.size, d=float(dt))
+    weights = _partition_weights_by_frequency(fft_freqs, nodes)
+    subbands = np.fft.ifft(weights * spectrum[None, :], axis=1)
+    return nodes, np.asarray(subbands, dtype=np.complex128)
+
+
 def _match_shape(profile: np.ndarray, target_shape: tuple[int, ...]) -> np.ndarray:
     profile = np.asarray(profile)
     if profile.shape == target_shape:
@@ -214,27 +307,6 @@ def _match_shape(profile: np.ndarray, target_shape: tuple[int, ...]) -> np.ndarr
     insert = tuple(slice(0, trimmed.shape[i]) for i in range(trimmed.ndim))
     out[insert] = trimmed
     return out
-
-
-def _mode_3d_profiles_and_indices(src: ModeSource):
-    profiles = {
-        "Ex": getattr(src, "_Ex_profile", None),
-        "Ey": getattr(src, "_Ey_profile", None),
-        "Ez": getattr(src, "_Ez_profile", None),
-        "Hx": getattr(src, "_Hx_profile", None),
-        "Hy": getattr(src, "_Hy_profile", None),
-        "Hz": getattr(src, "_Hz_profile", None),
-    }
-    profiles = _runtime_3d_profiles(profiles, src._axis, src._direction_sign)
-    indices = {
-        "Ex": getattr(src, "_Ex_indices", None),
-        "Ey": getattr(src, "_Ey_indices", None),
-        "Ez": getattr(src, "_Ez_indices", None),
-        "Hx": getattr(src, "_Hx_indices", None),
-        "Hy": getattr(src, "_Hy_indices", None),
-        "Hz": getattr(src, "_Hz_indices", None),
-    }
-    return profiles, indices
 
 
 def compile_source_specs(
@@ -348,12 +420,21 @@ def _compile_mode_source(
     resolution: float,
     total_steps: int | None = None,
 ) -> tuple[CompiledSourceSpec, ...]:
-    if (
+    needs_initialize = (
         (not getattr(device, "_initialized", False))
         or (getattr(device, "_grid_shape", None) != fields.permittivity.shape)
         or (getattr(device, "_resolution", None) is None)
         or (not np.isclose(getattr(device, "_resolution", 0.0), resolution))
-    ):
+    )
+    if not needs_initialize and bool(getattr(device, "_is_3d", False)):
+        launch_dt = getattr(device, "_launch_dt", None)
+        needs_initialize = (
+            launch_dt is None
+            or (not np.isclose(float(launch_dt), float(dt)))
+            or (getattr(device, "_k_num_axis", None) is None)
+            or (getattr(device, "_omega_launch", None) is None)
+        )
+    if needs_initialize:
         device.initialize(fields.permittivity, resolution, dt=dt)
 
     is_3d = bool(getattr(device, "_is_3d", False))
@@ -381,13 +462,48 @@ def _compile_mode_source(
     )
 
     if is_3d:
+        profile_frequencies = getattr(device, "profile_frequencies", None)
+        if profile_frequencies is not None:
+            profile_frequencies = np.asarray(profile_frequencies, dtype=float).reshape(
+                -1
+            )
+            if profile_frequencies.size > 1:
+                return _compile_mode_source_3d_multifrequency(
+                    device,
+                    fields,
+                    dt,
+                    resolution,
+                    num_steps=num_steps,
+                    t0=t0,
+                    total_steps=total_steps,
+                    profile_frequencies=profile_frequencies,
+                )
+        phasor_waveform = _sample_waveform(
+            device._get_signal_value,
+            t0=t0,
+            dt=dt,
+            num_steps=num_steps,
+            offset_fn=lambda t, dt_: t,
+            total_steps=total_steps,
+        )
+        phasor_quadrature_waveform = _sample_waveform(
+            device._get_signal_quadrature_value,
+            t0=t0,
+            dt=dt,
+            num_steps=num_steps,
+            offset_fn=lambda t, dt_: t,
+            total_steps=total_steps,
+        )
         return _compile_mode_source_3d(
             device,
             fields,
             dt,
             resolution,
-            h_waveform,
-            e_waveform,
+            phasor_waveform,
+            phasor_waveform,
+            phasor_quadrature_waveform,
+            phasor_quadrature_waveform,
+            t0=t0,
         )
     return _compile_mode_source_2d(
         device,
@@ -399,6 +515,66 @@ def _compile_mode_source(
     )
 
 
+def _compile_mode_source_3d_multifrequency(
+    src: ModeSource,
+    fields,
+    dt: float,
+    resolution: float,
+    *,
+    num_steps: int,
+    t0: float,
+    total_steps: int | None,
+    profile_frequencies: np.ndarray,
+) -> tuple[CompiledSourceSpec, ...]:
+    """Compile a broadband 3D ModeSource as a profile-frequency filter bank."""
+    analytic = _analytic_waveform_samples(
+        src,
+        t0=t0,
+        dt=dt,
+        num_steps=num_steps,
+        total_steps=total_steps,
+    )
+    nodes, subbands = _analytic_subband_waveforms(
+        analytic,
+        dt=dt,
+        profile_frequencies=profile_frequencies,
+    )
+    specs: list[CompiledSourceSpec] = []
+    common_kwargs = dict(
+        grid=src.grid,
+        center=src.center,
+        width=src.width,
+        pol=src.pol,
+        signal=src.signal,
+        direction=src.direction,
+        height=src.height,
+        signal_quadrature=getattr(src, "signal_quadrature", None),
+    )
+    for freq, waveform in zip(nodes, subbands, strict=True):
+        profile_src = ModeSource(
+            wavelength=LIGHT_SPEED / float(freq),
+            profile_frequencies=None,
+            **common_kwargs,
+        )
+        profile_src.initialize(fields.permittivity, resolution, dt=dt)
+        real_waveform = jnp.asarray(np.real(waveform), dtype=jnp.float32)
+        quadrature_waveform = jnp.asarray(np.imag(waveform), dtype=jnp.float32)
+        specs.extend(
+            _compile_mode_source_3d(
+                profile_src,
+                fields,
+                dt,
+                resolution,
+                real_waveform,
+                real_waveform,
+                quadrature_waveform,
+                quadrature_waveform,
+                t0=t0,
+            )
+        )
+    return tuple(specs)
+
+
 def _build_coeff(
     profile: np.ndarray,
     target: np.ndarray,
@@ -408,6 +584,77 @@ def _build_coeff(
     profile = _match_shape(np.asarray(profile), target.shape)
     coeff = profile * dt / scale_denom
     return jnp.asarray(coeff, dtype=jnp.float32)
+
+
+def _append_phasor_source_specs(
+    specs: list[CompiledSourceSpec],
+    *,
+    component: str,
+    timing: str,
+    index: tuple[Any, ...],
+    profile: np.ndarray,
+    target: np.ndarray,
+    dt: float,
+    scale_denom: np.ndarray,
+    waveform: jnp.ndarray,
+    quadrature_waveform: jnp.ndarray | None,
+    target_shape: tuple[int, ...],
+    imag_tol: float = 1e-30,
+) -> None:
+    """Append real compiled specs for Re(profile * analytic_waveform)."""
+    profile_c = np.asarray(profile, dtype=np.complex128)
+    real_coeff = _build_coeff(
+        profile=np.real(profile_c),
+        target=target,
+        dt=dt,
+        scale_denom=scale_denom,
+    )
+    specs.append(
+        _as_slab_spec(
+            component=component,
+            timing=timing,
+            index=index,
+            coeff=real_coeff,
+            waveform=waveform,
+            target_shape=target_shape,
+        )
+    )
+
+    if quadrature_waveform is None:
+        return
+    imag_peak = float(np.max(np.abs(np.imag(profile_c)))) if profile_c.size else 0.0
+    if imag_peak <= float(imag_tol):
+        return
+
+    imag_coeff = _build_coeff(
+        profile=-np.imag(profile_c),
+        target=target,
+        dt=dt,
+        scale_denom=scale_denom,
+    )
+    specs.append(
+        _as_slab_spec(
+            component=component,
+            timing=timing,
+            index=index,
+            coeff=imag_coeff,
+            waveform=quadrature_waveform,
+            target_shape=target_shape,
+        )
+    )
+
+
+def _nonzero_bbox(arr: np.ndarray, *, atol: float = 0.0):
+    values = np.asarray(arr)
+    if values.size == 0:
+        return None
+    mask = np.abs(values) > float(atol)
+    if not np.any(mask):
+        return None
+    coords = np.argwhere(mask)
+    lo = coords.min(axis=0)
+    hi = coords.max(axis=0) + 1
+    return tuple(slice(int(a), int(b)) for a, b in zip(lo, hi))
 
 
 def _compile_mode_source_2d(
@@ -519,58 +766,41 @@ def _compile_mode_source_3d(
     resolution: float,
     h_waveform: jnp.ndarray,
     e_waveform: jnp.ndarray,
+    h_quadrature_waveform: jnp.ndarray | None = None,
+    e_quadrature_waveform: jnp.ndarray | None = None,
+    t0: float = 0.0,
 ) -> tuple[CompiledSourceSpec, ...]:
     specs: list[CompiledSourceSpec] = []
-    profiles, indices = _mode_3d_profiles_and_indices(src)
+    del resolution, e_waveform, e_quadrature_waveform, t0
 
-    e_terms, h_terms = _get_3d_huygens_terms(src._axis, src.pol)
-
-    for h_comp, e_source, sign in h_terms:
-        idx = indices[h_comp]
-        prof = profiles[e_source]
-        if idx is None or prof is None:
-            continue
-        target = np.asarray(getattr(fields, h_comp)[idx])
-        mu = np.asarray(component_permeability_at(fields, h_comp, idx))
-        coeff = _build_coeff(
-            profile=sign * np.asarray(prof),
-            target=target,
-            dt=dt,
-            scale_denom=MU_0 * mu * resolution,
-        )
-        specs.append(
-            _as_slab_spec(
-                component=h_comp,
-                timing="h",
-                index=idx,
-                coeff=coeff,
+    def append_delta_specs(timing: str, deltas: dict[str, np.ndarray]):
+        for component, delta in deltas.items():
+            bbox = _nonzero_bbox(np.asarray(delta), atol=1e-30)
+            if bbox is None:
+                continue
+            profile = np.asarray(delta, dtype=np.complex128)[bbox]
+            target = np.asarray(getattr(fields, component)[bbox])
+            _append_phasor_source_specs(
+                specs,
+                component=component,
+                timing=timing,
+                index=bbox,
+                profile=profile,
+                target=target,
+                dt=1.0,
+                scale_denom=np.asarray(1.0, dtype=np.float64),
                 waveform=h_waveform,
-                target_shape=tuple(getattr(fields, h_comp).shape),
+                quadrature_waveform=h_quadrature_waveform,
+                target_shape=tuple(getattr(fields, component).shape),
             )
-        )
 
-    for e_comp, h_source, sign in e_terms:
-        idx = indices[e_comp]
-        prof = profiles[h_source]
-        if idx is None or prof is None:
-            continue
-        target = np.asarray(getattr(fields, e_comp)[idx])
-        eps = np.asarray(component_permittivity_at(fields, e_comp, idx))
-        coeff = _build_coeff(
-            profile=sign * np.asarray(prof),
-            target=target,
-            dt=dt,
-            scale_denom=EPS_0 * eps * resolution,
-        )
-        specs.append(
-            _as_slab_spec(
-                component=e_comp,
-                timing="e",
-                index=idx,
-                coeff=coeff,
-                waveform=e_waveform,
-                target_shape=tuple(getattr(fields, e_comp).shape),
-            )
-        )
+    append_delta_specs(
+        "h",
+        src._compute_discrete_3d_h_phasor_delta(fields, dt=float(dt)),
+    )
+    append_delta_specs(
+        "e",
+        src._compute_discrete_3d_e_phasor_delta(fields, dt=float(dt)),
+    )
 
     return tuple(specs)

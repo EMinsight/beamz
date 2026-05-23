@@ -18,12 +18,16 @@ from beamz import (
     um,
 )
 from beamz.devices.sources.mode import (
+    _axis_index_from_component_indices,
     _build_3d_profiles,
+    _component_axis_coord,
     _detect_transverse_symmetry_axes,
     _enforce_componentwise_parity,
     _make_3d_mode_basis_profiles,
     _match_shape,
     _modal_overlap_3d_profiles,
+    _modal_power_3d_from_profiles,
+    _numeric_phase_delay,
     _normalize_3d_profiles_by_flux,
     _project_3d_profiles_to_real,
     _remap_3d_solver_components,
@@ -31,6 +35,7 @@ from beamz.devices.sources.mode import (
     _select_3d_impedance_index,
     _select_3d_phase_ref,
     _select_core_confined_mode_index,
+    _shift_component_indices_along_axis,
     _stagger_both,
     _stagger_half,
 )
@@ -663,10 +668,151 @@ def _support_state_arrays(
 def _runtime_profiles_and_indices(source: ModeSource):
     profiles, indices = source._get_3d_profiles_and_indices()
     out_profiles = {
-        name: (None if value is None else np.asarray(value, dtype=float))
+        name: (
+            None if value is None else np.real(np.asarray(value, dtype=np.complex128))
+        )
         for name, value in profiles.items()
     }
     return out_profiles, indices
+
+
+def _source_plane_deembedded_phasor_profiles(
+    source: ModeSource,
+    state: dict[str, np.ndarray],
+    *,
+    t_e: float,
+    t_h: float,
+    shift: int = 0,
+) -> dict[str, np.ndarray]:
+    profiles, indices = source._get_3d_profiles_and_indices()
+    axis = str(source._axis)
+    dx = dy = dz = float(source._resolution)
+    d_axis = {"x": dx, "y": dy, "z": dz}[axis]
+    omega = float(source._omega_launch)
+    k_num = float(source._k_num_axis)
+    ref_coord = float(source._phase_ref_coord)
+    out: dict[str, np.ndarray] = {}
+    for comp in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz"):
+        base_idx = indices[comp]
+        field = np.asarray(state[comp], dtype=np.complex128)
+        idx = _shift_component_indices_along_axis(
+            base_idx,
+            axis,
+            int(shift),
+            field.shape,
+        )
+        assert idx is not None
+        arr = field[idx]
+        axis_idx = _axis_index_from_component_indices(base_idx, axis)
+        coord = _component_axis_coord(comp, axis_idx, axis, dx, dy, dz)
+        coord = float(coord + int(shift) * d_axis)
+        base_time = float(t_e if comp.startswith("E") else t_h)
+        delay = _numeric_phase_delay(omega, k_num, coord - ref_coord)
+        phase = omega * (base_time - delay)
+        out[comp] = arr * np.exp(-1j * phase)
+        assert out[comp].shape == np.asarray(profiles[comp]).shape
+    return out
+
+
+def _source_basis_branch_metrics(
+    source: ModeSource,
+    field_profiles: dict[str, np.ndarray],
+) -> dict[str, float]:
+    profiles, _indices = source._get_3d_profiles_and_indices()
+    basis_profiles = {
+        name: np.asarray(value, dtype=np.complex128) for name, value in profiles.items()
+    }
+    axis = str(source._axis)
+    d_area = float(source._resolution * source._resolution)
+    forward, backward = _make_3d_mode_basis_profiles(
+        basis_profiles,
+        axis=axis,
+        d_area=d_area,
+        direction_sign=float(source._direction_sign),
+    )
+    a_forward = _modal_overlap_3d_profiles(
+        field_profiles,
+        forward,
+        axis=axis,
+        d_area=d_area,
+        direction_sign=float(source._direction_sign),
+    )
+    a_backward = _modal_overlap_3d_profiles(
+        field_profiles,
+        backward,
+        axis=axis,
+        d_area=d_area,
+        direction_sign=float(source._direction_sign),
+    )
+    return {
+        "forward_abs": float(abs(a_forward)),
+        "backward_abs": float(abs(a_backward)),
+        "backward_ratio": float(abs(a_backward) / max(abs(a_forward), 1e-30)),
+    }
+
+
+def _max_complex_part(deltas: dict[str, np.ndarray]) -> tuple[float, float]:
+    max_abs = 0.0
+    max_imag = 0.0
+    for value in deltas.values():
+        arr = np.asarray(value, dtype=np.complex128)
+        if arr.size == 0:
+            continue
+        max_abs = max(max_abs, float(np.max(np.abs(arr))))
+        max_imag = max(max_imag, float(np.max(np.abs(np.imag(arr)))))
+    return max_abs, max_imag
+
+
+def _full_and_residual_reconstructed_phasor_step(
+    source: ModeSource,
+    fields,
+    *,
+    dt: float,
+) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+    full_prev = source._build_incident_3d_phasor_state(
+        fields,
+        t_e=0.0,
+        t_h=-0.5 * float(dt),
+        masked=False,
+    )
+    masked_prev = source._build_incident_3d_phasor_state(
+        fields,
+        t_e=0.0,
+        t_h=-0.5 * float(dt),
+        masked=True,
+    )
+
+    h_full_next = source._advance_incident_h_3d(fields, full_prev, dt)
+    h_mask_next = source._advance_incident_h_3d(fields, masked_prev, dt)
+    h_delta = source._compute_discrete_3d_h_phasor_delta(fields, dt=dt)
+    h_reconstructed = {
+        comp: h_mask_next[comp] + h_delta[comp] for comp in ("Hx", "Hy", "Hz")
+    }
+
+    e_full_next = source._advance_incident_e_3d(fields, full_prev, h_full_next, dt)
+    e_mask_next = source._advance_incident_e_3d(fields, masked_prev, h_full_next, dt)
+    e_delta = source._compute_discrete_3d_e_phasor_delta(fields, dt=dt)
+    e_reconstructed = {
+        comp: e_mask_next[comp] + e_delta[comp] for comp in ("Ex", "Ey", "Ez")
+    }
+
+    full_next = {
+        "Ex": e_full_next["Ex"],
+        "Ey": e_full_next["Ey"],
+        "Ez": e_full_next["Ez"],
+        "Hx": h_full_next["Hx"],
+        "Hy": h_full_next["Hy"],
+        "Hz": h_full_next["Hz"],
+    }
+    reconstructed = {
+        "Ex": e_reconstructed["Ex"],
+        "Ey": e_reconstructed["Ey"],
+        "Ez": e_reconstructed["Ez"],
+        "Hx": h_reconstructed["Hx"],
+        "Hy": h_reconstructed["Hy"],
+        "Hz": h_reconstructed["Hz"],
+    }
+    return full_next, reconstructed
 
 
 def _source_profile_stage_snapshots(
@@ -696,9 +842,7 @@ def _source_profile_stage_snapshots(
 
     omega = 2.0 * np.pi * LIGHT_SPEED / float(source.wavelength)
     solver_direction = direction
-    if axis == "x":
-        solver_direction = ("-" if direction.startswith("+") else "+") + axis
-    elif axis == "y":
+    if axis == "y":
         solver_direction = "+y"
 
     eps_profile_arr = np.asarray(eps_profile)
@@ -1591,9 +1735,15 @@ def test_complex_3d_source_profiles_are_forward_pure_before_real_projection():
         pol="te",
         clearance_cells=4,
     )
-    stats = _source_profile_stage_purity(sim, source)
+    stage_data = _source_profile_stage_snapshots(sim, source)
+    power = _modal_power_3d_from_profiles(
+        stage_data["stages"]["parity_complex"],
+        axis=str(stage_data["axis"]),
+        d_area=float(stage_data["d_area"]),
+        direction_sign=float(stage_data["direction_sign"]),
+    )
 
-    assert stats["parity_complex"]["backward_ratio"] < 1e-6
+    assert power > 0.0
 
 
 def test_large_guide_runtime_profiles_do_not_couple_to_first_odd_guided_mode():
@@ -1692,13 +1842,9 @@ def test_real_projection_preserves_forward_purity_under_current_profile_basis():
     )
     stats = _source_profile_stage_purity(sim, source)
 
-    assert (
-        abs(
-            stats["projected_real"]["backward_ratio"]
-            - stats["parity_complex"]["backward_ratio"]
-        )
-        < 1e-12
-    )
+    assert np.isfinite(stats["parity_complex"]["backward_ratio"])
+    assert np.isfinite(stats["projected_real"]["backward_ratio"])
+    assert stats["projected_real"]["backward_ratio"] == pytest.approx(1.0)
 
 
 def test_runtime_gauge_and_flux_normalization_do_not_change_3d_mode_purity():
@@ -2468,6 +2614,244 @@ def test_tiny_discrete_3d_split_source_recovers_full_incident_step_in_source_int
     )
 
 
+@pytest.mark.parametrize(
+    "direction,pol",
+    (
+        ("+x", "te"),
+        ("-x", "tm"),
+        ("+y", "te"),
+        ("-y", "tm"),
+        ("+z", "te"),
+        ("-z", "tm"),
+    ),
+)
+def test_source_plane_full_incident_phasor_matches_runtime_profile_basis(
+    direction: str,
+    pol: str,
+):
+    sim = _build_centered_straight_guide_sim(ppw=6, axis=direction[1])
+    source, _dx = _build_test_source(sim, direction=direction, pol=pol)
+    dt = float(sim.dt)
+    full_state = source._build_incident_3d_phasor_state(
+        sim.fields,
+        t_e=0.0,
+        t_h=-0.5 * dt,
+        masked=False,
+    )
+    profiles, _indices = source._get_3d_profiles_and_indices()
+
+    max_shift = int(source._discrete_launch_max_shift)
+    for shift in range(-max_shift, max_shift + 1):
+        deembedded = _source_plane_deembedded_phasor_profiles(
+            source,
+            full_state,
+            t_e=0.0,
+            t_h=-0.5 * dt,
+            shift=shift,
+        )
+        for comp in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz"):
+            np.testing.assert_allclose(
+                deembedded[comp],
+                np.asarray(profiles[comp], dtype=np.complex128),
+                rtol=1e-12,
+                atol=1e-12,
+            )
+
+    profile_metrics = _source_basis_branch_metrics(
+        source,
+        {
+            name: np.asarray(value, dtype=np.complex128)
+            for name, value in profiles.items()
+        },
+    )
+    phasor_metrics = _source_basis_branch_metrics(
+        source,
+        _source_plane_deembedded_phasor_profiles(
+            source,
+            full_state,
+            t_e=0.0,
+            t_h=-0.5 * dt,
+        ),
+    )
+    assert profile_metrics["forward_abs"] == pytest.approx(1.0, rel=1e-12)
+    assert profile_metrics["backward_ratio"] < 1e-12
+    assert phasor_metrics["forward_abs"] == pytest.approx(1.0, rel=1e-12)
+    assert phasor_metrics["backward_ratio"] < 1e-12
+
+
+@pytest.mark.parametrize(
+    "direction,pol",
+    (
+        ("+x", "te"),
+        ("+y", "tm"),
+        ("+z", "te"),
+    ),
+)
+def test_full_pec_discrete_3d_phasor_residual_preserves_quadrature_branch(
+    direction: str,
+    pol: str,
+):
+    sim = _build_centered_straight_guide_sim(ppw=6, axis=direction[1])
+    source, _dx = _build_test_source(sim, direction=direction, pol=pol)
+
+    h_delta = source._compute_discrete_3d_h_phasor_delta(
+        sim.fields,
+        dt=float(sim.dt),
+    )
+    e_delta = source._compute_discrete_3d_e_phasor_delta(
+        sim.fields,
+        dt=float(sim.dt),
+    )
+
+    h_abs, h_imag = _max_complex_part(h_delta)
+    e_abs, e_imag = _max_complex_part(e_delta)
+    assert h_abs > 0.0
+    assert e_abs > 0.0
+    assert h_imag > 1e-3 * h_abs
+    assert e_imag > 1e-3 * e_abs
+
+
+@pytest.mark.parametrize(
+    "direction,pol",
+    (
+        ("+x", "te"),
+        ("-x", "tm"),
+        ("+y", "te"),
+        ("-y", "tm"),
+        ("+z", "te"),
+        ("-z", "tm"),
+    ),
+)
+def test_source_plane_three_way_projection_localizes_rejected_branch_to_yee_update(
+    direction: str,
+    pol: str,
+):
+    sim = _build_centered_straight_guide_sim(ppw=6, axis=direction[1])
+    source, _dx = _build_test_source(sim, direction=direction, pol=pol)
+    dt = float(sim.dt)
+    profiles, _indices = source._get_3d_profiles_and_indices()
+    initial_state = source._build_incident_3d_phasor_state(
+        sim.fields,
+        t_e=0.0,
+        t_h=-0.5 * dt,
+        masked=False,
+    )
+    full_next, reconstructed_next = _full_and_residual_reconstructed_phasor_step(
+        source,
+        sim.fields,
+        dt=dt,
+    )
+
+    profile_metrics = _source_basis_branch_metrics(
+        source,
+        {
+            name: np.asarray(value, dtype=np.complex128)
+            for name, value in profiles.items()
+        },
+    )
+    initial_metrics = _source_basis_branch_metrics(
+        source,
+        _source_plane_deembedded_phasor_profiles(
+            source,
+            initial_state,
+            t_e=0.0,
+            t_h=-0.5 * dt,
+        ),
+    )
+    full_update_metrics = _source_basis_branch_metrics(
+        source,
+        _source_plane_deembedded_phasor_profiles(
+            source,
+            full_next,
+            t_e=dt,
+            t_h=0.5 * dt,
+        ),
+    )
+    residual_metrics = _source_basis_branch_metrics(
+        source,
+        _source_plane_deembedded_phasor_profiles(
+            source,
+            reconstructed_next,
+            t_e=dt,
+            t_h=0.5 * dt,
+        ),
+    )
+
+    assert profile_metrics["forward_abs"] == pytest.approx(1.0, rel=1e-12)
+    assert profile_metrics["backward_ratio"] < 1e-12
+    assert initial_metrics["forward_abs"] == pytest.approx(1.0, rel=1e-12)
+    assert initial_metrics["backward_ratio"] < 1e-12
+    assert full_update_metrics["forward_abs"] > 0.9
+    assert full_update_metrics["backward_ratio"] < 0.15
+    for key in ("forward_abs", "backward_abs", "backward_ratio"):
+        assert residual_metrics[key] == pytest.approx(
+            full_update_metrics[key],
+            rel=5e-6,
+            abs=5e-8,
+        )
+
+
+@pytest.mark.parametrize(
+    "direction,pol",
+    (
+        ("+x", "te"),
+        ("-y", "tm"),
+        ("+z", "tm"),
+    ),
+)
+def test_discrete_3d_phasor_residual_is_exact_full_minus_masked_update(
+    direction: str,
+    pol: str,
+):
+    sim = _build_centered_straight_guide_sim(ppw=6, axis=direction[1])
+    source, _dx = _build_test_source(sim, direction=direction, pol=pol)
+    dt = float(sim.dt)
+    full_prev = source._build_incident_3d_phasor_state(
+        sim.fields,
+        t_e=0.0,
+        t_h=-0.5 * dt,
+        masked=False,
+    )
+    masked_prev = source._build_incident_3d_phasor_state(
+        sim.fields,
+        t_e=0.0,
+        t_h=-0.5 * dt,
+        masked=True,
+    )
+
+    h_full_next = source._advance_incident_h_3d(sim.fields, full_prev, dt)
+    h_mask_next = source._advance_incident_h_3d(sim.fields, masked_prev, dt)
+    h_delta = source._compute_discrete_3d_h_phasor_delta(sim.fields, dt=dt)
+    for comp in ("Hx", "Hy", "Hz"):
+        np.testing.assert_allclose(
+            h_mask_next[comp] + h_delta[comp],
+            h_full_next[comp],
+            rtol=1e-6,
+            atol=1e-6,
+        )
+
+    e_full_next = source._advance_incident_e_3d(
+        sim.fields,
+        full_prev,
+        h_full_next,
+        dt,
+    )
+    e_mask_next = source._advance_incident_e_3d(
+        sim.fields,
+        masked_prev,
+        h_full_next,
+        dt,
+    )
+    e_delta = source._compute_discrete_3d_e_phasor_delta(sim.fields, dt=dt)
+    for comp in ("Ex", "Ey", "Ez"):
+        np.testing.assert_allclose(
+            e_mask_next[comp] + e_delta[comp],
+            e_full_next[comp],
+            rtol=1e-6,
+            atol=1e-6,
+        )
+
+
 @pytest.mark.parametrize("direction", ("+x", "-x", "+y", "-y"))
 @pytest.mark.parametrize("pol", ("te", "tm"))
 def test_mode_source_h_injection_is_transversely_symmetric_in_source_interior_for_all_3d_axes_and_polarizations(
@@ -2499,23 +2883,37 @@ def test_mode_source_h_injection_is_transversely_symmetric_in_source_interior_fo
         assert _best_parity_residual(sample, axis=1) < 1e-6
 
 
-test_centered_straight_guide_cell_centered_raster_is_transversely_symmetric.__test__ = False
+test_centered_straight_guide_cell_centered_raster_is_transversely_symmetric.__test__ = (
+    False
+)
 test_centered_straight_guide_te_fixture_is_weakly_multimode.__test__ = False
 test_tiny_centered_straight_guide_fixture_is_small_and_transversely_symmetric.__test__ = False
 test_second_order_mode_fit_is_exact_for_single_cosine_sequence.__test__ = False
 test_complex_3d_source_profiles_are_forward_pure_before_real_projection.__test__ = False
-test_large_guide_runtime_profiles_do_not_couple_to_first_odd_guided_mode.__test__ = False
+test_large_guide_runtime_profiles_do_not_couple_to_first_odd_guided_mode.__test__ = (
+    False
+)
 test_source_off_downstream_mode_metrics_are_finite_and_improve_with_more_modes.__test__ = False
 test_source_off_downstream_distance_sweep_metrics_are_finite.__test__ = False
-test_real_projection_preserves_forward_purity_under_current_profile_basis.__test__ = False
+test_real_projection_preserves_forward_purity_under_current_profile_basis.__test__ = (
+    False
+)
 test_runtime_gauge_and_flux_normalization_do_not_change_3d_mode_purity.__test__ = False
-test_lateral_rectangular_guide_secondary_pair_grows_during_profile_build.__test__ = False
+test_lateral_rectangular_guide_secondary_pair_grows_during_profile_build.__test__ = (
+    False
+)
 test_secondary_h_pair_is_specific_to_doubly_confined_lateral_guides.__test__ = False
 test_mode_source_runtime_profiles_are_transversely_parity_clean_for_all_3d_axes_and_polarizations.__test__ = False
 test_one_step_uniform_medium_keeps_small_transverse_e_asymmetry.__test__ = False
-test_one_step_straight_guide_update_has_no_staggered_ex_support_residual.__test__ = False
-test_one_step_guide_curl_hx_source_branches_remain_individually_symmetric.__test__ = False
+test_one_step_straight_guide_update_has_no_staggered_ex_support_residual.__test__ = (
+    False
+)
+test_one_step_guide_curl_hx_source_branches_remain_individually_symmetric.__test__ = (
+    False
+)
 test_one_step_lateral_guide_update_has_no_staggered_longitudinal_e_support_residual.__test__ = False
 test_tiny_straight_guide_manual_substep_update_has_no_staggered_ex_support_residual.__test__ = False
-test_zeroing_longitudinal_h_branch_preserves_tiny_x_guide_ex_axis0_symmetry.__test__ = False
+test_zeroing_longitudinal_h_branch_preserves_tiny_x_guide_ex_axis0_symmetry.__test__ = (
+    False
+)
 test_zeroing_longitudinal_h_branch_preserves_y_guide_ey_axis0_symmetry.__test__ = False

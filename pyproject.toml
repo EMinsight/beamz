@@ -29,7 +29,6 @@ dependencies = [
     "anywidget>=0.9.18",
     "gdspy>=1.6.0",
     "scipy>=1.10.1",
-    "rich>=13.9.4",
     "shapely>=2.0.6",
     "jax>=0.4.0",
     "gdsfactory",
@@ -39,6 +38,7 @@ dependencies = [
     "traitlets>=5.14.0",
     "matplotlib>=3.8.0",
     "scikit-image>=0.21.0",
+    "xarray>=2024.0.0",
 ]
 
 [project.urls]

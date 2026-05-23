@@ -62,6 +62,51 @@ class _ModeSourceState:
 # ---------------------------------------------------------------------------
 
 
+def _interpolate_time_signal(signal, time, dt):
+    """Linearly interpolate a real-valued source signal at an arbitrary time."""
+    arr = np.asarray(signal, dtype=np.float64)
+    if arr.size <= 0:
+        return 0.0
+
+    idx_float = float(time / dt)
+    idx_low = int(np.floor(idx_float))
+    idx_high = idx_low + 1
+    frac = idx_float - idx_low
+
+    if 0 <= idx_low < arr.size - 1:
+        return float((1.0 - frac) * arr[idx_low] + frac * arr[idx_high])
+    if idx_low == arr.size - 1:
+        return float(arr[idx_low])
+    return 0.0
+
+
+def _analytic_signal_quadrature(signal):
+    """Return the Hilbert-transform quadrature of a real source waveform."""
+    arr = np.asarray(signal, dtype=np.float64).reshape(-1)
+    n = int(arr.size)
+    if n <= 0:
+        return np.zeros((0,), dtype=np.float64)
+    if n == 1:
+        return np.zeros_like(arr, dtype=np.float64)
+
+    spectrum = np.fft.fft(arr)
+    weights = np.zeros((n,), dtype=np.float64)
+    weights[0] = 1.0
+    if n % 2 == 0:
+        weights[n // 2] = 1.0
+        weights[1 : n // 2] = 2.0
+    else:
+        weights[1 : (n + 1) // 2] = 2.0
+    analytic = np.fft.ifft(spectrum * weights)
+    return np.asarray(np.imag(analytic), dtype=np.float64)
+
+
+def _real_phasor_sample(profile, in_phase, quadrature):
+    """Evaluate Re(profile * analytic_signal) for real-valued FDTD fields."""
+    arr = np.asarray(profile, dtype=np.complex128)
+    return np.real(arr) * float(in_phase) - np.imag(arr) * float(quadrature)
+
+
 def _jax_tukey_window(M: int, alpha: float = 0.5) -> jnp.ndarray:
     """JAX-compatible Tukey (tapered cosine) window.
 
@@ -1649,10 +1694,26 @@ class ModeSource:
         if name in self._RUNTIME_ATTRS and "_state" in self.__dict__:
             setattr(self._state, name, value)
             return
+        if (
+            name in {"signal", "signal_quadrature"}
+            and "_signal_quadrature" in self.__dict__
+        ):
+            object.__setattr__(self, "_signal_quadrature", None)
+            object.__setattr__(self, "_signal_quadrature_signature", None)
         object.__setattr__(self, name, value)
 
     def __init__(
-        self, grid, center, width, wavelength, pol, signal, direction="+x", height=None
+        self,
+        grid,
+        center,
+        width,
+        wavelength,
+        pol,
+        signal,
+        direction="+x",
+        height=None,
+        signal_quadrature=None,
+        profile_frequencies=None,
     ):
         self.grid = grid
         self.center = (
@@ -1665,6 +1726,10 @@ class ModeSource:
         if self.pol not in {"te", "tm"}:
             raise ValueError(f"pol must be 'te' or 'tm', got {pol!r}")
         self.signal = signal
+        self.signal_quadrature = signal_quadrature
+        self.profile_frequencies = profile_frequencies
+        self._signal_quadrature = None
+        self._signal_quadrature_signature = None
         self.direction, self._direction_axis, self._direction_sign = _parse_direction(
             direction
         )
@@ -1753,11 +1818,7 @@ class ModeSource:
         self._omega_launch = float(omega) if is_3d else None
         dL = dz if is_3d else (dy if axis == "x" else dx)
         solver_direction = self.direction
-        if is_3d and axis == "x":
-            # x-directed 3D launches are still anchored to the opposite signed
-            # solver branch to match the source-plane staggering conventions.
-            solver_direction = ("-" if self.direction.startswith("+") else "+") + axis
-        elif is_3d and axis == "y":
+        if is_3d and axis == "y":
             # y-directed 3D launches are solved in a fixed +y basis for a
             # stable gauge; launch direction is handled by source timing.
             solver_direction = "+y"
@@ -1930,7 +1991,6 @@ class ModeSource:
         symmetric_axes = _detect_transverse_symmetry_axes(self._eps_profile_2d)
         if symmetric_axes:
             profiles = _enforce_componentwise_parity(profiles, symmetric_axes)
-        profiles = _project_3d_profiles_to_real(profiles)
         profiles = _normalize_3d_profiles_by_flux(
             profiles,
             axis=axis,
@@ -2301,17 +2361,40 @@ class ModeSource:
 
     def _get_signal_value(self, time, dt):
         """Interpolate signal value at arbitrary time."""
-        idx_float = float(time / dt)
-        idx_low = int(np.floor(idx_float))
-        idx_high = idx_low + 1
-        frac = idx_float - idx_low
+        return _interpolate_time_signal(self.signal, time, dt)
 
-        if 0 <= idx_low < len(self.signal) - 1:
-            return (1.0 - frac) * self.signal[idx_low] + frac * self.signal[idx_high]
-        elif idx_low == len(self.signal) - 1:
-            return self.signal[idx_low]
-        else:
-            return 0.0
+    def _get_signal_quadrature(self):
+        explicit = getattr(self, "signal_quadrature", None)
+        if explicit is not None:
+            signal = np.asarray(self.signal, dtype=np.float64).reshape(-1)
+            quadrature = np.asarray(explicit, dtype=np.float64).reshape(-1)
+            if quadrature.shape != signal.shape:
+                raise ValueError(
+                    "signal_quadrature must have the same shape as signal; "
+                    f"got {quadrature.shape} and {signal.shape}"
+                )
+            return quadrature
+
+        signal = np.asarray(self.signal, dtype=np.float64).reshape(-1)
+        signature = (id(self.signal), signal.shape, str(signal.dtype))
+        if (
+            self._signal_quadrature is None
+            or self._signal_quadrature_signature != signature
+        ):
+            self._signal_quadrature = _analytic_signal_quadrature(signal)
+            self._signal_quadrature_signature = signature
+        return self._signal_quadrature
+
+    def _get_signal_quadrature_value(self, time, dt):
+        """Interpolate the quadrature drive used for complex modal phasors."""
+        return _interpolate_time_signal(self._get_signal_quadrature(), time, dt)
+
+    def _get_analytic_signal_value(self, time, dt):
+        """Sample the analytic source waveform at an arbitrary time."""
+        return complex(
+            self._get_signal_value(time, dt),
+            self._get_signal_quadrature_value(time, dt),
+        )
 
     def inject_h(self, fields, t, dt, current_step, resolution, design):
         """Inject magnetic current (M) into H-fields after the H update."""
@@ -2445,7 +2528,7 @@ class ModeSource:
             base_coord = _component_axis_coord(
                 comp_name, base_axis_idx, axis, dx, dy, dz
             )
-            profile_arr = np.asarray(profile, dtype=np.float64)
+            profile_arr = np.asarray(profile, dtype=np.complex128)
             base_time = float(t_e if comp_name.startswith("E") else t_h)
 
             for shift in range(-max_shift, max_shift + 1):
@@ -2467,12 +2550,96 @@ class ModeSource:
 
                 delay = _numeric_phase_delay(omega, k_num, coord - ref_coord)
                 signal_time = base_time - delay
-                amp = float(self._get_signal_value(signal_time, dt))
-                if amp == 0.0:
+                amp_re = float(self._get_signal_value(signal_time, dt))
+                amp_im = float(self._get_signal_quadrature_value(signal_time, dt))
+                if amp_re == 0.0 and amp_im == 0.0:
                     continue
 
                 field_arrays[comp_name][shifted_idx] = (
-                    field_arrays[comp_name][shifted_idx] + profile_arr * amp
+                    field_arrays[comp_name][shifted_idx]
+                    + _real_phasor_sample(profile_arr, amp_re, amp_im)
+                )
+
+        return field_arrays
+
+    def _build_incident_3d_phasor_state(
+        self,
+        fields,
+        *,
+        t_e,
+        t_h,
+        masked,
+    ):
+        """Construct a complex carrier phasor for the local 3D incident field."""
+        profiles, indices = self._get_3d_profiles_and_indices()
+        dx = dy = dz = float(self._resolution or 0.0)
+        axis = self._axis
+        if axis is None:
+            raise RuntimeError(
+                "3D incident phasor requested before source initialization"
+            )
+        k_num = self._k_num_axis
+        omega = self._omega_launch
+        if k_num is None or omega is None:
+            raise RuntimeError(
+                "3D incident phasor requested without discrete launch metadata"
+            )
+
+        plane_coord = float(self._phase_plane_coord)
+        ref_coord = float(self._phase_ref_coord)
+        d_axis = {"x": dx, "y": dy, "z": dz}[axis]
+        max_shift = int(max(1, self._discrete_launch_max_shift))
+        direction_sign = float(self._direction_sign)
+        staggered_along_axis = {
+            "x": {"Ex", "Hy", "Hz"},
+            "y": {"Ey", "Hx", "Hz"},
+            "z": {"Ez", "Hx", "Hy"},
+        }
+
+        field_arrays = {
+            "Ex": np.zeros_like(np.asarray(fields.Ex), dtype=np.complex128),
+            "Ey": np.zeros_like(np.asarray(fields.Ey), dtype=np.complex128),
+            "Ez": np.zeros_like(np.asarray(fields.Ez), dtype=np.complex128),
+            "Hx": np.zeros_like(np.asarray(fields.Hx), dtype=np.complex128),
+            "Hy": np.zeros_like(np.asarray(fields.Hy), dtype=np.complex128),
+            "Hz": np.zeros_like(np.asarray(fields.Hz), dtype=np.complex128),
+        }
+        field_shapes = {name: arr.shape for name, arr in field_arrays.items()}
+
+        for comp_name, profile in profiles.items():
+            idx = indices.get(comp_name)
+            if profile is None or idx is None:
+                continue
+
+            base_axis_idx = _axis_index_from_component_indices(idx, axis)
+            base_coord = _component_axis_coord(
+                comp_name, base_axis_idx, axis, dx, dy, dz
+            )
+            profile_arr = np.asarray(profile, dtype=np.complex128)
+            base_time = float(t_e if comp_name.startswith("E") else t_h)
+
+            for shift in range(-max_shift, max_shift + 1):
+                shifted_idx = _shift_component_indices_along_axis(
+                    idx, axis, shift, field_shapes[comp_name]
+                )
+                if shifted_idx is None:
+                    continue
+
+                coord = float(base_coord + shift * d_axis)
+                if masked:
+                    mask_coord = (
+                        ref_coord
+                        if comp_name in staggered_along_axis[axis]
+                        else plane_coord
+                    )
+                    if direction_sign * (coord - mask_coord) < -1e-12:
+                        continue
+
+                delay = _numeric_phase_delay(omega, k_num, coord - ref_coord)
+                phase = float(omega) * (base_time - delay)
+                field_arrays[comp_name][shifted_idx] = (
+                    field_arrays[comp_name][shifted_idx]
+                    + profile_arr * np.exp(1j * phase)
                 )
 
         return field_arrays
@@ -2497,9 +2664,11 @@ class ModeSource:
         if has_full_pec_3d(boundaries):
             fp_state = initialize_full_pec_3d_state(fields)
             for comp in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz"):
-                full = getattr(fp_state, comp)
-                full = full.at[:-1, :-1, :-1].set(jnp.asarray(state[comp]))
-                setattr(fp_state, comp, jnp.where(fp_state.masks[comp], 0.0, full))
+                compact = jnp.asarray(state[comp])
+                full = jnp.asarray(getattr(fp_state, comp), dtype=compact.dtype)
+                full = full.at[:-1, :-1, :-1].set(compact)
+                zero = jnp.asarray(0.0, dtype=full.dtype)
+                setattr(fp_state, comp, jnp.where(fp_state.masks[comp], zero, full))
             curl_hx, curl_hy, curl_hz = pec_curl_e_to_h_3d(
                 fp_state.Ex,
                 fp_state.Ey,
@@ -2512,28 +2681,31 @@ class ModeSource:
             hx_next = ops.advance_h_field(fp_state.Hx, curl_hx, fp_state.sigma_m_hx, dt)
             hy_next = ops.advance_h_field(fp_state.Hy, curl_hy, fp_state.sigma_m_hy, dt)
             hz_next = ops.advance_h_field(fp_state.Hz, curl_hz, fp_state.sigma_m_hz, dt)
-            hx_next = jnp.where(fp_state.masks["Hx"], 0.0, hx_next)
-            hy_next = jnp.where(fp_state.masks["Hy"], 0.0, hy_next)
-            hz_next = jnp.where(fp_state.masks["Hz"], 0.0, hz_next)
+            hx_next = jnp.where(
+                fp_state.masks["Hx"], jnp.asarray(0.0, dtype=hx_next.dtype), hx_next
+            )
+            hy_next = jnp.where(
+                fp_state.masks["Hy"], jnp.asarray(0.0, dtype=hy_next.dtype), hy_next
+            )
+            hz_next = jnp.where(
+                fp_state.masks["Hz"], jnp.asarray(0.0, dtype=hz_next.dtype), hz_next
+            )
             return {
-                "Hx": np.asarray(hx_next[:-1, :-1, :-1], dtype=np.float64),
-                "Hy": np.asarray(hy_next[:-1, :-1, :-1], dtype=np.float64),
-                "Hz": np.asarray(hz_next[:-1, :-1, :-1], dtype=np.float64),
+                "Hx": np.asarray(hx_next[:-1, :-1, :-1]),
+                "Hy": np.asarray(hy_next[:-1, :-1, :-1]),
+                "Hz": np.asarray(hz_next[:-1, :-1, :-1]),
             }
 
         curl_hx, curl_hy, curl_hz = ops.curl_e_to_h_3d(ex, ey, ez, self._resolution)
         return {
             "Hx": np.asarray(
                 ops.advance_h_field(hx, curl_hx, fields.sigma_m_hx, dt),
-                dtype=np.float64,
             ),
             "Hy": np.asarray(
                 ops.advance_h_field(hy, curl_hy, fields.sigma_m_hy, dt),
-                dtype=np.float64,
             ),
             "Hz": np.asarray(
                 ops.advance_h_field(hz, curl_hz, fields.sigma_m_hz, dt),
-                dtype=np.float64,
             ),
         }
 
@@ -2558,13 +2730,17 @@ class ModeSource:
         if has_full_pec_3d(boundaries):
             fp_state = initialize_full_pec_3d_state(fields)
             for comp in ("Ex", "Ey", "Ez"):
-                full = getattr(fp_state, comp)
-                full = full.at[:-1, :-1, :-1].set(jnp.asarray(state[comp]))
-                setattr(fp_state, comp, jnp.where(fp_state.masks[comp], 0.0, full))
+                compact = jnp.asarray(state[comp])
+                full = jnp.asarray(getattr(fp_state, comp), dtype=compact.dtype)
+                full = full.at[:-1, :-1, :-1].set(compact)
+                zero = jnp.asarray(0.0, dtype=full.dtype)
+                setattr(fp_state, comp, jnp.where(fp_state.masks[comp], zero, full))
             for comp, arr in (("Hx", hx), ("Hy", hy), ("Hz", hz)):
-                full = getattr(fp_state, comp)
-                full = full.at[:-1, :-1, :-1].set(arr)
-                setattr(fp_state, comp, jnp.where(fp_state.masks[comp], 0.0, full))
+                compact = jnp.asarray(arr)
+                full = jnp.asarray(getattr(fp_state, comp), dtype=compact.dtype)
+                full = full.at[:-1, :-1, :-1].set(compact)
+                zero = jnp.asarray(0.0, dtype=full.dtype)
+                setattr(fp_state, comp, jnp.where(fp_state.masks[comp], zero, full))
             curl_hx, curl_hy, curl_hz = full_pec_curl_h_to_e_3d(
                 fp_state.Hx,
                 fp_state.Hy,
@@ -2601,13 +2777,19 @@ class ModeSource:
                 dt,
                 region_z,
             )
-            ex_next = jnp.where(fp_state.masks["Ex"], 0.0, ex_next)
-            ey_next = jnp.where(fp_state.masks["Ey"], 0.0, ey_next)
-            ez_next = jnp.where(fp_state.masks["Ez"], 0.0, ez_next)
+            ex_next = jnp.where(
+                fp_state.masks["Ex"], jnp.asarray(0.0, dtype=ex_next.dtype), ex_next
+            )
+            ey_next = jnp.where(
+                fp_state.masks["Ey"], jnp.asarray(0.0, dtype=ey_next.dtype), ey_next
+            )
+            ez_next = jnp.where(
+                fp_state.masks["Ez"], jnp.asarray(0.0, dtype=ez_next.dtype), ez_next
+            )
             return {
-                "Ex": np.asarray(ex_next[:-1, :-1, :-1], dtype=np.float64),
-                "Ey": np.asarray(ey_next[:-1, :-1, :-1], dtype=np.float64),
-                "Ez": np.asarray(ez_next[:-1, :-1, :-1], dtype=np.float64),
+                "Ex": np.asarray(ex_next[:-1, :-1, :-1]),
+                "Ey": np.asarray(ey_next[:-1, :-1, :-1]),
+                "Ez": np.asarray(ez_next[:-1, :-1, :-1]),
             }
 
         boundaries = getattr(fields, "boundaries", None)
@@ -2627,19 +2809,16 @@ class ModeSource:
                 ops.advance_e_field(
                     ex, curl_hx, fields.sig_x, fields.eps_x, dt, fields.region_x
                 ),
-                dtype=np.float64,
             ),
             "Ey": np.asarray(
                 ops.advance_e_field(
                     ey, curl_hy, fields.sig_y, fields.eps_y, dt, fields.region_y
                 ),
-                dtype=np.float64,
             ),
             "Ez": np.asarray(
                 ops.advance_e_field(
                     ez, curl_hz, fields.sig_z, fields.eps_z, dt, fields.region_z
                 ),
-                dtype=np.float64,
             ),
         }
 
@@ -2666,6 +2845,39 @@ class ModeSource:
         )
         masked_prev = self._build_incident_3d_state(
             fields, t_e=float(t), t_h=float(t - 0.5 * dt), dt=dt, masked=True
+        )
+        h_full_next = self._advance_incident_h_3d(fields, full_prev, dt)
+        e_full_next = self._advance_incident_e_3d(fields, full_prev, h_full_next, dt)
+        e_mask_next = self._advance_incident_e_3d(fields, masked_prev, h_full_next, dt)
+        return {
+            "Ex": e_full_next["Ex"] - e_mask_next["Ex"],
+            "Ey": e_full_next["Ey"] - e_mask_next["Ey"],
+            "Ez": e_full_next["Ez"] - e_mask_next["Ez"],
+        }
+
+    def _compute_discrete_3d_h_phasor_delta(self, fields, *, dt):
+        """Complex carrier residual for compiled 3D ModeSource H injection."""
+        full_prev = self._build_incident_3d_phasor_state(
+            fields, t_e=0.0, t_h=-0.5 * float(dt), masked=False
+        )
+        masked_prev = self._build_incident_3d_phasor_state(
+            fields, t_e=0.0, t_h=-0.5 * float(dt), masked=True
+        )
+        h_full_next = self._advance_incident_h_3d(fields, full_prev, dt)
+        h_mask_next = self._advance_incident_h_3d(fields, masked_prev, dt)
+        return {
+            "Hx": h_full_next["Hx"] - h_mask_next["Hx"],
+            "Hy": h_full_next["Hy"] - h_mask_next["Hy"],
+            "Hz": h_full_next["Hz"] - h_mask_next["Hz"],
+        }
+
+    def _compute_discrete_3d_e_phasor_delta(self, fields, *, dt):
+        """Complex carrier residual for compiled 3D ModeSource E injection."""
+        full_prev = self._build_incident_3d_phasor_state(
+            fields, t_e=0.0, t_h=-0.5 * float(dt), masked=False
+        )
+        masked_prev = self._build_incident_3d_phasor_state(
+            fields, t_e=0.0, t_h=-0.5 * float(dt), masked=True
         )
         h_full_next = self._advance_incident_h_3d(fields, full_prev, dt)
         e_full_next = self._advance_incident_e_3d(fields, full_prev, h_full_next, dt)
@@ -2752,6 +2964,82 @@ class ModeSource:
         from beamz.visual.data import mode_profile_data
 
         return mode_profile_data(self, field=field)
+
+    def mode_permittivity_plot_data(self):
+        """Return permittivity data used by this mode source."""
+        from beamz.visual.data import mode_permittivity_plot_data
+
+        return mode_permittivity_plot_data(self)
+
+    def signal_plot_data(self, *, t=None):
+        """Return renderer-agnostic source signal data."""
+        from beamz.visual.data import source_signal_plot_data
+
+        return source_signal_plot_data(self, t=t)
+
+    def spectrum_plot_data(self, *, t=None, dt=None):
+        """Return renderer-agnostic source spectrum data."""
+        from beamz.visual.data import source_spectrum_plot_data
+
+        return source_spectrum_plot_data(self, t=t, dt=dt)
+
+    def plot(self, **kwargs):
+        """Plot the mode profile using the matplotlib backend."""
+        from beamz.visual.mpl import plot_mode_profile
+
+        kwargs.setdefault("show", False)
+        return plot_mode_profile(self, **kwargs)
+
+    def show(self, **kwargs):
+        """Display the mode profile using the matplotlib backend."""
+        kwargs.setdefault("show", True)
+        return self.plot(**kwargs)
+
+    def plot_mode(self, **kwargs):
+        """Alias for :meth:`plot`."""
+        return self.plot(**kwargs)
+
+    def plot_eps(self, **kwargs):
+        """Plot the permittivity profile used by the mode solve."""
+        from beamz.visual.mpl import plot_mode_permittivity
+
+        kwargs.setdefault("show", False)
+        return plot_mode_permittivity(self, **kwargs)
+
+    def show_eps(self, **kwargs):
+        """Display the permittivity profile used by the mode solve."""
+        kwargs.setdefault("show", True)
+        return self.plot_eps(**kwargs)
+
+    def plot_signal(self, **kwargs):
+        """Plot the source time dependence."""
+        from beamz.visual.mpl import plot_source_signal
+
+        kwargs.setdefault("show", False)
+        return plot_source_signal(self, **kwargs)
+
+    def show_signal(self, **kwargs):
+        """Display the source time dependence."""
+        kwargs.setdefault("show", True)
+        return self.plot_signal(**kwargs)
+
+    def plot_spectrum(self, **kwargs):
+        """Plot the normalized source spectrum."""
+        from beamz.visual.mpl import plot_source_spectrum
+
+        kwargs.setdefault("show", False)
+        return plot_source_spectrum(self, **kwargs)
+
+    def show_spectrum(self, **kwargs):
+        """Display the normalized source spectrum."""
+        kwargs.setdefault("show", True)
+        return self.plot_spectrum(**kwargs)
+
+    def to_xarray(self, *, t=None):
+        """Return mode profile and signal data as an xarray Dataset."""
+        from beamz.data.xarray import mode_dataset
+
+        return mode_dataset(self, t=t)
 
     def to_plot_data(
         self, *, facecolor="none", edgecolor="crimson", alpha=0.8, linestyle="-"

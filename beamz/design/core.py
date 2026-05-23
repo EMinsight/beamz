@@ -762,3 +762,15 @@ class Design:
         from beamz.visual.data import design_plot_data
 
         return design_plot_data(self, **kwargs)
+
+    def plot(self, **kwargs):
+        """Plot the design layout using the matplotlib backend."""
+        from beamz.visual.mpl import plot_design
+
+        kwargs.setdefault("show", False)
+        return plot_design(self, **kwargs)
+
+    def show(self, **kwargs):
+        """Display the design using the matplotlib backend."""
+        kwargs.setdefault("show", True)
+        return self.plot(**kwargs)

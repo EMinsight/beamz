@@ -1,16 +1,13 @@
-from typing import Any, Dict
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TextIO
 
 import numpy as np
-from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    TimeRemainingColumn,
-)
 
 from beamz.const import LIGHT_SPEED
+
+_STATUS_MARKER = "● "
 
 
 def get_si_scale_and_label(value):
@@ -147,28 +144,143 @@ def dxdt(
     )
 
 
-# Initialize rich console
-console = Console()
-
-
 def display_status(status: str, status_type: str = "info") -> None:
-    """Display a status message with appropriate styling."""
-    style_map = {
-        "info": "blue",
-        "success": "green",
-        "warning": "yellow",
-        "error": "red",
+    """Display a plain status message."""
+    prefix_map = {
+        "info": "Info",
+        "success": "Done",
+        "warning": "Warning",
+        "error": "Error",
     }
-    style = style_map.get(status_type, "white")
-    console.print(f"[{style}]● {status}[/]")
+    prefix = prefix_map.get(status_type, "Info")
+    print(f"{_STATUS_MARKER}{prefix}: {status}")
 
 
-def create_rich_progress() -> Progress:
-    """Create and return a rich progress bar for tracking processes."""
-    return Progress(
-        SpinnerColumn(),
-        TextColumn("[bold blue]{task.description}"),
-        BarColumn(bar_width=None),
-        "[progress.percentage]{task.percentage:>3.0f}%",
-        TimeRemainingColumn(),
-    )
+@dataclass
+class _PlainTask:
+    description: str
+    total: int | None
+    completed: int = 0
+
+
+class PlainProgress:
+    """Minimal progress helper with no colors, spinners, bars, or styled markup."""
+
+    def __init__(self, *, file: TextIO | None = None, inline: bool = True):
+        self._file = file
+        self._inline = inline
+        self._tasks: dict[int, _PlainTask] = {}
+        self._next_task_id = 0
+
+    @property
+    def _output(self) -> TextIO:
+        import sys
+
+        return self._file if self._file is not None else sys.stdout
+
+    def __enter__(self) -> "PlainProgress":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        status = "failed" if exc_type is not None else "done"
+        for task in self._tasks.values():
+            total = task.total
+            if total is None:
+                self._write_line(f"{task.description} {status}")
+            else:
+                completed = min(task.completed, total)
+                self._write_line(f"{task.description} {status} ({completed}/{total})")
+
+    def add_task(self, description: str, total: int | None = None) -> int:
+        task_id = self._next_task_id
+        self._next_task_id += 1
+        normalized_total = None if total is None else max(int(total), 0)
+        self._tasks[task_id] = _PlainTask(
+            description=description,
+            total=normalized_total,
+        )
+        if normalized_total is None:
+            self._write_line(description)
+        else:
+            self._write_progress(description, completed=0, total=normalized_total)
+        return task_id
+
+    def update(
+        self, task_id: int, *, advance: int = 0, completed: int | None = None
+    ) -> None:
+        task = self._tasks[task_id]
+        if completed is not None:
+            task.completed = max(int(completed), 0)
+        else:
+            task.completed = max(task.completed + int(advance), 0)
+        if task.total is not None:
+            self._write_progress(
+                task.description,
+                completed=min(task.completed, task.total),
+                total=task.total,
+            )
+
+    def _can_inline(self) -> bool:
+        isatty = getattr(self._output, "isatty", None)
+        return bool(self._inline and callable(isatty) and isatty())
+
+    def _write_line(self, message: str) -> None:
+        if self._can_inline():
+            print(f"\r{_STATUS_MARKER}{message}", file=self._output, flush=True)
+        else:
+            print(f"{_STATUS_MARKER}{message}", file=self._output)
+
+    def _write_progress(self, description: str, *, completed: int, total: int) -> None:
+        message = _format_progress_message(
+            completed,
+            total,
+            label=description.rstrip("."),
+            unit="items",
+        )
+        if self._can_inline():
+            print(f"\r{_STATUS_MARKER}{message}", end="", file=self._output, flush=True)
+        elif completed == 0:
+            print(f"{_STATUS_MARKER}{description}", file=self._output)
+
+
+def _format_progress_message(
+    completed: int,
+    total: int,
+    *,
+    label: str = "Progress",
+    unit: str = "steps",
+) -> str:
+    """Format a simple progress message."""
+    safe_total = max(int(total), 1)
+    safe_completed = min(max(int(completed), 0), safe_total)
+    pct = 100.0 * safe_completed / safe_total
+    return f"{label}: {pct:.0f}% ({safe_completed}/{safe_total} {unit})"
+
+
+def _print_inline_progress(
+    completed: int,
+    total: int,
+    *,
+    label: str = "Progress",
+    unit: str = "steps",
+    file: TextIO | None = None,
+) -> None:
+    """Print a plain single-line progress update."""
+    import sys
+
+    output = file if file is not None else sys.stdout
+    message = _format_progress_message(completed, total, label=label, unit=unit)
+    print(f"\r{_STATUS_MARKER}{message}", end="", file=output, flush=True)
+
+
+def _finish_inline_progress(*, file: TextIO | None = None) -> None:
+    """Finish a plain inline progress line."""
+    import sys
+
+    output = file if file is not None else sys.stdout
+    print(file=output, flush=True)
+
+
+def create_plain_progress() -> PlainProgress:
+    """Create a plain progress reporter for tracking processes."""
+    return PlainProgress()

@@ -241,7 +241,7 @@ def run_forward(grid, wavelength, wave, fields=("Ez",)):
         resolution=DX,
     )
     results = sim.run(save_fields=list(fields), field_subsample=FIELD_SUBSAMPLE)
-    return modal_metrics(sim, wavelength), results.get("fields", {})
+    return modal_metrics(sim, wavelength), results.fields
 
 def run_adjoint(grid, wavelength, target_port, wave):
     source = ModeSource(
@@ -260,12 +260,13 @@ def run_adjoint(grid, wavelength, target_port, wave):
         time=wave["time"],
         resolution=DX,
     )
-    return [np.array(frame) for frame in sim.run(save_fields=["Ez"], field_subsample=FIELD_SUBSAMPLE)["fields"]["Ez"]]
+    results = sim.run(save_fields=["Ez"], field_subsample=FIELD_SUBSAMPLE)
+    return [np.asarray(frame) for frame in results.fields["Ez"].values]
 
 def flux_map(fields, time, gate_start):
-    ez_hist = [np.array(frame) for frame in fields["Ez"]]
-    hx_hist = [np.array(frame) for frame in fields["Hx"]]
-    hy_hist = [np.array(frame) for frame in fields["Hy"]]
+    ez_hist = [np.asarray(frame) for frame in fields["Ez"].values]
+    hx_hist = [np.asarray(frame) for frame in fields["Hx"].values]
+    hy_hist = [np.asarray(frame) for frame in fields["Hy"].values]
     n = min(len(ez_hist), len(hx_hist), len(hy_hist), len(time))
     flux = np.zeros_like(ez_hist[0], dtype=float)
     for i in range(n):
@@ -613,7 +614,7 @@ def run_iteration(beta, blur_radius, binarity_weight, gray_penalty_weight=0.0):
 
     for wl, target_port in CASES:
         modal, fields = run_forward(grid, wl, waves[wl], fields=("Ez",))
-        ez_hist = [np.array(frame) for frame in fields["Ez"]]
+        ez_hist = [np.asarray(frame) for frame in fields["Ez"].values]
         norm = max(modal["p_in"], 1e-30)
         target_tx = (modal["p_top"] if target_port == "top" else modal["p_bot"]) / norm
         leak_tx = (modal["p_bot"] if target_port == "top" else modal["p_top"]) / norm

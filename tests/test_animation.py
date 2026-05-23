@@ -76,12 +76,175 @@ def test_signal_plot_data_scales_picoseconds():
     assert np.allclose(payload["t_scaled"], np.array([0.0, 2.0]))
 
 
-def test_beamz_source_tree_contains_no_matplotlib_imports():
+def test_matplotlib_backend_isolated_to_visual_mpl():
     root = Path(__file__).resolve().parents[1] / "beamz"
     offenders = []
     for path in root.rglob("*.py"):
+        rel = path.relative_to(root).as_posix()
+        if rel == "visual/mpl.py":
+            continue
         text = path.read_text()
         if "import matplotlib" in text or "from matplotlib" in text:
-            offenders.append(path.relative_to(root).as_posix())
+            offenders.append(rel)
 
     assert offenders == []
+
+
+def test_import_beamz_does_not_import_pyplot():
+    import subprocess
+    import sys
+
+    code = "import sys, beamz; print('matplotlib.pyplot' in sys.modules)"
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.strip() == "False"
+
+
+def test_simulation_run_accepts_animate_live_kwargs(monkeypatch):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from beamz.visual import mpl as mpl_backend
+
+    rendered_steps = []
+
+    def fake_snapshot_figure(snapshot, **kwargs):
+        rendered_steps.append(snapshot["step"])
+        fig, ax = plt.subplots()
+        return fig, ax
+
+    class FakePyplot:
+        @staticmethod
+        def show(*args, **kwargs):
+            return None
+
+        @staticmethod
+        def pause(*args, **kwargs):
+            return None
+
+    monkeypatch.setattr(mpl_backend, "snapshot_figure", fake_snapshot_figure)
+    monkeypatch.setattr(mpl_backend, "_pyplot", lambda: FakePyplot)
+
+    sim = _make_snapshot_sim()
+    results = sim.run(
+        animate_live="Ez",
+        animation_interval=4,
+        store_snapshots=False,
+        progress=False,
+    )
+
+    assert results is None
+    assert rendered_steps == [4, 8, 12]
+    plt.close("all")
+
+
+def test_simulation_run_accepts_fixed_live_cmap_limits(monkeypatch):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from beamz.visual import mpl as mpl_backend
+
+    rendered_limits = []
+
+    def fake_snapshot_figure(snapshot, **kwargs):
+        rendered_limits.append((kwargs.get("vmin"), kwargs.get("vmax")))
+        fig, ax = plt.subplots()
+        return fig, ax
+
+    class FakePyplot:
+        @staticmethod
+        def show(*args, **kwargs):
+            return None
+
+        @staticmethod
+        def pause(*args, **kwargs):
+            return None
+
+    monkeypatch.setattr(mpl_backend, "snapshot_figure", fake_snapshot_figure)
+    monkeypatch.setattr(mpl_backend, "_pyplot", lambda: FakePyplot)
+
+    sim = _make_snapshot_sim()
+    sim.run(
+        animate_live="Ez",
+        animation_interval=4,
+        cmap_limits=(-0.25, 0.25),
+        store_snapshots=False,
+        progress=False,
+    )
+
+    assert rendered_limits == [(-0.25, 0.25), (-0.25, 0.25), (-0.25, 0.25)]
+    plt.close("all")
+
+
+def test_simulation_run_dynamic_live_cmap_limits_are_default(monkeypatch):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from beamz.visual import mpl as mpl_backend
+
+    rendered_limits = []
+
+    def fake_snapshot_figure(snapshot, **kwargs):
+        rendered_limits.append((kwargs.get("vmin"), kwargs.get("vmax")))
+        fig, ax = plt.subplots()
+        return fig, ax
+
+    class FakePyplot:
+        @staticmethod
+        def show(*args, **kwargs):
+            return None
+
+        @staticmethod
+        def pause(*args, **kwargs):
+            return None
+
+    monkeypatch.setattr(mpl_backend, "snapshot_figure", fake_snapshot_figure)
+    monkeypatch.setattr(mpl_backend, "_pyplot", lambda: FakePyplot)
+
+    sim = _make_snapshot_sim()
+    sim.run(
+        animate_live="Ez",
+        animation_interval=4,
+        cmap_limits="dynamic",
+        store_snapshots=False,
+        progress=False,
+    )
+
+    assert rendered_limits == [(None, None), (None, None), (None, None)]
+    plt.close("all")
+
+
+def test_simulation_animation_convenience_methods_forward_kwargs(monkeypatch):
+    calls = []
+    sim = _make_snapshot_sim()
+
+    def fake_run(**kwargs):
+        calls.append(kwargs)
+        return "result"
+
+    monkeypatch.setattr(sim, "run", fake_run)
+
+    assert sim.animate("Hy", animation_interval=2, cmap_limits=(-1.0, 1.0)) == "result"
+    assert sim.save_video("out.mp4", field="Ez", video_fps=24) == "result"
+
+    assert calls[0] == {
+        "animation_interval": 2,
+        "cmap_limits": (-1.0, 1.0),
+        "animate_live": "Hy",
+    }
+    assert calls[1] == {
+        "video_fps": 24,
+        "save_video": "out.mp4",
+        "video_field": "Ez",
+    }

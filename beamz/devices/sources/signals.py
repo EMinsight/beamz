@@ -48,6 +48,7 @@ class GaussianBandPulse:
     tail_cap_time: float
     time: np.ndarray
     signal: np.ndarray
+    signal_quadrature: np.ndarray
 
 
 def gaussian_band_pulse(
@@ -93,10 +94,10 @@ def gaussian_band_pulse(
         float(max_tail_uoc) * 1e-6 / LIGHT_SPEED, float(max_tail_cycles) / fmin
     )
     time = np.arange(0.0, source_end_time + tail_cap_time, float(dt))
-    signal = np.asarray(
-        gaussian_pulse(time, 1.0, peak_time, sigma, float(carrier_frequency), 0.0),
-        dtype=np.float32,
-    )
+    envelope = gaussian(time, 1.0, peak_time, sigma)
+    phase = 2.0 * np.pi * float(carrier_frequency) * time
+    signal = np.asarray(envelope * np.cos(phase), dtype=np.float32)
+    signal_quadrature = np.asarray(envelope * np.sin(phase), dtype=np.float32)
     return GaussianBandPulse(
         frequencies=freqs,
         carrier_frequency=float(carrier_frequency),
@@ -108,6 +109,7 @@ def gaussian_band_pulse(
         tail_cap_time=tail_cap_time,
         time=time,
         signal=signal,
+        signal_quadrature=signal_quadrature,
     )
 
 
@@ -116,3 +118,10 @@ def signal_plot_data(signals, t):
     from beamz.visual.data import signal_plot_data as _signal_plot_data
 
     return _signal_plot_data(signals, t)
+
+
+def plot_signal(signals, t, **kwargs):
+    """Plot one or more source signals using the matplotlib backend."""
+    from beamz.visual.mpl import plot_signal as _plot_signal
+
+    return _plot_signal(signals, t, **kwargs)

@@ -36,7 +36,8 @@ from beamz.devices.monitors import ModeMonitor, Monitor
 from beamz.devices.ports import Port
 from beamz.devices.sources import GaussianSource, ModeSource
 from beamz.devices.sources.mode import solve_modes
-from beamz.devices.sources.signals import ramped_cosine, signal_plot_data
+from beamz.devices.sources.signals import plot_signal, ramped_cosine, signal_plot_data
+from beamz.data import colocate_dataset, field_intensity, poynting_vector
 from beamz.optimization.autodiff import transform_density
 from beamz.optimization.topology import (
     TopologyManager,
@@ -62,10 +63,22 @@ from beamz.simulation.core import (
 # Import UI helpers
 from beamz.visual.helpers import (
     calc_optimal_fdtd_params,
-    create_rich_progress,
+    create_plain_progress,
     display_status,
     dxdt,
     get_si_scale_and_label,
+)
+from beamz.visual.mpl import (
+    mode_field_component_pairs,
+    plot_mode_fields,
+    plot_simulation_field,
+    plot_simulation_permittivity,
+    plot_source_signal,
+    plot_source_spectrum,
+    plot_tidy3d_cross_sections,
+    plot_tidy3d_dft_field,
+    plot_tidy3d_field_frame,
+    plot_tidy3d_mode_components,
 )
 
 # Prepare a dictionary of all our exports
@@ -103,6 +116,9 @@ _exports = {
     # Signals
     "ramped_cosine": ramped_cosine,
     "signal_plot_data": signal_plot_data,
+    "plot_signal": plot_signal,
+    "plot_source_signal": plot_source_signal,
+    "plot_source_spectrum": plot_source_spectrum,
     # Mode calculations
     "solve_modes": solve_modes,
     # Simulation
@@ -111,6 +127,17 @@ _exports = {
     "PortSpec": PortSpec,
     "MonitorResults": MonitorResults,
     "SimulationResults": SimulationResults,
+    "colocate_dataset": colocate_dataset,
+    "field_intensity": field_intensity,
+    "poynting_vector": poynting_vector,
+    "plot_simulation_field": plot_simulation_field,
+    "plot_simulation_permittivity": plot_simulation_permittivity,
+    "mode_field_component_pairs": mode_field_component_pairs,
+    "plot_mode_fields": plot_mode_fields,
+    "plot_tidy3d_cross_sections": plot_tidy3d_cross_sections,
+    "plot_tidy3d_dft_field": plot_tidy3d_dft_field,
+    "plot_tidy3d_field_frame": plot_tidy3d_field_frame,
+    "plot_tidy3d_mode_components": plot_tidy3d_mode_components,
     "CompiledRunConfig": CompiledRunConfig,
     "CompiledSimulation": CompiledSimulation,
     "EngineState": EngineState,
@@ -129,7 +156,7 @@ _exports = {
     "transform_density": transform_density,
     # UI helpers
     "display_status": display_status,
-    "create_rich_progress": create_rich_progress,
+    "create_plain_progress": create_plain_progress,
     "get_si_scale_and_label": get_si_scale_and_label,
     "calc_optimal_fdtd_params": calc_optimal_fdtd_params,
     "dxdt": dxdt,

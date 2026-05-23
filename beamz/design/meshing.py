@@ -9,7 +9,7 @@ from shapely.prepared import prep
 
 from beamz.design.structures import Rectangle
 from beamz.visual.helpers import (
-    create_rich_progress,
+    create_plain_progress,
     display_status,
 )
 
@@ -374,7 +374,7 @@ class RegularGrid(BaseMeshGrid):
                 grids.fill_all(self._get_all_material_props(background.material))
 
         # Process remaining structures
-        with create_rich_progress() as progress:
+        with create_plain_progress() as progress:
             task = progress.add_task(
                 "Rasterizing structures...", total=len(self.design.structures)
             )
@@ -884,6 +884,18 @@ class RegularGrid(BaseMeshGrid):
             raise RuntimeError("Grid not rasterized yet.")
         return grid_plot_data(self, field=field)
 
+    def plot(self, **kwargs):
+        """Plot a rasterized grid field using the matplotlib backend."""
+        from beamz.visual.mpl import plot_grid
+
+        kwargs.setdefault("show", False)
+        return plot_grid(self, **kwargs)
+
+    def show(self, **kwargs):
+        """Display a rasterized grid field using the matplotlib backend."""
+        kwargs.setdefault("show", True)
+        return self.plot(**kwargs)
+
 
 class RegularGrid3D(BaseMeshGrid):
     """3D Regular grid meshing for 3D designs."""
@@ -997,7 +1009,7 @@ class RegularGrid3D(BaseMeshGrid):
         fallback_count = 0
 
         t_struct_start = time.perf_counter()
-        with create_rich_progress() as progress:
+        with create_plain_progress() as progress:
             task = progress.add_task(
                 "Rasterizing 3D structures...", total=len(self.design.structures)
             )
@@ -1153,7 +1165,7 @@ class RegularGrid3D(BaseMeshGrid):
         if not hasattr(self.design, "boundaries") or not self.design.boundaries:
             return
 
-        with create_rich_progress() as progress:
+        with create_plain_progress() as progress:
             task = progress.add_task(
                 "Processing 3D PML boundaries...", total=len(self.design.boundaries)
             )
@@ -1654,6 +1666,18 @@ class RegularGrid3D(BaseMeshGrid):
             z_index=z_index,
             z_position=z_position,
         )
+
+    def plot(self, **kwargs):
+        """Plot a 2D slice of the rasterized 3D grid."""
+        from beamz.visual.mpl import plot_grid
+
+        kwargs.setdefault("show", False)
+        return plot_grid(self, **kwargs)
+
+    def show(self, **kwargs):
+        """Display a 2D slice of the rasterized 3D grid."""
+        kwargs.setdefault("show", True)
+        return self.plot(**kwargs)
 
 
 # Convenience functions for automatic mesh selection

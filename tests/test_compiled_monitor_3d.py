@@ -10,7 +10,10 @@ from beamz.devices.monitors.compiler import (
     compile_monitor_specs,
     sample_compiled_monitor_plane_component_3d,
 )
-from beamz.simulation.yee import component_coordinates_2d_um, component_coordinates_3d_um
+from beamz.simulation.yee import (
+    component_coordinates_2d_um,
+    component_coordinates_3d_um,
+)
 from tests.test_3d_constitutive_sampling import (
     _build_centered_straight_guide_sim_steps,
     _build_step_driven_test_source,
@@ -201,6 +204,62 @@ def test_compiled_monitor_3d_plane_sampling_matches_offline_record_fields(normal
             atol=1e-10,
             rtol=1e-7,
         )
+
+
+def test_compiled_monitor_3d_uses_full_canonical_analysis_plane():
+    sim = _build_centered_straight_guide_sim_steps(
+        ppw=6,
+        axis="x",
+        num_steps=1,
+    )
+    dx = float(sim.resolution)
+    monitor = Monitor(
+        design=sim.design,
+        start=(0.5 * sim.design.width, 0.5 * sim.design.height - 6.0 * dx, 0.0),
+        end=(
+            0.5 * sim.design.width,
+            0.5 * sim.design.height + 6.0 * dx,
+            sim.design.depth,
+        ),
+        name="staggered",
+        dft_enabled=True,
+        dft_frequencies=[3.0e14],
+    )
+
+    specs, _ = compile_monitor_specs(
+        [monitor],
+        sim.fields,
+        resolution=dx,
+        num_steps=1,
+        dt=float(sim.dt),
+    )
+    spec = specs[0]
+    expected_points = spec.min_dim0 * spec.min_dim1
+    coord0, coord1 = sim._monitor_analysis_plane_3d(monitor, "x")
+    comp_coord0, comp_coord1 = sim._monitor_component_plane_coords_3d(
+        monitor,
+        "Ex",
+        "x",
+    )
+
+    assert coord0.size == spec.min_dim0
+    assert coord1.size == spec.min_dim1
+    assert comp_coord0.size == spec.min_dim0
+    assert comp_coord1.size == spec.min_dim1
+
+    for comp in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz"):
+        flat_idx = getattr(spec, f"{comp.lower()}_interp_flat_idx")
+        weights = getattr(spec, f"{comp.lower()}_interp_weights")
+        assert tuple(flat_idx.shape) == (expected_points, 8)
+        assert tuple(weights.shape) == (expected_points, 8)
+        sampled = sample_compiled_monitor_plane_component_3d(
+            np.asarray(getattr(sim.fields, comp)),
+            flat_idx,
+            weights,
+            spec.min_dim0,
+            spec.min_dim1,
+        )
+        assert sampled.shape == (spec.min_dim0, spec.min_dim1)
 
 
 @pytest.mark.parametrize("direction,pol", [("+x", "te"), ("+y", "tm"), ("+z", "te")])

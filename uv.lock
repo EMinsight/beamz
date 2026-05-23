@@ -143,13 +143,14 @@ dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "optax" },
-    { name = "rich" },
     { name = "scikit-image", version = "0.25.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scikit-image", version = "0.26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "shapely" },
     { name = "traitlets" },
+    { name = "xarray", version = "2025.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "xarray", version = "2025.12.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 
 [package.optional-dependencies]
@@ -198,13 +199,13 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=4.0.0" },
     { name = "pytest-randomly", marker = "extra == 'test'", specifier = ">=3.0.0" },
-    { name = "rich", specifier = ">=13.9.4" },
     { name = "scikit-image", specifier = ">=0.21.0" },
     { name = "scipy", specifier = ">=1.10.1" },
     { name = "shapely", specifier = ">=2.0.6" },
     { name = "torch", marker = "extra == 'gpu'", specifier = ">=2.6.0" },
     { name = "traitlets", specifier = ">=5.14.0" },
     { name = "ubcpdk", marker = "extra == 'ubc'", specifier = "==2.7.0" },
+    { name = "xarray", specifier = ">=2024.0.0" },
 ]
 provides-extras = ["dev", "gpu", "ubc", "test"]
 

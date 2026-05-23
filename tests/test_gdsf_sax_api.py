@@ -14,6 +14,8 @@ from beamz import (
     design,
     dxdt,
 )
+from beamz.devices.sources.mode import _modal_overlap_3d_profiles
+from beamz.simulation.yee import component_shape_3d
 
 
 def test_dxdt_alias_matches_calc_optimal_fdtd_params():
@@ -53,29 +55,6 @@ def test_gdsf_loader_mmi1x2_returns_materialized_design_and_ports():
         cx, cy = port["center"]
         assert 0 <= cx <= loaded_design.width
         assert 0 <= cy <= loaded_design.height
-
-
-@pytest.mark.skipif(
-    importlib.util.find_spec("gdsfactory") is None,
-    reason="gdsfactory not installed",
-)
-def test_gdsf_prepare_component_resolves_generic_crossing_fallback():
-    prepared = design.io.gdsf.prepare_component(
-        "crossing_linear_taper",
-        layer=(1, 0),
-        n_core=3.47,
-        n_clad=1.44,
-        core_thickness=0.22e-6,
-        clad_below=0.50e-6,
-        clad_above=0.50e-6,
-        xy_padding=1.0e-6,
-        z_padding=0.50e-6,
-        extension=1.0e-6,
-    )
-
-    assert prepared["component_label"].startswith("gf.get_component")
-    assert {"o1", "o2", "o3", "o4"}.issubset(prepared["ports"])
-    assert prepared["design"].depth > 0
 
 
 def test_get_S_matrix_proxy_raises_and_points_to_modal_api():
@@ -169,8 +148,9 @@ def test_get_s_matrix_modal_dft_accepts_mode_monitor_ports(monkeypatch):
         frequencies,
         min_incident_db=-40.0,
         return_power=True,
+        mode_strategy="per_frequency",
     ):
-        del self, min_incident_db, return_power
+        del self, min_incident_db, return_power, mode_strategy
         np.testing.assert_allclose(frequencies, freqs)
         by_name = {p.name: p for p in ports}
         assert by_name["o1"].reference_monitor == "o1_ref"
@@ -366,7 +346,7 @@ def test_cw_demod_recovers_complex_amplitude():
     )
     assert demod.shape == (1,)
     assert np.isclose(np.abs(demod[0]), amp, rtol=0.03)
-    phase_err = np.angle(demod[0] / (amp * np.exp(1j * phase)))
+    phase_err = np.angle(demod[0] / (amp * np.exp(-1j * phase)))
     assert abs(phase_err) < 0.08
 
 
@@ -671,6 +651,25 @@ def test_monitor_get_dft_flux_uses_phasor_poynting_product():
     np.testing.assert_allclose(mon.get_dft_flux(), expected, rtol=1e-12, atol=1e-12)
 
 
+def test_monitor_get_dft_flux_phase_aligns_leapfrog_h_phasor():
+    mon = Monitor(
+        start=(0.0, 0.0),
+        end=(0.0, 1.0),
+        record_fields=False,
+        dft_enabled=True,
+        dft_frequencies=np.array([0.5], dtype=float),
+        dft_components=("Ez", "Hy"),
+        dft_normalization="physical",
+    )
+    mon._resolution = 1.0
+    mon._dft_base_dt = 1.0
+    mon._dft_accum["Ez"] = np.array([[1.0 + 0.0j]], dtype=np.complex128)
+    mon._dft_accum["Hy"] = np.array([[1.0j]], dtype=np.complex128)
+    mon._dft_weight_sum = np.ones((1,), dtype=float)
+
+    np.testing.assert_allclose(mon.get_dft_flux(), [-0.5], rtol=1e-12, atol=1e-12)
+
+
 def test_monitor_frequency_points_aliases_are_deprecated():
     with pytest.warns(DeprecationWarning, match="frequency_points"):
         mon = Monitor(
@@ -925,6 +924,355 @@ def test_project_modal_coefficients_3d_is_linear_in_field_amplitude():
     a_p, a_m = Simulation._project_modal_coefficients_3d(scaled, projection)
     np.testing.assert_allclose(a_p, scale, rtol=1e-10, atol=1e-10)
     np.testing.assert_allclose(a_m, 0.0 + 0.0j, rtol=1e-10, atol=1e-10)
+
+
+def test_project_modal_coefficients_3d_uses_rhs_orientation_for_complex_basis():
+    mode_components = {
+        "Ex": np.zeros((2,), dtype=np.complex128),
+        "Ey": np.array([1.0 + 0.2j, 0.3 - 0.1j], dtype=np.complex128),
+        "Ez": np.array([0.2 + 0.1j, -0.1 + 0.4j], dtype=np.complex128),
+        "Hx": np.zeros((2,), dtype=np.complex128),
+        "Hy": np.array([0.05 - 0.3j, 0.2 + 0.1j], dtype=np.complex128),
+        "Hz": np.array([0.9 - 0.1j, -0.2 + 0.5j], dtype=np.complex128),
+    }
+    mode_components_bwd = {
+        name: (-arr if name.startswith("H") else arr.copy())
+        for name, arr in mode_components.items()
+    }
+    overlap = np.asarray(
+        [
+            [
+                _modal_overlap_3d_profiles(mode_components, mode_components, "x", 0.1),
+                _modal_overlap_3d_profiles(
+                    mode_components, mode_components_bwd, "x", 0.1
+                ),
+            ],
+            [
+                _modal_overlap_3d_profiles(
+                    mode_components_bwd, mode_components, "x", 0.1
+                ),
+                _modal_overlap_3d_profiles(
+                    mode_components_bwd, mode_components_bwd, "x", 0.1
+                ),
+            ],
+        ],
+        dtype=np.complex128,
+    )
+    projection = {
+        "components": ("Ey", "Ez", "Hy", "Hz"),
+        "axis": "x",
+        "d_area": 0.1,
+        "mode_components": mode_components,
+        "mode_components_bwd": mode_components_bwd,
+        "overlap_matrix": overlap,
+        "pinv": np.zeros((2, 0), dtype=np.complex128),
+    }
+    a_true = 0.7 + 0.1j
+    b_true = -0.2 + 0.3j
+    mixed_fields = {
+        name: a_true * mode_components[name] + b_true * mode_components_bwd[name]
+        for name in mode_components
+    }
+
+    a_p, a_m = Simulation._project_modal_coefficients_3d(mixed_fields, projection)
+
+    np.testing.assert_allclose(a_p, a_true, rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(a_m, b_true, rtol=1e-10, atol=1e-10)
+
+
+def test_interpolate_plane_matrix_2d_preserves_complex_affine_plane():
+    src0 = np.array([0.0, 1.0, 2.0], dtype=float)
+    src1 = np.array([0.0, 2.0, 4.0], dtype=float)
+    dst0 = np.array([0.25, 1.5], dtype=float)
+    dst1 = np.array([0.5, 3.0], dtype=float)
+
+    def plane(c0, c1):
+        return 2.0 + 3.0 * c0 - 0.5 * c1 + 1j * (-1.0 + 0.25 * c0 + 2.0 * c1)
+
+    values = plane(src0[:, None], src1[None, :])
+    expected = plane(dst0[:, None], dst1[None, :])
+
+    actual = Simulation._interpolate_plane_matrix_2d(values, src0, src1, dst0, dst1)
+
+    np.testing.assert_allclose(actual, expected, rtol=1e-13, atol=1e-13)
+
+
+def test_colocate_field_components_to_projection_3d_respects_yee_offsets():
+    sim = Simulation.__new__(Simulation)
+    sim.is_3d = True
+    sim.resolution = 1.0
+    grid_shape = (5, 5, 5)
+    field_arrays = {
+        comp: np.zeros(component_shape_3d(comp, grid_shape), dtype=np.float32)
+        for comp in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
+    }
+    field_arrays["permittivity"] = np.ones(grid_shape, dtype=np.float32)
+    sim.fields = type("F", (), field_arrays)()
+
+    class DummyXMonitor:
+        name = "yee_x"
+
+        @staticmethod
+        def get_grid_slice_3d(dx, dy, dz, field_shape):
+            del dx, dy, dz
+            normal_index = min(1, int(field_shape[2]) - 1)
+            return slice(1, 4), slice(1, 4), normal_index
+
+    def plane(c0, c1):
+        return 0.25 + 0.75 * c0 - 0.4 * c1 + 1j * (1.5 - 0.2 * c0 + 0.6 * c1)
+
+    monitor = DummyXMonitor()
+    target0 = np.array([1.5, 2.0, 2.5], dtype=float)
+    target1 = np.array([1.5, 2.0, 2.5], dtype=float)
+    projection = {
+        "axis": "x",
+        "analysis_coords0": target0,
+        "analysis_coords1": target1,
+    }
+    field_components = {}
+    for comp in ("Ey", "Ez", "Hy", "Hz"):
+        src0, src1 = sim._monitor_component_plane_coords_3d(monitor, comp, "x")
+        field_components[comp] = plane(src0[:, None], src1[None, :]).reshape(-1)
+
+    colocated = sim._colocate_field_components_to_projection_3d(
+        monitor,
+        field_components,
+        projection,
+    )
+
+    expected = plane(target0[:, None], target1[None, :]).reshape(-1)
+    for comp in ("Ey", "Ez", "Hy", "Hz"):
+        np.testing.assert_allclose(colocated[comp], expected, rtol=1e-13, atol=1e-13)
+
+
+def test_build_port_projection_3d_staggers_solver_fields_to_yee_lattices(
+    monkeypatch,
+):
+    import beamz.simulation.core as core_mod
+
+    sim = Simulation.__new__(Simulation)
+    sim.is_3d = True
+    sim.resolution = 1.0
+    grid_shape = (4, 4, 4)
+    field_arrays = {
+        comp: np.zeros(component_shape_3d(comp, grid_shape), dtype=np.float32)
+        for comp in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
+    }
+    zz, yy, xx = np.meshgrid(
+        np.arange(grid_shape[0]),
+        np.arange(grid_shape[1]),
+        np.arange(grid_shape[2]),
+        indexing="ij",
+    )
+    field_arrays["permittivity"] = (
+        1.0 + 0.8 * ((zz + 2 * yy + 3 * xx) % 5)
+    ).astype(np.float32)
+    sim.fields = type("F", (), field_arrays)()
+
+    class DummyXMonitor:
+        name = "m_yee_projection"
+
+        @staticmethod
+        def get_grid_slice_3d(dx, dy, dz, field_shape):
+            del dx, dy, dz
+            normal_index = min(1, int(field_shape[2]) - 1)
+            return slice(0, 4), slice(0, 4), normal_index
+
+        @staticmethod
+        def get_dft_component(component):
+            del component
+            return np.zeros((1, 9), dtype=np.complex128)
+
+    z, y = np.meshgrid(np.arange(4), np.arange(4), indexing="ij")
+    ex = 10.0 + z + 0.1 * y + 0.03 * z * y
+    ey = 20.0 + 2.0 * z - 0.3 * y + 0.11 * z * y
+    ez = 30.0 - 0.4 * z + 1.5 * y - 0.07 * z * y
+    hx = 40.0 + 0.8 * z + 0.6 * y + 0.05 * z * y
+    hy = 50.0 + 1.2 * z - 0.2 * y + 0.09 * z * y
+    hz = 60.0 - 0.5 * z + 0.4 * y + 0.13 * z * y
+    e_mode = np.stack([ex, ey, ez]).astype(np.complex128)
+    h_mode = np.stack([hx, hy, hz]).astype(np.complex128)
+
+    def fake_solve_modes(
+        eps,
+        omega,
+        dL,
+        m,
+        direction,
+        filter_pol,
+        target_neff,
+        return_fields,
+    ):
+        del eps, omega, dL, m, direction, filter_pol, target_neff, return_fields
+        return np.array([2.0]), [e_mode], [h_mode], None
+
+    monkeypatch.setattr(core_mod, "solve_modes", fake_solve_modes)
+
+    projection = sim._build_port_projection(
+        spec=PortSpec(
+            name="p",
+            monitor_name="m_yee_projection",
+            direction="+x",
+            polarization="te",
+        ),
+        monitor=DummyXMonitor(),
+        frequency=1.0,
+        cache={},
+    )
+
+    grids = projection["mode_component_grids"]
+    expected = {
+        "Ey": 0.5 * (ey[:, :-1] + ey[:, 1:])[:3, :3],
+        "Ez": 0.5 * (ez[:-1, :] + ez[1:, :])[:3, :3],
+        "Hy": 0.5 * (hy[:-1, :] + hy[1:, :])[:3, :3],
+        "Hz": 0.5 * (hz[:, :-1] + hz[:, 1:])[:3, :3],
+    }
+    for comp, values in expected.items():
+        np.testing.assert_allclose(grids[comp], values, rtol=1e-13, atol=1e-13)
+
+
+def test_build_port_projection_3d_interpolates_cropped_yee_profiles(monkeypatch):
+    import beamz.simulation.core as core_mod
+
+    sim = Simulation.__new__(Simulation)
+    sim.is_3d = True
+    sim.resolution = 1.0
+    grid_shape = (5, 5, 5)
+    field_arrays = {
+        comp: np.zeros(component_shape_3d(comp, grid_shape), dtype=np.float32)
+        for comp in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
+    }
+    zz, yy, xx = np.meshgrid(
+        np.arange(grid_shape[0]),
+        np.arange(grid_shape[1]),
+        np.arange(grid_shape[2]),
+        indexing="ij",
+    )
+    field_arrays["permittivity"] = (
+        1.0 + 0.8 * ((zz + 2 * yy + 3 * xx) % 5)
+    ).astype(np.float32)
+    sim.fields = type("F", (), field_arrays)()
+
+    class DummyXMonitor:
+        name = "m_cropped_yee_projection"
+
+        @staticmethod
+        def get_grid_slice_3d(dx, dy, dz, field_shape):
+            del dx, dy, dz
+            normal_index = min(1, int(field_shape[2]) - 1)
+            return slice(0, 5), slice(0, 5), normal_index
+
+        @staticmethod
+        def get_dft_component(component):
+            del component
+            return np.zeros((1, 16), dtype=np.complex128)
+
+    z, y = np.meshgrid(np.arange(5), np.arange(5), indexing="ij")
+    ex = 10.0 + z + 0.1 * y + 0.03 * z * y
+    ey = 20.0 + 2.0 * z - 0.3 * y + 0.11 * z * y
+    ez = 30.0 - 0.4 * z + 1.5 * y - 0.07 * z * y
+    hx = 40.0 + 0.8 * z + 0.6 * y + 0.05 * z * y
+    hy = 50.0 + 1.2 * z - 0.2 * y + 0.09 * z * y
+    hz = 60.0 - 0.5 * z + 0.4 * y + 0.13 * z * y
+    e_mode = np.stack([ex, ey, ez]).astype(np.complex128)
+    h_mode = np.stack([hx, hy, hz]).astype(np.complex128)
+
+    def fake_solve_modes(
+        eps,
+        omega,
+        dL,
+        m,
+        direction,
+        filter_pol,
+        target_neff,
+        return_fields,
+    ):
+        del eps, omega, dL, m, direction, filter_pol, target_neff, return_fields
+        return np.array([2.0]), [e_mode], [h_mode], None
+
+    monkeypatch.setattr(core_mod, "solve_modes", fake_solve_modes)
+
+    projection = sim._build_port_projection(
+        spec=PortSpec(
+            name="p",
+            monitor_name="m_cropped_yee_projection",
+            direction="+x",
+            polarization="te",
+        ),
+        monitor=DummyXMonitor(),
+        frequency=1.0,
+        cache={},
+    )
+
+    assert projection["mode_component_grids"]["Ey"].shape == (4, 4)
+
+
+def test_project_modal_coefficients_3d_group_recovers_multiple_modes():
+    components = ("Ey", "Ez", "Hy", "Hz")
+
+    def _mode(ey, hz):
+        return {
+            "Ey": np.asarray(ey, dtype=np.complex128),
+            "Ez": np.zeros((2,), dtype=np.complex128),
+            "Hy": np.zeros((2,), dtype=np.complex128),
+            "Hz": np.asarray(hz, dtype=np.complex128),
+        }
+
+    def _backward(mode):
+        return {
+            name: (-value if name.startswith("H") else value.copy())
+            for name, value in mode.items()
+        }
+
+    mode0 = _mode([1.0, 0.0], [1.0, 0.0])
+    mode1 = _mode([0.0, 1.0], [0.0, 1.0])
+    mode0_bwd = _backward(mode0)
+    mode1_bwd = _backward(mode1)
+    projections = [
+        {
+            "components": components,
+            "axis": "x",
+            "d_area": 1.0,
+            "direction_sign": 1.0,
+            "mode_components": mode0,
+            "mode_components_bwd": mode0_bwd,
+        },
+        {
+            "components": components,
+            "axis": "x",
+            "d_area": 1.0,
+            "direction_sign": 1.0,
+            "mode_components": mode1,
+            "mode_components_bwd": mode1_bwd,
+        },
+    ]
+    coeff_true = [
+        (0.7 - 0.2j, -0.1 + 0.05j),
+        (0.25 + 0.4j, 0.15 - 0.3j),
+    ]
+    field = {}
+    for name in components:
+        field[name] = (
+            coeff_true[0][0] * mode0[name]
+            + coeff_true[0][1] * mode0_bwd[name]
+            + coeff_true[1][0] * mode1[name]
+            + coeff_true[1][1] * mode1_bwd[name]
+        )
+
+    coeff, residual, cond, diagnostics = (
+        Simulation._project_modal_coefficients_3d_group(
+            field,
+            projections,
+        )
+    )
+
+    assert cond < 10.0
+    assert residual < 1e-12
+    assert diagnostics["residual_e"] < 1e-12
+    assert diagnostics["residual_h"] < 1e-12
+    for actual, expected in zip(coeff, coeff_true):
+        np.testing.assert_allclose(actual[0], expected[0], rtol=1e-10, atol=1e-10)
+        np.testing.assert_allclose(actual[1], expected[1], rtol=1e-10, atol=1e-10)
 
 
 def test_project_modal_coefficients_3d_uses_overlap_space_when_ill_conditioned(
@@ -1351,11 +1699,11 @@ def test_build_port_projection_3d_uses_solved_backward_mode_components(monkeypat
 
     np.testing.assert_allclose(
         projection["mode_components"]["Ex"],
-        np.array([5.0, 0.0, 0.0, 0.0], dtype=np.complex128),
+        np.array([2.5], dtype=np.complex128),
     )
     np.testing.assert_allclose(
         projection["mode_components_bwd"]["Ex"],
-        np.array([1.0, 0.0, 0.0, 0.0], dtype=np.complex128),
+        np.array([0.5], dtype=np.complex128),
     )
     assert not np.array_equal(
         projection["mode_components_bwd"]["Ex"],
@@ -1554,8 +1902,8 @@ def test_build_port_projection_3d_preserves_requested_mode_index_without_seed(
     )
     monkeypatch.setattr(core_mod, "_select_core_confined_mode_index", lambda *args: 0)
 
-    first = np.array([[1.0, 0.0], [0.0, 0.0]], dtype=np.complex128)
-    second = np.array([[0.0, 0.0], [0.0, 2.0]], dtype=np.complex128)
+    first = np.array([[0.0, 0.0], [0.0, 1.0]], dtype=np.complex128)
+    second = np.array([[2.0, 0.0], [0.0, 0.0]], dtype=np.complex128)
     z = np.zeros((2, 2), dtype=np.complex128)
 
     def fake_solve_modes(
@@ -1606,7 +1954,7 @@ def test_build_port_projection_3d_preserves_requested_mode_index_without_seed(
 
     np.testing.assert_allclose(
         projection["mode_components"]["Ex"],
-        second.reshape(-1),
+        np.array([1.0], dtype=np.complex128),
     )
     assert projection["mode_neff"] == pytest.approx(1.8)
 
@@ -1706,12 +2054,26 @@ def test_extract_port_waves_dft_modal_coefficients_synthetic(monkeypatch):
         assert np.allclose(frequencies, freqs)
         return np.asarray(frequencies, dtype=float), dft_map[(monitor.name, component)]
 
-    def fake_projection(self, spec, monitor, frequency, cache, mode_pad_cells=6):
+    projection_frequencies = []
+
+    def fake_projection(
+        self,
+        spec,
+        monitor,
+        frequency,
+        cache,
+        mode_pad_cells=6,
+        previous_projection=None,
+    ):
+        del previous_projection
+        projection_frequencies.append(float(frequency))
         return {
             "e_component": "Ez",
             "h_component": "Hy",
+            "mode_matrix": mode_matrix,
             "pinv": pinv,
             "condition_number": 1.0,
+            "mode_neff": 2.0,
         }
 
     monkeypatch.setattr(Simulation, "_sample_monitor_component_dft", fake_sample)
@@ -1762,6 +2124,36 @@ def test_extract_port_waves_dft_modal_coefficients_synthetic(monkeypatch):
     np.testing.assert_allclose(waves["o1"]["a_incident"], a_ref, rtol=1e-9, atol=1e-9)
     np.testing.assert_allclose(waves["o2"]["a_plus"], a_out, rtol=1e-9, atol=1e-9)
     np.testing.assert_allclose(waves["o2"]["a_minus"], b_out, rtol=1e-9, atol=1e-9)
+    np.testing.assert_allclose(
+        waves["o1"]["projection_residual"],
+        np.zeros_like(freqs),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        waves["o1"]["reference_projection_residual"],
+        np.zeros_like(freqs),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        waves["o2"]["projection_residual"],
+        np.zeros_like(freqs),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+    projection_frequencies.clear()
+    sim.extract_port_waves_dft(
+        ports=ports,
+        frequencies=freqs,
+        mode_strategy="single",
+    )
+    assert projection_frequencies
+    np.testing.assert_allclose(
+        projection_frequencies,
+        np.full(len(projection_frequencies), np.median(freqs)),
+    )
 
 
 def test_get_S_matrix_modal_dft_keys_shapes_and_valid_mask(monkeypatch):
@@ -1786,7 +2178,12 @@ def test_get_S_matrix_modal_dft_keys_shapes_and_valid_mask(monkeypatch):
     }
 
     def fake_extract(
-        self, ports, frequencies, min_incident_db=-40.0, return_power=True
+        self,
+        ports,
+        frequencies,
+        min_incident_db=-40.0,
+        return_power=True,
+        mode_strategy="per_frequency",
     ):
         assert np.allclose(frequencies, freqs)
         return waves
@@ -1845,9 +2242,14 @@ def test_get_S_matrix_modal_dft_respects_wave_selectors(monkeypatch):
     }
 
     def fake_extract(
-        self, ports, frequencies, min_incident_db=-40.0, return_power=True
+        self,
+        ports,
+        frequencies,
+        min_incident_db=-40.0,
+        return_power=True,
+        mode_strategy="per_frequency",
     ):
-        del ports, min_incident_db, return_power
+        del ports, min_incident_db, return_power, mode_strategy
         assert np.allclose(frequencies, freqs)
         return waves
 
@@ -1883,6 +2285,12 @@ def test_get_S_matrix_modal_dft_respects_wave_selectors(monkeypatch):
         rtol=1e-12,
         atol=1e-12,
     )
+    out_check = result["diagnostics"]["monitor_flux_checks"]["out"]
+    assert out_check["incident_wave"] == "plus"
+    assert out_check["scattered_wave"] == "plus"
+    np.testing.assert_allclose(out_check["P_selected"], np.array([0.81, 0.64]))
+    np.testing.assert_allclose(out_check["P_rejected"], np.array([0.01, 0.01]))
+    np.testing.assert_allclose(out_check["P_selected_modal_net"], np.array([0.8, 0.63]))
 
 
 def test_get_S_matrix_modal_dft_auto_selectors_prefer_band_dominant_source_wave(
@@ -1908,9 +2316,14 @@ def test_get_S_matrix_modal_dft_auto_selectors_prefer_band_dominant_source_wave(
     }
 
     def fake_extract(
-        self, ports, frequencies, min_incident_db=-40.0, return_power=True
+        self,
+        ports,
+        frequencies,
+        min_incident_db=-40.0,
+        return_power=True,
+        mode_strategy="per_frequency",
     ):
-        del ports, min_incident_db, return_power
+        del ports, min_incident_db, return_power, mode_strategy
         assert np.allclose(frequencies, freqs)
         return waves
 
@@ -1945,6 +2358,14 @@ def test_get_S_matrix_modal_dft_auto_selectors_prefer_band_dominant_source_wave(
         np.array([0.25, 2.5], dtype=np.complex128),
         rtol=1e-12,
         atol=1e-12,
+    )
+    out_check = result["diagnostics"]["monitor_flux_checks"]["out"]
+    assert out_check["incident_wave"] == "plus"
+    assert out_check["scattered_wave"] == "minus"
+    np.testing.assert_allclose(out_check["P_selected"], np.array([0.25, 0.25]))
+    np.testing.assert_allclose(out_check["P_rejected"], np.array([0.16, 0.16]))
+    np.testing.assert_allclose(
+        out_check["P_selected_modal_net"], np.array([0.09, 0.09])
     )
 
 

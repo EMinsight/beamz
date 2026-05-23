@@ -172,3 +172,45 @@ class GaussianSource:
             alpha=alpha,
             linestyle=linestyle,
         )
+
+    def signal_plot_data(self, *, t=None):
+        """Return renderer-agnostic source signal data."""
+        from beamz.visual.data import source_signal_plot_data
+
+        return source_signal_plot_data(self, t=t)
+
+    def spectrum_plot_data(self, *, t=None, dt=None):
+        """Return renderer-agnostic source spectrum data."""
+        from beamz.visual.data import source_spectrum_plot_data
+
+        return source_spectrum_plot_data(self, t=t, dt=dt)
+
+    def plot_signal(self, **kwargs):
+        """Plot the source time dependence."""
+        from beamz.visual.mpl import plot_source_signal
+
+        kwargs.setdefault("show", False)
+        return plot_source_signal(self, **kwargs)
+
+    def show_signal(self, **kwargs):
+        """Display the source time dependence."""
+        kwargs.setdefault("show", True)
+        return self.plot_signal(**kwargs)
+
+    def plot_spectrum(self, **kwargs):
+        """Plot the normalized source spectrum."""
+        from beamz.visual.mpl import plot_source_spectrum
+
+        kwargs.setdefault("show", False)
+        return plot_source_spectrum(self, **kwargs)
+
+    def show_spectrum(self, **kwargs):
+        """Display the normalized source spectrum."""
+        kwargs.setdefault("show", True)
+        return self.plot_spectrum(**kwargs)
+
+    def to_xarray(self, *, t=None):
+        """Return source signal data as an xarray Dataset."""
+        from beamz.data.xarray import source_dataset
+
+        return source_dataset(self, t=t)

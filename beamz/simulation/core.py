@@ -41,6 +41,7 @@ from beamz.simulation.compiled import (
     EngineState,
     MonitorState,
     compile_simulation,
+    monitor_dft_accumulator_dtype,
     monitor_dft_point_size,
     monitor_frequency_size,
     monitor_state_size,
@@ -48,6 +49,7 @@ from beamz.simulation.compiled import (
 from beamz.simulation.fields import Fields
 from beamz.simulation.step_sequence import run_step_sequence
 from beamz.simulation.yee import component_coordinates_3d_um
+from beamz.visual.helpers import _finish_inline_progress, _print_inline_progress
 
 
 def _pml_merge_mode(key: str) -> str:
@@ -157,6 +159,117 @@ class MonitorResults:
     power_spectrum: np.ndarray
     frequency_flux_spectrum: np.ndarray
     objective_value: float | None = None
+    data: Any = None
+
+    def _plot_proxy(self):
+        if self.data is not None and hasattr(self.data, "data_vars"):
+            fields: dict[str, list[Any]] = {}
+            for name, da in self.data.data_vars.items():
+                if str(name) not in {
+                    "power",
+                    "power_spectrum",
+                    "frequency_flux_spectrum",
+                }:
+                    if "t" in da.dims:
+                        fields.setdefault(
+                            "t", list(np.asarray(da.coords["t"], dtype=float))
+                        )
+                        fields[str(name)] = [
+                            np.asarray(da.isel(t=idx)) for idx in range(da.sizes["t"])
+                        ]
+                    elif "frame" in da.dims:
+                        fields[str(name)] = [
+                            np.asarray(da.isel(frame=idx))
+                            for idx in range(da.sizes["frame"])
+                        ]
+            power = (
+                np.asarray(self.data["power"])
+                if "power" in self.data.data_vars
+                else np.asarray(self.power_history, dtype=float)
+            )
+            power_timestamps = (
+                np.asarray(self.data["power"].coords.get("t", ()), dtype=float)
+                if "power" in self.data.data_vars and "t" in self.data["power"].coords
+                else np.asarray(self.power_timestamps, dtype=float)
+            )
+            power_spectrum = (
+                np.asarray(self.data["power_spectrum"])
+                if "power_spectrum" in self.data.data_vars
+                else np.asarray(self.power_spectrum)
+            )
+            return SimpleNamespace(
+                fields=fields
+                or {name: list(values) for name, values in self.fields.items()},
+                power_history=list(power),
+                power_timestamps=list(power_timestamps),
+                power_spectrum=power_spectrum,
+                power_spectrum_frequencies=np.asarray(
+                    getattr(self.monitor, "power_spectrum_frequencies", ())
+                ),
+                monitor_type=getattr(self.monitor, "monitor_type", "line"),
+                start=getattr(self.monitor, "start", (0.0, 0.0)),
+                end=getattr(self.monitor, "end", (0.0, 0.0)),
+                size=getattr(self.monitor, "size", (0.0, 0.0)),
+                name=getattr(self.monitor, "name", None),
+            )
+        return SimpleNamespace(
+            fields={name: list(values) for name, values in self.fields.items()},
+            power_history=list(np.asarray(self.power_history, dtype=float)),
+            power_timestamps=list(np.asarray(self.power_timestamps, dtype=float)),
+            power_spectrum=np.asarray(self.power_spectrum),
+            power_spectrum_frequencies=np.asarray(
+                getattr(self.monitor, "power_spectrum_frequencies", ())
+            ),
+            monitor_type=getattr(self.monitor, "monitor_type", "line"),
+            start=getattr(self.monitor, "start", (0.0, 0.0)),
+            end=getattr(self.monitor, "end", (0.0, 0.0)),
+            size=getattr(self.monitor, "size", (0.0, 0.0)),
+            name=getattr(self.monitor, "name", None),
+        )
+
+    def field_plot_data(self, **kwargs):
+        """Return monitor-field plot data from this result."""
+        from beamz.visual.data import monitor_field_plot_data
+
+        return monitor_field_plot_data(self._plot_proxy(), **kwargs)
+
+    def power_plot_data(self, **kwargs):
+        """Return monitor-power plot data from this result."""
+        from beamz.visual.data import monitor_power_plot_data
+
+        return monitor_power_plot_data(self._plot_proxy(), **kwargs)
+
+    def plot(self, **kwargs):
+        """Plot recorded monitor field data from this result."""
+        from beamz.visual.mpl import plot_monitor_field
+
+        kwargs.setdefault("show", False)
+        return plot_monitor_field(self._plot_proxy(), **kwargs)
+
+    def show(self, **kwargs):
+        """Display recorded monitor field data from this result."""
+        kwargs.setdefault("show", True)
+        return self.plot(**kwargs)
+
+    def plot_fields(self, **kwargs):
+        """Alias for :meth:`plot`."""
+        return self.plot(**kwargs)
+
+    def plot_power(self, **kwargs):
+        """Plot monitor power history from this result."""
+        from beamz.visual.mpl import plot_monitor_power
+
+        kwargs.setdefault("show", False)
+        return plot_monitor_power(self._plot_proxy(), **kwargs)
+
+    def show_power(self, **kwargs):
+        """Display monitor power history from this result."""
+        kwargs.setdefault("show", True)
+        return self.plot_power(**kwargs)
+
+    def to_xarray(self):
+        """Return this monitor result as an xarray Dataset."""
+        return self.data
 
     @classmethod
     def from_monitor(cls, monitor: Monitor) -> "MonitorResults":
@@ -175,7 +288,7 @@ class MonitorResults:
         )
         if legacy_flux is None:
             legacy_flux = power_spectrum
-        return cls(
+        result = cls(
             monitor=monitor,
             fields=fields,
             power_history=np.asarray(
@@ -188,6 +301,11 @@ class MonitorResults:
             frequency_flux_spectrum=np.asarray(legacy_flux, dtype=np.complex64),
             objective_value=getattr(monitor, "objective_value", None),
         )
+        from dataclasses import replace
+
+        from beamz.data.xarray import monitor_dataset
+
+        return replace(result, data=monitor_dataset(result))
 
 
 @dataclass(frozen=True)
@@ -195,10 +313,28 @@ class SimulationResults(Mapping[str, Any]):
     """Primary run output with backward-compatible mapping access."""
 
     simulation: "Simulation"
-    fields: dict[str, np.ndarray] | None = None
+    fields: Any = None
+    field_times: np.ndarray | None = None
+    field_steps: np.ndarray | None = None
     monitors: tuple[Monitor, ...] = ()
     monitor_results: dict[str, MonitorResults] | None = None
     snapshots: tuple[dict[str, Any], ...] = ()
+
+    def __post_init__(self):
+        if self.fields is None or hasattr(self.fields, "data_vars"):
+            return
+        from beamz.data.xarray import simulation_fields_dataset
+
+        object.__setattr__(
+            self,
+            "fields",
+            simulation_fields_dataset(
+                self.simulation,
+                self.fields,
+                field_times=self.field_times,
+                field_steps=self.field_steps,
+            ),
+        )
 
     def __getitem__(self, key: str) -> Any:
         payload = self.to_dict()
@@ -216,6 +352,10 @@ class SimulationResults(Mapping[str, Any]):
         payload = {}
         if self.fields is not None:
             payload["fields"] = self.fields
+        if self.field_times is not None:
+            payload["field_times"] = self.field_times
+        if self.field_steps is not None:
+            payload["field_steps"] = self.field_steps
         if self.monitors:
             payload["monitors"] = list(self.monitors)
         if self.monitor_results:
@@ -224,12 +364,64 @@ class SimulationResults(Mapping[str, Any]):
             payload["snapshots"] = list(self.snapshots)
         return payload
 
+    def plot_field(self, **kwargs):
+        """Plot a stored field frame from this result."""
+        from beamz.visual.mpl import plot_simulation_field
+
+        kwargs.setdefault("show", False)
+        return plot_simulation_field(self, **kwargs)
+
+    def plot(self, **kwargs):
+        """Plot stored simulation snapshots with the matplotlib backend."""
+        if not self.snapshots:
+            return self.plot_field(**kwargs)
+        from beamz.visual.mpl import show_snapshots
+
+        kwargs.setdefault("show", False)
+        return show_snapshots(self.snapshots, **kwargs)
+
+    def show(self, **kwargs):
+        """Display stored simulation snapshots or stored fields."""
+        if not self.snapshots:
+            kwargs.setdefault("show", True)
+            return self.plot_field(**kwargs)
+
+        kwargs.setdefault("show", True)
+        return self.plot(**kwargs)
+
+    def animate(self, **kwargs):
+        """Animate stored simulation snapshots."""
+        if not self.snapshots:
+            raise RuntimeError("No snapshots available. Run with snapshot_field first.")
+        from beamz.visual.mpl import show_snapshots
+
+        kwargs.setdefault("show", True)
+        return show_snapshots(self.snapshots, **kwargs)
+
+    def save_video(self, filename, **kwargs):
+        """Save stored simulation snapshots as a video with the matplotlib backend."""
+        if not self.snapshots:
+            raise RuntimeError("No snapshots available. Run with snapshot_field first.")
+        from beamz.visual.mpl import save_snapshot_video
+
+        return save_snapshot_video(self.snapshots, filename=filename, **kwargs)
+
+    def to_xarray(self):
+        """Return stored simulation fields as an xarray Dataset."""
+        if self.fields is not None:
+            return self.fields
+        from beamz.data.xarray import simulation_fields_dataset
+
+        return simulation_fields_dataset(self.simulation, None)
+
     @classmethod
     def from_run(
         cls,
         simulation: "Simulation",
         *,
         fields: dict[str, np.ndarray] | None = None,
+        field_times: np.ndarray | list[float] | None = None,
+        field_steps: np.ndarray | list[int] | None = None,
         monitors: list[Monitor] | tuple[Monitor, ...] = (),
         snapshots: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     ) -> "SimulationResults" | None:
@@ -242,9 +434,25 @@ class SimulationResults(Mapping[str, Any]):
         }
         if fields is None and not monitor_tuple and not snapshot_tuple:
             return None
+        fields_dataset = None
+        if fields is not None:
+            from beamz.data.xarray import simulation_fields_dataset
+
+            fields_dataset = simulation_fields_dataset(
+                simulation,
+                fields,
+                field_times=field_times,
+                field_steps=field_steps,
+            )
         return cls(
             simulation=simulation,
-            fields=fields,
+            fields=fields_dataset,
+            field_times=(
+                None if field_times is None else np.asarray(field_times, dtype=float)
+            ),
+            field_steps=(
+                None if field_steps is None else np.asarray(field_steps, dtype=int)
+            ),
             monitors=monitor_tuple,
             monitor_results=monitor_results or None,
             snapshots=snapshot_tuple,
@@ -529,6 +737,8 @@ class Simulation:
             return np.array(getattr(self.fields, name))
 
         field_history = {name: [] for name in record_fields} if record_every else None
+        field_times = [] if record_every else None
+        field_steps = [] if record_every else None
         steps_done = 0
         progress_stride = max(1, num_steps // 100) if progress else None
 
@@ -539,6 +749,8 @@ class Simulation:
                 for name in record_fields:
                     if hasattr(self.fields, name):
                         field_history[name].append(np.array(getattr(self.fields, name)))
+                field_times.append(float(self.t))
+                field_steps.append(int(self.current_step))
 
             if snapshot_field is not None and (
                 self.current_step % snapshot_interval == 0
@@ -566,15 +778,10 @@ class Simulation:
                 or steps_done == 1
                 or (steps_done % progress_stride) == 0
             ):
-                pct = 100.0 * steps_done / max(num_steps, 1)
-                print(
-                    f"\r● Progress: {pct:.0f}% ({steps_done}/{num_steps} steps)",
-                    end="",
-                    flush=True,
-                )
+                _print_inline_progress(steps_done, num_steps)
 
         if progress:
-            print()
+            _finish_inline_progress()
 
         fields_result = None
         if field_history is not None:
@@ -586,6 +793,8 @@ class Simulation:
         return SimulationResults.from_run(
             self,
             fields=fields_result,
+            field_times=field_times,
+            field_steps=field_steps,
             monitors=self.monitors,
             snapshots=snapshots,
         )
@@ -598,7 +807,9 @@ class Simulation:
             device for device in self.sources if source_supports_compiled_specs(device)
         ]
         self._imperative_step_sources = [
-            device for device in self.sources if not source_supports_compiled_specs(device)
+            device
+            for device in self.sources
+            if not source_supports_compiled_specs(device)
         ]
         grouped = {
             "pre_e": {"Ex": [], "Ey": [], "Ez": []},
@@ -633,7 +844,9 @@ class Simulation:
     def _sync_full_pec_after_source_mutation(self):
         if self.is_3d and has_full_pec_3d(self.boundaries):
             if self.fields.full_pec_3d_state is None:
-                self.fields.full_pec_3d_state = initialize_full_pec_3d_state(self.fields)
+                self.fields.full_pec_3d_state = initialize_full_pec_3d_state(
+                    self.fields
+                )
             else:
                 sync_full_pec_3d_from_compact(
                     self.fields,
@@ -875,6 +1088,8 @@ class Simulation:
             raise ValueError("record_interval must be a positive integer")
 
         field_history = {name: [] for name in record_fields} if record_every else None
+        field_times = [] if record_every else None
+        field_steps = [] if record_every else None
         if self.current_step == 0:
             self._compiled_monitor_state = None
 
@@ -894,7 +1109,9 @@ class Simulation:
 
             if progress and steps_done == 0 and program.compile_count == 0:
                 print(
-                    "● JIT compiling v0.3 packed FDTD program...", end=" ", flush=True
+                    "● JIT compiling v0.3 packed FDTD program...",
+                    end=" ",
+                    flush=True,
                 )
 
             if (
@@ -990,6 +1207,7 @@ class Simulation:
                     )
                     max_freq = monitor_frequency_size(program.monitor_specs)
                     max_points = monitor_dft_point_size(program.monitor_specs)
+                    dft_dtype = monitor_dft_accumulator_dtype()
                     monitor_state = MonitorState(
                         powers=jnp.zeros(
                             (len(program.monitor_specs), max_records), dtype=jnp.float32
@@ -1014,17 +1232,18 @@ class Simulation:
                         ),
                         dft_vec_re=jnp.zeros(
                             (len(program.monitor_specs), 6, max_freq, max_points),
-                            dtype=jnp.float32,
+                            dtype=dft_dtype,
                         ),
                         dft_vec_im=jnp.zeros(
                             (len(program.monitor_specs), 6, max_freq, max_points),
-                            dtype=jnp.float32,
+                            dtype=dft_dtype,
                         ),
                         dft_weight_sum=jnp.zeros(
-                            (len(program.monitor_specs), max_freq), dtype=jnp.float32
+                            (len(program.monitor_specs), max_freq), dtype=dft_dtype
                         ),
                     )
                 else:
+                    dft_dtype = monitor_dft_accumulator_dtype()
                     monitor_state = MonitorState(
                         powers=jnp.zeros((0, 0), dtype=jnp.float32),
                         timestamps=jnp.zeros((0, 0), dtype=jnp.float32),
@@ -1033,9 +1252,9 @@ class Simulation:
                         freq_flux_im=jnp.zeros((0, 0), dtype=jnp.float32),
                         freq_phase_re=jnp.zeros((0, 0), dtype=jnp.float32),
                         freq_phase_im=jnp.zeros((0, 0), dtype=jnp.float32),
-                        dft_vec_re=jnp.zeros((0, 0, 0, 0), dtype=jnp.float32),
-                        dft_vec_im=jnp.zeros((0, 0, 0, 0), dtype=jnp.float32),
-                        dft_weight_sum=jnp.zeros((0, 0), dtype=jnp.float32),
+                        dft_vec_re=jnp.zeros((0, 0, 0, 0), dtype=dft_dtype),
+                        dft_vec_im=jnp.zeros((0, 0, 0, 0), dtype=dft_dtype),
+                        dft_weight_sum=jnp.zeros((0, 0), dtype=dft_dtype),
                     )
             self._compiled_monitor_state = monitor_state
 
@@ -1081,6 +1300,8 @@ class Simulation:
                 for name in record_fields:
                     if hasattr(self.fields, name):
                         field_history[name].append(np.array(getattr(self.fields, name)))
+                field_times.append(float(self.t))
+                field_steps.append(int(self.current_step))
             if snapshot_data is not None:
                 from beamz.simulation.snapshots import collect_compiled_snapshots
 
@@ -1100,15 +1321,10 @@ class Simulation:
             steps_remaining -= this_chunk
 
             if progress and num_steps > 0:
-                pct = 100.0 * steps_done / num_steps
-                print(
-                    f"\r● Progress: {pct:.0f}% ({steps_done}/{num_steps} steps)",
-                    end="",
-                    flush=True,
-                )
+                _print_inline_progress(steps_done, num_steps)
 
         if progress:
-            print()
+            _finish_inline_progress()
 
         if monitor_state is not None:
             program.apply_monitor_state(monitor_state)
@@ -1122,6 +1338,8 @@ class Simulation:
         return SimulationResults.from_run(
             self,
             fields=fields_result,
+            field_times=field_times,
+            field_steps=field_steps,
             monitors=self.monitors,
             snapshots=snapshots,
         )
@@ -1169,12 +1387,7 @@ class Simulation:
                 )
 
             if progress:
-                pct = 100.0 * steps_done / max(total_steps, 1)
-                print(
-                    f"\r● Progress: {pct:.0f}% ({steps_done}/{total_steps} steps)",
-                    end="",
-                    flush=True,
-                )
+                _print_inline_progress(steps_done, total_steps)
 
             if (
                 steps_done >= min_steps
@@ -1185,7 +1398,7 @@ class Simulation:
                 break
 
         if progress:
-            print()
+            _finish_inline_progress()
         return steps_done
 
     def run_fast(
@@ -1489,13 +1702,13 @@ class Simulation:
             raise ValueError(f"Invalid dt inferred from monitor '{monitor.name}'.")
         if np.iscomplexobj(values):
             freq_bins = np.fft.fftfreq(n, d=dt)
-            spec_bins = np.fft.fft(values, axis=0)
+            spec_bins = np.fft.ifft(values, axis=0) * n
             keep = freq_bins >= 0
             freq_bins = freq_bins[keep]
             spec_bins = spec_bins[keep]
         else:
             freq_bins = np.fft.rfftfreq(n, d=dt)
-            spec_bins = np.fft.rfft(values, axis=0)
+            spec_bins = np.conjugate(np.fft.rfft(values, axis=0))
 
         if frequencies is None:
             phase = self._monitor_projection_phase(component, freq_bins, dt)
@@ -1618,7 +1831,11 @@ class Simulation:
 
         direction_sign = +1.0 if str(spec.direction).startswith("+") else -1.0
         delta_s = direction_sign * 0.5 * d_axis
-        if getattr(self, "is_3d", False) and hasattr(self, "dt") and self.dt is not None:
+        if (
+            getattr(self, "is_3d", False)
+            and hasattr(self, "dt")
+            and self.dt is not None
+        ):
             omega = 2.0 * np.pi * freq
             k_num = _solve_numeric_k_axis(omega, float(self.dt), d_axis, neff)
             return _numeric_phase_delay(omega, k_num, delta_s)
@@ -1729,7 +1946,7 @@ class Simulation:
         else:
             raise ValueError(f"Unsupported window '{window}'.")
 
-        carrier = np.exp(-1j * 2.0 * np.pi * f0 * t_sel)[:, None]
+        carrier = np.exp(1j * 2.0 * np.pi * f0 * t_sel)[:, None]
         denom = max(float(np.sum(w)), 1e-18)
         demod = (2.0 / denom) * np.sum((w[:, None] * v_sel) * carrier, axis=0)
         if hasattr(self, "dt") and self.dt is not None:
@@ -1780,6 +1997,78 @@ class Simulation:
         if axis not in {"x", "y", "z"}:
             raise ValueError(f"Unsupported axis {axis!r} for 3D mode remap.")
         return ex, ey, ez, hx, hy, hz
+
+    @staticmethod
+    def _stagger_3d_solver_components_to_yee(ex, ey, ez, hx, hy, hz, axis):
+        """Sample collocated 3D solver fields on Beamz's transverse Yee lattices."""
+
+        def _half(field, ax):
+            arr = np.asarray(field, dtype=np.complex128)
+            if arr.ndim == 1:
+                arr = arr[:, None]
+            if arr.shape[ax] <= 1:
+                return arr
+            if ax == 0:
+                return 0.5 * (arr[:-1, :] + arr[1:, :])
+            return 0.5 * (arr[:, :-1] + arr[:, 1:])
+
+        def _both(field):
+            arr = np.asarray(field, dtype=np.complex128)
+            if arr.ndim == 1:
+                arr = arr[:, None]
+            if arr.shape[1] > 1:
+                arr = 0.5 * (arr[:, :-1] + arr[:, 1:])
+            if arr.shape[0] > 1:
+                arr = 0.5 * (arr[:-1, :] + arr[1:, :])
+            return arr
+
+        ex = np.asarray(ex, dtype=np.complex128)
+        ey = np.asarray(ey, dtype=np.complex128)
+        ez = np.asarray(ez, dtype=np.complex128)
+        hx = np.asarray(hx, dtype=np.complex128)
+        hy = np.asarray(hy, dtype=np.complex128)
+        hz = np.asarray(hz, dtype=np.complex128)
+        for name, arr in (
+            ("Ex", ex),
+            ("Ey", ey),
+            ("Ez", ez),
+            ("Hx", hx),
+            ("Hy", hy),
+            ("Hz", hz),
+        ):
+            if arr.ndim not in {1, 2}:
+                raise ValueError(
+                    f"Expected 3D mode solver component '{name}' to be 1D or 2D, "
+                    f"got {arr.shape}."
+                )
+        if axis == "x":
+            return (
+                ex,
+                _half(ey, 1),
+                _half(ez, 0),
+                _both(hx),
+                _half(hy, 0),
+                _half(hz, 1),
+            )
+        if axis == "y":
+            return (
+                _half(ex, 1),
+                ey,
+                _half(ez, 0),
+                _half(hx, 0),
+                _both(hy),
+                _half(hz, 1),
+            )
+        if axis == "z":
+            return (
+                _half(ex, 1),
+                _half(ey, 0),
+                ez,
+                _half(hx, 0),
+                _half(hy, 1),
+                _both(hz),
+            )
+        raise ValueError(f"Unsupported axis {axis!r} for 3D Yee staggering.")
 
     @staticmethod
     def _opposite_port_direction(direction):
@@ -1875,6 +2164,19 @@ class Simulation:
             raise ValueError(f"Unsupported port axis {axis!r}.") from exc
 
     @staticmethod
+    def _analysis_plane_sample_area(coord0, coord1, fallback_step: float) -> float:
+        def _axis_step(coord):
+            arr = np.asarray(coord, dtype=np.float64).reshape(-1)
+            if arr.size > 1:
+                diffs = np.diff(arr)
+                step = float(np.median(np.abs(diffs)))
+                if np.isfinite(step) and step > 0.0:
+                    return step
+            return float(fallback_step)
+
+        return float(_axis_step(coord0) * _axis_step(coord1))
+
+    @staticmethod
     def _clamp_monitor_grid_index(idx, limit):
         if isinstance(idx, slice):
             start = 0 if idx.start is None else int(idx.start)
@@ -1918,11 +2220,15 @@ class Simulation:
     ) -> tuple[np.ndarray, np.ndarray]:
         if hasattr(monitor, "get_analysis_plane_coords_3d"):
             try:
-                return monitor.get_analysis_plane_coords_3d(
+                coord0, coord1 = monitor.get_analysis_plane_coords_3d(
                     dx=self.resolution,
                     dy=self.resolution,
                     dz=self.resolution,
                     field_shape=tuple(np.asarray(self.fields.permittivity).shape),
+                )
+                return (
+                    np.asarray(coord0, dtype=np.float64),
+                    np.asarray(coord1, dtype=np.float64),
                 )
             except Exception:
                 pass
@@ -1942,18 +2248,14 @@ class Simulation:
             raise ValueError(
                 f"Monitor '{monitor.name}' is missing tangential intervals for axis '{axis}'."
             )
-        return (
-            (
-                np.arange(int(interval0.start), int(interval0.stop), dtype=np.float64)
-                + 0.5
-            )
-            * float(self.resolution),
-            (
-                np.arange(int(interval1.start), int(interval1.stop), dtype=np.float64)
-                + 0.5
-            )
-            * float(self.resolution),
-        )
+        coord0 = (
+            np.arange(int(interval0.start), int(interval0.stop), dtype=np.float64) + 0.5
+        ) * float(self.resolution)
+        coord1 = (
+            np.arange(int(interval1.start), int(interval1.stop), dtype=np.float64) + 0.5
+        ) * float(self.resolution)
+        common0, common1 = self._monitor_common_plane_shape_3d(monitor)
+        return coord0[:common0], coord1[:common1]
 
     def _monitor_component_plane_coords_3d(
         self,
@@ -1963,11 +2265,15 @@ class Simulation:
     ) -> tuple[np.ndarray, np.ndarray]:
         if hasattr(monitor, "get_analysis_plane_coords_3d"):
             try:
-                return monitor.get_analysis_plane_coords_3d(
+                coord0, coord1 = monitor.get_analysis_plane_coords_3d(
                     dx=self.resolution,
                     dy=self.resolution,
                     dz=self.resolution,
                     field_shape=tuple(np.asarray(self.fields.permittivity).shape),
+                )
+                return (
+                    np.asarray(coord0, dtype=np.float64),
+                    np.asarray(coord1, dtype=np.float64),
                 )
             except Exception:
                 pass
@@ -2221,6 +2527,12 @@ class Simulation:
         eps_profile, local_idx, dl = self._monitor_profile_slice(
             monitor, parts["axis"], mode_pad_cells
         )
+        if self.is_3d and analysis_coords0 is not None and analysis_coords1 is not None:
+            dl = self._analysis_plane_sample_area(
+                analysis_coords0,
+                analysis_coords1,
+                float(self.resolution),
+            )
         solver_direction = spec.direction
         basis_direction = solver_direction
         backward_direction = self._opposite_port_direction(spec.direction)
@@ -2299,6 +2611,17 @@ class Simulation:
                 )
                 ex_full, ey_full, ez_full, hx_full, hy_full, hz_full = (
                     self._remap_3d_solver_components(
+                        ex_full,
+                        ey_full,
+                        ez_full,
+                        hx_full,
+                        hy_full,
+                        hz_full,
+                        parts["axis"],
+                    )
+                )
+                ex_full, ey_full, ez_full, hx_full, hy_full, hz_full = (
+                    self._stagger_3d_solver_components_to_yee(
                         ex_full,
                         ey_full,
                         ez_full,
@@ -2396,13 +2719,20 @@ class Simulation:
                         dims1.append(max(d1, 1))
                     mon_dim0 = min(dims0)
                     mon_dim1 = min(dims1)
+                    if analysis_coords0 is not None and analysis_coords1 is not None:
+                        mon_dim0 = int(np.asarray(analysis_coords0).size)
+                        mon_dim1 = int(np.asarray(analysis_coords1).size)
                 except Exception:
-                    mon_dim0 = min(
-                        int(comp_full[c].shape[0]) for c in proj_components_local
-                    )
-                    mon_dim1 = min(
-                        int(comp_full[c].shape[1]) for c in proj_components_local
-                    )
+                    if analysis_coords0 is not None and analysis_coords1 is not None:
+                        mon_dim0 = int(np.asarray(analysis_coords0).size)
+                        mon_dim1 = int(np.asarray(analysis_coords1).size)
+                    else:
+                        mon_dim0 = min(
+                            int(comp_full[c].shape[0]) for c in proj_components_local
+                        )
+                        mon_dim1 = min(
+                            int(comp_full[c].shape[1]) for c in proj_components_local
+                        )
 
                 try:
                     n_monitor = min(
@@ -2470,6 +2800,8 @@ class Simulation:
                             name,
                             parts["axis"],
                         )
+                        src0 = np.asarray(src0, dtype=np.float64)[: a.shape[0]]
+                        src1 = np.asarray(src1, dtype=np.float64)[: a.shape[1]]
                         a = self._interpolate_plane_matrix_2d(
                             a,
                             src0,
@@ -2885,6 +3217,138 @@ class Simulation:
         return float(0.5 * np.real(np.sum(s_axis) * float(d_area)))
 
     @staticmethod
+    def _modal_projection_reconstruction_residual(field_vec, projection, coeff):
+        mode_matrix = np.asarray(
+            projection.get("mode_matrix", np.zeros((0, 0), dtype=np.complex128)),
+            dtype=np.complex128,
+        )
+        if (
+            mode_matrix.ndim != 2
+            or mode_matrix.shape[0] <= 0
+            or mode_matrix.shape[1] < 2
+        ):
+            return np.nan
+        field = np.asarray(field_vec, dtype=np.complex128).reshape(-1)
+        if field.size <= 0:
+            return np.nan
+        n = int(min(field.size, mode_matrix.shape[0]))
+        if n <= 0:
+            return np.nan
+        coeff_arr = np.asarray(coeff, dtype=np.complex128).reshape(-1)
+        if coeff_arr.size < 2:
+            return np.nan
+        recon = mode_matrix[:n, :2] @ coeff_arr[:2]
+        target = field[:n]
+        denom = float(np.linalg.norm(target))
+        if denom <= 1e-30 or not np.isfinite(denom):
+            return np.nan
+        return float(np.linalg.norm(target - recon) / denom)
+
+    @staticmethod
+    def _modal_projection_reconstruction_residual_from_matrix(
+        field_vec,
+        mode_matrix,
+        coeff,
+    ):
+        return Simulation._modal_projection_reconstruction_diagnostics_from_matrix(
+            field_vec,
+            mode_matrix,
+            coeff,
+        )["residual"]
+
+    @staticmethod
+    def _modal_projection_reconstruction_diagnostics_from_matrix(
+        field_vec,
+        mode_matrix,
+        coeff,
+        component_slices=(),
+    ):
+        matrix = np.asarray(mode_matrix, dtype=np.complex128)
+        empty = {
+            "residual": np.nan,
+            "residual_e": np.nan,
+            "residual_h": np.nan,
+            "residual_balanced": np.nan,
+            "e_scale": np.nan + 0.0j,
+            "h_scale": np.nan + 0.0j,
+        }
+        if matrix.ndim != 2 or matrix.shape[0] <= 0 or matrix.shape[1] <= 0:
+            return empty
+        field = np.asarray(field_vec, dtype=np.complex128).reshape(-1)
+        coeff_arr = np.asarray(coeff, dtype=np.complex128).reshape(-1)
+        n = int(min(field.size, matrix.shape[0]))
+        m = int(min(coeff_arr.size, matrix.shape[1]))
+        if n <= 0 or m <= 0:
+            return empty
+        target = field[:n]
+        recon = matrix[:n, :m] @ coeff_arr[:m]
+
+        def _residual(mask):
+            if mask.size <= 0:
+                return np.nan
+            denom = float(np.linalg.norm(target[mask]))
+            if denom <= 1e-30 or not np.isfinite(denom):
+                return np.nan
+            return float(np.linalg.norm(target[mask] - recon[mask]) / denom)
+
+        def _scale_and_residual(mask):
+            if mask.size <= 0:
+                return np.nan + 0.0j, np.nan
+            target_part = target[mask]
+            recon_part = recon[mask]
+            denom = np.vdot(recon_part, recon_part)
+            if abs(denom) <= 1e-30 or not np.isfinite(abs(denom)):
+                return np.nan + 0.0j, np.nan
+            scale = np.vdot(recon_part, target_part) / denom
+            target_norm = float(np.linalg.norm(target_part))
+            if target_norm <= 1e-30 or not np.isfinite(target_norm):
+                return scale, np.nan
+            residual = float(
+                np.linalg.norm(target_part - scale * recon_part) / target_norm
+            )
+            return np.complex128(scale), residual
+
+        all_mask = np.arange(n, dtype=int)
+        e_parts = []
+        h_parts = []
+        for name, start, stop in component_slices:
+            lo = max(0, min(int(start), n))
+            hi = max(lo, min(int(stop), n))
+            if hi <= lo:
+                continue
+            part = np.arange(lo, hi, dtype=int)
+            if str(name).startswith("E"):
+                e_parts.append(part)
+            elif str(name).startswith("H"):
+                h_parts.append(part)
+        e_mask = np.concatenate(e_parts) if e_parts else np.asarray([], dtype=int)
+        h_mask = np.concatenate(h_parts) if h_parts else np.asarray([], dtype=int)
+
+        e_scale, e_resid_scaled = _scale_and_residual(e_mask)
+        h_scale, h_resid_scaled = _scale_and_residual(h_mask)
+        balanced_recon = recon.copy()
+        if e_mask.size and np.isfinite(abs(e_scale)):
+            balanced_recon[e_mask] *= e_scale
+        if h_mask.size and np.isfinite(abs(h_scale)):
+            balanced_recon[h_mask] *= h_scale
+        balanced_denom = float(np.linalg.norm(target))
+        balanced = (
+            float(np.linalg.norm(target - balanced_recon) / balanced_denom)
+            if balanced_denom > 1e-30 and np.isfinite(balanced_denom)
+            else np.nan
+        )
+        return {
+            "residual": _residual(all_mask),
+            "residual_e": _residual(e_mask),
+            "residual_h": _residual(h_mask),
+            "residual_balanced": balanced,
+            "residual_e_scaled": e_resid_scaled,
+            "residual_h_scaled": h_resid_scaled,
+            "e_scale": e_scale,
+            "h_scale": h_scale,
+        }
+
+    @staticmethod
     def _project_modal_coefficients_3d(
         field_components, projection, apply_calibration=True
     ):
@@ -2928,13 +3392,14 @@ class Simulation:
                 or not np.isfinite(cond)
             ):
                 raise ValueError("Invalid 3D modal overlap system.")
+            system = overlap.T
             if cond < 1e8:
-                coeff = np.linalg.solve(overlap, rhs)
+                coeff = np.linalg.solve(system, rhs)
             else:
                 # Stay in modal-overlap space even when the biorthogonal system
                 # is poorly conditioned. This is the closest analogue to
                 # Meep-style eigenmode coefficient extraction we have.
-                coeff = np.linalg.pinv(overlap) @ rhs
+                coeff = np.linalg.pinv(system) @ rhs
             return np.complex128(coeff[0]), np.complex128(coeff[1])
 
         components = tuple(projection.get("components", ()))
@@ -2968,6 +3433,129 @@ class Simulation:
         a_plus = coeff[0]
         a_minus = coeff[1]
         return np.complex128(a_plus), np.complex128(a_minus)
+
+    @staticmethod
+    def _project_modal_coefficients_3d_group(field_components, projections):
+        """Project one 3D monitor field onto a coupled forward/backward mode set."""
+        projections = tuple(projections)
+        if not projections:
+            return [], np.nan, np.nan, {}
+
+        first = projections[0]
+        components = tuple(first.get("components", ()))
+        axis = str(first.get("axis", "")).lower()
+        d_area = float(first.get("d_area", 1.0))
+        direction_sign = float(first.get("direction_sign", 1.0))
+        if len(components) == 0 or axis not in {"x", "y", "z"}:
+            raise ValueError("3D modal group projection is missing components or axis.")
+
+        basis = []
+        for proj in projections:
+            if tuple(proj.get("components", ())) != components:
+                raise ValueError("Grouped 3D modal projections must share components.")
+            if str(proj.get("axis", "")).lower() != axis:
+                raise ValueError("Grouped 3D modal projections must share an axis.")
+            basis.append(
+                {
+                    name: np.asarray(
+                        proj.get("mode_components", {}).get(name, []),
+                        dtype=np.complex128,
+                    ).reshape(-1)
+                    for name in components
+                }
+            )
+            basis.append(
+                {
+                    name: np.asarray(
+                        proj.get("mode_components_bwd", {}).get(name, []),
+                        dtype=np.complex128,
+                    ).reshape(-1)
+                    for name in components
+                }
+            )
+
+        rhs = np.asarray(
+            [
+                _safe_modal_overlap_3d(
+                    field_components,
+                    mode,
+                    axis,
+                    d_area,
+                    direction_sign=direction_sign,
+                )
+                for mode in basis
+            ],
+            dtype=np.complex128,
+        )
+        overlap = np.asarray(
+            [
+                [
+                    _safe_modal_overlap_3d(
+                        basis_i,
+                        basis_j,
+                        axis,
+                        d_area,
+                        direction_sign=direction_sign,
+                    )
+                    for basis_j in basis
+                ]
+                for basis_i in basis
+            ],
+            dtype=np.complex128,
+        )
+        system = overlap.T
+        cond = float(np.linalg.cond(system))
+        if (
+            not np.all(np.isfinite(system))
+            or not np.all(np.isfinite(rhs))
+            or not np.isfinite(cond)
+        ):
+            raise ValueError("Invalid grouped 3D modal overlap system.")
+        if cond < 1e8:
+            coeff = np.linalg.solve(system, rhs)
+        else:
+            coeff = np.linalg.pinv(system) @ rhs
+
+        field_parts = [
+            np.asarray(field_components[name], dtype=np.complex128).reshape(-1)
+            for name in components
+        ]
+        component_slices = []
+        offset = 0
+        for name, part in zip(components, field_parts):
+            next_offset = offset + int(part.size)
+            component_slices.append((name, offset, next_offset))
+            offset = next_offset
+        field_vec = np.concatenate(field_parts)
+        mode_matrix = np.column_stack(
+            [
+                np.concatenate(
+                    [
+                        np.asarray(mode[name], dtype=np.complex128).reshape(-1)
+                        for name in components
+                    ]
+                )
+                for mode in basis
+            ]
+        )
+        diagnostics = (
+            Simulation._modal_projection_reconstruction_diagnostics_from_matrix(
+                field_vec,
+                mode_matrix,
+                coeff,
+                component_slices=component_slices,
+            )
+        )
+        residual = diagnostics["residual"]
+        return (
+            [
+                (np.complex128(coeff[2 * idx]), np.complex128(coeff[2 * idx + 1]))
+                for idx in range(len(projections))
+            ],
+            residual,
+            cond,
+            diagnostics,
+        )
 
     def extract_port_waves(
         self,
@@ -3018,6 +3606,7 @@ class Simulation:
         sibling_projection_cache = {}
         sibling_reference_projection_cache = {}
         waves = {}
+
         for spec in port_map.values():
             main_monitor = monitor_by_name[spec.monitor_name]
             parts = self._mode_components_for_port(spec)
@@ -3210,6 +3799,7 @@ class Simulation:
         frequencies,
         min_incident_db=-40.0,
         return_power=True,
+        mode_strategy="per_frequency",
     ):
         """Extract modal port waves from in-simulation DFT monitor accumulators."""
         del min_incident_db  # Used in get_S_matrix_modal_dft validity masking.
@@ -3224,6 +3814,13 @@ class Simulation:
             raise ValueError("frequencies must contain at least one value.")
         if np.any(freqs <= 0):
             raise ValueError("frequencies must be strictly positive.")
+        strategy = str(mode_strategy).lower()
+        if strategy not in {"per_frequency", "single", "single_frequency", "center"}:
+            raise ValueError(
+                f"Unsupported mode_strategy '{mode_strategy}'. "
+                "Use 'per_frequency' or 'single'."
+            )
+        single_freq = float(np.median(freqs))
 
         monitor_by_name = self._named_monitors()
         for spec in port_map.values():
@@ -3252,6 +3849,129 @@ class Simulation:
         sibling_projection_cache = {}
         sibling_reference_projection_cache = {}
         waves = {}
+        group_projection_history = {}
+
+        def _matching_3d_group_specs(spec, monitor_name, *, reference):
+            if not self.is_3d:
+                return (spec,)
+            if reference:
+                candidates = [
+                    candidate
+                    for candidate in port_map.values()
+                    if candidate.reference_monitor == monitor_name
+                ]
+            else:
+                candidates = [
+                    candidate
+                    for candidate in port_map.values()
+                    if candidate.monitor_name == monitor_name
+                ]
+            group = [
+                candidate
+                for candidate in candidates
+                if candidate.direction == spec.direction
+                and candidate.polarization == spec.polarization
+            ]
+            if not group:
+                return (spec,)
+            return tuple(
+                sorted(group, key=lambda item: (int(item.mode_index), item.name))
+            )
+
+        def _build_3d_group_projection(spec, monitor, f_mode):
+            hist_key = (spec.name, monitor.name)
+            previous = group_projection_history.get(hist_key)
+            if previous is None:
+                proj = self._build_port_projection(
+                    spec,
+                    monitor,
+                    f_mode,
+                    projection_cache,
+                )
+            else:
+                proj = self._build_port_projection(
+                    spec,
+                    monitor,
+                    f_mode,
+                    projection_cache,
+                    previous_projection=previous,
+                )
+            proj_neff = float(proj.get("mode_neff", np.nan))
+            if (not np.isfinite(proj_neff)) or (proj_neff <= 1e-6):
+                if previous is not None:
+                    return previous
+            else:
+                group_projection_history[hist_key] = proj
+            return proj
+
+        def _project_3d_group_at_monitor(
+            spec,
+            monitor,
+            idx,
+            frequency,
+            f_mode,
+            *,
+            reference,
+        ):
+            group_specs = _matching_3d_group_specs(
+                spec,
+                monitor.name,
+                reference=reference,
+            )
+            projections = [
+                _build_3d_group_projection(group_spec, monitor, f_mode)
+                for group_spec in group_specs
+            ]
+            try:
+                group_index = next(
+                    index
+                    for index, group_spec in enumerate(group_specs)
+                    if group_spec.name == spec.name
+                )
+            except StopIteration:
+                group_index = 0
+            proj = projections[group_index]
+            proj_components = tuple(
+                proj.get("components", (proj["e_component"], proj["h_component"]))
+            )
+            raw_field_components = {
+                comp: self._apply_modal_projection_spatial_phase(
+                    comp,
+                    dft_cache[(monitor.name, comp)][idx],
+                    frequency,
+                    proj,
+                )
+                for comp in proj_components
+            }
+            field_components = self._colocate_field_components_to_projection_3d(
+                monitor,
+                raw_field_components,
+                proj,
+            )
+            coeffs, residual, group_cond, projection_diag = (
+                self._project_modal_coefficients_3d_group(
+                    field_components,
+                    projections,
+                )
+            )
+            cond_values = [
+                float(projection.get("condition_number", np.nan))
+                for projection in projections
+            ]
+            finite_conds = [
+                value
+                for value in [float(group_cond), *cond_values]
+                if np.isfinite(value)
+            ]
+            cond = max(finite_conds) if finite_conds else np.nan
+            return (
+                coeffs[group_index],
+                residual,
+                cond,
+                float(proj.get("mode_neff", np.nan)),
+                projection_diag,
+            )
+
         for spec in port_map.values():
             parts = self._mode_components_for_port(spec)
             main_monitor = monitor_by_name[spec.monitor_name]
@@ -3280,9 +4000,16 @@ class Simulation:
             a_minus = np.zeros(freqs.size, dtype=np.complex128)
             cond_main = np.zeros(freqs.size, dtype=float)
             neff_main = np.full(freqs.size, np.nan, dtype=float)
+            residual_main = np.full(freqs.size, np.nan, dtype=float)
+            residual_e_main = np.full(freqs.size, np.nan, dtype=float)
+            residual_h_main = np.full(freqs.size, np.nan, dtype=float)
+            residual_balanced_main = np.full(freqs.size, np.nan, dtype=float)
+            e_scale_main = np.full(freqs.size, np.nan + 0.0j, dtype=np.complex128)
+            h_scale_main = np.full(freqs.size, np.nan + 0.0j, dtype=np.complex128)
             last_valid_proj = None
             last_tracked_proj = None
             for idx, f in enumerate(freqs):
+                f_mode = float(f if strategy == "per_frequency" else single_freq)
                 seed_proj = last_tracked_proj
                 if seed_proj is None and sibling_seed_key is not None:
                     seed_proj = sibling_projection_cache.get((idx, sibling_seed_key))
@@ -3290,14 +4017,14 @@ class Simulation:
                     proj = self._build_port_projection(
                         spec,
                         main_monitor,
-                        float(f),
+                        f_mode,
                         projection_cache,
                     )
                 else:
                     proj = self._build_port_projection(
                         spec,
                         main_monitor,
-                        float(f),
+                        f_mode,
                         projection_cache,
                         previous_projection=seed_proj,
                     )
@@ -3314,22 +4041,35 @@ class Simulation:
                     proj.get("components", (proj["e_component"], proj["h_component"]))
                 )
                 if self.is_3d:
-                    raw_field_components = {
-                        comp: self._apply_modal_projection_spatial_phase(
-                            comp,
-                            dft_cache[(main_monitor.name, comp)][idx],
+                    coeff, residual, cond, neff, projection_diag = (
+                        _project_3d_group_at_monitor(
+                            spec,
+                            main_monitor,
+                            idx,
                             f,
-                            proj,
+                            f_mode,
+                            reference=False,
                         )
-                        for comp in proj_components
-                    }
-                    field_components = self._colocate_field_components_to_projection_3d(
-                        main_monitor,
-                        raw_field_components,
-                        proj,
                     )
-                    coeff = self._project_modal_coefficients_3d(field_components, proj)
                     a_plus[idx], a_minus[idx] = coeff[0], coeff[1]
+                    residual_main[idx] = residual
+                    cond_main[idx] = cond
+                    neff_main[idx] = neff
+                    residual_e_main[idx] = float(
+                        projection_diag.get("residual_e", np.nan)
+                    )
+                    residual_h_main[idx] = float(
+                        projection_diag.get("residual_h", np.nan)
+                    )
+                    residual_balanced_main[idx] = float(
+                        projection_diag.get("residual_balanced", np.nan)
+                    )
+                    e_scale_main[idx] = np.complex128(
+                        projection_diag.get("e_scale", np.nan + 0.0j)
+                    )
+                    h_scale_main[idx] = np.complex128(
+                        projection_diag.get("h_scale", np.nan + 0.0j)
+                    )
                 else:
                     field_vec = np.concatenate(
                         [
@@ -3344,14 +4084,25 @@ class Simulation:
                     )
                     coeff = proj["pinv"] @ field_vec
                     a_plus[idx], a_minus[idx] = coeff[0], coeff[1]
-                cond_main[idx] = float(proj.get("condition_number", np.nan))
-                neff_main[idx] = float(proj.get("mode_neff", np.nan))
+                    residual_main[idx] = self._modal_projection_reconstruction_residual(
+                        field_vec,
+                        proj,
+                        coeff,
+                    )
+                    cond_main[idx] = float(proj.get("condition_number", np.nan))
+                    neff_main[idx] = float(proj.get("mode_neff", np.nan))
 
             port_waves = {
                 "a_plus": a_plus,
                 "a_minus": a_minus,
                 "condition_number": cond_main,
                 "mode_neff": neff_main,
+                "projection_residual": residual_main,
+                "projection_residual_e": residual_e_main,
+                "projection_residual_h": residual_h_main,
+                "projection_residual_balanced": residual_balanced_main,
+                "projection_e_scale": e_scale_main,
+                "projection_h_scale": h_scale_main,
             }
             if return_power:
                 port_waves["P_plus"] = np.abs(a_plus) ** 2
@@ -3375,9 +4126,16 @@ class Simulation:
                 a_incident_minus = np.zeros(freqs.size, dtype=np.complex128)
                 cond_ref = np.zeros(freqs.size, dtype=float)
                 neff_ref = np.full(freqs.size, np.nan, dtype=float)
+                residual_ref = np.full(freqs.size, np.nan, dtype=float)
+                residual_e_ref = np.full(freqs.size, np.nan, dtype=float)
+                residual_h_ref = np.full(freqs.size, np.nan, dtype=float)
+                residual_balanced_ref = np.full(freqs.size, np.nan, dtype=float)
+                e_scale_ref = np.full(freqs.size, np.nan + 0.0j, dtype=np.complex128)
+                h_scale_ref = np.full(freqs.size, np.nan + 0.0j, dtype=np.complex128)
                 last_valid_ref_proj = None
                 last_tracked_ref_proj = None
                 for idx, f in enumerate(freqs):
+                    f_mode = float(f if strategy == "per_frequency" else single_freq)
                     ref_seed_proj = last_tracked_ref_proj
                     if ref_seed_proj is None and sibling_ref_seed_key is not None:
                         ref_seed_proj = sibling_reference_projection_cache.get(
@@ -3387,14 +4145,14 @@ class Simulation:
                         proj = self._build_port_projection(
                             spec,
                             ref_monitor,
-                            float(f),
+                            f_mode,
                             projection_cache,
                         )
                     else:
                         proj = self._build_port_projection(
                             spec,
                             ref_monitor,
-                            float(f),
+                            f_mode,
                             projection_cache,
                             previous_projection=ref_seed_proj,
                         )
@@ -3415,26 +4173,35 @@ class Simulation:
                         )
                     )
                     if self.is_3d:
-                        raw_field_components = {
-                            comp: self._apply_modal_projection_spatial_phase(
-                                comp,
-                                dft_cache[(ref_monitor.name, comp)][idx],
-                                f,
-                                proj,
-                            )
-                            for comp in proj_components
-                        }
-                        field_components = (
-                            self._colocate_field_components_to_projection_3d(
+                        coeff, residual, cond, neff, projection_diag = (
+                            _project_3d_group_at_monitor(
+                                spec,
                                 ref_monitor,
-                                raw_field_components,
-                                proj,
+                                idx,
+                                f,
+                                f_mode,
+                                reference=True,
                             )
-                        )
-                        coeff = self._project_modal_coefficients_3d(
-                            field_components, proj
                         )
                         a_incident_plus[idx], a_incident_minus[idx] = coeff[0], coeff[1]
+                        residual_ref[idx] = residual
+                        cond_ref[idx] = cond
+                        neff_ref[idx] = neff
+                        residual_e_ref[idx] = float(
+                            projection_diag.get("residual_e", np.nan)
+                        )
+                        residual_h_ref[idx] = float(
+                            projection_diag.get("residual_h", np.nan)
+                        )
+                        residual_balanced_ref[idx] = float(
+                            projection_diag.get("residual_balanced", np.nan)
+                        )
+                        e_scale_ref[idx] = np.complex128(
+                            projection_diag.get("e_scale", np.nan + 0.0j)
+                        )
+                        h_scale_ref[idx] = np.complex128(
+                            projection_diag.get("h_scale", np.nan + 0.0j)
+                        )
                     else:
                         field_vec = np.concatenate(
                             [
@@ -3449,13 +4216,28 @@ class Simulation:
                         )
                         coeff = proj["pinv"] @ field_vec
                         a_incident_plus[idx], a_incident_minus[idx] = coeff[0], coeff[1]
-                    cond_ref[idx] = float(proj.get("condition_number", np.nan))
-                    neff_ref[idx] = float(proj.get("mode_neff", np.nan))
+                        residual_ref[idx] = (
+                            self._modal_projection_reconstruction_residual(
+                                field_vec,
+                                proj,
+                                coeff,
+                            )
+                        )
+                        cond_ref[idx] = float(proj.get("condition_number", np.nan))
+                        neff_ref[idx] = float(proj.get("mode_neff", np.nan))
                 port_waves["a_incident"] = a_incident_plus
                 port_waves["a_incident_plus"] = a_incident_plus
                 port_waves["a_incident_minus"] = a_incident_minus
                 port_waves["reference_condition_number"] = cond_ref
                 port_waves["reference_mode_neff"] = neff_ref
+                port_waves["reference_projection_residual"] = residual_ref
+                port_waves["reference_projection_residual_e"] = residual_e_ref
+                port_waves["reference_projection_residual_h"] = residual_h_ref
+                port_waves["reference_projection_residual_balanced"] = (
+                    residual_balanced_ref
+                )
+                port_waves["reference_projection_e_scale"] = e_scale_ref
+                port_waves["reference_projection_h_scale"] = h_scale_ref
                 if return_power:
                     port_waves["P_incident"] = np.abs(a_incident_plus) ** 2
                     port_waves["P_incident_plus"] = np.abs(a_incident_plus) ** 2
@@ -3473,6 +4255,7 @@ class Simulation:
         as_sax=True,
         return_diagnostics=True,
         min_incident_db=-40.0,
+        mode_strategy="per_frequency",
     ):
         """Broadband modal S extraction from in-simulation DFT monitor accumulators."""
         port_map = self._normalize_portspecs(ports)
@@ -3495,6 +4278,7 @@ class Simulation:
             frequencies=frequencies,
             min_incident_db=min_incident_db,
             return_power=True,
+            mode_strategy=mode_strategy,
         )
 
         output_ports = self._normalize_output_port_names(output_ports, port_map)
@@ -3557,6 +4341,7 @@ class Simulation:
             "frequencies": np.asarray(frequencies, dtype=float),
             "source_port": source_port,
             "output_ports": output_ports,
+            "mode_strategy": str(mode_strategy).lower(),
             "waves": waves,
             "P_in": p_in,
             "P_guided_out": p_guided_out,
@@ -3580,9 +4365,101 @@ class Simulation:
                 "incident_wave": source_incident_selector,
                 "scattered_wave": source_scattered_selector,
             },
+            "monitor_flux_checks": self._modal_dft_flux_diagnostics(
+                port_map, monitor_by_name, waves, frequencies
+            ),
             "scattered_waves": scattered_waves,
         }
         return {"s_matrix": s_output, "diagnostics": diagnostics}
+
+    @staticmethod
+    def _resample_real_vector(freq_src, values_src, freq_dst):
+        freq_src = np.atleast_1d(np.asarray(freq_src, dtype=float))
+        values = np.atleast_1d(np.asarray(values_src, dtype=float))
+        freq_dst = np.atleast_1d(np.asarray(freq_dst, dtype=float))
+        if freq_src.size == 0 or values.size == 0:
+            return np.full(freq_dst.shape, np.nan, dtype=float)
+        n = min(freq_src.size, values.size)
+        freq_src = freq_src[:n]
+        values = values[:n]
+        if n == freq_dst.size and np.allclose(freq_src, freq_dst, rtol=1e-9, atol=0.0):
+            return values.astype(float, copy=True)
+        return np.interp(freq_dst, freq_src, values, left=np.nan, right=np.nan)
+
+    def _modal_dft_flux_diagnostics(
+        self, port_map, monitor_by_name, waves, frequencies
+    ):
+        """Compare raw DFT flux monitors with selector-aware modal overlap power."""
+
+        freqs = np.atleast_1d(np.asarray(frequencies, dtype=float))
+        diagnostics = {}
+        for name, spec in port_map.items():
+            wave = waves.get(name, {})
+
+            def _wave_power(power_key, amplitude_key):
+                if power_key in wave:
+                    power = np.asarray(wave[power_key], dtype=float)
+                elif amplitude_key in wave:
+                    amplitude = np.asarray(wave[amplitude_key], dtype=np.complex128)
+                    power = np.abs(amplitude) ** 2
+                else:
+                    power = np.asarray([], dtype=float)
+                if power.size != freqs.size:
+                    return np.full(freqs.shape, np.nan, dtype=float)
+                return power
+
+            p_plus = _wave_power("P_plus", "a_plus")
+            p_minus = _wave_power("P_minus", "a_minus")
+            modal_sum = p_plus + p_minus
+            modal_net = p_plus - p_minus
+
+            incident_selector, scattered_selector = self._resolve_port_wave_selectors(
+                spec,
+                wave,
+                use_reference=bool(spec.reference_monitor),
+            )
+            if scattered_selector == "plus":
+                selected_power = p_plus
+                rejected_power = p_minus
+            else:
+                selected_power = p_minus
+                rejected_power = p_plus
+            selected_modal_net = selected_power - rejected_power
+
+            def _flux_for_monitor(monitor_name):
+                monitor = monitor_by_name.get(monitor_name)
+                if monitor is None or not hasattr(monitor, "get_dft_flux"):
+                    return np.full(freqs.shape, np.nan, dtype=float)
+                try:
+                    flux = monitor.get_dft_flux()
+                    mon_freqs = monitor.get_dft_frequencies()
+                except ValueError:
+                    return np.full(freqs.shape, np.nan, dtype=float)
+                return self._resample_real_vector(mon_freqs, flux, freqs)
+
+            monitor_flux = _flux_for_monitor(spec.monitor_name)
+            entry = {
+                "monitor": spec.monitor_name,
+                "monitor_flux": monitor_flux,
+                "incident_wave": incident_selector,
+                "scattered_wave": scattered_selector,
+                "P_plus": p_plus,
+                "P_minus": p_minus,
+                "P_modal_sum": modal_sum,
+                "P_modal_net": modal_net,
+                "P_selected": selected_power,
+                "P_rejected": rejected_power,
+                "P_selected_modal_net": selected_modal_net,
+                "flux_minus_modal_net": monitor_flux - modal_net,
+                "flux_minus_selected_modal_net": monitor_flux - selected_modal_net,
+                "abs_flux_minus_modal_sum": np.abs(monitor_flux) - modal_sum,
+            }
+            if spec.reference_monitor:
+                reference_flux = _flux_for_monitor(spec.reference_monitor)
+                entry["reference_monitor"] = spec.reference_monitor
+                entry["reference_monitor_flux"] = reference_flux
+            diagnostics[name] = entry
+        return diagnostics
 
     def extract_port_waves_cw(
         self,
@@ -3971,46 +4848,104 @@ class Simulation:
             - snapshot_interval: emit every N steps
             - snapshot_callback: callable receiving each snapshot payload
             - store_snapshots: include emitted snapshots in the returned results
+            - animate_live / save_video: matplotlib rendering conveniences
+            - cmap_limits: "dynamic" or (vmin, vmax) for live snapshot colors
             - save_fields / field_subsample / progress
         """
         removed_visual_keys = (
-            "animate_live",
-            "save_video",
             "jupyter_live",
-            "video_field",
-            "video_fps",
-            "video_dpi",
-            "cmap",
             "axis_scale",
-            "clean_visualization",
             "wavelength",
             "line_color",
             "line_opacity",
-            "interpolation",
             "store_animation",
         )
         removed = [key for key in removed_visual_keys if key in kwargs]
         if removed:
             raise TypeError(
-                "Matplotlib-backed simulation rendering was removed from beamz. "
+                "These legacy visualization kwargs are no longer supported. "
                 f"Unsupported kwargs: {removed}. "
-                "Use snapshot_field/snapshot_callback and render in examples."
+                "Use animate_live, save_video, or snapshot_field/snapshot_callback."
             )
 
         save_fields = kwargs.get("save_fields")
         field_subsample = int(kwargs.get("field_subsample", 1))
         progress = bool(kwargs.get("progress", False))
         record_interval = field_subsample if save_fields else None
-        return self.run_compiled(
+        animate_live = kwargs.get("animate_live")
+        save_video = kwargs.get("save_video")
+        video_field = kwargs.get("video_field")
+        snapshot_field = kwargs.get("snapshot_field")
+        if snapshot_field is None:
+            snapshot_field = video_field or animate_live
+        if snapshot_field is not None:
+            snapshot_field = str(snapshot_field)
+
+        snapshot_interval = kwargs.get(
+            "snapshot_interval", kwargs.get("animation_interval", 10)
+        )
+        user_callback = kwargs.get("snapshot_callback")
+        callback = user_callback
+        if animate_live and save_video is None:
+            from beamz.visual import mpl as mpl_backend
+
+            context = {"fig": None, "ax": None}
+            cmap = kwargs.get("cmap", "twilight_zero")
+            clean_visualization = bool(kwargs.get("clean_visualization", False))
+            interpolation = kwargs.get("interpolation", "bicubic")
+            pause = float(kwargs.get("pause", 0.001))
+            vmin, vmax = mpl_backend.resolve_cmap_limits(
+                kwargs.get("cmap_limits", "dynamic"),
+                vmin=kwargs.get("vmin"),
+                vmax=kwargs.get("vmax"),
+            )
+
+            def callback(snapshot):
+                if user_callback is not None:
+                    user_callback(snapshot)
+                fig, ax = mpl_backend.snapshot_figure(
+                    snapshot,
+                    cmap=cmap,
+                    clean_visualization=clean_visualization,
+                    interpolation=interpolation,
+                    figure=context["fig"],
+                    axes=context["ax"],
+                    vmin=vmin,
+                    vmax=vmax,
+                )
+                context["fig"], context["ax"] = fig, ax
+                mpl_backend._pyplot().show(block=False)
+                mpl_backend._pyplot().pause(pause)
+
+        store_snapshots_default = save_video is not None or bool(
+            kwargs.get("store_snapshots", True)
+        )
+        results = self.run_compiled(
             num_steps=None,
             record_interval=record_interval,
             record_fields=save_fields,
             progress=progress,
-            snapshot_field=kwargs.get("snapshot_field"),
-            snapshot_interval=kwargs.get("snapshot_interval", 10),
-            snapshot_callback=kwargs.get("snapshot_callback"),
-            store_snapshots=bool(kwargs.get("store_snapshots", True)),
+            snapshot_field=snapshot_field,
+            snapshot_interval=snapshot_interval,
+            snapshot_callback=callback,
+            store_snapshots=store_snapshots_default,
         )
+        if save_video is not None and results is not None and results.snapshots:
+            from beamz.visual.mpl import save_snapshot_video
+
+            save_snapshot_video(
+                results.snapshots,
+                filename=save_video,
+                fps=int(kwargs.get("video_fps", 30)),
+                dpi=int(kwargs.get("video_dpi", 150)),
+                cmap=kwargs.get("cmap", "twilight_zero"),
+                cmap_limits=kwargs.get("cmap_limits"),
+                vmin=kwargs.get("vmin"),
+                vmax=kwargs.get("vmax"),
+                clean_visualization=bool(kwargs.get("clean_visualization", False)),
+                interpolation=kwargs.get("interpolation", "bicubic"),
+            )
+        return results
 
     def to_scene(self):
         """Build a 3D scene representation of the simulation setup."""
@@ -4024,8 +4959,48 @@ class Simulation:
 
         return simulation_plot_data(self)
 
+    def plot(self, **kwargs):
+        """Plot the simulation layout using the matplotlib backend."""
+        from beamz.visual.mpl import plot_simulation
+
+        kwargs.setdefault("show", False)
+        return plot_simulation(self, **kwargs)
+
+    def plot_eps(self, **kwargs):
+        """Plot a simulation permittivity slice."""
+        from beamz.visual.mpl import plot_simulation_permittivity
+
+        kwargs.setdefault("show", False)
+        return plot_simulation_permittivity(self, **kwargs)
+
     def show(self, *, mode="auto", open_browser=True, **kwargs):
+        """Display the simulation layout using the matplotlib backend."""
+        del mode, open_browser
+        kwargs.setdefault("show", True)
+        return self.plot(**kwargs)
+
+    def show_eps(self, **kwargs):
+        """Display a simulation permittivity slice."""
+        kwargs.setdefault("show", True)
+        return self.plot_eps(**kwargs)
+
+    def animate(self, field="Ez", **kwargs):
+        """Run the simulation with live matplotlib animation enabled."""
+        kwargs.setdefault("animate_live", field)
+        return self.run(**kwargs)
+
+    def save_video(self, filename, *, field="Ez", **kwargs):
+        """Run the simulation and save a snapshot video."""
+        kwargs.setdefault("save_video", filename)
+        kwargs.setdefault("video_field", field)
+        return self.run(**kwargs)
+
+    def show3d(self, *, mode="auto", open_browser=True, **kwargs):
         """Display the simulation setup in the interactive 3D scene viewer."""
         from beamz.visual.scene import view3d
 
         return view3d(self.to_scene(), mode=mode, open_browser=open_browser, **kwargs)
+
+    def view3d(self, **kwargs):
+        """Alias for :meth:`show3d`."""
+        return self.show3d(**kwargs)

@@ -8,7 +8,6 @@ import numpy as np
 # Ensure local workspace package import when running from examples/.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from _mpl_helpers import plot_design, plot_grid, show_snapshots
 from beamz import (
     LIGHT_SPEED,
     Design,
@@ -76,11 +75,11 @@ design += Rectangle(
     height=WG_W,
     material=Material(N_CORE**2),
 )
-plot_design(design)
+design.show()
 
 # Rasterize the design
 grid = design.rasterize(resolution=DX)
-plot_grid(grid, field="permittivity")
+grid.show(field="permittivity")
 
 # Define the source
 time_steps = np.arange(0, TIME, DT)
@@ -100,6 +99,7 @@ source = ModeSource(
     signal=signal,
     direction="+x",
 )
+source.show_signal(t=time_steps)
 
 # Run the simulation
 sim = Simulation(
@@ -109,5 +109,5 @@ sim = Simulation(
     time=time_steps,
     resolution=DX,
 )
-results = sim.run(snapshot_field="Ez", snapshot_interval=15, store_snapshots=True)
-show_snapshots(results.snapshots, clean_visualization=True)
+results = sim.run(save_fields=["Ez"], field_subsample=15, progress=False)
+results.show(field="Ez", cmap="RdBu")

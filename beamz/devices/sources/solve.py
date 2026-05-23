@@ -62,6 +62,39 @@ def _field_plane(data_array, normal_axis: int, mode_index: int) -> np.ndarray:
     return np.take(np.asarray(selected.values), indices=0, axis=normal_position)
 
 
+def _remap_mode_tuple_to_global(
+    mode: ModeTupleType,
+    local_axis_to_global: tuple[int, int, int],
+) -> ModeTupleType:
+    """Map micromode local-axis component labels to BEAMZ global Cartesian labels."""
+
+    def _remap_components(components):
+        out = [None, None, None]
+        for local_axis, global_axis in enumerate(local_axis_to_global):
+            out[int(global_axis)] = components[int(local_axis)]
+        if any(component is None for component in out):
+            raise ValueError(
+                f"Invalid local-to-global axis mapping: {local_axis_to_global!r}"
+            )
+        return out
+
+    Ex, Ey, Ez = _remap_components((mode.Ex, mode.Ey, mode.Ez))
+    Hx, Hy, Hz = _remap_components((mode.Hx, mode.Hy, mode.Hz))
+    transform = np.zeros((3, 3), dtype=float)
+    for local_axis, global_axis in enumerate(local_axis_to_global):
+        transform[int(global_axis), int(local_axis)] = 1.0
+    axial_sign = float(round(np.linalg.det(transform)))
+    return ModeTupleType(
+        neff=mode.neff,
+        Ex=Ex,
+        Ey=Ey,
+        Ez=Ez,
+        Hx=axial_sign * Hx,
+        Hy=axial_sign * Hy,
+        Hz=axial_sign * Hz,
+    )
+
+
 def sort_modes(
     modes: list[ModeTupleType],
     filter_pol: Union[Literal["te", "tm"], None],
@@ -96,6 +129,7 @@ def compute_mode(
     mode_index: int = 0,
     filter_pol: Union[Literal["te", "tm"], None] = None,
     target_neff: Union[float, None] = None,
+    local_axis_to_global: tuple[int, int, int] = (0, 1, 2),
 ) -> tuple[np.ndarray, np.ndarray, complex, int]:
     _ensure_micromode()  # Lazy import micromode
     inv_permittivities = np.asarray(inv_permittivities, dtype=np.complex128)
@@ -168,8 +202,9 @@ def compute_mode(
         target_neff=target_neff,
         normal_axis=propagation_axis,
     )
-    modes = [
-        ModeTupleType(
+    modes = []
+    for idx in range(result.n_complex.shape[1]):
+        local_mode = ModeTupleType(
             neff=result.n_complex.values[0, idx],
             Ex=_field_plane(result.field_components["Ex"], propagation_axis, idx),
             Ey=_field_plane(result.field_components["Ey"], propagation_axis, idx),
@@ -178,8 +213,7 @@ def compute_mode(
             Hy=_field_plane(result.field_components["Hy"], propagation_axis, idx),
             Hz=_field_plane(result.field_components["Hz"], propagation_axis, idx),
         )
-        for idx in range(result.n_complex.shape[1])
-    ]
+        modes.append(_remap_mode_tuple_to_global(local_mode, local_axis_to_global))
     tangential_axes = tuple(ax for ax in range(3) if ax != propagation_axis)
     modes = sort_modes(modes, filter_pol, tangential_axes)
     if mode_index >= len(modes):
@@ -231,22 +265,29 @@ def solve_modes(
 
     # Reshape eps to 3D for compute_mode (axis, trans1, trans2)
     # compute_mode expects (prop_axis, trans1, trans2) where prop_axis is singleton
+    local_axis_to_global = (0, 1, 2)
     if eps.ndim == 1:
         line = np.asarray(eps, dtype=np.complex128)
         if axis_index == 0:
             inv_eps = (1.0 / line).reshape(1, line.size, 1)
+            local_axis_to_global = (0, 1, 2)
         elif axis_index == 1:
             inv_eps = (1.0 / line).reshape(line.size, 1, 1)
+            local_axis_to_global = (0, 1, 2)
         else:
             inv_eps = (1.0 / line).reshape(line.size, 1, 1)
+            local_axis_to_global = (0, 1, 2)
     else:
         eps_arr = 1.0 / np.asarray(eps, dtype=np.complex128)
         if axis_index == 0:
             inv_eps = eps_arr[np.newaxis, :, :]
+            local_axis_to_global = (0, 2, 1)
         elif axis_index == 1:
             inv_eps = eps_arr[:, np.newaxis, :]
+            local_axis_to_global = (2, 1, 0)
         else:
             inv_eps = eps_arr[:, :, np.newaxis]
+            local_axis_to_global = (1, 0, 2)
 
     direction_flag = "+" if direction.startswith("+") else "-"
 
@@ -265,6 +306,7 @@ def solve_modes(
             mode_index=mode_index,
             filter_pol=filter_pol,
             target_neff=target_neff,
+            local_axis_to_global=local_axis_to_global,
         )
 
         neffs.append(neff)

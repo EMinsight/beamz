@@ -41,6 +41,8 @@ def _interp_complex_1d(
             dst, src, arr[:, col].imag
         )
     return out
+
+
 def _plane_axes_for_normal_3d(axis: str) -> tuple[str, str]:
     axis = str(axis).lower()
     mapping = {
@@ -1102,6 +1104,21 @@ class Monitor:
         ).reshape(nfreq, 1)
         return (2.0 / scale) * accum
 
+    def _get_dft_component_for_flux(self, component: str):
+        values = np.asarray(self.get_dft_component(component), dtype=np.complex128)
+        if not str(component).startswith("H"):
+            return values
+        dt = self._dft_base_dt
+        if dt is None or float(dt) == 0.0:
+            return values
+        phase = np.exp(
+            -1j
+            * np.pi
+            * np.asarray(self.dft_frequencies, dtype=float).reshape(-1, 1)
+            * float(dt)
+        )
+        return values * phase
+
     def _normal_axis_and_sign(self) -> tuple[str, float]:
         if self.is_3d:
             return str(getattr(self, "plane_normal", "z")).lower(), 1.0
@@ -1135,24 +1152,28 @@ class Monitor:
         axis, sign = self._normal_axis_and_sign()
         if self.is_3d:
             measure = dx * dx
-            ex = np.asarray(self.get_dft_component("Ex"), dtype=np.complex128)
-            ey = np.asarray(self.get_dft_component("Ey"), dtype=np.complex128)
-            ez = np.asarray(self.get_dft_component("Ez"), dtype=np.complex128)
-            hx = np.asarray(self.get_dft_component("Hx"), dtype=np.complex128)
-            hy = np.asarray(self.get_dft_component("Hy"), dtype=np.complex128)
-            hz = np.asarray(self.get_dft_component("Hz"), dtype=np.complex128)
+            ex = np.asarray(self._get_dft_component_for_flux("Ex"), dtype=np.complex128)
+            ey = np.asarray(self._get_dft_component_for_flux("Ey"), dtype=np.complex128)
+            ez = np.asarray(self._get_dft_component_for_flux("Ez"), dtype=np.complex128)
+            hx = np.asarray(self._get_dft_component_for_flux("Hx"), dtype=np.complex128)
+            hy = np.asarray(self._get_dft_component_for_flux("Hy"), dtype=np.complex128)
+            hz = np.asarray(self._get_dft_component_for_flux("Hz"), dtype=np.complex128)
             sx = ey * np.conjugate(hz) - ez * np.conjugate(hy)
             sy = ez * np.conjugate(hx) - ex * np.conjugate(hz)
             sz = ex * np.conjugate(hy) - ey * np.conjugate(hx)
             component = {"x": sx, "y": sy, "z": sz}.get(axis, sz)
         else:
             measure = _line_integral_scale_2d(axis, dx, dx)
-            ez = np.asarray(self.get_dft_component("Ez"), dtype=np.complex128)
+            ez = np.asarray(self._get_dft_component_for_flux("Ez"), dtype=np.complex128)
             if axis == "x":
-                hy = np.asarray(self.get_dft_component("Hy"), dtype=np.complex128)
+                hy = np.asarray(
+                    self._get_dft_component_for_flux("Hy"), dtype=np.complex128
+                )
                 component = -ez * np.conjugate(hy)
             else:
-                hx = np.asarray(self.get_dft_component("Hx"), dtype=np.complex128)
+                hx = np.asarray(
+                    self._get_dft_component_for_flux("Hx"), dtype=np.complex128
+                )
                 component = ez * np.conjugate(hx)
         return 0.5 * np.real(np.sum(sign * component, axis=1)) * measure
 
@@ -1413,9 +1434,6 @@ class Monitor:
             target1=target1,
         )
 
-        # print(f"● Monitor record step {step}: Ez_slice max={np.max(np.abs(Ez_slice)):.2e}")
-        # print(f"● Monitor record step {step}: Ez_slice max={np.max(np.abs(Ez_slice)):.2e}")
-
         if do_record and self.should_record_fields:
             self.fields["Ex"].append(Ex_slice)
             self.fields["Ey"].append(Ey_slice)
@@ -1522,11 +1540,12 @@ class Monitor:
             self.power_timestamps = self.power_timestamps[excess:]
 
     def start_live_visualization(self, field_component="Ez"):
-        """Removed matplotlib hook kept for backward compatibility."""
-        raise RuntimeError(
-            "Monitor.start_live_visualization() was removed from beamz. "
-            "Use Monitor.field_plot_data()/power_plot_data() and render in examples."
-        )
+        """Display the latest recorded field with matplotlib.
+
+        This compatibility hook no longer installs a persistent live updater. Use
+        ``Simulation.animate(...)`` for streamed simulation updates.
+        """
+        return self.show(field=field_component)
 
     def get_field_statistics(self):
         """Get statistical information about recorded fields."""
@@ -1653,6 +1672,46 @@ class Monitor:
         from beamz.visual.data import monitor_power_plot_data
 
         return monitor_power_plot_data(self, **kwargs)
+
+    def plot(self, **kwargs):
+        """Plot recorded monitor field data using the matplotlib backend."""
+        from beamz.visual.mpl import plot_monitor_field
+
+        kwargs.setdefault("show", False)
+        return plot_monitor_field(self, **kwargs)
+
+    def show(self, **kwargs):
+        """Display recorded monitor field data using the matplotlib backend."""
+        kwargs.setdefault("show", True)
+        return self.plot(**kwargs)
+
+    def plot_fields(self, **kwargs):
+        """Plot recorded monitor field data."""
+        return self.plot(**kwargs)
+
+    def plot_power(self, **kwargs):
+        """Plot monitor power history."""
+        from beamz.visual.mpl import plot_monitor_power
+
+        kwargs.setdefault("show", False)
+        return plot_monitor_power(self, **kwargs)
+
+    def show_power(self, **kwargs):
+        """Display monitor power history using the matplotlib backend."""
+        kwargs.setdefault("show", True)
+        return self.plot_power(**kwargs)
+
+    def to_xarray(self):
+        """Return recorded monitor data as an xarray Dataset."""
+        from beamz.data.xarray import monitor_dataset
+
+        return monitor_dataset(self)
+
+    def animate_fields(self, **kwargs):
+        """Animate recorded monitor field data using matplotlib."""
+        from beamz.visual.mpl import animate_monitor_fields
+
+        return animate_monitor_fields(self, **kwargs)
 
     def get_field_at_time(self, field="Ez", time_value=None, time_index=None):
         """Get field data at a specific time.

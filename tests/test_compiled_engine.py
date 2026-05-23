@@ -20,12 +20,15 @@ from beamz import (
     um,
 )
 from beamz.const import EPS_0
+from beamz.devices.sources import compiler as source_compiler
 from beamz.devices.monitors.compiler import CompiledMonitorSpec
 from beamz.devices.sources.compiler import (
+    _analytic_subband_waveforms,
     _as_slab_spec,
     _compile_mode_source_3d,
     _sample_waveform,
 )
+from beamz.devices.sources.mode import _analytic_signal_quadrature
 from beamz.simulation.boundaries import initialize_full_pec_3d_state
 from beamz.simulation.compiled import (
     CompiledRunConfig,
@@ -1196,9 +1199,160 @@ def test_compile_mode_source_builds_e_and_h_specs():
     assert np.isfinite(np.asarray(sim.fields.Ez)).all()
 
 
-def test_compile_3d_mode_source_scales_e_terms_by_component_eps():
+def test_analytic_signal_quadrature_matches_periodic_sine():
+    phase = 2.0 * np.pi * 5.0 * np.arange(64, dtype=float) / 64.0
+    quadrature = _analytic_signal_quadrature(np.cos(phase))
+
+    np.testing.assert_allclose(quadrature, np.sin(phase), atol=1e-12, rtol=1e-12)
+
+
+def test_mode_source_uses_explicit_signal_quadrature():
+    source = ModeSource.__new__(ModeSource)
+    source.signal = np.asarray([1.0, 2.0, 3.0], dtype=float)
+    source.signal_quadrature = np.asarray([4.0, 5.0, 6.0], dtype=float)
+    source._signal_quadrature = None
+    source._signal_quadrature_signature = None
+
+    np.testing.assert_allclose(source._get_signal_quadrature(), [4.0, 5.0, 6.0])
+    assert source._get_signal_quadrature_value(1.0, 1.0) == 5.0
+
+
+def test_analytic_subband_waveforms_reconstruct_input():
+    dt = 1e-15
+    t = np.arange(256, dtype=float) * dt
+    analytic = (
+        0.8 * np.exp(2j * np.pi * 120e12 * t)
+        + 0.2 * np.exp(2j * np.pi * 210e12 * t)
+    )
+
+    nodes, subbands = _analytic_subband_waveforms(
+        analytic,
+        dt=dt,
+        profile_frequencies=np.asarray([100e12, 180e12, 240e12]),
+    )
+
+    assert nodes.shape == (3,)
+    assert subbands.shape == (3, analytic.size)
+    np.testing.assert_allclose(np.sum(subbands, axis=0), analytic, rtol=1e-12, atol=1e-12)
+
+
+def test_compile_3d_multifrequency_mode_source_uses_temporary_profile_sources(
+    monkeypatch,
+):
+    dt = 1e-15
+    source = ModeSource(
+        grid=SimpleNamespace(),
+        center=(0.0, 0.0, 0.0),
+        width=1.0,
+        height=1.0,
+        wavelength=LIGHT_SPEED / 200e12,
+        pol="te",
+        signal=np.ones(64, dtype=float),
+        direction="+x",
+        profile_frequencies=np.asarray([230e12, 170e12, 210e12]),
+    )
+    fields = SimpleNamespace(permittivity=jnp.ones((3, 3, 3), dtype=jnp.float32))
+    seen: list[tuple[bool, float, object]] = []
+
+    def fake_initialize(self, permittivity, resolution, dt=None):
+        del dt
+        self._initialized = True
+        self._is_3d = True
+        self._grid_shape = tuple(np.asarray(permittivity).shape)
+        self._resolution = float(resolution)
+
+    def fake_compile(profile_src, *_args, **_kwargs):
+        seen.append(
+            (
+                profile_src is source,
+                float(LIGHT_SPEED / profile_src.wavelength),
+                profile_src.profile_frequencies,
+            )
+        )
+        return ()
+
+    monkeypatch.setattr(ModeSource, "initialize", fake_initialize)
+    monkeypatch.setattr(source_compiler, "_compile_mode_source_3d", fake_compile)
+
+    specs = source_compiler._compile_mode_source(
+        source,
+        fields,
+        dt=dt,
+        num_steps=16,
+        t0=0.0,
+        resolution=1.0,
+        total_steps=64,
+    )
+
+    assert specs == ()
+    assert [item[0] for item in seen] == [False, False, False]
+    np.testing.assert_allclose(
+        [item[1] for item in seen],
+        [170e12, 210e12, 230e12],
+        rtol=1e-15,
+        atol=0.0,
+    )
+    assert [item[2] for item in seen] == [None, None, None]
+
+
+def test_compile_3d_mode_source_reinitializes_missing_launch_dt(monkeypatch):
+    dt = 1e-15
+    source = ModeSource(
+        grid=SimpleNamespace(),
+        center=(0.0, 0.0, 0.0),
+        width=1.0,
+        height=1.0,
+        wavelength=LIGHT_SPEED / 200e12,
+        pol="te",
+        signal=np.ones(64, dtype=float),
+        direction="+x",
+    )
+    source._initialized = True
+    source._is_3d = True
+    source._grid_shape = (3, 3, 3)
+    source._resolution = 1.0
+    source._launch_dt = None
+    source._k_num_axis = None
+    source._omega_launch = 2.0 * np.pi * LIGHT_SPEED / source.wavelength
+    fields = SimpleNamespace(permittivity=jnp.ones((3, 3, 3), dtype=jnp.float32))
+    seen_dt: list[float | None] = []
+
+    def fake_initialize(self, permittivity, resolution, dt=None):
+        seen_dt.append(dt)
+        self._initialized = True
+        self._is_3d = True
+        self._grid_shape = tuple(np.asarray(permittivity).shape)
+        self._resolution = float(resolution)
+        self._launch_dt = None if dt is None else float(dt)
+        self._k_num_axis = 1.0
+        self._omega_launch = 2.0 * np.pi * LIGHT_SPEED / self.wavelength
+
+    def fake_compile(profile_src, *_args, **_kwargs):
+        assert profile_src is source
+        assert np.isclose(profile_src._launch_dt, dt)
+        assert profile_src._k_num_axis is not None
+        return ()
+
+    monkeypatch.setattr(ModeSource, "initialize", fake_initialize)
+    monkeypatch.setattr(source_compiler, "_compile_mode_source_3d", fake_compile)
+
+    specs = source_compiler._compile_mode_source(
+        source,
+        fields,
+        dt=dt,
+        num_steps=16,
+        t0=0.0,
+        resolution=1.0,
+        total_steps=64,
+    )
+
+    assert specs == ()
+    assert seen_dt == [dt]
+
+
+def test_compile_3d_mode_source_uses_discrete_phasor_residual_slabs():
     fields = SimpleNamespace(
-        permittivity=jnp.full((2, 2, 2), 99.0),
+        permittivity=jnp.ones((2, 2, 2)),
         permeability=jnp.ones((2, 2, 2)),
         Ex=jnp.zeros((2, 2, 1)),
         Ey=jnp.zeros((2, 1, 2)),
@@ -1210,41 +1364,64 @@ def test_compile_3d_mode_source_scales_e_terms_by_component_eps():
         eps_y=jnp.full((2, 1, 2), 3.0),
         eps_z=jnp.full((1, 2, 2), 4.0),
     )
-    one = np.ones((1, 1, 1), dtype=np.float32)
+
+    def h_delta(_fields, *, dt):
+        del _fields, dt
+        return {
+            "Hx": np.zeros((1, 1, 2), dtype=np.float32),
+            "Hy": np.asarray([[[1.0 + 2.0j], [0.0]]], dtype=np.complex128),
+            "Hz": np.zeros((2, 1, 1), dtype=np.float32),
+        }
+
+    def e_delta(_fields, *, dt):
+        del _fields, dt
+        return {
+            "Ex": np.asarray(
+                [[[0.0], [3.0 - 4.0j]], [[0.0], [0.0]]],
+                dtype=np.complex128,
+            ),
+            "Ey": np.zeros((2, 1, 2), dtype=np.float32),
+            "Ez": np.zeros((1, 2, 2), dtype=np.float32),
+        }
+
     source = SimpleNamespace(
         _axis="z",
         pol="te",
         _direction_sign=1.0,
-        _Ex_profile=one,
-        _Ey_profile=one,
-        _Ez_profile=None,
-        _Hx_profile=one,
-        _Hy_profile=one,
-        _Hz_profile=None,
-        _Ex_indices=(slice(0, 1), slice(0, 1), slice(0, 1)),
-        _Ey_indices=(slice(0, 1), slice(0, 1), slice(0, 1)),
-        _Ez_indices=None,
-        _Hx_indices=(slice(0, 1), slice(0, 1), slice(0, 1)),
-        _Hy_indices=(slice(0, 1), slice(0, 1), slice(0, 1)),
-        _Hz_indices=None,
+        _compute_discrete_3d_h_phasor_delta=h_delta,
+        _compute_discrete_3d_e_phasor_delta=e_delta,
     )
+    waveform = jnp.asarray([2.0, 3.0], dtype=jnp.float32)
+    quadrature = jnp.asarray([5.0, 7.0], dtype=jnp.float32)
 
     specs = _compile_mode_source_3d(
         source,
         fields,
-        dt=5.0,
+        dt=0.25,
         resolution=7.0,
-        h_waveform=jnp.ones((1,), dtype=jnp.float32),
-        e_waveform=jnp.ones((1,), dtype=jnp.float32),
+        h_waveform=waveform,
+        e_waveform=waveform,
+        h_quadrature_waveform=quadrature,
+        e_quadrature_waveform=quadrature,
+        t0=1.0,
     )
-    e_specs = {spec.component: spec for spec in specs if spec.timing == "e"}
 
-    assert np.asarray(e_specs["Ex"].coeff).item() == pytest.approx(
-        -5.0 / (EPS_0 * 2.0 * 7.0)
-    )
-    assert np.asarray(e_specs["Ey"].coeff).item() == pytest.approx(
-        5.0 / (EPS_0 * 3.0 * 7.0)
-    )
+    hy_specs = [spec for spec in specs if spec.component == "Hy"]
+    ex_specs = [spec for spec in specs if spec.component == "Ex"]
+    assert len(hy_specs) == 2
+    assert len(ex_specs) == 2
+    assert hy_specs[0].timing == "h"
+    assert hy_specs[0].slab_starts == (0, 0, 0)
+    assert hy_specs[0].slab_sizes == (1, 1, 1)
+    np.testing.assert_allclose(np.asarray(hy_specs[0].coeff).reshape(()), 1.0)
+    np.testing.assert_allclose(np.asarray(hy_specs[1].coeff).reshape(()), -2.0)
+    assert ex_specs[0].timing == "e"
+    assert ex_specs[0].slab_starts == (0, 1, 0)
+    assert ex_specs[0].slab_sizes == (1, 1, 1)
+    np.testing.assert_allclose(np.asarray(ex_specs[0].coeff).reshape(()), 3.0)
+    np.testing.assert_allclose(np.asarray(ex_specs[1].coeff).reshape(()), 4.0)
+    np.testing.assert_allclose(np.asarray(hy_specs[0].waveform), np.asarray(waveform))
+    np.testing.assert_allclose(np.asarray(hy_specs[1].waveform), np.asarray(quadrature))
 
 
 def test_cache_reuse_across_equal_chunks(small_sim_params):

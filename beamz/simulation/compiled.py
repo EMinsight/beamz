@@ -127,6 +127,18 @@ def _init_persistent_cache():
 
 
 _init_persistent_cache()
+
+
+def monitor_dft_accumulator_dtype():
+    """Return the real dtype used for compiled monitor DFT accumulators.
+
+    JAX's x64 mode is global, so BeamZ does not enable it implicitly here. When
+    the host application has already enabled x64, DFT accumulators use it.
+    """
+
+    return jnp.float64 if bool(jax.config.jax_enable_x64) else jnp.float32
+
+
 def _sample_centered_grid_targets_2d(
     field: jnp.ndarray,
     x_targets: jnp.ndarray,
@@ -955,6 +967,7 @@ class CompiledSimulation:
         dft_vec_re = monitor_state.dft_vec_re
         dft_vec_im = monitor_state.dft_vec_im
         dft_weight_sum = monitor_state.dft_weight_sum
+        dft_dtype = dft_vec_re.dtype
         max_records = powers.shape[1]
 
         # Batched 3D monitors via fori_loop (constant HLO size)
@@ -1085,27 +1098,31 @@ class CompiledSimulation:
                     ),
                     jnp.asarray(0.0, dtype=jnp.float32),
                 )
-                ph_vec_re = cur_ph_re * mask_f
-                ph_vec_im = cur_ph_im * mask_f
+                ph_vec_re = cur_ph_re.astype(dft_dtype) * mask_f.astype(dft_dtype)
+                ph_vec_im = cur_ph_im.astype(dft_dtype) * mask_f.astype(dft_dtype)
 
                 vecs = jnp.stack((exs, eys, ezs, hxs, hys, hzs), axis=0)
-                comp_mask = bm.dft_component_mask[i][:, None, None]
+                comp_mask = bm.dft_component_mask[i].astype(dft_dtype)[:, None, None]
                 sample_scale = monitor_dft_sample_scale(
                     w,
                     normalization_code=bm.dft_normalization_code[i],
                     base_dt=dt_scalar,
                     record_interval=bm.dft_record_intervals[i],
                     length_unit=bm.dft_length_unit[i],
-                )
+                ).astype(dft_dtype)
                 delta_re_3d = (
-                    sample_scale * comp_mask * jnp.einsum("f,cp->cfp", ph_vec_re, vecs)
+                    sample_scale
+                    * comp_mask
+                    * jnp.einsum("f,cp->cfp", ph_vec_re, vecs.astype(dft_dtype))
                 )
                 delta_im_3d = (
-                    sample_scale * comp_mask * jnp.einsum("f,cp->cfp", ph_vec_im, vecs)
+                    sample_scale
+                    * comp_mask
+                    * jnp.einsum("f,cp->cfp", ph_vec_im, vecs.astype(dft_dtype))
                 )
                 d_re = d_re.at[mi].add(delta_re_3d)
                 d_im = d_im.at[mi].add(delta_im_3d)
-                d_w = d_w.at[mi].add(w * mask_f)
+                d_w = d_w.at[mi].add(w.astype(dft_dtype) * mask_f.astype(dft_dtype))
 
                 return pwr, ts, cnt, f_re, f_im, ph_re, ph_im, d_re, d_im, d_w
 
@@ -1205,9 +1222,9 @@ class CompiledSimulation:
             if mon.dft_enabled and mon.freq_count > 0 and mon.dft_point_count > 0:
                 mi = mon.monitor_index
                 theta_now = (
-                    jnp.asarray(2.0 * np.pi, dtype=jnp.float32)
-                    * jnp.asarray(mon.freq_hz, dtype=jnp.float32)
-                    * t_phys
+                    jnp.asarray(2.0 * np.pi, dtype=dft_dtype)
+                    * jnp.asarray(mon.freq_hz, dtype=dft_dtype)
+                    * jnp.asarray(t_phys, dtype=dft_dtype)
                 )
                 dft_ph_re = jnp.cos(theta_now)
                 dft_ph_im = jnp.sin(theta_now)
@@ -1240,7 +1257,7 @@ class CompiledSimulation:
                         record_interval=mon.dft_record_interval,
                         length_unit=mon.dft_length_unit,
                     ),
-                    dtype=jnp.float32,
+                    dtype=dft_dtype,
                 )
 
                 if mon.is_3d:
@@ -1258,14 +1275,18 @@ class CompiledSimulation:
                         tm_hx=tm_hx,
                         tm_hy=tm_hy,
                     )
-                comp_mask = mon.dft_component_mask[:, None, None]
+                comp_mask = mon.dft_component_mask.astype(dft_dtype)[:, None, None]
                 delta_re = jnp.asarray(
-                    sample_scale * comp_mask * jnp.einsum("f,cp->cfp", dft_ph_re, vecs),
-                    dtype=jnp.float32,
+                    sample_scale
+                    * comp_mask
+                    * jnp.einsum("f,cp->cfp", dft_ph_re, vecs.astype(dft_dtype)),
+                    dtype=dft_dtype,
                 )
                 delta_im = jnp.asarray(
-                    sample_scale * comp_mask * jnp.einsum("f,cp->cfp", dft_ph_im, vecs),
-                    dtype=jnp.float32,
+                    sample_scale
+                    * comp_mask
+                    * jnp.einsum("f,cp->cfp", dft_ph_im, vecs.astype(dft_dtype)),
+                    dtype=dft_dtype,
                 )
                 dft_vec_re = dft_vec_re.at[
                     mi, :, : mon.freq_count, : mon.dft_point_count
@@ -1274,7 +1295,7 @@ class CompiledSimulation:
                     mi, :, : mon.freq_count, : mon.dft_point_count
                 ].add(delta_im[:, : mon.freq_count, : mon.dft_point_count])
                 dft_weight_sum = dft_weight_sum.at[mi, : mon.freq_count].add(
-                    jnp.asarray(w, dtype=jnp.float32)
+                    jnp.asarray(w, dtype=dft_dtype)
                 )
 
         return MonitorState(
@@ -2191,6 +2212,7 @@ class CompiledSimulation:
                 )
                 max_freq = monitor_frequency_size(self.monitor_specs)
                 max_points = monitor_dft_point_size(self.monitor_specs)
+                dft_dtype = monitor_dft_accumulator_dtype()
                 monitor_state = MonitorState(
                     powers=jnp.zeros(
                         (len(self.monitor_specs), max_records), dtype=jnp.float32
@@ -2213,17 +2235,18 @@ class CompiledSimulation:
                     ),
                     dft_vec_re=jnp.zeros(
                         (len(self.monitor_specs), 6, max_freq, max_points),
-                        dtype=jnp.float32,
+                        dtype=dft_dtype,
                     ),
                     dft_vec_im=jnp.zeros(
                         (len(self.monitor_specs), 6, max_freq, max_points),
-                        dtype=jnp.float32,
+                        dtype=dft_dtype,
                     ),
                     dft_weight_sum=jnp.zeros(
-                        (len(self.monitor_specs), max_freq), dtype=jnp.float32
+                        (len(self.monitor_specs), max_freq), dtype=dft_dtype
                     ),
                 )
             else:
+                dft_dtype = monitor_dft_accumulator_dtype()
                 monitor_state = MonitorState(
                     powers=jnp.zeros((0, 0), dtype=jnp.float32),
                     timestamps=jnp.zeros((0, 0), dtype=jnp.float32),
@@ -2232,9 +2255,9 @@ class CompiledSimulation:
                     freq_flux_im=jnp.zeros((0, 0), dtype=jnp.float32),
                     freq_phase_re=jnp.zeros((0, 0), dtype=jnp.float32),
                     freq_phase_im=jnp.zeros((0, 0), dtype=jnp.float32),
-                    dft_vec_re=jnp.zeros((0, 0, 0, 0), dtype=jnp.float32),
-                    dft_vec_im=jnp.zeros((0, 0, 0, 0), dtype=jnp.float32),
-                    dft_weight_sum=jnp.zeros((0, 0), dtype=jnp.float32),
+                    dft_vec_re=jnp.zeros((0, 0, 0, 0), dtype=dft_dtype),
+                    dft_vec_im=jnp.zeros((0, 0, 0, 0), dtype=dft_dtype),
+                    dft_weight_sum=jnp.zeros((0, 0), dtype=dft_dtype),
                 )
 
         if self._compiled_scan is None:
@@ -2297,6 +2320,15 @@ class CompiledSimulation:
                     dtype=np.float64,
                 )
                 dev._dft_weight_sum = weight_sum
+                dev._dft_base_dt = float(self.config.dt)
+                if spec.is_3d:
+                    dev._compiled_dft_shape_3d = (int(spec.min_dim0), int(spec.min_dim1))
+                    axis = str(getattr(dev, "plane_normal", "z")).lower()
+                    dev._compiled_dft_plane_axes = {
+                        "x": ("z", "y"),
+                        "y": ("z", "x"),
+                        "z": ("y", "x"),
+                    }.get(axis, ("y", "x"))
                 dev._dft_accum = {}
                 for comp_i, comp_name in enumerate(comp_names):
                     if comp_mask[comp_i] <= 0.0:
