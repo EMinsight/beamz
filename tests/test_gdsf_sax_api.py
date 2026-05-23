@@ -1154,6 +1154,82 @@ def test_build_port_projection_3d_staggers_solver_fields_to_yee_lattices(
         np.testing.assert_allclose(grids[comp], values, rtol=1e-13, atol=1e-13)
 
 
+def test_build_port_projection_3d_interpolates_cropped_yee_profiles(monkeypatch):
+    import beamz.simulation.core as core_mod
+
+    sim = Simulation.__new__(Simulation)
+    sim.is_3d = True
+    sim.resolution = 1.0
+    grid_shape = (5, 5, 5)
+    field_arrays = {
+        comp: np.zeros(component_shape_3d(comp, grid_shape), dtype=np.float32)
+        for comp in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
+    }
+    zz, yy, xx = np.meshgrid(
+        np.arange(grid_shape[0]),
+        np.arange(grid_shape[1]),
+        np.arange(grid_shape[2]),
+        indexing="ij",
+    )
+    field_arrays["permittivity"] = (
+        1.0 + 0.8 * ((zz + 2 * yy + 3 * xx) % 5)
+    ).astype(np.float32)
+    sim.fields = type("F", (), field_arrays)()
+
+    class DummyXMonitor:
+        name = "m_cropped_yee_projection"
+
+        @staticmethod
+        def get_grid_slice_3d(dx, dy, dz, field_shape):
+            del dx, dy, dz
+            normal_index = min(1, int(field_shape[2]) - 1)
+            return slice(0, 5), slice(0, 5), normal_index
+
+        @staticmethod
+        def get_dft_component(component):
+            del component
+            return np.zeros((1, 16), dtype=np.complex128)
+
+    z, y = np.meshgrid(np.arange(5), np.arange(5), indexing="ij")
+    ex = 10.0 + z + 0.1 * y + 0.03 * z * y
+    ey = 20.0 + 2.0 * z - 0.3 * y + 0.11 * z * y
+    ez = 30.0 - 0.4 * z + 1.5 * y - 0.07 * z * y
+    hx = 40.0 + 0.8 * z + 0.6 * y + 0.05 * z * y
+    hy = 50.0 + 1.2 * z - 0.2 * y + 0.09 * z * y
+    hz = 60.0 - 0.5 * z + 0.4 * y + 0.13 * z * y
+    e_mode = np.stack([ex, ey, ez]).astype(np.complex128)
+    h_mode = np.stack([hx, hy, hz]).astype(np.complex128)
+
+    def fake_solve_modes(
+        eps,
+        omega,
+        dL,
+        m,
+        direction,
+        filter_pol,
+        target_neff,
+        return_fields,
+    ):
+        del eps, omega, dL, m, direction, filter_pol, target_neff, return_fields
+        return np.array([2.0]), [e_mode], [h_mode], None
+
+    monkeypatch.setattr(core_mod, "solve_modes", fake_solve_modes)
+
+    projection = sim._build_port_projection(
+        spec=PortSpec(
+            name="p",
+            monitor_name="m_cropped_yee_projection",
+            direction="+x",
+            polarization="te",
+        ),
+        monitor=DummyXMonitor(),
+        frequency=1.0,
+        cache={},
+    )
+
+    assert projection["mode_component_grids"]["Ey"].shape == (4, 4)
+
+
 def test_project_modal_coefficients_3d_group_recovers_multiple_modes():
     components = ("Ey", "Ez", "Hy", "Hz")
 

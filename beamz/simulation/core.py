@@ -2807,6 +2807,8 @@ class Simulation:
                             name,
                             parts["axis"],
                         )
+                        src0 = np.asarray(src0, dtype=np.float64)[: a.shape[0]]
+                        src1 = np.asarray(src1, dtype=np.float64)[: a.shape[1]]
                         a = self._interpolate_plane_matrix_2d(
                             a,
                             src0,
