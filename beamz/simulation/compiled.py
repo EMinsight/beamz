@@ -2320,6 +2320,7 @@ class CompiledSimulation:
                     dtype=np.float64,
                 )
                 dev._dft_weight_sum = weight_sum
+                dev._dft_base_dt = float(self.config.dt)
                 if spec.is_3d:
                     dev._compiled_dft_shape_3d = (int(spec.min_dim0), int(spec.min_dim1))
                     axis = str(getattr(dev, "plane_normal", "z")).lower()

@@ -671,6 +671,25 @@ def test_monitor_get_dft_flux_uses_phasor_poynting_product():
     np.testing.assert_allclose(mon.get_dft_flux(), expected, rtol=1e-12, atol=1e-12)
 
 
+def test_monitor_get_dft_flux_phase_aligns_leapfrog_h_phasor():
+    mon = Monitor(
+        start=(0.0, 0.0),
+        end=(0.0, 1.0),
+        record_fields=False,
+        dft_enabled=True,
+        dft_frequencies=np.array([0.5], dtype=float),
+        dft_components=("Ez", "Hy"),
+        dft_normalization="physical",
+    )
+    mon._resolution = 1.0
+    mon._dft_base_dt = 1.0
+    mon._dft_accum["Ez"] = np.array([[1.0 + 0.0j]], dtype=np.complex128)
+    mon._dft_accum["Hy"] = np.array([[1.0j]], dtype=np.complex128)
+    mon._dft_weight_sum = np.ones((1,), dtype=float)
+
+    np.testing.assert_allclose(mon.get_dft_flux(), [-0.5], rtol=1e-12, atol=1e-12)
+
+
 def test_monitor_frequency_points_aliases_are_deprecated():
     with pytest.warns(DeprecationWarning, match="frequency_points"):
         mon = Monitor(
