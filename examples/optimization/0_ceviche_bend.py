@@ -163,7 +163,7 @@ for step in range(STEPS):
     print(f"[{step+1}/{STEPS}] Forward Sim...", end="\r")
     results = sim_fwd.run(save_fields=["Ez"], field_subsample=2)
 
-    fwd_ds = results.to_xarray() if results is not None else None
+    fwd_ds = results.fields if results is not None else None
     fwd_ez_history = (
         [np.asarray(frame) for frame in fwd_ds["Ez"].values]
         if fwd_ds is not None and "Ez" in fwd_ds
@@ -202,7 +202,7 @@ for step in range(STEPS):
     )
 
     adj_results = sim_adj.run(save_fields=["Ez"], field_subsample=2)
-    adj_ds = adj_results.to_xarray() if adj_results is not None else None
+    adj_ds = adj_results.fields if adj_results is not None else None
     adj_ez_history = (
         [np.asarray(field) for field in adj_ds["Ez"].values]
         if adj_ds is not None and "Ez" in adj_ds
@@ -406,7 +406,7 @@ results_final = sim_final.run(save_fields=["Ez", "Hx", "Hy"], field_subsample=1)
 trans_final = transmission_percent(mon_in_final, mon_out_final, DT)
 
 print("Calculating energy flow...")
-final_ds = results_final.to_xarray()
+final_ds = results_final.fields
 Ez_t = final_ds["Ez"].values
 Hx_t = final_ds["Hx"].values
 Hy_t = final_ds["Hy"].values

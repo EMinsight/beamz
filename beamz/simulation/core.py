@@ -157,6 +157,7 @@ class MonitorResults:
     power_spectrum: np.ndarray
     frequency_flux_spectrum: np.ndarray
     objective_value: float | None = None
+    data: Any = None
 
     def _plot_proxy(self):
         return SimpleNamespace(
@@ -216,9 +217,7 @@ class MonitorResults:
 
     def to_xarray(self):
         """Return this monitor result as an xarray Dataset."""
-        from beamz.data.xarray import monitor_dataset
-
-        return monitor_dataset(self)
+        return self.data
 
     @classmethod
     def from_monitor(cls, monitor: Monitor) -> "MonitorResults":
@@ -237,7 +236,7 @@ class MonitorResults:
         )
         if legacy_flux is None:
             legacy_flux = power_spectrum
-        return cls(
+        result = cls(
             monitor=monitor,
             fields=fields,
             power_history=np.asarray(
@@ -250,6 +249,11 @@ class MonitorResults:
             frequency_flux_spectrum=np.asarray(legacy_flux, dtype=np.complex64),
             objective_value=getattr(monitor, "objective_value", None),
         )
+        from dataclasses import replace
+
+        from beamz.data.xarray import monitor_dataset
+
+        return replace(result, data=monitor_dataset(result))
 
 
 @dataclass(frozen=True)
@@ -257,12 +261,28 @@ class SimulationResults(Mapping[str, Any]):
     """Primary run output with backward-compatible mapping access."""
 
     simulation: "Simulation"
-    fields: dict[str, np.ndarray] | None = None
+    fields: Any = None
     field_times: np.ndarray | None = None
     field_steps: np.ndarray | None = None
     monitors: tuple[Monitor, ...] = ()
     monitor_results: dict[str, MonitorResults] | None = None
     snapshots: tuple[dict[str, Any], ...] = ()
+
+    def __post_init__(self):
+        if self.fields is None or hasattr(self.fields, "data_vars"):
+            return
+        from beamz.data.xarray import simulation_fields_dataset
+
+        object.__setattr__(
+            self,
+            "fields",
+            simulation_fields_dataset(
+                self.simulation,
+                self.fields,
+                field_times=self.field_times,
+                field_steps=self.field_steps,
+            ),
+        )
 
     def __getitem__(self, key: str) -> Any:
         payload = self.to_dict()
@@ -335,10 +355,12 @@ class SimulationResults(Mapping[str, Any]):
         return save_snapshot_video(self.snapshots, filename=filename, **kwargs)
 
     def to_xarray(self):
-        """Return stored simulation field data as an xarray Dataset."""
-        from beamz.data.xarray import simulation_dataset
+        """Return stored simulation fields as an xarray Dataset."""
+        if self.fields is not None:
+            return self.fields
+        from beamz.data.xarray import simulation_fields_dataset
 
-        return simulation_dataset(self)
+        return simulation_fields_dataset(self.simulation, None)
 
     @classmethod
     def from_run(
@@ -360,9 +382,19 @@ class SimulationResults(Mapping[str, Any]):
         }
         if fields is None and not monitor_tuple and not snapshot_tuple:
             return None
+        fields_dataset = None
+        if fields is not None:
+            from beamz.data.xarray import simulation_fields_dataset
+
+            fields_dataset = simulation_fields_dataset(
+                simulation,
+                fields,
+                field_times=field_times,
+                field_steps=field_steps,
+            )
         return cls(
             simulation=simulation,
-            fields=fields,
+            fields=fields_dataset,
             field_times=(
                 None
                 if field_times is None

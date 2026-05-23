@@ -542,7 +542,7 @@ while steps_done < total_steps:
         record_fields=list(xy_flux_fields),
         progress=False,
     )
-    f = chunk_result.to_xarray()
+    f = chunk_result.fields
     nrec = int(f["Ex"].sizes["t"])
     for i in range(nrec):
         ex_i = f["Ex"].isel(t=i).values

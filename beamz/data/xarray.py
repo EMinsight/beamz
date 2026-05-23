@@ -134,23 +134,31 @@ def field_data_array(
     return xr.DataArray(arr, dims=dims, coords=coords, name=str(name), attrs=da_attrs)
 
 
-def simulation_dataset(results):
-    """Convert ``SimulationResults`` stored fields to an xarray ``Dataset``."""
-    if results.fields is None:
+def simulation_fields_dataset(
+    simulation,
+    fields,
+    *,
+    field_times=None,
+    field_steps=None,
+):
+    """Create the public xarray Dataset for saved simulation fields."""
+    if fields is None:
         data_vars = {}
+    elif isinstance(fields, xr.Dataset):
+        return fields
     else:
         data_vars = {
             name: field_data_array(
                 values,
                 name=name,
-                simulation=results.simulation,
-                times=getattr(results, "field_times", None),
-                steps=getattr(results, "field_steps", None),
+                simulation=simulation,
+                times=field_times,
+                steps=field_steps,
             )
-            for name, values in results.fields.items()
+            for name, values in fields.items()
         }
 
-    sim = results.simulation
+    sim = simulation
     attrs = {
         "beamz_kind": "SimulationResults",
         "resolution": float(getattr(sim, "resolution", np.nan)),
@@ -160,6 +168,16 @@ def simulation_dataset(results):
         "design_depth": float(getattr(sim.design, "depth", 0.0) or 0.0),
     }
     return xr.Dataset(data_vars=data_vars, attrs=attrs)
+
+
+def simulation_dataset(results):
+    """Return ``SimulationResults`` saved fields as an xarray Dataset."""
+    return simulation_fields_dataset(
+        results.simulation,
+        results.fields,
+        field_times=getattr(results, "field_times", None),
+        field_steps=getattr(results, "field_steps", None),
+    )
 
 
 def _monitor_field_data_array(monitor, component, values, times):
@@ -357,6 +375,7 @@ __all__ = [
     "monitor_dataset",
     "proxy_monitor",
     "simulation_dataset",
+    "simulation_fields_dataset",
     "source_dataset",
     "source_signal_data_array",
 ]

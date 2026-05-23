@@ -71,5 +71,4 @@ results = sim.save_video(
     save_fields=["Ez"],
     field_subsample=15,
 )
-field_ds = results.to_xarray()
-field_ds["Ez"].isel(t=-1).plot(x="x", y="y", cmap="RdBu")
+results.fields["Ez"].isel(t=-1).plot(x="x", y="y", cmap="RdBu")

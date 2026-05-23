@@ -71,7 +71,7 @@ source_ds = source.to_xarray(t=time)
 source_ds["signal"].plot()
 
 results = sim.run(save_fields=["Ez"], field_subsample=5, progress=False)
-field_ds = results.to_xarray()
+field_ds = results.fields
 
 last_ez = field_ds["Ez"].isel(t=-1)
 last_ez.plot(x="x", y="y", cmap="RdBu")
@@ -79,5 +79,5 @@ last_ez.plot(x="x", y="y", cmap="RdBu")
 center_ez = field_ds["Ez"].sel(y=2.0 * µm, method="nearest")
 center_ez.plot(x="x", y="t", cmap="RdBu")
 
-monitor_ds = results.monitor_results["output_line"].to_xarray()
+monitor_ds = results.monitor_results["output_line"].data
 monitor_ds["power"].plot()

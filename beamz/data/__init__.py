@@ -5,6 +5,7 @@ from beamz.data.xarray import (
     mode_dataset,
     monitor_dataset,
     simulation_dataset,
+    simulation_fields_dataset,
     source_dataset,
     source_signal_data_array,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "mode_dataset",
     "monitor_dataset",
     "simulation_dataset",
+    "simulation_fields_dataset",
     "source_dataset",
     "source_signal_data_array",
 ]

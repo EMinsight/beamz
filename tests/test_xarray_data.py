@@ -17,7 +17,7 @@ def _sim():
     )
 
 
-def test_simulation_results_to_xarray_labels_fields():
+def test_simulation_results_fields_are_xarray_by_default():
     sim = _sim()
     fields = {"Ez": np.zeros((2, 4, 5))}
     results = SimulationResults(
@@ -27,7 +27,7 @@ def test_simulation_results_to_xarray_labels_fields():
         field_steps=np.array([10, 20]),
     )
 
-    ds = results.to_xarray()
+    ds = results.fields
 
     assert isinstance(ds, xr.Dataset)
     assert ds["Ez"].dims == ("t", "y", "x")
@@ -36,6 +36,7 @@ def test_simulation_results_to_xarray_labels_fields():
     assert ds["Ez"].attrs["component"] == "Ez"
     np.testing.assert_allclose(ds["Ez"].coords["t"], [1e-15, 2e-15])
     np.testing.assert_array_equal(ds["step"], [10, 20])
+    assert results.to_xarray() is results.fields
 
 
 def test_monitor_to_xarray_labels_fields_and_power():
@@ -61,10 +62,11 @@ def test_monitor_results_to_xarray_uses_snapshot_data():
     monitor.power_timestamps.append(0.0)
     result = MonitorResults.from_monitor(monitor)
 
-    ds = result.to_xarray()
+    ds = result.data
 
     assert ds["Ez"].dims == ("t", "s")
     assert ds["power"].dims == ("t",)
+    assert result.to_xarray() is result.data
 
 
 def test_source_to_xarray_labels_signal_time():

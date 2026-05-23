@@ -241,7 +241,7 @@ def run_forward(grid, wavelength, wave, fields=("Ez",)):
         resolution=DX,
     )
     results = sim.run(save_fields=list(fields), field_subsample=FIELD_SUBSAMPLE)
-    return modal_metrics(sim, wavelength), results.to_xarray()
+    return modal_metrics(sim, wavelength), results.fields
 
 def run_adjoint(grid, wavelength, target_port, wave):
     source = ModeSource(
@@ -261,7 +261,7 @@ def run_adjoint(grid, wavelength, target_port, wave):
         resolution=DX,
     )
     results = sim.run(save_fields=["Ez"], field_subsample=FIELD_SUBSAMPLE)
-    return [np.asarray(frame) for frame in results.to_xarray()["Ez"].values]
+    return [np.asarray(frame) for frame in results.fields["Ez"].values]
 
 def flux_map(fields, time, gate_start):
     ez_hist = [np.asarray(frame) for frame in fields["Ez"].values]
