@@ -174,6 +174,29 @@ def test_simulation_plot_is_standard_non_showing_api():
     assert ax.get_title() == "Simulation Layout"
 
 
+def test_simulation_plot_eps_overlays_layout():
+    design = Design(width=2 * um, height=1 * um, material=Material(1.0))
+    design += Rectangle(
+        position=(1 * um, 0.5 * um),
+        width=0.5 * um,
+        height=0.2 * um,
+        material=Material(12.0),
+    )
+    sim = Simulation(
+        design=design,
+        sources=[],
+        monitors=[],
+        time=np.array([0.0, 1e-15]),
+        resolution=0.25 * um,
+    )
+
+    fig, ax = _close(sim.plot_eps())
+
+    assert fig is ax.figure
+    assert ax.get_title() == "Permittivity"
+    assert len(ax.patches) >= 1
+
+
 def test_plot_signal_returns_matplotlib_handles():
     fig, ax = _close(
         plot_signal(
@@ -225,6 +248,12 @@ def test_simulation_results_plot_field_uses_stored_fields():
         time=np.array([0.0, 1e-15]),
         resolution=0.25 * um,
     )
+    design += Rectangle(
+        position=(1 * um, 0.5 * um),
+        width=0.5 * um,
+        height=0.2 * um,
+        material=Material(12.0),
+    )
     fields = {"Ez": np.zeros((2, 4, 5))}
     results = SimulationResults(simulation=sim, fields=fields)
 
@@ -232,3 +261,4 @@ def test_simulation_results_plot_field_uses_stored_fields():
 
     assert fig is ax.figure
     assert ax.get_title() == "Ez frame -1"
+    assert len(ax.patches) >= 1

@@ -268,6 +268,91 @@ def _draw_boundaries(ax, layout, line_color="gray", line_opacity=0.5):
             )
 
 
+def _scaled_point(point, scale):
+    return tuple(float(v) * scale for v in point)
+
+
+def _scale_design_payload_for_axes(design_payload, scale):
+    """Scale design plot payload coordinates for already-scaled axes."""
+    payload = dict(design_payload)
+    payload["xlim"] = _scaled_point(payload["xlim"], scale)
+    payload["ylim"] = _scaled_point(payload["ylim"], scale)
+
+    structures = []
+    for structure in payload.get("structures", []):
+        item = dict(structure)
+        item["vertices"] = [_scaled_point(vertex, scale) for vertex in item["vertices"]]
+        item["interiors"] = [
+            [_scaled_point(vertex, scale) for vertex in interior]
+            for interior in item.get("interiors", [])
+        ]
+        item["position"] = _scaled_point(item.get("position", (0.0, 0.0)), scale)
+        structures.append(item)
+    payload["structures"] = structures
+
+    sources = []
+    for source in payload.get("sources", []):
+        item = dict(source)
+        if "position" in item:
+            item["position"] = _scaled_point(item["position"], scale)
+        if "center" in item:
+            item["center"] = _scaled_point(item["center"], scale)
+        for key in ("radius", "width", "height", "wavelength"):
+            if item.get(key) is not None:
+                item[key] = float(item[key]) * scale
+        sources.append(item)
+    payload["sources"] = sources
+
+    monitors = []
+    for monitor in payload.get("monitors", []):
+        item = dict(monitor)
+        for key in ("start", "end", "position"):
+            if key in item:
+                item[key] = _scaled_point(item[key], scale)
+        if "size" in item:
+            item["size"] = _scaled_point(item["size"], scale)
+        monitors.append(item)
+    payload["monitors"] = monitors
+    return payload
+
+
+def _scale_layout_payload_for_axes(layout, scale):
+    payload = dict(layout)
+    payload["design"] = _scale_design_payload_for_axes(layout["design"], scale)
+    boundaries = []
+    for boundary in payload.get("boundaries", []):
+        item = dict(boundary)
+        rects = []
+        for rect in item.get("rectangles", []):
+            rect_item = dict(rect)
+            rect_item["origin"] = _scaled_point(rect_item["origin"], scale)
+            rect_item["width"] = float(rect_item["width"]) * scale
+            rect_item["height"] = float(rect_item["height"]) * scale
+            rects.append(rect_item)
+        item["rectangles"] = rects
+        boundaries.append(item)
+    payload["boundaries"] = boundaries
+    return payload
+
+
+def _draw_simulation_overlay(ax, sim, *, scale, line_color="gray", line_opacity=0.5):
+    layout = _scale_layout_payload_for_axes(sim.to_plot_data(), scale)
+    design_payload = layout["design"]
+    for structure in design_payload["structures"]:
+        overlay = dict(structure)
+        style = dict(overlay["style"])
+        style["facecolor"] = "none"
+        style["edgecolor"] = line_color
+        style["alpha"] = line_opacity
+        overlay["style"] = style
+        _draw_polygon(ax, overlay)
+    for source in design_payload["sources"]:
+        _draw_source(ax, source)
+    for monitor in design_payload["monitors"]:
+        _draw_monitor(ax, monitor)
+    _draw_boundaries(ax, layout, line_color=line_color, line_opacity=line_opacity)
+
+
 def _configure_axes(ax, design_payload):
     unit = design_payload["scale_unit"]
     scale = design_payload["scale_factor"]
@@ -362,6 +447,7 @@ def plot_grid(
     cmap="Grays",
     show=True,
     colorbar=True,
+    overlay=False,
 ):
     """Plot a rasterized grid field or 3D grid slice."""
     payload = grid.to_plot_data(field=field, z_index=z_index, z_position=z_position)
@@ -377,6 +463,15 @@ def plot_grid(
     )
     if colorbar:
         fig.colorbar(im, ax=ax, label=field)
+    if overlay:
+        for structure in grid.design.to_plot_data()["structures"]:
+            overlay_structure = dict(structure)
+            style = dict(overlay_structure["style"])
+            style["facecolor"] = "none"
+            style["edgecolor"] = "gray"
+            style["alpha"] = 0.5
+            overlay_structure["style"] = style
+            _draw_polygon(ax, overlay_structure)
     ax.set_title("Rasterized Design Grid")
     scale_factor, scale_unit = get_si_scale_and_label(
         max(design["width"], design["height"], design.get("depth", 0.0))
@@ -581,6 +676,9 @@ def plot_simulation_field(
     vmin=None,
     vmax=None,
     colorbar=True,
+    overlay=True,
+    overlay_color="gray",
+    overlay_alpha=0.5,
     show=True,
 ):
     """Plot a stored simulation field frame from ``SimulationResults``."""
@@ -606,6 +704,58 @@ def plot_simulation_field(
     )
     if colorbar:
         fig.colorbar(im, ax=ax, label=f"{field} amplitude")
+    if overlay and payload["plane"] == "xy":
+        _draw_simulation_overlay(
+            ax,
+            results.simulation,
+            scale=payload["scale_factor"],
+            line_color=overlay_color,
+            line_opacity=overlay_alpha,
+        )
+    ax.set_xlabel(payload["xlabel"])
+    ax.set_ylabel(payload["ylabel"])
+    ax.set_title(payload["title"])
+    fig.tight_layout()
+    _maybe_show(fig, show=show)
+    return fig, ax
+
+
+def plot_simulation_permittivity(
+    sim,
+    *,
+    plane="z",
+    index=None,
+    ax=None,
+    figsize=(8, 6),
+    cmap="viridis",
+    colorbar=True,
+    overlay=True,
+    overlay_color="gray",
+    overlay_alpha=0.5,
+    show=True,
+):
+    """Plot a simulation permittivity slice."""
+    from beamz.visual.data import simulation_permittivity_plot_data
+
+    payload = simulation_permittivity_plot_data(sim, plane=plane, index=index)
+    fig, ax = _figure_axes(ax, figsize=figsize)
+    im = ax.imshow(
+        payload["array"],
+        origin="lower",
+        cmap=resolve_cmap(cmap),
+        extent=payload["extent"],
+        aspect="auto",
+    )
+    if colorbar:
+        fig.colorbar(im, ax=ax, label="Permittivity")
+    if overlay and payload["plane"] == "xy":
+        _draw_simulation_overlay(
+            ax,
+            sim,
+            scale=payload["scale_factor"],
+            line_color=overlay_color,
+            line_opacity=overlay_alpha,
+        )
     ax.set_xlabel(payload["xlabel"])
     ax.set_ylabel(payload["ylabel"])
     ax.set_title(payload["title"])
@@ -974,6 +1124,7 @@ __all__ = [
     "plot_monitor_field",
     "plot_monitor_power",
     "plot_simulation_field",
+    "plot_simulation_permittivity",
     "plot_signal",
     "plot_simulation",
     "plot_source_signal",

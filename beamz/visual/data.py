@@ -861,6 +861,53 @@ def simulation_field_plot_data(
         "slice_index": selected_index,
         "time_index": selected_time,
         "extent": tuple(float(v * scale) for v in extent),
+        "scale_factor": float(scale),
+        "scale_unit": unit,
+        "xlabel": f"{xlabel} ({unit})",
+        "ylabel": f"{ylabel} ({unit})",
+        "title": title,
+    }
+
+
+def simulation_permittivity_plot_data(
+    sim,
+    *,
+    plane="z",
+    index=None,
+):
+    """Serialize simulation permittivity into a 2D plot payload."""
+    field_2d, plane_label, selected_index = _slice_2d(
+        np.asarray(sim.fields.permittivity),
+        plane=plane,
+        index=index,
+    )
+
+    design = sim.design
+    depth = float(getattr(design, "depth", 0.0) or 0.0)
+    if plane_label == "xy":
+        extent = (0.0, float(design.width), 0.0, float(design.height))
+        xlabel, ylabel = "X", "Y"
+    elif plane_label == "xz":
+        extent = (0.0, float(design.width), 0.0, depth)
+        xlabel, ylabel = "X", "Z"
+    else:
+        extent = (0.0, float(design.height), 0.0, depth)
+        xlabel, ylabel = "Y", "Z"
+
+    scale, unit = get_si_scale_and_label(max(extent[1], extent[3], 1e-30))
+    title = "Permittivity"
+    if selected_index is not None:
+        title += f" ({plane_label}, index {selected_index})"
+
+    return {
+        "kind": "simulation_permittivity",
+        "field": "permittivity",
+        "array": np.asarray(field_2d).copy(),
+        "plane": plane_label,
+        "slice_index": selected_index,
+        "extent": tuple(float(v * scale) for v in extent),
+        "scale_factor": float(scale),
+        "scale_unit": unit,
         "xlabel": f"{xlabel} ({unit})",
         "ylabel": f"{ylabel} ({unit})",
         "title": title,
@@ -911,6 +958,7 @@ __all__ = [
     "signal_plot_data",
     "simulation_plot_data",
     "simulation_field_plot_data",
+    "simulation_permittivity_plot_data",
     "snapshot_payload",
     "source_plot_data",
     "source_signal_plot_data",

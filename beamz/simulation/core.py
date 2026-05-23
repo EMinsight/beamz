@@ -4139,11 +4139,23 @@ class Simulation:
         kwargs.setdefault("show", False)
         return plot_simulation(self, **kwargs)
 
+    def plot_eps(self, **kwargs):
+        """Plot a simulation permittivity slice."""
+        from beamz.visual.mpl import plot_simulation_permittivity
+
+        kwargs.setdefault("show", False)
+        return plot_simulation_permittivity(self, **kwargs)
+
     def show(self, *, mode="auto", open_browser=True, **kwargs):
         """Display the simulation layout using the matplotlib backend."""
         del mode, open_browser
         kwargs.setdefault("show", True)
         return self.plot(**kwargs)
+
+    def show_eps(self, **kwargs):
+        """Display a simulation permittivity slice."""
+        kwargs.setdefault("show", True)
+        return self.plot_eps(**kwargs)
 
     def animate(self, field="Ez", **kwargs):
         """Run the simulation with live matplotlib animation enabled."""
