@@ -3182,13 +3182,14 @@ class Simulation:
                 or not np.isfinite(cond)
             ):
                 raise ValueError("Invalid 3D modal overlap system.")
+            system = overlap.T
             if cond < 1e8:
-                coeff = np.linalg.solve(overlap, rhs)
+                coeff = np.linalg.solve(system, rhs)
             else:
                 # Stay in modal-overlap space even when the biorthogonal system
                 # is poorly conditioned. This is the closest analogue to
                 # Meep-style eigenmode coefficient extraction we have.
-                coeff = np.linalg.pinv(overlap) @ rhs
+                coeff = np.linalg.pinv(system) @ rhs
             return np.complex128(coeff[0]), np.complex128(coeff[1])
 
         components = tuple(projection.get("components", ()))

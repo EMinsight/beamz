@@ -14,6 +14,7 @@ from beamz import (
     design,
     dxdt,
 )
+from beamz.devices.sources.mode import _modal_overlap_3d_profiles
 
 
 def test_dxdt_alias_matches_calc_optimal_fdtd_params():
@@ -945,6 +946,62 @@ def test_project_modal_coefficients_3d_is_linear_in_field_amplitude():
     a_p, a_m = Simulation._project_modal_coefficients_3d(scaled, projection)
     np.testing.assert_allclose(a_p, scale, rtol=1e-10, atol=1e-10)
     np.testing.assert_allclose(a_m, 0.0 + 0.0j, rtol=1e-10, atol=1e-10)
+
+
+def test_project_modal_coefficients_3d_uses_rhs_orientation_for_complex_basis():
+    mode_components = {
+        "Ex": np.zeros((2,), dtype=np.complex128),
+        "Ey": np.array([1.0 + 0.2j, 0.3 - 0.1j], dtype=np.complex128),
+        "Ez": np.array([0.2 + 0.1j, -0.1 + 0.4j], dtype=np.complex128),
+        "Hx": np.zeros((2,), dtype=np.complex128),
+        "Hy": np.array([0.05 - 0.3j, 0.2 + 0.1j], dtype=np.complex128),
+        "Hz": np.array([0.9 - 0.1j, -0.2 + 0.5j], dtype=np.complex128),
+    }
+    mode_components_bwd = {
+        name: (-arr if name.startswith("H") else arr.copy())
+        for name, arr in mode_components.items()
+    }
+    overlap = np.asarray(
+        [
+            [
+                _modal_overlap_3d_profiles(
+                    mode_components, mode_components, "x", 0.1
+                ),
+                _modal_overlap_3d_profiles(
+                    mode_components, mode_components_bwd, "x", 0.1
+                ),
+            ],
+            [
+                _modal_overlap_3d_profiles(
+                    mode_components_bwd, mode_components, "x", 0.1
+                ),
+                _modal_overlap_3d_profiles(
+                    mode_components_bwd, mode_components_bwd, "x", 0.1
+                ),
+            ],
+        ],
+        dtype=np.complex128,
+    )
+    projection = {
+        "components": ("Ey", "Ez", "Hy", "Hz"),
+        "axis": "x",
+        "d_area": 0.1,
+        "mode_components": mode_components,
+        "mode_components_bwd": mode_components_bwd,
+        "overlap_matrix": overlap,
+        "pinv": np.zeros((2, 0), dtype=np.complex128),
+    }
+    a_true = 0.7 + 0.1j
+    b_true = -0.2 + 0.3j
+    mixed_fields = {
+        name: a_true * mode_components[name] + b_true * mode_components_bwd[name]
+        for name in mode_components
+    }
+
+    a_p, a_m = Simulation._project_modal_coefficients_3d(mixed_fields, projection)
+
+    np.testing.assert_allclose(a_p, a_true, rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(a_m, b_true, rtol=1e-10, atol=1e-10)
 
 
 def test_project_modal_coefficients_3d_uses_overlap_space_when_ill_conditioned(
