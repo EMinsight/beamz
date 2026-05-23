@@ -1,4 +1,5 @@
 import numpy as np
+import matplotlib.pyplot as plt
 from beamz import (
     Design,
     Rectangle,
@@ -117,3 +118,4 @@ sim.show()
 
 # Stream snapshots using the matplotlib-backed live view.
 # sim.animate("Ez", animation_interval=15)
+plt.show()
