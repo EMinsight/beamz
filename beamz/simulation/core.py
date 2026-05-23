@@ -4025,7 +4025,18 @@ class Simulation:
         return simulation_plot_data(self)
 
     def show(self, *, mode="auto", open_browser=True, **kwargs):
+        """Display the simulation layout using the matplotlib backend."""
+        del mode, open_browser
+        from beamz.visual.mpl import plot_simulation
+
+        return plot_simulation(self, **kwargs)
+
+    def show3d(self, *, mode="auto", open_browser=True, **kwargs):
         """Display the simulation setup in the interactive 3D scene viewer."""
         from beamz.visual.scene import view3d
 
         return view3d(self.to_scene(), mode=mode, open_browser=open_browser, **kwargs)
+
+    def view3d(self, **kwargs):
+        """Alias for :meth:`show3d`."""
+        return self.show3d(**kwargs)

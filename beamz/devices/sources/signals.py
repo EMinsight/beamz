@@ -116,3 +116,10 @@ def signal_plot_data(signals, t):
     from beamz.visual.data import signal_plot_data as _signal_plot_data
 
     return _signal_plot_data(signals, t)
+
+
+def plot_signal(signals, t, **kwargs):
+    """Plot one or more source signals using the matplotlib backend."""
+    from beamz.visual.mpl import plot_signal as _plot_signal
+
+    return _plot_signal(signals, t, **kwargs)

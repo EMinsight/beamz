@@ -22,6 +22,19 @@ from beamz.visual.helpers import (
     dxdt,
     get_si_scale_and_label,
 )
+from beamz.visual.mpl import (
+    animate_monitor_fields,
+    plot_design,
+    plot_grid,
+    plot_mode_profile,
+    plot_monitor_field,
+    plot_monitor_power,
+    plot_signal,
+    plot_simulation,
+    save_snapshot_video,
+    show_snapshots,
+    snapshot_figure,
+)
 from beamz.visual.scene import beamz_to_scene, view3d
 
 __all__ = [
@@ -45,4 +58,15 @@ __all__ = [
     "dxdt",
     "beamz_to_scene",
     "view3d",
+    "animate_monitor_fields",
+    "plot_design",
+    "plot_grid",
+    "plot_mode_profile",
+    "plot_monitor_field",
+    "plot_monitor_power",
+    "plot_signal",
+    "plot_simulation",
+    "save_snapshot_video",
+    "show_snapshots",
+    "snapshot_figure",
 ]

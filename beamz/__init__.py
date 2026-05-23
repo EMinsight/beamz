@@ -36,7 +36,7 @@ from beamz.devices.monitors import ModeMonitor, Monitor
 from beamz.devices.ports import Port
 from beamz.devices.sources import GaussianSource, ModeSource
 from beamz.devices.sources.mode import solve_modes
-from beamz.devices.sources.signals import ramped_cosine, signal_plot_data
+from beamz.devices.sources.signals import plot_signal, ramped_cosine, signal_plot_data
 from beamz.optimization.autodiff import transform_density
 from beamz.optimization.topology import (
     TopologyManager,
@@ -103,6 +103,7 @@ _exports = {
     # Signals
     "ramped_cosine": ramped_cosine,
     "signal_plot_data": signal_plot_data,
+    "plot_signal": plot_signal,
     # Mode calculations
     "solve_modes": solve_modes,
     # Simulation

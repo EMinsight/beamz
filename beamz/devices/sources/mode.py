@@ -2753,6 +2753,12 @@ class ModeSource:
 
         return mode_profile_data(self, field=field)
 
+    def show(self, **kwargs):
+        """Display the mode profile using the matplotlib backend."""
+        from beamz.visual.mpl import plot_mode_profile
+
+        return plot_mode_profile(self, **kwargs)
+
     def to_plot_data(
         self, *, facecolor="none", edgecolor="crimson", alpha=0.8, linestyle="-"
     ):

@@ -41,6 +41,8 @@ def _interp_complex_1d(
             dst, src, arr[:, col].imag
         )
     return out
+
+
 def _plane_axes_for_normal_3d(axis: str) -> tuple[str, str]:
     axis = str(axis).lower()
     mapping = {
@@ -1522,11 +1524,12 @@ class Monitor:
             self.power_timestamps = self.power_timestamps[excess:]
 
     def start_live_visualization(self, field_component="Ez"):
-        """Removed matplotlib hook kept for backward compatibility."""
-        raise RuntimeError(
-            "Monitor.start_live_visualization() was removed from beamz. "
-            "Use Monitor.field_plot_data()/power_plot_data() and render in examples."
-        )
+        """Display the latest recorded field with matplotlib.
+
+        This compatibility hook no longer installs a persistent live updater. Use
+        ``Simulation.run(..., animate_live=...)`` for streamed simulation updates.
+        """
+        return self.show(field=field_component)
 
     def get_field_statistics(self):
         """Get statistical information about recorded fields."""
@@ -1653,6 +1656,32 @@ class Monitor:
         from beamz.visual.data import monitor_power_plot_data
 
         return monitor_power_plot_data(self, **kwargs)
+
+    def show(self, **kwargs):
+        """Display recorded monitor field data using the matplotlib backend."""
+        from beamz.visual.mpl import plot_monitor_field
+
+        return plot_monitor_field(self, **kwargs)
+
+    def plot_fields(self, **kwargs):
+        """Plot recorded monitor field data."""
+        return self.show(**kwargs)
+
+    def show_power(self, **kwargs):
+        """Display monitor power history using the matplotlib backend."""
+        from beamz.visual.mpl import plot_monitor_power
+
+        return plot_monitor_power(self, **kwargs)
+
+    def plot_power(self, **kwargs):
+        """Plot monitor power history."""
+        return self.show_power(**kwargs)
+
+    def animate_fields(self, **kwargs):
+        """Animate recorded monitor field data using matplotlib."""
+        from beamz.visual.mpl import animate_monitor_fields
+
+        return animate_monitor_fields(self, **kwargs)
 
     def get_field_at_time(self, field="Ez", time_value=None, time_index=None):
         """Get field data at a specific time.
