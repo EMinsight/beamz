@@ -143,3 +143,83 @@ def test_simulation_run_accepts_animate_live_kwargs(monkeypatch):
     assert results is None
     assert rendered_steps == [4, 8, 12]
     plt.close("all")
+
+
+def test_simulation_run_accepts_fixed_live_cmap_limits(monkeypatch):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from beamz.visual import mpl as mpl_backend
+
+    rendered_limits = []
+
+    def fake_snapshot_figure(snapshot, **kwargs):
+        rendered_limits.append((kwargs.get("vmin"), kwargs.get("vmax")))
+        fig, ax = plt.subplots()
+        return fig, ax
+
+    class FakePyplot:
+        @staticmethod
+        def show(*args, **kwargs):
+            return None
+
+        @staticmethod
+        def pause(*args, **kwargs):
+            return None
+
+    monkeypatch.setattr(mpl_backend, "snapshot_figure", fake_snapshot_figure)
+    monkeypatch.setattr(mpl_backend, "_pyplot", lambda: FakePyplot)
+
+    sim = _make_snapshot_sim()
+    sim.run(
+        animate_live="Ez",
+        animation_interval=4,
+        cmap_limits=(-0.25, 0.25),
+        store_snapshots=False,
+        progress=False,
+    )
+
+    assert rendered_limits == [(-0.25, 0.25), (-0.25, 0.25), (-0.25, 0.25)]
+    plt.close("all")
+
+
+def test_simulation_run_dynamic_live_cmap_limits_are_default(monkeypatch):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from beamz.visual import mpl as mpl_backend
+
+    rendered_limits = []
+
+    def fake_snapshot_figure(snapshot, **kwargs):
+        rendered_limits.append((kwargs.get("vmin"), kwargs.get("vmax")))
+        fig, ax = plt.subplots()
+        return fig, ax
+
+    class FakePyplot:
+        @staticmethod
+        def show(*args, **kwargs):
+            return None
+
+        @staticmethod
+        def pause(*args, **kwargs):
+            return None
+
+    monkeypatch.setattr(mpl_backend, "snapshot_figure", fake_snapshot_figure)
+    monkeypatch.setattr(mpl_backend, "_pyplot", lambda: FakePyplot)
+
+    sim = _make_snapshot_sim()
+    sim.run(
+        animate_live="Ez",
+        animation_interval=4,
+        cmap_limits="dynamic",
+        store_snapshots=False,
+        progress=False,
+    )
+
+    assert rendered_limits == [(None, None), (None, None), (None, None)]
+    plt.close("all")

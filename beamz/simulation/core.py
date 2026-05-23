@@ -3996,6 +3996,7 @@ class Simulation:
             - snapshot_callback: callable receiving each snapshot payload
             - store_snapshots: include emitted snapshots in the returned results
             - animate_live / save_video: matplotlib rendering conveniences
+            - cmap_limits: "dynamic" or (vmin, vmax) for live snapshot colors
             - save_fields / field_subsample / progress
         """
         removed_visual_keys = (
@@ -4040,6 +4041,11 @@ class Simulation:
             clean_visualization = bool(kwargs.get("clean_visualization", False))
             interpolation = kwargs.get("interpolation", "bicubic")
             pause = float(kwargs.get("pause", 0.001))
+            vmin, vmax = mpl_backend.resolve_cmap_limits(
+                kwargs.get("cmap_limits", "dynamic"),
+                vmin=kwargs.get("vmin"),
+                vmax=kwargs.get("vmax"),
+            )
 
             def callback(snapshot):
                 if user_callback is not None:
@@ -4051,6 +4057,8 @@ class Simulation:
                     interpolation=interpolation,
                     figure=context["fig"],
                     axes=context["ax"],
+                    vmin=vmin,
+                    vmax=vmax,
                 )
                 context["fig"], context["ax"] = fig, ax
                 mpl_backend._pyplot().show(block=False)

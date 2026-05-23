@@ -53,6 +53,33 @@ def resolve_cmap(cmap):
     return cmap
 
 
+def resolve_cmap_limits(cmap_limits="dynamic", *, vmin=None, vmax=None):
+    """Normalize colormap scaling options to matplotlib ``vmin``/``vmax``."""
+    explicit_limits = vmin is not None or vmax is not None
+    if cmap_limits is None:
+        cmap_limits = "dynamic"
+
+    if isinstance(cmap_limits, str):
+        if cmap_limits.lower() != "dynamic":
+            raise ValueError("cmap_limits must be 'dynamic' or a (vmin, vmax) pair.")
+        return vmin, vmax
+
+    if explicit_limits:
+        raise ValueError("Use either cmap_limits or vmin/vmax, not both.")
+
+    try:
+        low, high = cmap_limits
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "cmap_limits must be 'dynamic' or a (vmin, vmax) pair."
+        ) from exc
+
+    return (
+        None if low is None else float(low),
+        None if high is None else float(high),
+    )
+
+
 def _maybe_show(fig, *, show):
     if show:
         _pyplot().show()
