@@ -2011,6 +2011,78 @@ class Simulation:
         return ex, ey, ez, hx, hy, hz
 
     @staticmethod
+    def _stagger_3d_solver_components_to_yee(ex, ey, ez, hx, hy, hz, axis):
+        """Sample collocated 3D solver fields on Beamz's transverse Yee lattices."""
+
+        def _half(field, ax):
+            arr = np.asarray(field, dtype=np.complex128)
+            if arr.ndim == 1:
+                arr = arr[:, None]
+            if arr.shape[ax] <= 1:
+                return arr
+            if ax == 0:
+                return 0.5 * (arr[:-1, :] + arr[1:, :])
+            return 0.5 * (arr[:, :-1] + arr[:, 1:])
+
+        def _both(field):
+            arr = np.asarray(field, dtype=np.complex128)
+            if arr.ndim == 1:
+                arr = arr[:, None]
+            if arr.shape[1] > 1:
+                arr = 0.5 * (arr[:, :-1] + arr[:, 1:])
+            if arr.shape[0] > 1:
+                arr = 0.5 * (arr[:-1, :] + arr[1:, :])
+            return arr
+
+        ex = np.asarray(ex, dtype=np.complex128)
+        ey = np.asarray(ey, dtype=np.complex128)
+        ez = np.asarray(ez, dtype=np.complex128)
+        hx = np.asarray(hx, dtype=np.complex128)
+        hy = np.asarray(hy, dtype=np.complex128)
+        hz = np.asarray(hz, dtype=np.complex128)
+        for name, arr in (
+            ("Ex", ex),
+            ("Ey", ey),
+            ("Ez", ez),
+            ("Hx", hx),
+            ("Hy", hy),
+            ("Hz", hz),
+        ):
+            if arr.ndim not in {1, 2}:
+                raise ValueError(
+                    f"Expected 3D mode solver component '{name}' to be 1D or 2D, "
+                    f"got {arr.shape}."
+                )
+        if axis == "x":
+            return (
+                ex,
+                _half(ey, 1),
+                _half(ez, 0),
+                _both(hx),
+                _half(hy, 0),
+                _half(hz, 1),
+            )
+        if axis == "y":
+            return (
+                _half(ex, 1),
+                ey,
+                _half(ez, 0),
+                _half(hx, 0),
+                _both(hy),
+                _half(hz, 1),
+            )
+        if axis == "z":
+            return (
+                _half(ex, 1),
+                _half(ey, 0),
+                ez,
+                _half(hx, 0),
+                _half(hy, 1),
+                _both(hz),
+            )
+        raise ValueError(f"Unsupported axis {axis!r} for 3D Yee staggering.")
+
+    @staticmethod
     def _opposite_port_direction(direction):
         direction = str(direction)
         if len(direction) != 2 or direction[0] not in "+-" or direction[1] not in "xyz":
@@ -2553,6 +2625,17 @@ class Simulation:
                 )
                 ex_full, ey_full, ez_full, hx_full, hy_full, hz_full = (
                     self._remap_3d_solver_components(
+                        ex_full,
+                        ey_full,
+                        ez_full,
+                        hx_full,
+                        hy_full,
+                        hz_full,
+                        parts["axis"],
+                    )
+                )
+                ex_full, ey_full, ez_full, hx_full, hy_full, hz_full = (
+                    self._stagger_3d_solver_components_to_yee(
                         ex_full,
                         ey_full,
                         ez_full,

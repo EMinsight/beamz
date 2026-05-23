@@ -1068,6 +1068,92 @@ def test_colocate_field_components_to_projection_3d_respects_yee_offsets():
         np.testing.assert_allclose(colocated[comp], expected, rtol=1e-13, atol=1e-13)
 
 
+def test_build_port_projection_3d_staggers_solver_fields_to_yee_lattices(
+    monkeypatch,
+):
+    import beamz.simulation.core as core_mod
+
+    sim = Simulation.__new__(Simulation)
+    sim.is_3d = True
+    sim.resolution = 1.0
+    grid_shape = (4, 4, 4)
+    field_arrays = {
+        comp: np.zeros(component_shape_3d(comp, grid_shape), dtype=np.float32)
+        for comp in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
+    }
+    zz, yy, xx = np.meshgrid(
+        np.arange(grid_shape[0]),
+        np.arange(grid_shape[1]),
+        np.arange(grid_shape[2]),
+        indexing="ij",
+    )
+    field_arrays["permittivity"] = (
+        1.0 + 0.8 * ((zz + 2 * yy + 3 * xx) % 5)
+    ).astype(np.float32)
+    sim.fields = type("F", (), field_arrays)()
+
+    class DummyXMonitor:
+        name = "m_yee_projection"
+
+        @staticmethod
+        def get_grid_slice_3d(dx, dy, dz, field_shape):
+            del dx, dy, dz
+            normal_index = min(1, int(field_shape[2]) - 1)
+            return slice(0, 4), slice(0, 4), normal_index
+
+        @staticmethod
+        def get_dft_component(component):
+            del component
+            return np.zeros((1, 9), dtype=np.complex128)
+
+    z, y = np.meshgrid(np.arange(4), np.arange(4), indexing="ij")
+    ex = 10.0 + z + 0.1 * y + 0.03 * z * y
+    ey = 20.0 + 2.0 * z - 0.3 * y + 0.11 * z * y
+    ez = 30.0 - 0.4 * z + 1.5 * y - 0.07 * z * y
+    hx = 40.0 + 0.8 * z + 0.6 * y + 0.05 * z * y
+    hy = 50.0 + 1.2 * z - 0.2 * y + 0.09 * z * y
+    hz = 60.0 - 0.5 * z + 0.4 * y + 0.13 * z * y
+    e_mode = np.stack([ex, ey, ez]).astype(np.complex128)
+    h_mode = np.stack([hx, hy, hz]).astype(np.complex128)
+
+    def fake_solve_modes(
+        eps,
+        omega,
+        dL,
+        m,
+        direction,
+        filter_pol,
+        target_neff,
+        return_fields,
+    ):
+        del eps, omega, dL, m, direction, filter_pol, target_neff, return_fields
+        return np.array([2.0]), [e_mode], [h_mode], None
+
+    monkeypatch.setattr(core_mod, "solve_modes", fake_solve_modes)
+
+    projection = sim._build_port_projection(
+        spec=PortSpec(
+            name="p",
+            monitor_name="m_yee_projection",
+            direction="+x",
+            polarization="te",
+        ),
+        monitor=DummyXMonitor(),
+        frequency=1.0,
+        cache={},
+    )
+
+    grids = projection["mode_component_grids"]
+    expected = {
+        "Ey": 0.5 * (ey[:, :-1] + ey[:, 1:])[:3, :3],
+        "Ez": 0.5 * (ez[:-1, :] + ez[1:, :])[:3, :3],
+        "Hy": 0.5 * (hy[:-1, :] + hy[1:, :])[:3, :3],
+        "Hz": 0.5 * (hz[:, :-1] + hz[:, 1:])[:3, :3],
+    }
+    for comp, values in expected.items():
+        np.testing.assert_allclose(grids[comp], values, rtol=1e-13, atol=1e-13)
+
+
 def test_project_modal_coefficients_3d_group_recovers_multiple_modes():
     components = ("Ey", "Ez", "Hy", "Hz")
 
@@ -1560,11 +1646,11 @@ def test_build_port_projection_3d_uses_solved_backward_mode_components(monkeypat
 
     np.testing.assert_allclose(
         projection["mode_components"]["Ex"],
-        np.array([5.0, 0.0, 0.0, 0.0], dtype=np.complex128),
+        np.array([2.5], dtype=np.complex128),
     )
     np.testing.assert_allclose(
         projection["mode_components_bwd"]["Ex"],
-        np.array([1.0, 0.0, 0.0, 0.0], dtype=np.complex128),
+        np.array([0.5], dtype=np.complex128),
     )
     assert not np.array_equal(
         projection["mode_components_bwd"]["Ex"],
@@ -1763,8 +1849,8 @@ def test_build_port_projection_3d_preserves_requested_mode_index_without_seed(
     )
     monkeypatch.setattr(core_mod, "_select_core_confined_mode_index", lambda *args: 0)
 
-    first = np.array([[1.0, 0.0], [0.0, 0.0]], dtype=np.complex128)
-    second = np.array([[0.0, 0.0], [0.0, 2.0]], dtype=np.complex128)
+    first = np.array([[0.0, 0.0], [0.0, 1.0]], dtype=np.complex128)
+    second = np.array([[2.0, 0.0], [0.0, 0.0]], dtype=np.complex128)
     z = np.zeros((2, 2), dtype=np.complex128)
 
     def fake_solve_modes(
@@ -1815,7 +1901,7 @@ def test_build_port_projection_3d_preserves_requested_mode_index_without_seed(
 
     np.testing.assert_allclose(
         projection["mode_components"]["Ex"],
-        second.reshape(-1),
+        np.array([1.0], dtype=np.complex128),
     )
     assert projection["mode_neff"] == pytest.approx(1.8)
 
