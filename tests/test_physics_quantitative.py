@@ -196,7 +196,7 @@ class TestFresnelQuantitative:
         # Quantitative: within 15% relative error
         assert T_error < 0.15, (
             f"T_measured={T_measured:.4f} vs T_analytical={T_analytical:.4f}, "
-            f"relative error={T_error*100:.1f}% > 15% for n2={n2}"
+            f"relative error={T_error * 100:.1f}% > 15% for n2={n2}"
         )
 
     def test_fresnel_energy_decreases_after_interface(self):
@@ -274,9 +274,9 @@ class TestFresnelQuantitative:
         E_dielectric = compute_field_energy(dielectric_field, dx, eps=n2**2)
 
         # Both regions should have non-zero energy
-        assert (
-            E_vacuum > 0 or E_dielectric > 0
-        ), "Should have field energy in at least one region"
+        assert E_vacuum > 0 or E_dielectric > 0, (
+            "Should have field energy in at least one region"
+        )
 
         # Total energy should be finite
         E_total = E_vacuum + E_dielectric
@@ -309,9 +309,9 @@ class TestModeSourceAccuracy:
 
         if neff is not None:
             # neff should be between cladding and core indices
-            assert (
-                n_clad < neff < n_core
-            ), f"neff={neff:.4f} outside valid range ({n_clad}, {n_core})"
+            assert n_clad < neff < n_core, (
+                f"neff={neff:.4f} outside valid range ({n_clad}, {n_core})"
+            )
 
             # V-number determines approximate number of modes
             # V = (pi * d / lambda) * sqrt(n_core^2 - n_clad^2)
@@ -363,9 +363,9 @@ class TestModeSourceAccuracy:
         # neff should decrease with wavelength
         assert len(neffs) >= 2, "Should find modes for multiple wavelengths"
         for i in range(1, len(neffs)):
-            assert (
-                neffs[i] <= neffs[i - 1]
-            ), f"neff should decrease with wavelength: {neffs}"
+            assert neffs[i] <= neffs[i - 1], (
+                f"neff should decrease with wavelength: {neffs}"
+            )
 
     def test_waveguide_mode_propagates(self, waveguide_domain):
         """Verify mode-like excitation propagates through waveguide.
@@ -552,7 +552,7 @@ class TestGridConvergenceQuantitative:
                 peak_energies
             )
             assert energy_spread < 0.3, (
-                f"Peak energies vary by {energy_spread*100:.1f}%, "
+                f"Peak energies vary by {energy_spread * 100:.1f}%, "
                 "should converge with grid refinement."
             )
 
@@ -610,9 +610,9 @@ class TestGridConvergenceQuantitative:
             peak_energies.append(max(energies))
 
         # All simulations should give stable, finite results
-        assert all(
-            np.isfinite(e) for e in peak_energies
-        ), "All energies should be finite"
+        assert all(np.isfinite(e) for e in peak_energies), (
+            "All energies should be finite"
+        )
         assert all(e > 0 for e in peak_energies), "All energies should be positive"
 
         # Results should be similar (within 40% - allowing for grid effects)
@@ -818,12 +818,12 @@ class TestMieScattering2D:
             efficiency_proxy = scattered_energy / incident_energy
 
             # Should see measurable scattering (not zero, not enormous)
-            assert (
-                efficiency_proxy > 0.001
-            ), f"Scattering efficiency {efficiency_proxy:.4f} too low"
-            assert (
-                efficiency_proxy < 10
-            ), f"Scattering efficiency {efficiency_proxy:.4f} unreasonably high"
+            assert efficiency_proxy > 0.001, (
+                f"Scattering efficiency {efficiency_proxy:.4f} too low"
+            )
+            assert efficiency_proxy < 10, (
+                f"Scattering efficiency {efficiency_proxy:.4f} unreasonably high"
+            )
 
 
 # =============================================================================
@@ -917,7 +917,7 @@ class TestFabryPerotQuantitative:
         # Decay ratio
         decay_ratio = late_energy / peak_energy if peak_energy > 0 else 1
         assert decay_ratio < 0.5, (
-            f"Energy decayed to {decay_ratio*100:.1f}% of peak, "
+            f"Energy decayed to {decay_ratio * 100:.1f}% of peak, "
             "should decay more with PML"
         )
 
@@ -1006,9 +1006,9 @@ class TestFabryPerotQuantitative:
                 # For open cavity with PML, Q should be low (few to tens)
                 # This is just an order of magnitude check
                 assert Q_measured > 1, f"Q={Q_measured:.1f} too low"
-                assert (
-                    Q_measured < 1000
-                ), f"Q={Q_measured:.1f} unreasonably high for open cavity"
+                assert Q_measured < 1000, (
+                    f"Q={Q_measured:.1f} unreasonably high for open cavity"
+                )
             else:
                 # If fit failed, at least verify energy decays
                 assert energies[-1] < energies[peak_idx], "Energy should decay"
@@ -1076,7 +1076,7 @@ class TestEnergyConservationQuantitative:
             if peak_post > 1e-30:
                 growth = e / peak_post
                 assert growth < 1.2, (
-                    f"Energy grew to {growth*100:.1f}% of peak at step {i}. "
+                    f"Energy grew to {growth * 100:.1f}% of peak at step {i}. "
                     "Possible numerical instability."
                 )
 
@@ -1128,7 +1128,7 @@ class TestEnergyConservationQuantitative:
         decay_ratio = final_energy / peak_energy if peak_energy > 0 else 0
 
         assert decay_ratio < 0.15, (
-            f"Final energy {decay_ratio*100:.1f}% of peak, "
+            f"Final energy {decay_ratio * 100:.1f}% of peak, "
             "should decay more with PML absorption."
         )
 
@@ -1201,9 +1201,9 @@ class TestPhysics3D:
 
         # Check for stability: all values should be finite
         for field_snapshot in result["fields"]["Ez"]:
-            assert np.all(
-                np.isfinite(field_snapshot)
-            ), "3D simulation produced NaN/Inf - numerical instability"
+            assert np.all(np.isfinite(field_snapshot)), (
+                "3D simulation produced NaN/Inf - numerical instability"
+            )
 
         # Check field has reasonable magnitude
         max_field = max(np.max(np.abs(Ez)) for Ez in result["fields"]["Ez"])

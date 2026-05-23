@@ -1064,9 +1064,9 @@ def test_build_port_projection_3d_staggers_solver_fields_to_yee_lattices(
         np.arange(grid_shape[2]),
         indexing="ij",
     )
-    field_arrays["permittivity"] = (
-        1.0 + 0.8 * ((zz + 2 * yy + 3 * xx) % 5)
-    ).astype(np.float32)
+    field_arrays["permittivity"] = (1.0 + 0.8 * ((zz + 2 * yy + 3 * xx) % 5)).astype(
+        np.float32
+    )
     sim.fields = type("F", (), field_arrays)()
 
     class DummyXMonitor:
@@ -1148,9 +1148,9 @@ def test_build_port_projection_3d_interpolates_cropped_yee_profiles(monkeypatch)
         np.arange(grid_shape[2]),
         indexing="ij",
     )
-    field_arrays["permittivity"] = (
-        1.0 + 0.8 * ((zz + 2 * yy + 3 * xx) % 5)
-    ).astype(np.float32)
+    field_arrays["permittivity"] = (1.0 + 0.8 * ((zz + 2 * yy + 3 * xx) % 5)).astype(
+        np.float32
+    )
     sim.fields = type("F", (), field_arrays)()
 
     class DummyXMonitor:

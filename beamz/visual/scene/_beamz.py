@@ -12,12 +12,10 @@ from shapely.ops import unary_union
 from beamz.const import BLUE, GREEN, ORANGE, PURPLE, RED
 from beamz.design.core import (
     _find_rings_to_preserve,
-)
-from beamz.design.core import _material_key as _design_material_key
-from beamz.design.core import (
     _shapely_to_polygons,
     _to_shapely,
 )
+from beamz.design.core import _material_key as _design_material_key
 
 from ._scene import CameraSpec, ClipPlaneSpec, MaterialSpec, Object3D, SceneSpec
 

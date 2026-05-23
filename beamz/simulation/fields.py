@@ -6,6 +6,13 @@ from dataclasses import dataclass
 
 import jax.numpy as jnp
 
+from beamz.shared_kernels import (
+    advance_e_from_curl,
+    advance_h_from_curl,
+    apply_zero_mask,
+    build_cpml_3d_terms,
+    build_tm_xy_cpml_terms,
+)
 from beamz.simulation import ops
 from beamz.simulation.boundaries import (
     build_h_boundary_views_for_e_3d,
@@ -33,13 +40,6 @@ from beamz.simulation.yee import (
     sample_voxel_grid_at_component_3d,
     sample_voxel_grid_at_tm_xy_full_component_2d,
 )
-from beamz.shared_kernels import (
-    advance_e_from_curl,
-    advance_h_from_curl,
-    apply_zero_mask,
-    build_cpml_3d_terms,
-    build_tm_xy_cpml_terms,
-)
 
 
 @dataclass
@@ -65,6 +65,8 @@ class Cpml3DState:
     a_e_terms: tuple[jnp.ndarray, ...]
     b_e_terms: tuple[jnp.ndarray, ...]
     inv_kappa_e_terms: tuple[jnp.ndarray, ...]
+
+
 class Fields:
     """Container for E/H field arrays on staggered Yee grid with FDTD update logic."""
 

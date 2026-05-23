@@ -32,6 +32,25 @@ from beamz.devices.sources.compiler import (
     batch_slab_specs,
     compile_source_specs,
 )
+from beamz.shared_kernels import (
+    advance_e_from_coefficients,
+    advance_e_from_curl,
+    advance_h_from_coefficients,
+    advance_h_from_curl,
+    apply_zero_mask,
+    build_cpml_3d_terms,
+    build_tm_xy_cpml_terms,
+    full_tm_xy_component_to_centered_grid,
+    monitor_dft_sample_scale,
+    monitor_dft_should_accumulate,
+    monitor_dft_window_weight,
+    monitor_records_on_step,
+    poynting_flux_2d,
+    poynting_flux_3d,
+    poynting_magnitude_2d,
+    poynting_magnitude_3d,
+    step_hits_interval,
+)
 from beamz.simulation import ops
 from beamz.simulation.boundaries import (
     build_h_boundary_views_for_e_3d,
@@ -59,25 +78,6 @@ from beamz.simulation.material_models import (
     create_material_model,
 )
 from beamz.simulation.step_sequence import run_step_sequence
-from beamz.shared_kernels import (
-    advance_e_from_coefficients,
-    advance_e_from_curl,
-    advance_h_from_coefficients,
-    advance_h_from_curl,
-    apply_zero_mask,
-    build_cpml_3d_terms,
-    build_tm_xy_cpml_terms,
-    full_tm_xy_component_to_centered_grid,
-    monitor_dft_sample_scale,
-    monitor_dft_should_accumulate,
-    monitor_dft_window_weight,
-    monitor_records_on_step,
-    poynting_magnitude_2d,
-    poynting_magnitude_3d,
-    poynting_flux_2d,
-    poynting_flux_3d,
-    step_hits_interval,
-)
 from beamz.simulation.yee import (
     sample_voxel_grid_at_tm_xy_full_component_2d,
 )
@@ -174,6 +174,8 @@ def _sample_centered_grid_targets_2d(
     return (one - ayf) * ((one - axf) * f00 + axf * f01) + ayf * (
         (one - axf) * f10 + axf * f11
     )
+
+
 def _empty_cpml_3d_terms(dtype=jnp.float32) -> tuple[jnp.ndarray, ...]:
     return tuple(jnp.zeros((0, 0, 0), dtype=dtype) for _ in range(6))
 
@@ -984,7 +986,9 @@ class CompiledSimulation:
                 pwr, ts, cnt, f_re, f_im, ph_re, ph_im, d_re, d_im, d_w = carry
                 mi = bm.monitor_indices[i]
 
-                should_record = monitor_records_on_step(abs_step, bm.record_intervals[i])
+                should_record = monitor_records_on_step(
+                    abs_step, bm.record_intervals[i]
+                )
                 can_record = cnt[mi] < max_records
                 do_record = should_record & can_record & bm.accumulate_flags[i]
 
@@ -1533,7 +1537,9 @@ class CompiledSimulation:
                         fp_ex = fp_ex.at[:-1, :-1, :-1].set(ex)
                         fp_ey = fp_ey.at[:-1, :-1, :-1].set(ey)
                         fp_ez = fp_ez.at[:-1, :-1, :-1].set(ez)
-                    eng = eng._replace(ex=ex, ey=ey, ez=ez, fp_ex=fp_ex, fp_ey=fp_ey, fp_ez=fp_ez)
+                    eng = eng._replace(
+                        ex=ex, ey=ey, ez=ez, fp_ex=fp_ex, fp_ey=fp_ey, fp_ez=fp_ez
+                    )
                     return _merge_carry(
                         eng, mon, mat, snap_fields, snap_steps, snap_times, snap_count
                     )
@@ -1560,14 +1566,18 @@ class CompiledSimulation:
                     if use_cpml_3d:
                         if len(cpml3d_psi_h_terms) != len(self.cpml3d_b_h_terms) or any(
                             psi.shape != coeff.shape
-                            for psi, coeff in zip(cpml3d_psi_h_terms, self.cpml3d_b_h_terms)
+                            for psi, coeff in zip(
+                                cpml3d_psi_h_terms, self.cpml3d_b_h_terms
+                            )
                         ):
                             cpml3d_psi_h_terms = tuple(
                                 jnp.zeros_like(term) for term in self.cpml3d_b_h_terms
                             )
                         if len(cpml3d_psi_e_terms) != len(self.cpml3d_b_e_terms) or any(
                             psi.shape != coeff.shape
-                            for psi, coeff in zip(cpml3d_psi_e_terms, self.cpml3d_b_e_terms)
+                            for psi, coeff in zip(
+                                cpml3d_psi_e_terms, self.cpml3d_b_e_terms
+                            )
                         ):
                             cpml3d_psi_e_terms = tuple(
                                 jnp.zeros_like(term) for term in self.cpml3d_b_e_terms
@@ -1634,9 +1644,15 @@ class CompiledSimulation:
                                 ez,
                                 resolution,
                             )
-                            hx = advance_h_from_curl(hx, curl_ex, self.sigma_m_hx_raw, dt)
-                            hy = advance_h_from_curl(hy, curl_ey, self.sigma_m_hy_raw, dt)
-                            hz = advance_h_from_curl(hz, curl_ez, self.sigma_m_hz_raw, dt)
+                            hx = advance_h_from_curl(
+                                hx, curl_ex, self.sigma_m_hx_raw, dt
+                            )
+                            hy = advance_h_from_curl(
+                                hy, curl_ey, self.sigma_m_hy_raw, dt
+                            )
+                            hz = advance_h_from_curl(
+                                hz, curl_ez, self.sigma_m_hz_raw, dt
+                            )
                     elif use_physical_tm_xy:
                         if tm_full_pec:
                             curl_tm_hx, curl_tm_hy = full_pec_curl_e_to_h_2d_xy(
@@ -1774,7 +1790,9 @@ class CompiledSimulation:
                     hx = self._apply_metal_mask(hx_post, hx_metal_mask)
                     hy = self._apply_metal_mask(hy_post, hy_metal_mask)
                     hz = self._apply_metal_mask(hz, hz_metal_mask)
-                    eng = eng._replace(hx=hx, hy=hy, hz=hz, fp_hx=fp_hx, fp_hy=fp_hy, fp_hz=fp_hz)
+                    eng = eng._replace(
+                        hx=hx, hy=hy, hz=hz, fp_hx=fp_hx, fp_hy=fp_hy, fp_hz=fp_hz
+                    )
                     return _merge_carry(
                         eng, mon, mat, snap_fields, snap_steps, snap_times, snap_count
                     )
@@ -1821,7 +1839,9 @@ class CompiledSimulation:
                         ey = fp_ey[:-1, :-1, :-1]
                         ez = fp_ez[:-1, :-1, :-1]
                     elif is_3d:
-                        boundary_views = build_h_boundary_views_for_e_3d(hx, hy, hz, None)
+                        boundary_views = build_h_boundary_views_for_e_3d(
+                            hx, hy, hz, None
+                        )
                         if self.use_cpml_3d:
                             curl_hx, curl_hy, curl_hz, cpml3d_psi_e_terms = (
                                 cpml_curl_h_to_e_3d(
@@ -2022,7 +2042,9 @@ class CompiledSimulation:
                     ez = self._apply_metal_mask(ez, ez_metal_mask)
                     if use_physical_tm_xy:
                         ez = jnp.where(tm_ez_mask, jnp.asarray(0.0, dtype=ez.dtype), ez)
-                    eng = eng._replace(ex=ex, ey=ey, ez=ez, fp_ex=fp_ex, fp_ey=fp_ey, fp_ez=fp_ez)
+                    eng = eng._replace(
+                        ex=ex, ey=ey, ez=ez, fp_ex=fp_ex, fp_ey=fp_ey, fp_ez=fp_ez
+                    )
                     return _merge_carry(
                         eng, mon, mat, snap_fields, snap_steps, snap_times, snap_count
                     )
@@ -2322,7 +2344,10 @@ class CompiledSimulation:
                 dev._dft_weight_sum = weight_sum
                 dev._dft_base_dt = float(self.config.dt)
                 if spec.is_3d:
-                    dev._compiled_dft_shape_3d = (int(spec.min_dim0), int(spec.min_dim1))
+                    dev._compiled_dft_shape_3d = (
+                        int(spec.min_dim0),
+                        int(spec.min_dim1),
+                    )
                     axis = str(getattr(dev, "plane_normal", "z")).lower()
                     dev._compiled_dft_plane_axes = {
                         "x": ("z", "y"),
@@ -2640,7 +2665,9 @@ def compile_simulation(
     cpml3d_inv_kappa_e_terms = _empty_cpml_3d_terms(jnp.float32)
     cpml3d_metallic_edges = frozenset()
     if bool(run_cfg.is_3d):
-        cpml3d_metallic_edges = frozenset(resolve_metallic_edges(boundaries, is_3d=True))
+        cpml3d_metallic_edges = frozenset(
+            resolve_metallic_edges(boundaries, is_3d=True)
+        )
         use_cpml_3d = bool(
             getattr(fields, "has_cpml", False) and getattr(fields, "pml_data", None)
         )
@@ -2708,7 +2735,9 @@ def compile_simulation(
             region=(slice(None), slice(None)),
         )
         metallic_edges_2d = frozenset(resolve_metallic_edges(boundaries, is_3d=False))
-        tm_masks = full_tm_2d_xy_masks(tuple(fields.permittivity.shape), metallic_edges_2d)
+        tm_masks = full_tm_2d_xy_masks(
+            tuple(fields.permittivity.shape), metallic_edges_2d
+        )
         tm_ez_mask = tm_masks["Ez"]
         tm_hx_mask = tm_masks["Hx"]
         tm_hy_mask = tm_masks["Hy"]

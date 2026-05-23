@@ -795,8 +795,6 @@ class Taper(Polygon):
         min_y = min(v[1] for v in self.vertices)
         min_z = min(v[2] for v in self.vertices)
         max_x = max(v[0] for v in self.vertices)
-        max_y = max(v[1] for v in self.vertices)
-        max_z = max(v[2] for v in self.vertices)
         self.position = (min_x, min_y, min_z)
         self.length = max_x - min_x
         return self

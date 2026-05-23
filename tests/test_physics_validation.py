@@ -166,9 +166,9 @@ class TestFresnelCoefficients:
         R_analytical = analytical_fresnel_r(n1, n2)
         T_analytical = analytical_fresnel_t(n1, n2)
         assert abs(R_analytical + T_analytical - 1.0) < 1e-10, "R + T should equal 1"
-        assert (
-            abs(R_analytical - expected_R) < 0.01
-        ), f"Analytical R={R_analytical:.4f} vs expected {expected_R:.4f}"
+        assert abs(R_analytical - expected_R) < 0.01, (
+            f"Analytical R={R_analytical:.4f} vs expected {expected_R:.4f}"
+        )
 
         # For higher index contrast, more reflection expected
         # This is a qualitative check that the physics is correct
@@ -177,9 +177,9 @@ class TestFresnelCoefficients:
             total_late = E_left + E_right
             if total_late > 1e-30:
                 # Check that both regions have some energy
-                assert (
-                    E_right > 0 or E_left > 0
-                ), "Should have field energy after pulse passes interface"
+                assert E_right > 0 or E_left > 0, (
+                    "Should have field energy after pulse passes interface"
+                )
 
 
 # =============================================================================
@@ -258,17 +258,17 @@ class TestGridConvergenceOrder:
             dx_values.append(dx)
 
         # All simulations should be stable with positive finite energy
-        assert all(
-            np.isfinite(e) and e > 0 for e in peak_energies
-        ), "All simulations should produce finite positive energy"
+        assert all(np.isfinite(e) and e > 0 for e in peak_energies), (
+            "All simulations should produce finite positive energy"
+        )
 
         # Energy values should be reasonably close across resolutions
         # (within factor of 2 for these moderate resolutions)
         max_e = max(peak_energies)
         min_e = min(peak_energies)
-        assert (
-            max_e / min_e < 2.0
-        ), f"Energy varies too much: {min_e:.2e} to {max_e:.2e}"
+        assert max_e / min_e < 2.0, (
+            f"Energy varies too much: {min_e:.2e} to {max_e:.2e}"
+        )
 
         # Verify that results become more consistent with finer grid
         # Compare coarse-to-fine difference with medium-to-fine difference
@@ -279,7 +279,9 @@ class TestGridConvergenceOrder:
         # (or both are essentially converged)
         assert (
             diff_medium <= diff_coarse * 1.5 or diff_coarse < 0.05 * peak_energies[-1]
-        ), f"Convergence expected: coarse diff={diff_coarse:.2e}, medium diff={diff_medium:.2e}"
+        ), (
+            f"Convergence expected: coarse diff={diff_coarse:.2e}, medium diff={diff_medium:.2e}"
+        )
 
     def test_energy_conservation_convergence(self):
         """Verify energy conservation improves with resolution."""
@@ -345,9 +347,9 @@ class TestGridConvergenceOrder:
                 energy_fluctuations.append(0)
 
         # Finer grid should have smaller energy fluctuation
-        assert (
-            energy_fluctuations[-1] <= energy_fluctuations[0] * 1.5
-        ), "Energy conservation should improve with finer grid"
+        assert energy_fluctuations[-1] <= energy_fluctuations[0] * 1.5, (
+            "Energy conservation should improve with finer grid"
+        )
 
 
 # =============================================================================
@@ -469,9 +471,9 @@ class TestMieScattering:
         assert 0 < Q_ext < 10, f"Q_ext={Q_ext:.3f} should be reasonable"
         # Q_sca should be close to Q_ext for dielectric (no absorption)
         # Use small tolerance for floating point
-        assert (
-            0 < Q_sca <= Q_ext * 1.001
-        ), f"Q_sca={Q_sca:.6f} should be <= Q_ext={Q_ext:.6f}"
+        assert 0 < Q_sca <= Q_ext * 1.001, (
+            f"Q_sca={Q_sca:.6f} should be <= Q_ext={Q_ext:.6f}"
+        )
 
     def test_analytical_mie_3d_vs_reference(self):
         """Verify 3D Mie analytical formulas against known values.
@@ -612,7 +614,7 @@ class TestFabryPerot:
         assert min_error < TOLERANCE_TIGHT, (
             f"Measured f={measured_freq:.2e} Hz should be near "
             f"f1={expected_f1:.2e} or f2={expected_f2:.2e} Hz "
-            f"(error={min_error*100:.1f}%)"
+            f"(error={min_error * 100:.1f}%)"
         )
 
     def test_analytical_cavity_formulas(self):
@@ -666,17 +668,17 @@ class TestWaveguideEffectiveIndex:
 
         if neff_te is not None:
             # n_eff should be between n_clad and n_core
-            assert (
-                n_clad < neff_te < n_core
-            ), f"n_eff={neff_te:.4f} should be between {n_clad} and {n_core}"
+            assert n_clad < neff_te < n_core, (
+                f"n_eff={neff_te:.4f} should be between {n_clad} and {n_core}"
+            )
 
             # Check TM mode as well
             neff_tm = slab_waveguide_neff_tm(n_core, n_clad, width, wavelength, mode=0)
             if neff_tm is not None:
                 # TM mode should have lower n_eff than TE for symmetric waveguide
-                assert (
-                    neff_tm < neff_te
-                ), f"TM n_eff={neff_tm:.4f} should be < TE n_eff={neff_te:.4f}"
+                assert neff_tm < neff_te, (
+                    f"TM n_eff={neff_tm:.4f} should be < TE n_eff={neff_te:.4f}"
+                )
 
     def test_waveguide_cutoff_condition(self):
         """Verify waveguide cutoff: no mode below V < π/2 for m=1."""
@@ -770,9 +772,9 @@ class TestWaveguideEffectiveIndex:
         if total_energy > 1e-30:
             confinement = core_energy / total_energy
             # Most energy should be in/near core for guided mode
-            assert (
-                confinement > 0.3
-            ), f"Only {confinement*100:.1f}% energy in core region"
+            assert confinement > 0.3, (
+                f"Only {confinement * 100:.1f}% energy in core region"
+            )
 
 
 # =============================================================================
@@ -788,7 +790,7 @@ class TestAnalyticalFunctions:
         for n1, n2 in test_cases:
             R = analytical_fresnel_r(n1, n2)
             T = analytical_fresnel_t(n1, n2)
-            assert abs(R + T - 1.0) < 1e-10, f"R+T={R+T} for n1={n1}, n2={n2}"
+            assert abs(R + T - 1.0) < 1e-10, f"R+T={R + T} for n1={n1}, n2={n2}"
 
     def test_mie_qext_positive(self):
         """Verify Mie Q_ext is always positive."""
@@ -830,14 +832,14 @@ class TestAnalyticalFunctions:
         wide = 3 * wavelength
         neff_wide = slab_waveguide_neff_te(n_core, n_clad, wide, wavelength)
         if neff_wide:
-            assert (
-                neff_wide > 0.85 * n_core
-            ), "Wide waveguide n_eff should be near n_core"
+            assert neff_wide > 0.85 * n_core, (
+                "Wide waveguide n_eff should be near n_core"
+            )
 
         # Narrower waveguide should have lower n_eff (if mode exists)
         narrow = 0.5 * wavelength
         neff_narrow = slab_waveguide_neff_te(n_core, n_clad, narrow, wavelength)
         if neff_narrow and neff_wide:
-            assert (
-                neff_narrow < neff_wide
-            ), f"Narrow waveguide n_eff ({neff_narrow:.4f}) should be lower than wide ({neff_wide:.4f})"
+            assert neff_narrow < neff_wide, (
+                f"Narrow waveguide n_eff ({neff_narrow:.4f}) should be lower than wide ({neff_wide:.4f})"
+            )

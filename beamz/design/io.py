@@ -154,7 +154,7 @@ class _GDSFactoryNamespace:
             layer_stack, _ = self._load_ubcpdk_layer_stack()
             return layer_stack
 
-        gf = self.activate()
+        self.activate()
         try:
             from gdsfactory.pdk import get_active_pdk
 

@@ -100,7 +100,7 @@ def calc_optimal_fdtd_params(
 
         if total_cells > 5e6:
             display_status(
-                f"Warning: Large simulation grid detected ({total_cells/1e6:.1f}M cells). "
+                f"Warning: Large simulation grid detected ({total_cells / 1e6:.1f}M cells). "
                 f"3D simulations can be slow. Consider reducing points_per_wavelength (current: {points_per_wavelength}) "
                 f"if performance is an issue.",
                 "warning",
@@ -116,9 +116,9 @@ def calc_optimal_fdtd_params(
             n_max=n_max,
             safety_factor=1.0,
         )
-        assert (
-            courant <= limit + 1e-15
-        ), "Internal error: calculated time step exceeds stability limit"
+        assert courant <= limit + 1e-15, (
+            "Internal error: calculated time step exceeds stability limit"
+        )
     except Exception:
         pass
 
@@ -181,7 +181,7 @@ class PlainProgress:
     def __enter__(self) -> "PlainProgress":
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(self, exc_type, exc, _tb) -> None:
         status = "failed" if exc_type is not None else "done"
         for task in self._tasks.values():
             total = task.total

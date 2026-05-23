@@ -254,9 +254,7 @@ def _partition_weights_by_frequency(
         right = nodes[idx + 1]
         left_mask = (abs_freq >= left) & (abs_freq <= freq)
         right_mask = (abs_freq >= freq) & (abs_freq <= right)
-        weights[idx, left_mask] = (abs_freq[left_mask] - left) / max(
-            freq - left, 1e-30
-        )
+        weights[idx, left_mask] = (abs_freq[left_mask] - left) / max(freq - left, 1e-30)
         weights[idx, right_mask] = (right - abs_freq[right_mask]) / max(
             right - freq, 1e-30
         )

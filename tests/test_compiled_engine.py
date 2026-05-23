@@ -836,7 +836,9 @@ def test_compiled_dft_component_monitor_populated(small_sim_params):
     assert np.isfinite(hy_dft).all()
     assert np.max(np.abs(ez_dft)) > 0.0
     assert np.max(np.abs(hy_dft)) > 0.0
-    np.testing.assert_allclose(monitor.power_spectrum, np.zeros((0,), dtype=np.complex64))
+    np.testing.assert_allclose(
+        monitor.power_spectrum, np.zeros((0,), dtype=np.complex64)
+    )
     assert np.isfinite(monitor.get_dft_flux()).all()
 
 
@@ -1220,9 +1222,8 @@ def test_mode_source_uses_explicit_signal_quadrature():
 def test_analytic_subband_waveforms_reconstruct_input():
     dt = 1e-15
     t = np.arange(256, dtype=float) * dt
-    analytic = (
-        0.8 * np.exp(2j * np.pi * 120e12 * t)
-        + 0.2 * np.exp(2j * np.pi * 210e12 * t)
+    analytic = 0.8 * np.exp(2j * np.pi * 120e12 * t) + 0.2 * np.exp(
+        2j * np.pi * 210e12 * t
     )
 
     nodes, subbands = _analytic_subband_waveforms(
@@ -1233,7 +1234,9 @@ def test_analytic_subband_waveforms_reconstruct_input():
 
     assert nodes.shape == (3,)
     assert subbands.shape == (3, analytic.size)
-    np.testing.assert_allclose(np.sum(subbands, axis=0), analytic, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(
+        np.sum(subbands, axis=0), analytic, rtol=1e-12, atol=1e-12
+    )
 
 
 def test_compile_3d_multifrequency_mode_source_uses_temporary_profile_sources(

@@ -70,8 +70,6 @@ class CustomMaterial:
                 bounds=((0, 10e-6), (0, 10e-6))  # 10 micron x 10 micron
             )
         """
-        import numpy as np
-
         # Store function-based definitions
         self.permittivity_func = permittivity_func
         self.permeability_func = permeability_func
@@ -264,8 +262,6 @@ class CustomMaterial:
 
     def copy(self):
         """Create a deep copy of the CustomMaterial."""
-        import numpy as np
-
         # Deep copy grids if they exist
         perm_grid = (
             self.permittivity_grid.copy()

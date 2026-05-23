@@ -48,7 +48,6 @@ def show_design_3d(
         design.depth if design.depth else min(design.width, design.height) * 0.1
     )
 
-    from beamz.devices.monitors import Monitor
     from beamz.devices.sources import GaussianSource, ModeSource
 
     material_colors = {}
@@ -186,7 +185,7 @@ def show_design_3d(
             backgroundcolor="rgba(248,249,250,0.8)",
             tickmode="array",
             tickvals=np.linspace(0, design.width, 6),
-            ticktext=[f"{val*scale:.1f}" for val in np.linspace(0, design.width, 6)],
+            ticktext=[f"{val * scale:.1f}" for val in np.linspace(0, design.width, 6)],
             tickfont=dict(size=11, color="#34495e"),
         ),
         yaxis=dict(
@@ -198,7 +197,7 @@ def show_design_3d(
             backgroundcolor="rgba(248,249,250,0.8)",
             tickmode="array",
             tickvals=np.linspace(0, design.height, 6),
-            ticktext=[f"{val*scale:.1f}" for val in np.linspace(0, design.height, 6)],
+            ticktext=[f"{val * scale:.1f}" for val in np.linspace(0, design.height, 6)],
             tickfont=dict(size=11, color="#34495e"),
         ),
         zaxis=dict(
@@ -211,7 +210,7 @@ def show_design_3d(
             tickmode="array",
             tickvals=np.linspace(0, design.depth if design.depth else default_depth, 6),
             ticktext=[
-                f"{val*scale:.1f}"
+                f"{val * scale:.1f}"
                 for val in np.linspace(
                     0, design.depth if design.depth else default_depth, 6
                 )
@@ -327,11 +326,11 @@ def _add_monitor_to_3d_plot(fig, monitor, scale, unit, design=None, index=0):
     z_coords = [v[2] for v in vertices]
     hovertext = f"Monitor ({monitor.monitor_type})"
     if hasattr(monitor, "size"):
-        hovertext += f"<br>Size: {monitor.size[0]*scale:.2f} x {monitor.size[1]*scale:.2f} {unit}"
+        hovertext += f"<br>Size: {monitor.size[0] * scale:.2f} x {monitor.size[1] * scale:.2f} {unit}"
     if hasattr(monitor, "plane_normal"):
         hovertext += f"<br>Normal: {monitor.plane_normal}"
     if hasattr(monitor, "plane_position"):
-        hovertext += f"<br>Position: {monitor.plane_position*scale:.2f} {unit}"
+        hovertext += f"<br>Position: {monitor.plane_position * scale:.2f} {unit}"
 
     # Create unique name for legend
     monitor_name = f"Monitor {index + 1}"
@@ -386,7 +385,9 @@ def _add_mode_source_to_3d_plot(fig, source, scale, unit, design=None, index=0):
             (
                 "yz"
                 if direction in ["+x", "-x"]
-                else "xz" if direction in ["+y", "-y"] else "xy"
+                else "xz"
+                if direction in ["+y", "-y"]
+                else "xy"
             ),
         )
 
@@ -472,9 +473,9 @@ def _add_mode_source_to_3d_plot(fig, source, scale, unit, design=None, index=0):
     faces_i = [0, 0]
     faces_j = [1, 2]
     faces_k = [2, 3]
-    hovertext = f"ModeSource"
+    hovertext = "ModeSource"
     if hasattr(source, "wavelength"):
-        hovertext += f"<br>Wavelength: {source.wavelength*scale*1e6:.0f} nm"
+        hovertext += f"<br>Wavelength: {source.wavelength * scale * 1e6:.0f} nm"
     if hasattr(source, "direction"):
         hovertext += f"<br>Direction: {source.direction}"
     if hasattr(source, "num_modes"):
@@ -582,9 +583,9 @@ def _add_gaussian_source_to_3d_plot(fig, source, scale, unit, index=0):
     x = position[0] + radius * np.sin(theta) * np.cos(phi)
     y = position[1] + radius * np.sin(theta) * np.sin(phi)
     z = position[2] + radius * np.cos(theta)
-    hovertext = f"GaussianSource"
-    hovertext += f"<br>Position: ({position[0]*scale:.2f}, {position[1]*scale:.2f}, {position[2]*scale:.2f}) {unit}"
-    hovertext += f"<br>Width: {source.width*scale:.2f} {unit}"
+    hovertext = "GaussianSource"
+    hovertext += f"<br>Position: ({position[0] * scale:.2f}, {position[1] * scale:.2f}, {position[2] * scale:.2f}) {unit}"
+    hovertext += f"<br>Width: {source.width * scale:.2f} {unit}"
 
     # Create unique name for legend
     source_name = f"GaussianSource {index + 1}"

@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from beamz.const import EPS_0
+from beamz.devices._runtime import RuntimeStateProxy
 from beamz.devices.sources._materials import component_permittivity_at
 
 
@@ -15,7 +16,7 @@ class _GaussianSourceState:
     _grid_indices: tuple[slice, ...] | tuple[slice, slice] | None = None
 
 
-class GaussianSource:
+class GaussianSource(RuntimeStateProxy):
     """Gaussian spatial source for FDTD simulations.
 
     Injects a Gaussian spatial profile into the Ez field (and other E components in 3D).
@@ -25,17 +26,6 @@ class GaussianSource:
     """
 
     _RUNTIME_ATTRS = {"_spatial_profile_ez", "_grid_indices"}
-
-    def __getattr__(self, name):
-        if name in self._RUNTIME_ATTRS and "_state" in self.__dict__:
-            return getattr(self._state, name)
-        raise AttributeError(f"{type(self).__name__!s} has no attribute {name!r}")
-
-    def __setattr__(self, name, value):
-        if name in self._RUNTIME_ATTRS and "_state" in self.__dict__:
-            setattr(self._state, name, value)
-            return
-        object.__setattr__(self, name, value)
 
     def __init__(self, position, width, signal):
         """Initialize the Gaussian source.

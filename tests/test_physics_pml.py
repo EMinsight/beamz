@@ -167,7 +167,10 @@ class TestPMLAbsorption:
 
     def test_cpml_full_tm_profiles_follow_discrete_yee_staggering(self):
         pml = PML(thickness=1.0, formulation="cpml", sigma_max=10.0, alpha_max=1.0)
-        profile_fn = getattr(pml, next(name for name in dir(pml) if name.endswith("_staggered_profile_1d")))
+        profile_fn = getattr(
+            pml,
+            next(name for name in dir(pml) if name.endswith("_staggered_profile_1d")),
+        )
 
         sigma_low_e, _, _ = profile_fn(
             total_samples=21,
@@ -508,7 +511,7 @@ class TestPMLAbsorption:
             reflection_ratio = late_energy / peak_energy if peak_energy > 0 else 0
 
             assert reflection_ratio < 0.10, (
-                f"PML reflection {reflection_ratio*100:.1f}% exceeds 10%. "
+                f"PML reflection {reflection_ratio * 100:.1f}% exceeds 10%. "
                 "This indicates poor PML absorption."
             )
 
@@ -626,7 +629,7 @@ class TestPMLAbsorption:
         reflection_ratio = late_energy / peak_energy if peak_energy > 0 else 0
         assert reflection_ratio < 0.20, (
             f"PML with {pml_layers_wl} wavelength thickness has "
-            f"{reflection_ratio*100:.1f}% reflection, exceeds 20%"
+            f"{reflection_ratio * 100:.1f}% reflection, exceeds 20%"
         )
 
     def test_pml_does_not_cause_instability(self, vacuum_domain_small):
@@ -672,14 +675,14 @@ class TestPMLAbsorption:
         max_reasonable = 1e10
         for i, Ez in enumerate(result["fields"]["Ez"]):
             max_field = np.max(np.abs(Ez))
-            assert (
-                max_field < max_reasonable
-            ), f"PML instability detected at snapshot {i}: max={max_field:.2e}"
+            assert max_field < max_reasonable, (
+                f"PML instability detected at snapshot {i}: max={max_field:.2e}"
+            )
 
         # Check that energy eventually decays (not stuck at high level)
         energies = [compute_field_energy(Ez, dx) for Ez in result["fields"]["Ez"]]
         if energies[0] > 1e-30:
             decay_ratio = energies[-1] / max(energies)
-            assert (
-                decay_ratio < 0.5
-            ), f"Energy not decaying with PML: final/peak = {decay_ratio:.2f}"
+            assert decay_ratio < 0.5, (
+                f"Energy not decaying with PML: final/peak = {decay_ratio:.2f}"
+            )

@@ -70,12 +70,12 @@ class TestDensityTransformationPipeline:
             for eta in eta_values:
                 projected = smoothed_heaviside(values, beta, eta)
 
-                assert (
-                    jnp.min(projected) >= -1e-6
-                ), f"Projection negative for beta={beta}, eta={eta}"
-                assert (
-                    jnp.max(projected) <= 1.0 + 1e-6
-                ), f"Projection exceeded 1.0 for beta={beta}, eta={eta}"
+                assert jnp.min(projected) >= -1e-6, (
+                    f"Projection negative for beta={beta}, eta={eta}"
+                )
+                assert jnp.max(projected) <= 1.0 + 1e-6, (
+                    f"Projection exceeded 1.0 for beta={beta}, eta={eta}"
+                )
 
     def test_heaviside_projection_sharpening(self):
         """Higher beta should create sharper transitions (more binary)."""
@@ -89,12 +89,12 @@ class TestDensityTransformationPipeline:
         result_high = smoothed_heaviside(value, beta=50.0, eta=eta)
 
         # At threshold (value=eta), both should give ~0.5
-        assert (
-            jnp.abs(result_low - 0.5) < 0.1
-        ), "Low beta should be near 0.5 at threshold"
-        assert (
-            jnp.abs(result_high - 0.5) < 0.1
-        ), "High beta should be near 0.5 at threshold"
+        assert jnp.abs(result_low - 0.5) < 0.1, (
+            "Low beta should be near 0.5 at threshold"
+        )
+        assert jnp.abs(result_high - 0.5) < 0.1, (
+            "High beta should be near 0.5 at threshold"
+        )
 
         # Test non-threshold values show sharpening
         value_above = 0.6
@@ -102,9 +102,9 @@ class TestDensityTransformationPipeline:
         result_high_above = smoothed_heaviside(value_above, beta=50.0, eta=eta)
 
         # Higher beta should push value closer to 1
-        assert (
-            result_high_above > result_low_above
-        ), "Higher beta should push values closer to binary"
+        assert result_high_above > result_low_above, (
+            "Higher beta should push values closer to binary"
+        )
 
     def test_morphological_filter_bounds(self):
         """Morphological filter should approximately preserve [0,1] bounds.
@@ -127,12 +127,12 @@ class TestDensityTransformationPipeline:
             )
 
             # Relaxed tolerance for morphological filters (~5% violation acceptable)
-            assert (
-                jnp.min(filtered) >= -0.1
-            ), f"{operation} filter produced values << 0: min = {jnp.min(filtered)}"
-            assert (
-                jnp.max(filtered) <= 1.1
-            ), f"{operation} filter produced values >> 1: max = {jnp.max(filtered)}"
+            assert jnp.min(filtered) >= -0.1, (
+                f"{operation} filter produced values << 0: min = {jnp.min(filtered)}"
+            )
+            assert jnp.max(filtered) <= 1.1, (
+                f"{operation} filter produced values >> 1: max = {jnp.max(filtered)}"
+            )
 
     def test_transform_density_full_pipeline(self):
         """Full density transform should preserve bounds with both filter types."""
@@ -156,12 +156,12 @@ class TestDensityTransformationPipeline:
                 filter_type=filter_type,
             )
 
-            assert (
-                jnp.min(physical) >= -1e-3
-            ), f"{filter_type}: transform produced negative values"
-            assert (
-                jnp.max(physical) <= 1.0 + 1e-3
-            ), f"{filter_type}: transform exceeded 1.0"
+            assert jnp.min(physical) >= -1e-3, (
+                f"{filter_type}: transform produced negative values"
+            )
+            assert jnp.max(physical) <= 1.0 + 1e-3, (
+                f"{filter_type}: transform exceeded 1.0"
+            )
 
 
 @pytest.mark.optimization
@@ -202,9 +202,9 @@ class TestGradientComputation:
         # = 0*4 + 1*3 + 2*2 + 3*1 + 4*0 = 0 + 3 + 4 + 3 + 0 = 10
         expected_value = 0 * 4 + 1 * 3 + 2 * 2 + 3 * 1 + 4 * 0
 
-        assert np.allclose(
-            grad, expected_value
-        ), f"Time reversal incorrect: got {grad[0,0]}, expected {expected_value}"
+        assert np.allclose(grad, expected_value), (
+            f"Time reversal incorrect: got {grad[0, 0]}, expected {expected_value}"
+        )
 
     def test_compute_overlap_gradient_forward_start(self):
         """Forward-start gating should skip the same leading frames as zero-padding."""
@@ -224,9 +224,9 @@ class TestGradientComputation:
         # 0*4 + 0*3 + 2*2 + 3*1 + 4*0 = 7
         expected_value = 2 * 2 + 3 * 1 + 4 * 0
 
-        assert np.allclose(
-            grad, expected_value
-        ), f"Forward-start gating incorrect: got {grad[0,0]}, expected {expected_value}"
+        assert np.allclose(grad, expected_value), (
+            f"Forward-start gating incorrect: got {grad[0, 0]}, expected {expected_value}"
+        )
 
     def test_fold_high_side_yee_padding_to_material_grid(self):
         """High-side full-Yee planes should accumulate onto the last material cell."""
@@ -330,14 +330,14 @@ class TestGradientComputation:
         )
 
         # Check gradient is not all zeros (should have non-trivial gradient)
-        assert (
-            jnp.max(jnp.abs(grad_vjp)) > 1e-6
-        ), "Morphological VJP gradient is all zeros"
+        assert jnp.max(jnp.abs(grad_vjp)) > 1e-6, (
+            "Morphological VJP gradient is all zeros"
+        )
 
         # Check gradient is finite
-        assert jnp.all(
-            jnp.isfinite(grad_vjp)
-        ), "Morphological VJP gradient contains inf/nan"
+        assert jnp.all(jnp.isfinite(grad_vjp)), (
+            "Morphological VJP gradient contains inf/nan"
+        )
 
 
 @pytest.mark.optimization
@@ -365,9 +365,9 @@ class TestMaterialPenalty:
         gray_high = jnp.sum((physical_high > 0.1) & (physical_high < 0.9))
 
         # High beta should have fewer gray pixels
-        assert (
-            gray_high <= gray_low
-        ), f"High beta should reduce grayscale: {gray_high} vs {gray_low}"
+        assert gray_high <= gray_low, (
+            f"High beta should reduce grayscale: {gray_high} vs {gray_low}"
+        )
 
 
 @pytest.mark.optimization
@@ -413,9 +413,9 @@ class TestOptimizationIntegration:
         obj_updated = float(objective(density_updated))
 
         # Should improve (objective should increase)
-        assert (
-            obj_updated > obj_initial
-        ), f"Optimization did not improve: {obj_updated} vs {obj_initial}"
+        assert obj_updated > obj_initial, (
+            f"Optimization did not improve: {obj_updated} vs {obj_initial}"
+        )
 
         # Gradient should not be all zeros
         assert jnp.max(jnp.abs(grad)) > 1e-6, "Gradient is all zeros"
@@ -462,9 +462,9 @@ class TestMaskHandling:
         )
 
         # Results should differ (context affects filtering)
-        assert not jnp.allclose(
-            filtered_with_context, filtered_no_context
-        ), "Fixed structure mask had no effect on filtering"
+        assert not jnp.allclose(filtered_with_context, filtered_no_context), (
+            "Fixed structure mask had no effect on filtering"
+        )
 
 
 @pytest.mark.optimization

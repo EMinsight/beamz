@@ -257,15 +257,15 @@ def magnetic_conductivity_terms_2d_full(
         stored_shape=hz_shape,
     )
 
-    assert (
-        sigma_m_hx.shape == hx_shape
-    ), f"sigma_m_hx shape mismatch: {sigma_m_hx.shape} vs {hx_shape}"
-    assert (
-        sigma_m_hy.shape == hy_shape
-    ), f"sigma_m_hy shape mismatch: {sigma_m_hy.shape} vs {hy_shape}"
-    assert (
-        sigma_m_hz.shape == hz_shape
-    ), f"sigma_m_hz shape mismatch: {sigma_m_hz.shape} vs {hz_shape}"
+    assert sigma_m_hx.shape == hx_shape, (
+        f"sigma_m_hx shape mismatch: {sigma_m_hx.shape} vs {hx_shape}"
+    )
+    assert sigma_m_hy.shape == hy_shape, (
+        f"sigma_m_hy shape mismatch: {sigma_m_hy.shape} vs {hy_shape}"
+    )
+    assert sigma_m_hz.shape == hz_shape, (
+        f"sigma_m_hz shape mismatch: {sigma_m_hz.shape} vs {hz_shape}"
+    )
 
     return sigma_m_hx, sigma_m_hy, sigma_m_hz
 
@@ -348,15 +348,15 @@ def curl_h_to_e_3d(
     ) - (_adjacent_difference(boundary_views["hx_y"], axis=1, resolution=resolution))
 
     # Preserve shape contracts when callers pass explicit target shapes.
-    assert (
-        curl_hx.shape == ex_shape
-    ), f"curl_hx shape mismatch: {curl_hx.shape} vs {ex_shape}"
-    assert (
-        curl_hy.shape == ey_shape
-    ), f"curl_hy shape mismatch: {curl_hy.shape} vs {ey_shape}"
-    assert (
-        curl_hz.shape == ez_shape
-    ), f"curl_hz shape mismatch: {curl_hz.shape} vs {ez_shape}"
+    assert curl_hx.shape == ex_shape, (
+        f"curl_hx shape mismatch: {curl_hx.shape} vs {ex_shape}"
+    )
+    assert curl_hy.shape == ey_shape, (
+        f"curl_hy shape mismatch: {curl_hy.shape} vs {ey_shape}"
+    )
+    assert curl_hz.shape == ez_shape, (
+        f"curl_hz shape mismatch: {curl_hz.shape} vs {ez_shape}"
+    )
 
     return (curl_hx, curl_hy, curl_hz)
 

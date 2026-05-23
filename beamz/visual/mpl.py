@@ -437,7 +437,7 @@ def _tidy3d_material_cmap():
 
 def _plot_tidy3d_marker(ax, marker, *, vertical_coord="y"):
     x = float(marker["x"])
-    span = marker.get("span")
+    span = marker.get(f"{vertical_coord}_span", marker.get("span"))
     if span is not None:
         y0, y1 = (float(span[0]), float(span[1]))
         ax.plot(
@@ -447,7 +447,7 @@ def _plot_tidy3d_marker(ax, marker, *, vertical_coord="y"):
             lw=float(marker.get("linewidth", 2.0)),
         )
     if marker.get("arrow", False):
-        y_mid = float(marker.get("arrow_y", 0.0))
+        y_mid = float(marker.get(f"arrow_{vertical_coord}", marker.get("arrow_y", 0.0)))
         dx = float(marker.get("arrow_length", 0.55))
         if str(marker.get("direction", "+x")).startswith("-"):
             dx = -abs(dx)
@@ -824,11 +824,15 @@ def plot_tidy3d_dft_field(
         raise ValueError("plot_tidy3d_dft_field expects a 3D plane monitor.")
     axis = str(getattr(monitor, "plane_normal", "z")).lower()
     if axis != "z":
-        raise ValueError("Only z-normal in-plane DFT field plots are currently supported.")
+        raise ValueError(
+            "Only z-normal in-plane DFT field plots are currently supported."
+        )
 
     freqs = np.asarray(monitor.get_dft_frequencies(), dtype=float)
     if freqs.size == 0:
-        raise ValueError(f"Monitor '{getattr(monitor, 'name', None)}' has no DFT frequencies.")
+        raise ValueError(
+            f"Monitor '{getattr(monitor, 'name', None)}' has no DFT frequencies."
+        )
     if frequency is None:
         f_idx = int(frequency_index)
     else:
@@ -883,8 +887,16 @@ def plot_tidy3d_dft_field(
     ox, oy, oz = (float(v) for v in origin)
     x_coords = np.asarray(target1, dtype=float)
     y_coords = np.asarray(target0, dtype=float)
-    dx = float(np.mean(np.diff(x_coords))) if x_coords.size > 1 else float(simulation.resolution)
-    dy = float(np.mean(np.diff(y_coords))) if y_coords.size > 1 else float(simulation.resolution)
+    dx = (
+        float(np.mean(np.diff(x_coords)))
+        if x_coords.size > 1
+        else float(simulation.resolution)
+    )
+    dy = (
+        float(np.mean(np.diff(y_coords)))
+        if y_coords.size > 1
+        else float(simulation.resolution)
+    )
     extent = [
         (float(x_coords[0]) - 0.5 * dx - ox) / µm,
         (float(x_coords[-1]) + 0.5 * dx - ox) / µm,
@@ -919,11 +931,16 @@ def plot_tidy3d_dft_field(
         )
 
     if overlay_core:
-        eps = np.asarray(getattr(getattr(simulation, "fields", None), "permittivity", ()))
+        eps = np.asarray(
+            getattr(getattr(simulation, "fields", None), "permittivity", ())
+        )
         if eps.ndim == 3:
             z_idx = int(
                 np.clip(
-                    round(float(getattr(monitor, "plane_position", 0.0)) / float(simulation.resolution)),
+                    round(
+                        float(getattr(monitor, "plane_position", 0.0))
+                        / float(simulation.resolution)
+                    ),
                     0,
                     eps.shape[0] - 1,
                 )
@@ -940,9 +957,29 @@ def plot_tidy3d_dft_field(
                         origin="lower",
                         extent=[
                             (0.0 - ox) / µm,
-                            (float(getattr(design, "width", eps_xy.shape[1] * simulation.resolution)) - ox) / µm,
+                            (
+                                float(
+                                    getattr(
+                                        design,
+                                        "width",
+                                        eps_xy.shape[1] * simulation.resolution,
+                                    )
+                                )
+                                - ox
+                            )
+                            / µm,
                             (0.0 - oy) / µm,
-                            (float(getattr(design, "height", eps_xy.shape[0] * simulation.resolution)) - oy) / µm,
+                            (
+                                float(
+                                    getattr(
+                                        design,
+                                        "height",
+                                        eps_xy.shape[0] * simulation.resolution,
+                                    )
+                                )
+                                - oy
+                            )
+                            / µm,
                         ],
                         cmap="Greys",
                         vmin=0.0,
@@ -957,7 +994,9 @@ def plot_tidy3d_dft_field(
         cbar_label = f"|{label}|"
     else:
         cbar_label = f"{label_prefix}({label})"
-    fig.colorbar(im, ax=ax, label=cbar_label, extend="both" if val_key != "abs" else "max")
+    fig.colorbar(
+        im, ax=ax, label=cbar_label, extend="both" if val_key != "abs" else "max"
+    )
     ax.set_xlabel("x (um)")
     ax.set_ylabel("y (um)")
     z_value = float(getattr(monitor, "plane_position", 0.0)) - oz
@@ -1807,7 +1846,9 @@ def plot_modal_dft_diagnostics(
         raise ValueError("source_port is required when diagnostics omit it.")
     ports = list(output_ports or diagnostics.get("output_ports", ()))
     if not ports:
-        ports = [key[0] for key in s_matrix if isinstance(key, tuple) and key[1] == source]
+        ports = [
+            key[0] for key in s_matrix if isinstance(key, tuple) and key[1] == source
+        ]
     ports = sorted(ports, key=_modal_dft_port_sort_key)
     if not ports:
         raise ValueError("No output ports available to plot.")

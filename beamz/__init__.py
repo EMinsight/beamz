@@ -16,6 +16,7 @@ from beamz.const import (
     µm,
     μm,  # noqa: F811 - public alias using Greek mu codepoint
 )
+from beamz.data import colocate_dataset, field_intensity, poynting_vector
 
 # Import design-related classes and functions
 from beamz.design.core import Design
@@ -37,14 +38,13 @@ from beamz.devices.ports import Port
 from beamz.devices.sources import GaussianSource, ModeSource
 from beamz.devices.sources.mode import solve_modes
 from beamz.devices.sources.signals import plot_signal, ramped_cosine, signal_plot_data
-from beamz.data import colocate_dataset, field_intensity, poynting_vector
 from beamz.optimization.autodiff import transform_density
 from beamz.optimization.topology import (
     TopologyManager,
     compute_overlap_gradient,
     create_optimization_mask,
 )
-from beamz.simulation.boundaries import AbsorbingLayer, PEC, PML, Boundary
+from beamz.simulation.boundaries import PEC, PML, AbsorbingLayer, Boundary
 from beamz.simulation.compiled import (
     CompiledRunConfig,
     CompiledSimulation,

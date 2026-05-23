@@ -4,8 +4,10 @@ from dataclasses import dataclass
 import jax.numpy as jnp
 import numpy as np
 
+from beamz._yee import component_axis_offsets_3d
 from beamz.const import EPS_0, LIGHT_SPEED, MU_0
 from beamz.devices._placement import snap_centered_extent, snap_mode_source_region
+from beamz.devices._runtime import RuntimeStateProxy
 from beamz.devices.sources._materials import (
     component_permeability_at,
     component_permittivity_at,
@@ -1205,9 +1207,7 @@ def _crop_and_window_all(
         te = min(te_end, field.shape[1])
         h_cells = max(0, fe - z_start)
         w_cells = max(0, te - t_start)
-        window = _make_tukey_window_2d(
-            h_cells, w_cells, alpha=alpha, use_jax=use_jax
-        )
+        window = _make_tukey_window_2d(h_cells, w_cells, alpha=alpha, use_jax=use_jax)
         profiles[name] = dir_sign * _crop_and_window_2d(
             field, z_start, fe, t_start, te, window
         )
@@ -1245,27 +1245,11 @@ def _component_support_stops_3d(
     col_start: int,
     col_stop: int,
 ) -> tuple[int, int]:
-    offsets = _component_axis_offsets_3d(component)
+    offsets = component_axis_offsets_3d(component)
     return (
         _support_stop_for_offset(row_start, row_stop, offsets[row_axis]),
         _support_stop_for_offset(col_start, col_stop, offsets[col_axis]),
     )
-
-
-def _component_axis_offsets_3d(component: str) -> dict[str, float]:
-    if component == "Ex":
-        return {"z": 0.0, "y": 0.0, "x": 0.5}
-    if component == "Ey":
-        return {"z": 0.0, "y": 0.5, "x": 0.0}
-    if component == "Ez":
-        return {"z": 0.5, "y": 0.0, "x": 0.0}
-    if component == "Hx":
-        return {"z": 0.5, "y": 0.5, "x": 0.0}
-    if component == "Hy":
-        return {"z": 0.5, "y": 0.0, "x": 0.5}
-    if component == "Hz":
-        return {"z": 0.0, "y": 0.5, "x": 0.5}
-    raise ValueError(f"Unsupported component {component!r}")
 
 
 def _component_support_slices_3d(
@@ -1632,7 +1616,7 @@ def _match_shape(profile, target_shape):
 # ---------------------------------------------------------------------------
 
 
-class ModeSource:
+class ModeSource(RuntimeStateProxy):
     """Huygens mode source on Yee grid supporting ±x/±y in 2D and ±x/±y/±z in 3D.
 
     In 3D, injects all 6 field components (Ex, Ey, Ez, Hx, Hy, Hz) for accurate
@@ -1685,14 +1669,8 @@ class ModeSource:
         "_x_end",
     }
 
-    def __getattr__(self, name):
-        if name in self._RUNTIME_ATTRS and "_state" in self.__dict__:
-            return getattr(self._state, name)
-        raise AttributeError(f"{type(self).__name__!s} has no attribute {name!r}")
-
     def __setattr__(self, name, value):
-        if name in self._RUNTIME_ATTRS and "_state" in self.__dict__:
-            setattr(self._state, name, value)
+        if self._set_runtime_attr(name, value):
             return
         if (
             name in {"signal", "signal_quadrature"}
@@ -2555,10 +2533,9 @@ class ModeSource:
                 if amp_re == 0.0 and amp_im == 0.0:
                     continue
 
-                field_arrays[comp_name][shifted_idx] = (
-                    field_arrays[comp_name][shifted_idx]
-                    + _real_phasor_sample(profile_arr, amp_re, amp_im)
-                )
+                field_arrays[comp_name][shifted_idx] = field_arrays[comp_name][
+                    shifted_idx
+                ] + _real_phasor_sample(profile_arr, amp_re, amp_im)
 
         return field_arrays
 
@@ -2637,10 +2614,9 @@ class ModeSource:
 
                 delay = _numeric_phase_delay(omega, k_num, coord - ref_coord)
                 phase = float(omega) * (base_time - delay)
-                field_arrays[comp_name][shifted_idx] = (
-                    field_arrays[comp_name][shifted_idx]
-                    + profile_arr * np.exp(1j * phase)
-                )
+                field_arrays[comp_name][shifted_idx] = field_arrays[comp_name][
+                    shifted_idx
+                ] + profile_arr * np.exp(1j * phase)
 
         return field_arrays
 

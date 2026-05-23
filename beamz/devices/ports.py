@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-
 PortDirection = Literal["+x", "-x", "+y", "-y", "+z", "-z"]
 PortPolarization = Literal["tm", "te"]
 WaveSelector = Literal["plus", "minus"]
@@ -25,12 +24,12 @@ def _normalize_polarization(polarization: str) -> PortPolarization:
 
 def positive_axis_direction(direction: str) -> PortDirection:
     direction = _normalize_direction(direction)
-    return ("+" + direction[1])  # type: ignore[return-value]
+    return "+" + direction[1]  # type: ignore[return-value]
 
 
 def opposite_direction(direction: str) -> PortDirection:
     direction = _normalize_direction(direction)
-    return (("-" if direction.startswith("+") else "+") + direction[1])  # type: ignore[return-value]
+    return ("-" if direction.startswith("+") else "+") + direction[1]  # type: ignore[return-value]
 
 
 def _wave_for_direction(direction: str, projection_direction: str) -> WaveSelector:

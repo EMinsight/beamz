@@ -235,6 +235,6 @@ class TestFresnelReflection:
         max_reasonable = 1e10
         for i, Ez in enumerate(result["fields"]["Ez"]):
             max_field = np.max(np.abs(Ez))
-            assert (
-                max_field < max_reasonable
-            ), f"Field explosion at interface: snapshot {i}, max={max_field:.2e}"
+            assert max_field < max_reasonable, (
+                f"Field explosion at interface: snapshot {i}, max={max_field:.2e}"
+            )

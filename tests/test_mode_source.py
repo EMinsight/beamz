@@ -312,9 +312,9 @@ class TestModeSourceDiscreteHelpers:
         lhs = np.sin(0.5 * omega * dt)
         rhs = S * np.sin(0.5 * k_num * d_axis)
 
-        assert (
-            abs(lhs - rhs) < 1e-10
-        ), f"Discrete dispersion residual too large: lhs={lhs:.6e}, rhs={rhs:.6e}"
+        assert abs(lhs - rhs) < 1e-10, (
+            f"Discrete dispersion residual too large: lhs={lhs:.6e}, rhs={rhs:.6e}"
+        )
 
     def test_numeric_phase_delay_monotonic(self):
         wavelength = TEST_WAVELENGTH
@@ -497,9 +497,9 @@ class TestModeSourceEffectiveIndex:
         # Check neff is in valid range (allow small tolerance for numerical precision)
         # n_eff should be close to n_clad or between n_clad and n_core
         assert neff > 0, f"n_eff={neff:.4f} should be positive"
-        assert (
-            neff < n_core + 0.1
-        ), f"n_eff={neff:.4f} should not exceed n_core={n_core}"
+        assert neff < n_core + 0.1, (
+            f"n_eff={neff:.4f} should not exceed n_core={n_core}"
+        )
 
         # For well-confined mode, neff should be above n_clad
         # Allow small tolerance for numerical precision near cutoff
@@ -566,12 +566,12 @@ class TestModeSourceEffectiveIndex:
             neffs.append(float(np.real(source._neff)))
 
         # neff should increase with core width (allow small tolerance)
-        assert (
-            neffs[1] >= neffs[0] - 0.01
-        ), f"n_eff should increase with core width: {neffs}"
-        assert (
-            neffs[2] >= neffs[1] - 0.01
-        ), f"n_eff should increase with core width: {neffs}"
+        assert neffs[1] >= neffs[0] - 0.01, (
+            f"n_eff should increase with core width: {neffs}"
+        )
+        assert neffs[2] >= neffs[1] - 0.01, (
+            f"n_eff should increase with core width: {neffs}"
+        )
 
 
 @pytest.mark.simulation
@@ -632,9 +632,9 @@ class TestModeSourceProfile:
             center_idx = len(profile) // 2
             # Allow 20% deviation from center
             tolerance = int(len(profile) * 0.2)
-            assert (
-                abs(max_idx - center_idx) < tolerance
-            ), f"Peak at index {max_idx}, expected near {center_idx}"
+            assert abs(max_idx - center_idx) < tolerance, (
+                f"Peak at index {max_idx}, expected near {center_idx}"
+            )
         else:
             # 2D profile - check it has some structure
             assert np.max(np.abs(profile)) > 0, "Profile should have non-zero values"
@@ -705,7 +705,7 @@ class TestModeSourcePropagation:
         if total > 1e-30:
             right_fraction = right_energy / total
             assert right_fraction > 0.5, (
-                f"Only {right_fraction*100:.1f}% energy downstream. "
+                f"Only {right_fraction * 100:.1f}% energy downstream. "
                 "Mode should propagate in +x direction."
             )
 
@@ -776,7 +776,7 @@ class TestModeSourcePropagation:
         if total_energy > 1e-30:
             confinement = wg_energy / total_energy
             assert confinement > 0.5, (
-                f"Only {confinement*100:.1f}% energy in waveguide region. "
+                f"Only {confinement * 100:.1f}% energy in waveguide region. "
                 "Mode should be confined."
             )
 
@@ -891,9 +891,9 @@ class TestModeSourcePolarization:
 
         profile = getattr(source, profile_attr)
         assert profile is not None, f"{profile_attr} should be defined for +y/{pol}"
-        assert (
-            float(np.max(np.abs(np.asarray(profile)))) > 1e-8
-        ), f"{profile_attr} is near zero for +y/{pol}; check component mapping"
+        assert float(np.max(np.abs(np.asarray(profile)))) > 1e-8, (
+            f"{profile_attr} is near zero for +y/{pol}; check component mapping"
+        )
 
     def test_invalid_direction_raises(self, waveguide_domain):
         """ModeSource should reject directions outside ±x/±y/±z."""
@@ -1231,12 +1231,12 @@ class TestModeSource3DSignGaugeParity:
         corr_h = _profile_correlation(h_plus, h_minus)
         corr_e = _profile_correlation(e_plus, e_minus)
 
-        assert (
-            corr_h < -0.60
-        ), f"{axis}/{pol} J-driving H profile should flip sign: corr={corr_h:.3f}"
-        assert (
-            corr_e > 0.60
-        ), f"{axis}/{pol} M-driving E profile should preserve sign: corr={corr_e:.3f}"
+        assert corr_h < -0.60, (
+            f"{axis}/{pol} J-driving H profile should flip sign: corr={corr_h:.3f}"
+        )
+        assert corr_e > 0.60, (
+            f"{axis}/{pol} M-driving E profile should preserve sign: corr={corr_e:.3f}"
+        )
 
 
 @pytest.mark.simulation
@@ -2160,9 +2160,9 @@ class TestModeSolver:
 
         assert len(neff) >= 1, "Should find at least one mode"
         neff_real = float(np.real(neff[0]))
-        assert (
-            n_clad < neff_real < n_core
-        ), f"n_eff={neff_real:.4f} should be between {n_clad} and {n_core}"
+        assert n_clad < neff_real < n_core, (
+            f"n_eff={neff_real:.4f} should be between {n_clad} and {n_core}"
+        )
 
     def test_filter_pol_uses_common_te_tm_mapping(self, waveguide_domain):
         """For +x propagation: TE should be Ey/Hz-like and TM should be Ez/Hy-like."""

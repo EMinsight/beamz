@@ -12,14 +12,15 @@ from beamz.devices._placement import (
     snap_axis_aligned_line_region,
     snap_plane_region,
 )
+from beamz.devices._runtime import RuntimeStateProxy
 from beamz.devices.ports import Port, _normalize_direction, _normalize_polarization
 from beamz.shared_kernels import (
     full_tm_xy_component_to_centered_grid,
     is_full_tm_xy_lattice,
+    monitor_dft_sample_scale,
     monitor_dft_should_accumulate,
     monitor_dft_window_weight,
     monitor_records_on_step,
-    monitor_dft_sample_scale,
     poynting_flux_2d,
     poynting_flux_3d,
 )
@@ -144,7 +145,7 @@ class _MonitorState:
         )
 
 
-class Monitor:
+class Monitor(RuntimeStateProxy):
     _RUNTIME_ATTRS = {
         "fields",
         "power_spectrum",
@@ -166,17 +167,6 @@ class Monitor:
         "_dft_last_rot",
         "_dft_base_dt",
     }
-
-    def __getattr__(self, name):
-        if name in self._RUNTIME_ATTRS and "_state" in self.__dict__:
-            return getattr(self._state, name)
-        raise AttributeError(f"{type(self).__name__!s} has no attribute {name!r}")
-
-    def __setattr__(self, name, value):
-        if name in self._RUNTIME_ATTRS and "_state" in self.__dict__:
-            setattr(self._state, name, value)
-            return
-        object.__setattr__(self, name, value)
 
     @property
     def frequency_points(self):

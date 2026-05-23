@@ -7,27 +7,7 @@ from typing import Mapping
 import jax.numpy as jnp
 import numpy as np
 
-
-def _component_axis_offsets_3d(component: str) -> dict[str, float]:
-    """Return physical Yee offsets, in grid-cell units, for a 3D component."""
-    if component == "Ex":
-        return {"z": 0.0, "y": 0.0, "x": 0.5}
-    if component == "Ey":
-        return {"z": 0.0, "y": 0.5, "x": 0.0}
-    if component == "Ez":
-        return {"z": 0.5, "y": 0.0, "x": 0.0}
-    if component == "Hx":
-        return {"z": 0.5, "y": 0.5, "x": 0.0}
-    if component == "Hy":
-        return {"z": 0.5, "y": 0.0, "x": 0.5}
-    if component == "Hz":
-        return {"z": 0.0, "y": 0.5, "x": 0.5}
-    raise ValueError(f"Unsupported component {component!r}")
-
-
-def component_axis_offsets_3d(component: str) -> dict[str, float]:
-    """Return the physical Yee offsets, in grid-cell units, for a 3D component."""
-    return dict(_component_axis_offsets_3d(component))
+from beamz._yee import component_axis_offsets_3d
 
 
 def component_shape_3d(
@@ -64,7 +44,7 @@ def component_coordinates_3d_um(
     """
 
     shape = component_shape_3d(component, grid_shape)
-    offsets = _component_axis_offsets_3d(component)
+    offsets = component_axis_offsets_3d(component)
     return {
         "z": (np.arange(shape[0], dtype=np.float64) + offsets["z"]) * dx_um,
         "y": (np.arange(shape[1], dtype=np.float64) + offsets["y"]) * dx_um,
@@ -100,7 +80,7 @@ def component_index_arrays_3d(
         if stored_shape is not None
         else component_shape_3d(component, grid_shape)
     )
-    offsets = _component_axis_offsets_3d(component)
+    offsets = component_axis_offsets_3d(component)
     axes = ("z", "y", "x")
     region = region or (slice(None), slice(None), slice(None))
 
@@ -179,7 +159,7 @@ def sample_voxel_grid_at_e_component_3d_centered(
         if stored_shape is not None
         else component_shape_3d(component, grid_shape)
     )
-    offsets = _component_axis_offsets_3d(component)
+    offsets = component_axis_offsets_3d(component)
     axes = ("z", "y", "x")
     region = region or (slice(None), slice(None), slice(None))
 
@@ -332,7 +312,10 @@ def sample_voxel_grid_at_component_2d(
         canonical_shape = tm_xy_full_component_shape_2d(
             component, tuple(int(v) for v in np.asarray(grid).shape)
         )
-        if stored_shape is not None and tuple(int(v) for v in stored_shape) != canonical_shape:
+        if (
+            stored_shape is not None
+            and tuple(int(v) for v in stored_shape) != canonical_shape
+        ):
             raise ValueError(
                 f"stored_shape={stored_shape!r} does not match canonical xy TM "
                 f"shape {canonical_shape!r} for component {component!r}"

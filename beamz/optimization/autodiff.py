@@ -14,8 +14,6 @@ def generate_conic_kernel(radius: int):
     w(r) = max(0, 1 - r/R)
     """
     radius = int(max(1, radius))
-    kernel_size = 2 * radius + 1
-    center = radius
 
     # Create coordinate grids
     y, x = jnp.ogrid[-radius : radius + 1, -radius : radius + 1]
