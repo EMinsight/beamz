@@ -3167,6 +3167,28 @@ class Simulation:
         return float(np.linalg.norm(target - recon) / denom)
 
     @staticmethod
+    def _modal_projection_reconstruction_residual_from_matrix(
+        field_vec,
+        mode_matrix,
+        coeff,
+    ):
+        matrix = np.asarray(mode_matrix, dtype=np.complex128)
+        if matrix.ndim != 2 or matrix.shape[0] <= 0 or matrix.shape[1] <= 0:
+            return np.nan
+        field = np.asarray(field_vec, dtype=np.complex128).reshape(-1)
+        coeff_arr = np.asarray(coeff, dtype=np.complex128).reshape(-1)
+        n = int(min(field.size, matrix.shape[0]))
+        m = int(min(coeff_arr.size, matrix.shape[1]))
+        if n <= 0 or m <= 0:
+            return np.nan
+        target = field[:n]
+        recon = matrix[:n, :m] @ coeff_arr[:m]
+        denom = float(np.linalg.norm(target))
+        if denom <= 1e-30 or not np.isfinite(denom):
+            return np.nan
+        return float(np.linalg.norm(target - recon) / denom)
+
+    @staticmethod
     def _project_modal_coefficients_3d(
         field_components, projection, apply_calibration=True
     ):
@@ -3252,6 +3274,119 @@ class Simulation:
         a_minus = coeff[1]
         return np.complex128(a_plus), np.complex128(a_minus)
 
+    @staticmethod
+    def _project_modal_coefficients_3d_group(field_components, projections):
+        """Project one 3D monitor field onto a coupled forward/backward mode set."""
+        projections = tuple(projections)
+        if not projections:
+            return [], np.nan, np.nan
+
+        first = projections[0]
+        components = tuple(first.get("components", ()))
+        axis = str(first.get("axis", "")).lower()
+        d_area = float(first.get("d_area", 1.0))
+        direction_sign = float(first.get("direction_sign", 1.0))
+        if len(components) == 0 or axis not in {"x", "y", "z"}:
+            raise ValueError("3D modal group projection is missing components or axis.")
+
+        basis = []
+        for proj in projections:
+            if tuple(proj.get("components", ())) != components:
+                raise ValueError("Grouped 3D modal projections must share components.")
+            if str(proj.get("axis", "")).lower() != axis:
+                raise ValueError("Grouped 3D modal projections must share an axis.")
+            basis.append(
+                {
+                    name: np.asarray(
+                        proj.get("mode_components", {}).get(name, []),
+                        dtype=np.complex128,
+                    ).reshape(-1)
+                    for name in components
+                }
+            )
+            basis.append(
+                {
+                    name: np.asarray(
+                        proj.get("mode_components_bwd", {}).get(name, []),
+                        dtype=np.complex128,
+                    ).reshape(-1)
+                    for name in components
+                }
+            )
+
+        rhs = np.asarray(
+            [
+                _safe_modal_overlap_3d(
+                    field_components,
+                    mode,
+                    axis,
+                    d_area,
+                    direction_sign=direction_sign,
+                )
+                for mode in basis
+            ],
+            dtype=np.complex128,
+        )
+        overlap = np.asarray(
+            [
+                [
+                    _safe_modal_overlap_3d(
+                        basis_i,
+                        basis_j,
+                        axis,
+                        d_area,
+                        direction_sign=direction_sign,
+                    )
+                    for basis_j in basis
+                ]
+                for basis_i in basis
+            ],
+            dtype=np.complex128,
+        )
+        system = overlap.T
+        cond = float(np.linalg.cond(system))
+        if (
+            not np.all(np.isfinite(system))
+            or not np.all(np.isfinite(rhs))
+            or not np.isfinite(cond)
+        ):
+            raise ValueError("Invalid grouped 3D modal overlap system.")
+        if cond < 1e8:
+            coeff = np.linalg.solve(system, rhs)
+        else:
+            coeff = np.linalg.pinv(system) @ rhs
+
+        field_vec = np.concatenate(
+            [
+                np.asarray(field_components[name], dtype=np.complex128).reshape(-1)
+                for name in components
+            ]
+        )
+        mode_matrix = np.column_stack(
+            [
+                np.concatenate(
+                    [
+                        np.asarray(mode[name], dtype=np.complex128).reshape(-1)
+                        for name in components
+                    ]
+                )
+                for mode in basis
+            ]
+        )
+        residual = Simulation._modal_projection_reconstruction_residual_from_matrix(
+            field_vec,
+            mode_matrix,
+            coeff,
+        )
+        return (
+            [
+                (np.complex128(coeff[2 * idx]), np.complex128(coeff[2 * idx + 1]))
+                for idx in range(len(projections))
+            ],
+            residual,
+            cond,
+        )
+
     def extract_port_waves(
         self,
         ports,
@@ -3301,6 +3436,7 @@ class Simulation:
         sibling_projection_cache = {}
         sibling_reference_projection_cache = {}
         waves = {}
+
         for spec in port_map.values():
             main_monitor = monitor_by_name[spec.monitor_name]
             parts = self._mode_components_for_port(spec)
@@ -3543,6 +3679,126 @@ class Simulation:
         sibling_projection_cache = {}
         sibling_reference_projection_cache = {}
         waves = {}
+        group_projection_history = {}
+
+        def _matching_3d_group_specs(spec, monitor_name, *, reference):
+            if not self.is_3d:
+                return (spec,)
+            if reference:
+                candidates = [
+                    candidate
+                    for candidate in port_map.values()
+                    if candidate.reference_monitor == monitor_name
+                ]
+            else:
+                candidates = [
+                    candidate
+                    for candidate in port_map.values()
+                    if candidate.monitor_name == monitor_name
+                ]
+            group = [
+                candidate
+                for candidate in candidates
+                if candidate.direction == spec.direction
+                and candidate.polarization == spec.polarization
+            ]
+            if not group:
+                return (spec,)
+            return tuple(
+                sorted(group, key=lambda item: (int(item.mode_index), item.name))
+            )
+
+        def _build_3d_group_projection(spec, monitor, f_mode):
+            hist_key = (spec.name, monitor.name)
+            previous = group_projection_history.get(hist_key)
+            if previous is None:
+                proj = self._build_port_projection(
+                    spec,
+                    monitor,
+                    f_mode,
+                    projection_cache,
+                )
+            else:
+                proj = self._build_port_projection(
+                    spec,
+                    monitor,
+                    f_mode,
+                    projection_cache,
+                    previous_projection=previous,
+                )
+            proj_neff = float(proj.get("mode_neff", np.nan))
+            if (not np.isfinite(proj_neff)) or (proj_neff <= 1e-6):
+                if previous is not None:
+                    return previous
+            else:
+                group_projection_history[hist_key] = proj
+            return proj
+
+        def _project_3d_group_at_monitor(
+            spec,
+            monitor,
+            idx,
+            frequency,
+            f_mode,
+            *,
+            reference,
+        ):
+            group_specs = _matching_3d_group_specs(
+                spec,
+                monitor.name,
+                reference=reference,
+            )
+            projections = [
+                _build_3d_group_projection(group_spec, monitor, f_mode)
+                for group_spec in group_specs
+            ]
+            try:
+                group_index = next(
+                    index
+                    for index, group_spec in enumerate(group_specs)
+                    if group_spec.name == spec.name
+                )
+            except StopIteration:
+                group_index = 0
+            proj = projections[group_index]
+            proj_components = tuple(
+                proj.get("components", (proj["e_component"], proj["h_component"]))
+            )
+            raw_field_components = {
+                comp: self._apply_modal_projection_spatial_phase(
+                    comp,
+                    dft_cache[(monitor.name, comp)][idx],
+                    frequency,
+                    proj,
+                )
+                for comp in proj_components
+            }
+            field_components = self._colocate_field_components_to_projection_3d(
+                monitor,
+                raw_field_components,
+                proj,
+            )
+            coeffs, residual, group_cond = self._project_modal_coefficients_3d_group(
+                field_components,
+                projections,
+            )
+            cond_values = [
+                float(projection.get("condition_number", np.nan))
+                for projection in projections
+            ]
+            finite_conds = [
+                value
+                for value in [float(group_cond), *cond_values]
+                if np.isfinite(value)
+            ]
+            cond = max(finite_conds) if finite_conds else np.nan
+            return (
+                coeffs[group_index],
+                residual,
+                cond,
+                float(proj.get("mode_neff", np.nan)),
+            )
+
         for spec in port_map.values():
             parts = self._mode_components_for_port(spec)
             main_monitor = monitor_by_name[spec.monitor_name]
@@ -3607,30 +3863,18 @@ class Simulation:
                     proj.get("components", (proj["e_component"], proj["h_component"]))
                 )
                 if self.is_3d:
-                    raw_field_components = {
-                        comp: self._apply_modal_projection_spatial_phase(
-                            comp,
-                            dft_cache[(main_monitor.name, comp)][idx],
-                            f,
-                            proj,
-                        )
-                        for comp in proj_components
-                    }
-                    field_components = self._colocate_field_components_to_projection_3d(
+                    coeff, residual, cond, neff = _project_3d_group_at_monitor(
+                        spec,
                         main_monitor,
-                        raw_field_components,
-                        proj,
+                        idx,
+                        f,
+                        f_mode,
+                        reference=False,
                     )
-                    coeff = self._project_modal_coefficients_3d(field_components, proj)
                     a_plus[idx], a_minus[idx] = coeff[0], coeff[1]
-                    field_vec = np.concatenate(
-                        [
-                            np.asarray(
-                                field_components[comp], dtype=np.complex128
-                            ).reshape(-1)
-                            for comp in proj_components
-                        ]
-                    )
+                    residual_main[idx] = residual
+                    cond_main[idx] = cond
+                    neff_main[idx] = neff
                 else:
                     field_vec = np.concatenate(
                         [
@@ -3645,13 +3889,13 @@ class Simulation:
                     )
                     coeff = proj["pinv"] @ field_vec
                     a_plus[idx], a_minus[idx] = coeff[0], coeff[1]
-                residual_main[idx] = self._modal_projection_reconstruction_residual(
-                    field_vec,
-                    proj,
-                    coeff,
-                )
-                cond_main[idx] = float(proj.get("condition_number", np.nan))
-                neff_main[idx] = float(proj.get("mode_neff", np.nan))
+                    residual_main[idx] = self._modal_projection_reconstruction_residual(
+                        field_vec,
+                        proj,
+                        coeff,
+                    )
+                    cond_main[idx] = float(proj.get("condition_number", np.nan))
+                    neff_main[idx] = float(proj.get("mode_neff", np.nan))
 
             port_waves = {
                 "a_plus": a_plus,
@@ -3724,34 +3968,18 @@ class Simulation:
                         )
                     )
                     if self.is_3d:
-                        raw_field_components = {
-                            comp: self._apply_modal_projection_spatial_phase(
-                                comp,
-                                dft_cache[(ref_monitor.name, comp)][idx],
-                                f,
-                                proj,
-                            )
-                            for comp in proj_components
-                        }
-                        field_components = (
-                            self._colocate_field_components_to_projection_3d(
-                                ref_monitor,
-                                raw_field_components,
-                                proj,
-                            )
-                        )
-                        coeff = self._project_modal_coefficients_3d(
-                            field_components, proj
+                        coeff, residual, cond, neff = _project_3d_group_at_monitor(
+                            spec,
+                            ref_monitor,
+                            idx,
+                            f,
+                            f_mode,
+                            reference=True,
                         )
                         a_incident_plus[idx], a_incident_minus[idx] = coeff[0], coeff[1]
-                        field_vec = np.concatenate(
-                            [
-                                np.asarray(
-                                    field_components[comp], dtype=np.complex128
-                                ).reshape(-1)
-                                for comp in proj_components
-                            ]
-                        )
+                        residual_ref[idx] = residual
+                        cond_ref[idx] = cond
+                        neff_ref[idx] = neff
                     else:
                         field_vec = np.concatenate(
                             [
@@ -3766,13 +3994,15 @@ class Simulation:
                         )
                         coeff = proj["pinv"] @ field_vec
                         a_incident_plus[idx], a_incident_minus[idx] = coeff[0], coeff[1]
-                    residual_ref[idx] = self._modal_projection_reconstruction_residual(
-                        field_vec,
-                        proj,
-                        coeff,
-                    )
-                    cond_ref[idx] = float(proj.get("condition_number", np.nan))
-                    neff_ref[idx] = float(proj.get("mode_neff", np.nan))
+                        residual_ref[idx] = (
+                            self._modal_projection_reconstruction_residual(
+                                field_vec,
+                                proj,
+                                coeff,
+                            )
+                        )
+                        cond_ref[idx] = float(proj.get("condition_number", np.nan))
+                        neff_ref[idx] = float(proj.get("mode_neff", np.nan))
                 port_waves["a_incident"] = a_incident_plus
                 port_waves["a_incident_plus"] = a_incident_plus
                 port_waves["a_incident_minus"] = a_incident_minus
@@ -3927,7 +4157,9 @@ class Simulation:
             return values.astype(float, copy=True)
         return np.interp(freq_dst, freq_src, values, left=np.nan, right=np.nan)
 
-    def _modal_dft_flux_diagnostics(self, port_map, monitor_by_name, waves, frequencies):
+    def _modal_dft_flux_diagnostics(
+        self, port_map, monitor_by_name, waves, frequencies
+    ):
         """Compare raw DFT flux monitors with selector-aware modal overlap power."""
 
         freqs = np.atleast_1d(np.asarray(frequencies, dtype=float))

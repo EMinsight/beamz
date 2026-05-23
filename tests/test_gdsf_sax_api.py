@@ -964,9 +964,7 @@ def test_project_modal_coefficients_3d_uses_rhs_orientation_for_complex_basis():
     overlap = np.asarray(
         [
             [
-                _modal_overlap_3d_profiles(
-                    mode_components, mode_components, "x", 0.1
-                ),
+                _modal_overlap_3d_profiles(mode_components, mode_components, "x", 0.1),
                 _modal_overlap_3d_profiles(
                     mode_components, mode_components_bwd, "x", 0.1
                 ),
@@ -1002,6 +1000,70 @@ def test_project_modal_coefficients_3d_uses_rhs_orientation_for_complex_basis():
 
     np.testing.assert_allclose(a_p, a_true, rtol=1e-10, atol=1e-10)
     np.testing.assert_allclose(a_m, b_true, rtol=1e-10, atol=1e-10)
+
+
+def test_project_modal_coefficients_3d_group_recovers_multiple_modes():
+    components = ("Ey", "Ez", "Hy", "Hz")
+
+    def _mode(ey, hz):
+        return {
+            "Ey": np.asarray(ey, dtype=np.complex128),
+            "Ez": np.zeros((2,), dtype=np.complex128),
+            "Hy": np.zeros((2,), dtype=np.complex128),
+            "Hz": np.asarray(hz, dtype=np.complex128),
+        }
+
+    def _backward(mode):
+        return {
+            name: (-value if name.startswith("H") else value.copy())
+            for name, value in mode.items()
+        }
+
+    mode0 = _mode([1.0, 0.0], [1.0, 0.0])
+    mode1 = _mode([0.0, 1.0], [0.0, 1.0])
+    mode0_bwd = _backward(mode0)
+    mode1_bwd = _backward(mode1)
+    projections = [
+        {
+            "components": components,
+            "axis": "x",
+            "d_area": 1.0,
+            "direction_sign": 1.0,
+            "mode_components": mode0,
+            "mode_components_bwd": mode0_bwd,
+        },
+        {
+            "components": components,
+            "axis": "x",
+            "d_area": 1.0,
+            "direction_sign": 1.0,
+            "mode_components": mode1,
+            "mode_components_bwd": mode1_bwd,
+        },
+    ]
+    coeff_true = [
+        (0.7 - 0.2j, -0.1 + 0.05j),
+        (0.25 + 0.4j, 0.15 - 0.3j),
+    ]
+    field = {}
+    for name in components:
+        field[name] = (
+            coeff_true[0][0] * mode0[name]
+            + coeff_true[0][1] * mode0_bwd[name]
+            + coeff_true[1][0] * mode1[name]
+            + coeff_true[1][1] * mode1_bwd[name]
+        )
+
+    coeff, residual, cond = Simulation._project_modal_coefficients_3d_group(
+        field,
+        projections,
+    )
+
+    assert cond < 10.0
+    assert residual < 1e-12
+    for actual, expected in zip(coeff, coeff_true):
+        np.testing.assert_allclose(actual[0], expected[0], rtol=1e-10, atol=1e-10)
+        np.testing.assert_allclose(actual[1], expected[1], rtol=1e-10, atol=1e-10)
 
 
 def test_project_modal_coefficients_3d_uses_overlap_space_when_ill_conditioned(
@@ -2093,7 +2155,9 @@ def test_get_S_matrix_modal_dft_auto_selectors_prefer_band_dominant_source_wave(
     assert out_check["scattered_wave"] == "minus"
     np.testing.assert_allclose(out_check["P_selected"], np.array([0.25, 0.25]))
     np.testing.assert_allclose(out_check["P_rejected"], np.array([0.16, 0.16]))
-    np.testing.assert_allclose(out_check["P_selected_modal_net"], np.array([0.09, 0.09]))
+    np.testing.assert_allclose(
+        out_check["P_selected_modal_net"], np.array([0.09, 0.09])
+    )
 
 
 def test_normalize_portspecs_rejects_invalid_wave_selector():
