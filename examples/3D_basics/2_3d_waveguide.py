@@ -57,10 +57,8 @@ source = ModeSource(
 # Initialize the source to compute mode profiles
 source.initialize(grid.permittivity, DX)
 
-# Plot and save all mode field components (Ex, Ey, Ez, Hx, Hy, Hz)
-print("Plotting all mode field components...")
-# plot_mode_profile(source) from examples/_mpl_helpers.py can be used here.
-print("Mode profile figure saved to mode_profile.png")
+# Plot the initialized mode profile.
+source.show()
 
 # 4. Add Monitors
 # XY plane monitor in the middle of the waveguide thickness
@@ -83,5 +81,5 @@ sim = Simulation(
 # Show the design
 sim.show()
 
-# Stream snapshots and animate/save them manually from examples/_mpl_helpers.py.
-# results = sim.run(snapshot_field="Ez", snapshot_interval=15, store_snapshots=True)
+# Stream snapshots using the matplotlib-backed live view.
+# sim.run(animate_live="Ez", animation_interval=15)

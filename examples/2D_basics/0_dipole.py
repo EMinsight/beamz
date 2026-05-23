@@ -13,7 +13,7 @@ for path in (REPO_ROOT, EXAMPLES_ROOT):
 from beamz import *
 import numpy as np
 
-from _mpl_helpers import save_snapshot_video, show_snapshots
+from beamz.visual.mpl import save_snapshot_video, show_snapshots
 
 WL = 0.6*µm # wavelength of the source
 TIME = 25*WL/LIGHT_SPEED # total simulation duration

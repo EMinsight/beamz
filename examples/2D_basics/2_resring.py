@@ -6,7 +6,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from _mpl_helpers import save_snapshot_video, show_snapshots
+from beamz.visual.mpl import save_snapshot_video, show_snapshots
 
 # Parameters
 WL = 1.55*µm
@@ -22,11 +22,11 @@ design += Rectangle(position=(0,WL*2), width=X, height=WG_WIDTH, material=Materi
 design += Ring(position=(X/2, WL*2+WG_WIDTH+RING_RADIUS+WG_WIDTH/2+0.2*WG_WIDTH), 
                inner_radius=RING_RADIUS-WG_WIDTH/2, outer_radius=RING_RADIUS+WG_WIDTH/2, 
                material=Material(N_CORE**2))
-#design.show()
+design.show()
 
 # Rasterize the design
 grid = design.rasterize(resolution=DX)
-#grid.show(field="permittivity")
+grid.show(field="permittivity")
 
 # Define the signal & source
 time_steps = np.arange(0, TIME, DT)

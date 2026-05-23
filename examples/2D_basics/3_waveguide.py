@@ -7,7 +7,7 @@ from beamz import calc_optimal_fdtd_params
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from _mpl_helpers import plot_design, plot_grid, show_snapshots
+from beamz.visual.mpl import show_snapshots
 
 WL = 1.55*µm
 TIME = 90*WL/LIGHT_SPEED
@@ -19,11 +19,11 @@ DX, DT = calc_optimal_fdtd_params(WL, max(N_CORE, N_CLAD), safety_factor=0.999, 
 design = Design(width=18*µm, height=7*µm, material=Material(N_CLAD**2))
 design += Rectangle(position=(0,3.5*µm-WG_WIDTH/2), width=18*µm, height=WG_WIDTH, material=Material(N_CORE**2))
 #design += Rectangle(position=(9*µm-WG_WIDTH/2,0), width=WG_WIDTH, height=7*µm, material=Material(N_CORE**2))
-plot_design(design)
+design.show()
 
 # Rasterize the design
 grid = design.rasterize(resolution=DX)
-plot_grid(grid, field="permittivity")
+grid.show(field="permittivity")
 
 # Create the signal & source
 time_steps = np.arange(0, TIME, DT)
