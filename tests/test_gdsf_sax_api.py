@@ -1799,6 +1799,7 @@ def test_extract_port_waves_dft_modal_coefficients_synthetic(monkeypatch):
         return {
             "e_component": "Ez",
             "h_component": "Hy",
+            "mode_matrix": mode_matrix,
             "pinv": pinv,
             "condition_number": 1.0,
             "mode_neff": 2.0,
@@ -1852,6 +1853,24 @@ def test_extract_port_waves_dft_modal_coefficients_synthetic(monkeypatch):
     np.testing.assert_allclose(waves["o1"]["a_incident"], a_ref, rtol=1e-9, atol=1e-9)
     np.testing.assert_allclose(waves["o2"]["a_plus"], a_out, rtol=1e-9, atol=1e-9)
     np.testing.assert_allclose(waves["o2"]["a_minus"], b_out, rtol=1e-9, atol=1e-9)
+    np.testing.assert_allclose(
+        waves["o1"]["projection_residual"],
+        np.zeros_like(freqs),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        waves["o1"]["reference_projection_residual"],
+        np.zeros_like(freqs),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        waves["o2"]["projection_residual"],
+        np.zeros_like(freqs),
+        rtol=1e-12,
+        atol=1e-12,
+    )
 
     projection_frequencies.clear()
     sim.extract_port_waves_dft(

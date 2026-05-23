@@ -3139,6 +3139,34 @@ class Simulation:
         return float(0.5 * np.real(np.sum(s_axis) * float(d_area)))
 
     @staticmethod
+    def _modal_projection_reconstruction_residual(field_vec, projection, coeff):
+        mode_matrix = np.asarray(
+            projection.get("mode_matrix", np.zeros((0, 0), dtype=np.complex128)),
+            dtype=np.complex128,
+        )
+        if (
+            mode_matrix.ndim != 2
+            or mode_matrix.shape[0] <= 0
+            or mode_matrix.shape[1] < 2
+        ):
+            return np.nan
+        field = np.asarray(field_vec, dtype=np.complex128).reshape(-1)
+        if field.size <= 0:
+            return np.nan
+        n = int(min(field.size, mode_matrix.shape[0]))
+        if n <= 0:
+            return np.nan
+        coeff_arr = np.asarray(coeff, dtype=np.complex128).reshape(-1)
+        if coeff_arr.size < 2:
+            return np.nan
+        recon = mode_matrix[:n, :2] @ coeff_arr[:2]
+        target = field[:n]
+        denom = float(np.linalg.norm(target))
+        if denom <= 1e-30 or not np.isfinite(denom):
+            return np.nan
+        return float(np.linalg.norm(target - recon) / denom)
+
+    @staticmethod
     def _project_modal_coefficients_3d(
         field_components, projection, apply_calibration=True
     ):
@@ -3543,6 +3571,7 @@ class Simulation:
             a_minus = np.zeros(freqs.size, dtype=np.complex128)
             cond_main = np.zeros(freqs.size, dtype=float)
             neff_main = np.full(freqs.size, np.nan, dtype=float)
+            residual_main = np.full(freqs.size, np.nan, dtype=float)
             last_valid_proj = None
             last_tracked_proj = None
             for idx, f in enumerate(freqs):
@@ -3594,6 +3623,14 @@ class Simulation:
                     )
                     coeff = self._project_modal_coefficients_3d(field_components, proj)
                     a_plus[idx], a_minus[idx] = coeff[0], coeff[1]
+                    field_vec = np.concatenate(
+                        [
+                            np.asarray(
+                                field_components[comp], dtype=np.complex128
+                            ).reshape(-1)
+                            for comp in proj_components
+                        ]
+                    )
                 else:
                     field_vec = np.concatenate(
                         [
@@ -3608,6 +3645,11 @@ class Simulation:
                     )
                     coeff = proj["pinv"] @ field_vec
                     a_plus[idx], a_minus[idx] = coeff[0], coeff[1]
+                residual_main[idx] = self._modal_projection_reconstruction_residual(
+                    field_vec,
+                    proj,
+                    coeff,
+                )
                 cond_main[idx] = float(proj.get("condition_number", np.nan))
                 neff_main[idx] = float(proj.get("mode_neff", np.nan))
 
@@ -3616,6 +3658,7 @@ class Simulation:
                 "a_minus": a_minus,
                 "condition_number": cond_main,
                 "mode_neff": neff_main,
+                "projection_residual": residual_main,
             }
             if return_power:
                 port_waves["P_plus"] = np.abs(a_plus) ** 2
@@ -3639,6 +3682,7 @@ class Simulation:
                 a_incident_minus = np.zeros(freqs.size, dtype=np.complex128)
                 cond_ref = np.zeros(freqs.size, dtype=float)
                 neff_ref = np.full(freqs.size, np.nan, dtype=float)
+                residual_ref = np.full(freqs.size, np.nan, dtype=float)
                 last_valid_ref_proj = None
                 last_tracked_ref_proj = None
                 for idx, f in enumerate(freqs):
@@ -3700,6 +3744,14 @@ class Simulation:
                             field_components, proj
                         )
                         a_incident_plus[idx], a_incident_minus[idx] = coeff[0], coeff[1]
+                        field_vec = np.concatenate(
+                            [
+                                np.asarray(
+                                    field_components[comp], dtype=np.complex128
+                                ).reshape(-1)
+                                for comp in proj_components
+                            ]
+                        )
                     else:
                         field_vec = np.concatenate(
                             [
@@ -3714,6 +3766,11 @@ class Simulation:
                         )
                         coeff = proj["pinv"] @ field_vec
                         a_incident_plus[idx], a_incident_minus[idx] = coeff[0], coeff[1]
+                    residual_ref[idx] = self._modal_projection_reconstruction_residual(
+                        field_vec,
+                        proj,
+                        coeff,
+                    )
                     cond_ref[idx] = float(proj.get("condition_number", np.nan))
                     neff_ref[idx] = float(proj.get("mode_neff", np.nan))
                 port_waves["a_incident"] = a_incident_plus
@@ -3721,6 +3778,7 @@ class Simulation:
                 port_waves["a_incident_minus"] = a_incident_minus
                 port_waves["reference_condition_number"] = cond_ref
                 port_waves["reference_mode_neff"] = neff_ref
+                port_waves["reference_projection_residual"] = residual_ref
                 if return_power:
                     port_waves["P_incident"] = np.abs(a_incident_plus) ** 2
                     port_waves["P_incident_plus"] = np.abs(a_incident_plus) ** 2
