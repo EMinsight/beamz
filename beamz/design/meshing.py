@@ -884,11 +884,17 @@ class RegularGrid(BaseMeshGrid):
             raise RuntimeError("Grid not rasterized yet.")
         return grid_plot_data(self, field=field)
 
-    def show(self, **kwargs):
-        """Display a rasterized grid field using the matplotlib backend."""
+    def plot(self, **kwargs):
+        """Plot a rasterized grid field using the matplotlib backend."""
         from beamz.visual.mpl import plot_grid
 
+        kwargs.setdefault("show", False)
         return plot_grid(self, **kwargs)
+
+    def show(self, **kwargs):
+        """Display a rasterized grid field using the matplotlib backend."""
+        kwargs.setdefault("show", True)
+        return self.plot(**kwargs)
 
 
 class RegularGrid3D(BaseMeshGrid):
@@ -1661,11 +1667,17 @@ class RegularGrid3D(BaseMeshGrid):
             z_position=z_position,
         )
 
-    def show(self, **kwargs):
-        """Display a 2D slice of the rasterized 3D grid."""
+    def plot(self, **kwargs):
+        """Plot a 2D slice of the rasterized 3D grid."""
         from beamz.visual.mpl import plot_grid
 
+        kwargs.setdefault("show", False)
         return plot_grid(self, **kwargs)
+
+    def show(self, **kwargs):
+        """Display a 2D slice of the rasterized 3D grid."""
+        kwargs.setdefault("show", True)
+        return self.plot(**kwargs)
 
 
 # Convenience functions for automatic mesh selection

@@ -415,6 +415,47 @@ def plot_signal(signals, t, *, ax=None, figsize=(9, 4), show=True, save_path=Non
     return fig, ax
 
 
+def plot_source_signal(source, *, t=None, ax=None, figsize=(9, 4), show=True):
+    """Plot a source object's time dependence."""
+    from beamz.visual.data import source_signal_plot_data
+
+    payload = source_signal_plot_data(source, t=t)
+    fig, ax = _figure_axes(ax, figsize=figsize)
+    ax.plot(payload["t_scaled"], payload["signals"][0])
+    ax.set_xlim(*payload["xlim"])
+    ax.set_xlabel(f"Time ({payload['time_unit']})")
+    ax.set_ylabel("Amplitude")
+    ax.set_title(f"{payload['source_type']} Signal")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    _maybe_show(fig, show=show)
+    return fig, ax
+
+
+def plot_source_spectrum(
+    source,
+    *,
+    t=None,
+    dt=None,
+    ax=None,
+    figsize=(9, 4),
+    show=True,
+):
+    """Plot a source object's normalized spectrum."""
+    from beamz.visual.data import source_spectrum_plot_data
+
+    payload = source_spectrum_plot_data(source, t=t, dt=dt)
+    fig, ax = _figure_axes(ax, figsize=figsize)
+    ax.plot(payload["frequency_scaled"], payload["amplitude"])
+    ax.set_xlabel(f"Frequency ({payload['frequency_unit']})")
+    ax.set_ylabel("Normalized amplitude")
+    ax.set_title(f"{payload['source_type']} Spectrum")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    _maybe_show(fig, show=show)
+    return fig, ax
+
+
 def plot_mode_profile(
     source,
     *,
@@ -461,6 +502,36 @@ def plot_mode_profile(
     return fig, ax
 
 
+def plot_mode_permittivity(
+    source,
+    *,
+    ax=None,
+    figsize=(8, 6),
+    cmap="viridis",
+    show=True,
+):
+    """Plot the permittivity profile used by a ModeSource."""
+    from beamz.visual.data import mode_permittivity_plot_data
+
+    payload = mode_permittivity_plot_data(source)
+    fig, ax = _figure_axes(ax, figsize=figsize)
+    array = np.asarray(payload["array"])
+    if array.ndim == 1:
+        ax.plot(array, "k-")
+        ax.set_xlabel("Coordinate index")
+        ax.set_ylabel("Permittivity")
+        ax.grid(True, alpha=0.3)
+    else:
+        im = ax.imshow(array, origin="lower", cmap=cmap, aspect="auto")
+        fig.colorbar(im, ax=ax, label="Permittivity")
+        ax.set_xlabel("Axis 1 index")
+        ax.set_ylabel("Axis 2 index")
+    ax.set_title(payload["title"])
+    fig.tight_layout()
+    _maybe_show(fig, show=show)
+    return fig, ax
+
+
 def plot_monitor_field(
     monitor,
     *,
@@ -476,14 +547,67 @@ def plot_monitor_field(
     fig, ax = _figure_axes(ax, figsize=figsize)
     if payload["monitor_type"] == "line":
         ax.plot(payload["x"], np.ravel(payload["array"]), "b-", linewidth=2)
-        ax.set_xlabel("Position along monitor line")
+        ax.set_xlabel(payload.get("xlabel", "Position along monitor line"))
         ax.set_ylabel(f"{field} amplitude")
         ax.grid(True, alpha=0.3)
     else:
-        im = ax.imshow(payload["array"], cmap=cmap, origin="lower", aspect="auto")
+        im = ax.imshow(
+            payload["array"],
+            cmap=resolve_cmap(cmap),
+            origin="lower",
+            aspect="auto",
+            extent=payload.get("extent"),
+        )
         fig.colorbar(im, ax=ax, label=f"{field} amplitude")
-        ax.set_xlabel("X index")
-        ax.set_ylabel("Y index")
+        ax.set_xlabel(payload.get("xlabel", "X index"))
+        ax.set_ylabel(payload.get("ylabel", "Y index"))
+    ax.set_title(payload["title"])
+    fig.tight_layout()
+    _maybe_show(fig, show=show)
+    return fig, ax
+
+
+def plot_simulation_field(
+    results,
+    *,
+    field="Ez",
+    time_index=-1,
+    plane="z",
+    index=None,
+    ax=None,
+    figsize=(8, 6),
+    cmap="twilight_zero",
+    cmap_limits="dynamic",
+    vmin=None,
+    vmax=None,
+    colorbar=True,
+    show=True,
+):
+    """Plot a stored simulation field frame from ``SimulationResults``."""
+    from beamz.visual.data import simulation_field_plot_data
+
+    payload = simulation_field_plot_data(
+        results,
+        field=field,
+        time_index=time_index,
+        plane=plane,
+        index=index,
+    )
+    fig, ax = _figure_axes(ax, figsize=figsize)
+    vmin, vmax = resolve_cmap_limits(cmap_limits, vmin=vmin, vmax=vmax)
+    im = ax.imshow(
+        payload["array"],
+        origin="lower",
+        cmap=resolve_cmap(cmap),
+        extent=payload["extent"],
+        aspect="auto",
+        vmin=vmin,
+        vmax=vmax,
+    )
+    if colorbar:
+        fig.colorbar(im, ax=ax, label=f"{field} amplitude")
+    ax.set_xlabel(payload["xlabel"])
+    ax.set_ylabel(payload["ylabel"])
     ax.set_title(payload["title"])
     fig.tight_layout()
     _maybe_show(fig, show=show)
@@ -763,16 +887,20 @@ def show_snapshots(
     snapshots,
     *,
     cmap="twilight_zero",
+    cmap_limits="dynamic",
     clean_visualization=False,
     interpolation="bicubic",
     pause=0.001,
     show=True,
+    vmin=None,
+    vmax=None,
 ):
     """Show a sequence of stored snapshot payloads."""
     if not snapshots:
         return None, None
     plt = _pyplot()
     context = {"fig": None, "ax": None}
+    vmin, vmax = resolve_cmap_limits(cmap_limits, vmin=vmin, vmax=vmax)
     for snapshot in snapshots:
         fig, ax = snapshot_figure(
             snapshot,
@@ -781,6 +909,8 @@ def show_snapshots(
             interpolation=interpolation,
             figure=context["fig"],
             axes=context["ax"],
+            vmin=vmin,
+            vmax=vmax,
         )
         context["fig"], context["ax"] = fig, ax
         if show:
@@ -796,8 +926,11 @@ def save_snapshot_video(
     fps=30,
     dpi=150,
     cmap="twilight_zero",
+    cmap_limits=None,
     clean_visualization=False,
     interpolation="bicubic",
+    vmin=None,
+    vmax=None,
 ):
     """Save stored simulation snapshots to a video file."""
     if not snapshots:
@@ -809,7 +942,10 @@ def save_snapshot_video(
     fig, ax = plt.subplots(
         figsize=_snapshot_figsize(snapshots[0], clean_visualization=clean_visualization)
     )
-    vmin, vmax = _snapshot_color_limits(snapshots)
+    if cmap_limits is None and vmin is None and vmax is None:
+        vmin, vmax = _snapshot_color_limits(snapshots)
+    else:
+        vmin, vmax = resolve_cmap_limits(cmap_limits, vmin=vmin, vmax=vmax)
     writer = FFMpegWriter(fps=fps, bitrate=5000)
     with writer.saving(fig, str(output), dpi=dpi):
         for snapshot in snapshots:
@@ -833,11 +969,16 @@ __all__ = [
     "get_twilight_zero_cmap",
     "plot_design",
     "plot_grid",
+    "plot_mode_permittivity",
     "plot_mode_profile",
     "plot_monitor_field",
     "plot_monitor_power",
+    "plot_simulation_field",
     "plot_signal",
     "plot_simulation",
+    "plot_source_signal",
+    "plot_source_spectrum",
+    "resolve_cmap_limits",
     "resolve_cmap",
     "save_snapshot_video",
     "show_snapshots",

@@ -1657,25 +1657,33 @@ class Monitor:
 
         return monitor_power_plot_data(self, **kwargs)
 
-    def show(self, **kwargs):
-        """Display recorded monitor field data using the matplotlib backend."""
+    def plot(self, **kwargs):
+        """Plot recorded monitor field data using the matplotlib backend."""
         from beamz.visual.mpl import plot_monitor_field
 
+        kwargs.setdefault("show", False)
         return plot_monitor_field(self, **kwargs)
+
+    def show(self, **kwargs):
+        """Display recorded monitor field data using the matplotlib backend."""
+        kwargs.setdefault("show", True)
+        return self.plot(**kwargs)
 
     def plot_fields(self, **kwargs):
         """Plot recorded monitor field data."""
-        return self.show(**kwargs)
-
-    def show_power(self, **kwargs):
-        """Display monitor power history using the matplotlib backend."""
-        from beamz.visual.mpl import plot_monitor_power
-
-        return plot_monitor_power(self, **kwargs)
+        return self.plot(**kwargs)
 
     def plot_power(self, **kwargs):
         """Plot monitor power history."""
-        return self.show_power(**kwargs)
+        from beamz.visual.mpl import plot_monitor_power
+
+        kwargs.setdefault("show", False)
+        return plot_monitor_power(self, **kwargs)
+
+    def show_power(self, **kwargs):
+        """Display monitor power history using the matplotlib backend."""
+        kwargs.setdefault("show", True)
+        return self.plot_power(**kwargs)
 
     def animate_fields(self, **kwargs):
         """Animate recorded monitor field data using matplotlib."""

@@ -5,7 +5,16 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from beamz import Design, Material, Monitor, Rectangle, Simulation, plot_signal, um
+from beamz import (
+    Design,
+    GaussianSource,
+    Material,
+    Monitor,
+    Rectangle,
+    Simulation,
+    plot_signal,
+    um,
+)
 from beamz.devices.sources.mode import ModeSource
 from beamz.simulation.core import SimulationResults
 
@@ -31,11 +40,30 @@ def test_design_show_returns_matplotlib_handles():
     assert ax.get_title() == "Design Layout"
 
 
+def test_design_plot_is_standard_non_showing_api():
+    design = Design(width=2 * um, height=1 * um, material=Material(1.0))
+
+    fig, ax = _close(design.plot())
+
+    assert fig is ax.figure
+    assert ax.get_title() == "Design Layout"
+
+
 def test_grid_show_returns_matplotlib_handles():
     design = Design(width=2 * um, height=1 * um, material=Material(1.0))
     grid = design.rasterize(resolution=0.25 * um)
 
     fig, ax = _close(grid.show(show=False))
+
+    assert fig is ax.figure
+    assert ax.get_title() == "Rasterized Design Grid"
+
+
+def test_grid_plot_accepts_standard_slice_kwargs():
+    design = Design(width=2 * um, height=1 * um, material=Material(1.0))
+    grid = design.rasterize(resolution=0.25 * um)
+
+    fig, ax = _close(grid.plot(field="permittivity"))
 
     assert fig is ax.figure
     assert ax.get_title() == "Rasterized Design Grid"
@@ -55,6 +83,33 @@ def test_mode_source_show_uses_profile_data():
     assert "Mode Source 1D Profile" in ax.get_title()
 
 
+def test_mode_source_plot_eps_and_source_spectrum():
+    source = ModeSource.__new__(ModeSource)
+    source._eps_profile_2d = np.ones((3, 4)) * 12.0
+    source.signal = np.sin(np.linspace(0.0, 2.0 * np.pi, 16))
+
+    eps_fig, eps_ax = _close(source.plot_eps())
+    spectrum_fig, spectrum_ax = _close(source.plot_spectrum(dt=1e-15))
+
+    assert eps_fig is eps_ax.figure
+    assert eps_ax.get_title() == "Mode Source Permittivity"
+    assert spectrum_fig is spectrum_ax.figure
+    assert spectrum_ax.get_title() == "ModeSource Spectrum"
+
+
+def test_gaussian_source_plots_signal_and_spectrum():
+    signal = np.sin(np.linspace(0.0, 2.0 * np.pi, 16))
+    source = GaussianSource(position=(0.0, 0.0), width=0.1 * um, signal=signal)
+
+    signal_fig, signal_ax = _close(source.plot_signal(t=np.arange(signal.size) * 1e-15))
+    spectrum_fig, spectrum_ax = _close(source.plot_spectrum(dt=1e-15))
+
+    assert signal_fig is signal_ax.figure
+    assert signal_ax.get_title() == "GaussianSource Signal"
+    assert spectrum_fig is spectrum_ax.figure
+    assert spectrum_ax.get_title() == "GaussianSource Spectrum"
+
+
 def test_monitor_show_and_power_show_return_matplotlib_handles():
     monitor = Monitor(start=(0.0, 0.0), end=(1.0, 0.0))
     monitor.fields["t"].append(0.0)
@@ -63,6 +118,21 @@ def test_monitor_show_and_power_show_return_matplotlib_handles():
 
     field_fig, field_ax = _close(monitor.show(show=False))
     power_fig, power_ax = _close(monitor.show_power(show=False))
+
+    assert field_fig is field_ax.figure
+    assert "Ez at t" in field_ax.get_title()
+    assert power_fig is power_ax.figure
+    assert power_ax.get_title() == "Power vs Time"
+
+
+def test_monitor_plot_fields_and_power_are_standard_non_showing_api():
+    monitor = Monitor(start=(0.0, 0.0), end=(1.0, 0.0))
+    monitor.fields["t"].append(0.0)
+    monitor.fields["Ez"].append(np.array([0.0, 1.0, 0.0]))
+    monitor.power_history.extend([1.0, 2.0, 1.0])
+
+    field_fig, field_ax = _close(monitor.plot_fields())
+    power_fig, power_ax = _close(monitor.plot_power())
 
     assert field_fig is field_ax.figure
     assert "Ez at t" in field_ax.get_title()
@@ -86,6 +156,22 @@ def test_simulation_show_is_matplotlib_and_show3d_remains_available():
     assert ax.get_title() == "Simulation Layout"
     assert hasattr(sim, "show3d")
     assert hasattr(sim, "view3d")
+
+
+def test_simulation_plot_is_standard_non_showing_api():
+    design = Design(width=2 * um, height=1 * um, material=Material(1.0))
+    sim = Simulation(
+        design=design,
+        sources=[],
+        monitors=[],
+        time=np.array([0.0, 1e-15]),
+        resolution=0.25 * um,
+    )
+
+    fig, ax = _close(sim.plot())
+
+    assert fig is ax.figure
+    assert ax.get_title() == "Simulation Layout"
 
 
 def test_plot_signal_returns_matplotlib_handles():
@@ -128,3 +214,21 @@ def test_simulation_results_show_uses_stored_snapshots():
 
     assert fig is ax.figure
     assert "Ez at t" in ax.get_title()
+
+
+def test_simulation_results_plot_field_uses_stored_fields():
+    design = Design(width=2 * um, height=1 * um, material=Material(1.0))
+    sim = Simulation(
+        design=design,
+        sources=[],
+        monitors=[],
+        time=np.array([0.0, 1e-15]),
+        resolution=0.25 * um,
+    )
+    fields = {"Ez": np.zeros((2, 4, 5))}
+    results = SimulationResults(simulation=sim, fields=fields)
+
+    fig, ax = _close(results.plot_field(field="Ez", time_index=-1))
+
+    assert fig is ax.figure
+    assert ax.get_title() == "Ez frame -1"

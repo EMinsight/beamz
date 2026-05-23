@@ -2753,11 +2753,75 @@ class ModeSource:
 
         return mode_profile_data(self, field=field)
 
-    def show(self, **kwargs):
-        """Display the mode profile using the matplotlib backend."""
+    def mode_permittivity_plot_data(self):
+        """Return permittivity data used by this mode source."""
+        from beamz.visual.data import mode_permittivity_plot_data
+
+        return mode_permittivity_plot_data(self)
+
+    def signal_plot_data(self, *, t=None):
+        """Return renderer-agnostic source signal data."""
+        from beamz.visual.data import source_signal_plot_data
+
+        return source_signal_plot_data(self, t=t)
+
+    def spectrum_plot_data(self, *, t=None, dt=None):
+        """Return renderer-agnostic source spectrum data."""
+        from beamz.visual.data import source_spectrum_plot_data
+
+        return source_spectrum_plot_data(self, t=t, dt=dt)
+
+    def plot(self, **kwargs):
+        """Plot the mode profile using the matplotlib backend."""
         from beamz.visual.mpl import plot_mode_profile
 
+        kwargs.setdefault("show", False)
         return plot_mode_profile(self, **kwargs)
+
+    def show(self, **kwargs):
+        """Display the mode profile using the matplotlib backend."""
+        kwargs.setdefault("show", True)
+        return self.plot(**kwargs)
+
+    def plot_mode(self, **kwargs):
+        """Alias for :meth:`plot`."""
+        return self.plot(**kwargs)
+
+    def plot_eps(self, **kwargs):
+        """Plot the permittivity profile used by the mode solve."""
+        from beamz.visual.mpl import plot_mode_permittivity
+
+        kwargs.setdefault("show", False)
+        return plot_mode_permittivity(self, **kwargs)
+
+    def show_eps(self, **kwargs):
+        """Display the permittivity profile used by the mode solve."""
+        kwargs.setdefault("show", True)
+        return self.plot_eps(**kwargs)
+
+    def plot_signal(self, **kwargs):
+        """Plot the source time dependence."""
+        from beamz.visual.mpl import plot_source_signal
+
+        kwargs.setdefault("show", False)
+        return plot_source_signal(self, **kwargs)
+
+    def show_signal(self, **kwargs):
+        """Display the source time dependence."""
+        kwargs.setdefault("show", True)
+        return self.plot_signal(**kwargs)
+
+    def plot_spectrum(self, **kwargs):
+        """Plot the normalized source spectrum."""
+        from beamz.visual.mpl import plot_source_spectrum
+
+        kwargs.setdefault("show", False)
+        return plot_source_spectrum(self, **kwargs)
+
+    def show_spectrum(self, **kwargs):
+        """Display the normalized source spectrum."""
+        kwargs.setdefault("show", True)
+        return self.plot_spectrum(**kwargs)
 
     def to_plot_data(
         self, *, facecolor="none", edgecolor="crimson", alpha=0.8, linestyle="-"

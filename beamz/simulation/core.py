@@ -224,12 +224,38 @@ class SimulationResults(Mapping[str, Any]):
             payload["snapshots"] = list(self.snapshots)
         return payload
 
+    def plot_field(self, **kwargs):
+        """Plot a stored field frame from this result."""
+        from beamz.visual.mpl import plot_simulation_field
+
+        kwargs.setdefault("show", False)
+        return plot_simulation_field(self, **kwargs)
+
+    def plot(self, **kwargs):
+        """Plot stored simulation snapshots with the matplotlib backend."""
+        if not self.snapshots:
+            return self.plot_field(**kwargs)
+        from beamz.visual.mpl import show_snapshots
+
+        kwargs.setdefault("show", False)
+        return show_snapshots(self.snapshots, **kwargs)
+
     def show(self, **kwargs):
-        """Display stored simulation snapshots with the matplotlib backend."""
+        """Display stored simulation snapshots or stored fields."""
+        if not self.snapshots:
+            kwargs.setdefault("show", True)
+            return self.plot_field(**kwargs)
+
+        kwargs.setdefault("show", True)
+        return self.plot(**kwargs)
+
+    def animate(self, **kwargs):
+        """Animate stored simulation snapshots."""
         if not self.snapshots:
             raise RuntimeError("No snapshots available. Run with snapshot_field first.")
         from beamz.visual.mpl import show_snapshots
 
+        kwargs.setdefault("show", True)
         return show_snapshots(self.snapshots, **kwargs)
 
     def save_video(self, filename, **kwargs):
@@ -4086,6 +4112,9 @@ class Simulation:
                 fps=int(kwargs.get("video_fps", 30)),
                 dpi=int(kwargs.get("video_dpi", 150)),
                 cmap=kwargs.get("cmap", "twilight_zero"),
+                cmap_limits=kwargs.get("cmap_limits"),
+                vmin=kwargs.get("vmin"),
+                vmax=kwargs.get("vmax"),
                 clean_visualization=bool(kwargs.get("clean_visualization", False)),
                 interpolation=kwargs.get("interpolation", "bicubic"),
             )
@@ -4103,12 +4132,29 @@ class Simulation:
 
         return simulation_plot_data(self)
 
+    def plot(self, **kwargs):
+        """Plot the simulation layout using the matplotlib backend."""
+        from beamz.visual.mpl import plot_simulation
+
+        kwargs.setdefault("show", False)
+        return plot_simulation(self, **kwargs)
+
     def show(self, *, mode="auto", open_browser=True, **kwargs):
         """Display the simulation layout using the matplotlib backend."""
         del mode, open_browser
-        from beamz.visual.mpl import plot_simulation
+        kwargs.setdefault("show", True)
+        return self.plot(**kwargs)
 
-        return plot_simulation(self, **kwargs)
+    def animate(self, field="Ez", **kwargs):
+        """Run the simulation with live matplotlib animation enabled."""
+        kwargs.setdefault("animate_live", field)
+        return self.run(**kwargs)
+
+    def save_video(self, filename, *, field="Ez", **kwargs):
+        """Run the simulation and save a snapshot video."""
+        kwargs.setdefault("save_video", filename)
+        kwargs.setdefault("video_field", field)
+        return self.run(**kwargs)
 
     def show3d(self, *, mode="auto", open_browser=True, **kwargs):
         """Display the simulation setup in the interactive 3D scene viewer."""

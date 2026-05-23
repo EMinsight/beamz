@@ -26,6 +26,19 @@ def _style_payload(**kwargs):
     return {key: value for key, value in kwargs.items() if value is not None}
 
 
+def _frequency_scale_and_label(max_frequency):
+    max_frequency = float(max_frequency)
+    if max_frequency >= 1e12:
+        return 1e-12, "THz"
+    if max_frequency >= 1e9:
+        return 1e-9, "GHz"
+    if max_frequency >= 1e6:
+        return 1e-6, "MHz"
+    if max_frequency >= 1e3:
+        return 1e-3, "kHz"
+    return 1.0, "Hz"
+
+
 def _world_origin(design_or_grid):
     design = getattr(design_or_grid, "design", design_or_grid)
     origin = getattr(design, "world_origin", None)
@@ -547,6 +560,84 @@ def signal_plot_data(signals, t):
     }
 
 
+def source_signal_plot_data(source, t=None):
+    """Prepare source time-signal data from a source object."""
+    signal = getattr(source, "signal", None)
+    if signal is None:
+        raise RuntimeError(f"{type(source).__name__} has no signal attribute.")
+    if callable(signal):
+        if t is None:
+            raise ValueError("t must be provided when plotting a callable source signal.")
+        t_arr = np.asarray(t, dtype=float)
+        values = np.asarray([signal(float(ti)) for ti in t_arr])
+    else:
+        values = np.asarray(signal)
+        if t is None:
+            t_arr = np.arange(values.shape[0], dtype=float)
+        else:
+            t_arr = np.asarray(t, dtype=float)
+            if t_arr.shape[0] != values.shape[0]:
+                raise ValueError(
+                    "t and source signal must have the same length: "
+                    f"{t_arr.shape[0]} != {values.shape[0]}"
+                )
+    payload = signal_plot_data(values, t_arr)
+    payload["kind"] = "source_signal"
+    payload["source_type"] = type(source).__name__
+    return payload
+
+
+def source_spectrum_plot_data(source, t=None, *, dt=None):
+    """Prepare a one-sided source spectrum from a source object."""
+    signal_payload = source_signal_plot_data(source, t=t)
+    values = np.asarray(signal_payload["signals"][0])
+    n = values.size
+    if n < 2:
+        raise ValueError("At least two signal samples are required for a spectrum.")
+
+    if dt is None:
+        t_seconds = np.asarray(signal_payload["t_seconds"], dtype=float)
+        deltas = np.diff(t_seconds)
+        if t is None or not np.all(np.isfinite(deltas)) or np.allclose(deltas, 0.0):
+            dt_seconds = 1.0
+            frequency_unit = "cycles/sample"
+            frequency_scale = 1.0
+        else:
+            dt_seconds = float(np.median(deltas))
+            frequency_scale, frequency_unit = _frequency_scale_and_label(
+                1.0 / max(dt_seconds, 1e-30)
+            )
+    else:
+        dt_seconds = float(dt)
+        frequency_scale, frequency_unit = _frequency_scale_and_label(
+            1.0 / max(dt_seconds, 1e-30)
+        )
+
+    if np.iscomplexobj(values):
+        spectrum = np.fft.fft(values)
+        freqs = np.fft.fftfreq(n, d=dt_seconds)
+        keep = freqs >= 0.0
+        freqs = freqs[keep]
+        spectrum = spectrum[keep]
+    else:
+        spectrum = np.fft.rfft(values)
+        freqs = np.fft.rfftfreq(n, d=dt_seconds)
+
+    amplitude = np.abs(spectrum)
+    if np.max(amplitude) > 0:
+        amplitude = amplitude / np.max(amplitude)
+
+    return {
+        "kind": "source_spectrum",
+        "source_type": signal_payload["source_type"],
+        "frequency_hz": freqs.copy(),
+        "frequency_scaled": freqs * frequency_scale,
+        "frequency_scale": float(frequency_scale),
+        "frequency_unit": frequency_unit,
+        "amplitude": amplitude,
+    }
+
+
 def mode_profile_data(mode_source, field=None):
     """Serialize mode-source profile data for manual plotting."""
     del field  # backward-compatible placeholder
@@ -580,6 +671,24 @@ def mode_profile_data(mode_source, field=None):
     }
 
 
+def mode_permittivity_plot_data(mode_source):
+    """Prepare mode-source permittivity data for plotting."""
+    eps = getattr(mode_source, "_eps_profile_2d", None)
+    if eps is None:
+        grid = getattr(mode_source, "grid", None)
+        eps = getattr(grid, "permittivity", None)
+    if eps is None:
+        raise RuntimeError("No permittivity data available for this ModeSource.")
+    eps = np.squeeze(np.asarray(eps))
+    if eps.ndim > 2:
+        eps = eps[eps.shape[0] // 2]
+    return {
+        "kind": "mode_permittivity",
+        "array": np.asarray(eps).copy(),
+        "title": "Mode Source Permittivity",
+    }
+
+
 def monitor_field_plot_data(monitor, *, field="Ez", time_index=-1):
     """Serialize monitor field data for manual plotting."""
     if not monitor.fields["t"]:
@@ -593,15 +702,40 @@ def monitor_field_plot_data(monitor, *, field="Ez", time_index=-1):
 
     field_data = np.asarray(monitor.fields[field][time_index])
     t_value = float(monitor.fields["t"][time_index])
-    return {
+    payload = {
         "kind": "monitor_field",
         "field": field,
         "time": t_value,
         "monitor_type": monitor.monitor_type,
         "array": field_data.copy(),
-        "x": np.arange(field_data.shape[-1], dtype=float),
         "title": f"{field} at t = {t_value:.2e} s",
     }
+    if monitor.monitor_type == "line":
+        start = np.asarray(getattr(monitor, "start", (0.0, 0.0)), dtype=float)
+        end = np.asarray(getattr(monitor, "end", start), dtype=float)
+        length = float(np.linalg.norm(end - start))
+        scale, unit = get_si_scale_and_label(max(length, 1e-30))
+        payload.update(
+            {
+                "x": np.linspace(0.0, length * scale, field_data.size),
+                "xlabel": f"Position along monitor ({unit})",
+            }
+        )
+    else:
+        size = tuple(float(v) for v in getattr(monitor, "size", field_data.shape[-2:]))
+        if len(size) >= 2 and size[0] > 0.0 and size[1] > 0.0:
+            extent = (0.0, size[0], 0.0, size[1])
+        else:
+            extent = (0.0, field_data.shape[-1], 0.0, field_data.shape[-2])
+        scale, unit = get_si_scale_and_label(max(extent[1], extent[3], 1e-30))
+        payload.update(
+            {
+                "extent": tuple(float(v * scale) for v in extent),
+                "xlabel": f"Axis 1 ({unit})",
+                "ylabel": f"Axis 2 ({unit})",
+            }
+        )
+    return payload
 
 
 def monitor_power_plot_data(monitor, *, log_scale=False, db_scale=False):
@@ -626,6 +760,110 @@ def monitor_power_plot_data(monitor, *, log_scale=False, db_scale=False):
         "ylabel": ylabel,
         "yscale": yscale,
         "title": "Power vs Time",
+    }
+
+
+def _select_field_frame(values, *, time_index=-1):
+    arr = np.asarray(values)
+    if arr.ndim < 2:
+        raise ValueError(f"Field data must be at least 2D, got shape {arr.shape}.")
+    if arr.ndim in {3, 4}:
+        return np.asarray(arr[time_index]), int(time_index)
+    return arr, None
+
+
+def _slice_2d(values, *, plane="z", index=None):
+    arr = np.squeeze(np.asarray(values))
+    if arr.ndim == 2:
+        return arr, "xy", None
+    if arr.ndim != 3:
+        raise ValueError(f"Cannot plot field array with shape {arr.shape}.")
+
+    plane_key = str(plane).lower()
+    if plane_key in {"xy", "z"}:
+        axis = 0
+        plane_label = "xy"
+    elif plane_key in {"xz", "y"}:
+        axis = 1
+        plane_label = "xz"
+    elif plane_key in {"yz", "x"}:
+        axis = 2
+        plane_label = "yz"
+    else:
+        raise ValueError("plane must be one of 'xy'/'z', 'xz'/'y', or 'yz'/'x'.")
+
+    if index is None:
+        index = arr.shape[axis] // 2
+    index = int(index)
+    if index < 0:
+        index += arr.shape[axis]
+    if index < 0 or index >= arr.shape[axis]:
+        raise IndexError(
+            f"Slice index {index} is out of bounds for axis {axis} "
+            f"with size {arr.shape[axis]}."
+        )
+
+    if axis == 0:
+        return arr[index, :, :], plane_label, index
+    if axis == 1:
+        return arr[:, index, :], plane_label, index
+    return arr[:, :, index], plane_label, index
+
+
+def simulation_field_plot_data(
+    results,
+    *,
+    field="Ez",
+    time_index=-1,
+    plane="z",
+    index=None,
+):
+    """Serialize stored simulation field data into a 2D plot payload."""
+    if results.fields is None or field not in results.fields:
+        available = [] if results.fields is None else sorted(results.fields)
+        raise RuntimeError(
+            f"Field '{field}' is not stored. Available stored fields: {available}"
+        )
+
+    frame, selected_time = _select_field_frame(
+        results.fields[field], time_index=time_index
+    )
+    field_2d, plane_label, selected_index = _slice_2d(
+        frame,
+        plane=plane,
+        index=index,
+    )
+
+    design = results.simulation.design
+    depth = float(getattr(design, "depth", 0.0) or 0.0)
+    if plane_label == "xy":
+        extent = (0.0, float(design.width), 0.0, float(design.height))
+        xlabel, ylabel = "X", "Y"
+    elif plane_label == "xz":
+        extent = (0.0, float(design.width), 0.0, depth)
+        xlabel, ylabel = "X", "Z"
+    else:
+        extent = (0.0, float(design.height), 0.0, depth)
+        xlabel, ylabel = "Y", "Z"
+
+    scale, unit = get_si_scale_and_label(max(extent[1], extent[3], 1e-30))
+    title = f"{field}"
+    if selected_time is not None:
+        title += f" frame {selected_time}"
+    if selected_index is not None:
+        title += f" ({plane_label}, index {selected_index})"
+
+    return {
+        "kind": "simulation_field",
+        "field": field,
+        "array": np.asarray(field_2d).copy(),
+        "plane": plane_label,
+        "slice_index": selected_index,
+        "time_index": selected_time,
+        "extent": tuple(float(v * scale) for v in extent),
+        "xlabel": f"{xlabel} ({unit})",
+        "ylabel": f"{ylabel} ({unit})",
+        "title": title,
     }
 
 
@@ -666,12 +904,16 @@ __all__ = [
     "design_plot_data",
     "grid_plot_data",
     "mode_profile_data",
+    "mode_permittivity_plot_data",
     "monitor_field_plot_data",
     "monitor_plot_data",
     "monitor_power_plot_data",
     "signal_plot_data",
     "simulation_plot_data",
+    "simulation_field_plot_data",
     "snapshot_payload",
     "source_plot_data",
+    "source_signal_plot_data",
+    "source_spectrum_plot_data",
     "structure_plot_data",
 ]
