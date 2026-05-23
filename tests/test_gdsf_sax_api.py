@@ -15,6 +15,7 @@ from beamz import (
     dxdt,
 )
 from beamz.devices.sources.mode import _modal_overlap_3d_profiles
+from beamz.simulation.yee import component_shape_3d
 
 
 def test_dxdt_alias_matches_calc_optimal_fdtd_params():
@@ -1000,6 +1001,71 @@ def test_project_modal_coefficients_3d_uses_rhs_orientation_for_complex_basis():
 
     np.testing.assert_allclose(a_p, a_true, rtol=1e-10, atol=1e-10)
     np.testing.assert_allclose(a_m, b_true, rtol=1e-10, atol=1e-10)
+
+
+def test_interpolate_plane_matrix_2d_preserves_complex_affine_plane():
+    src0 = np.array([0.0, 1.0, 2.0], dtype=float)
+    src1 = np.array([0.0, 2.0, 4.0], dtype=float)
+    dst0 = np.array([0.25, 1.5], dtype=float)
+    dst1 = np.array([0.5, 3.0], dtype=float)
+
+    def plane(c0, c1):
+        return 2.0 + 3.0 * c0 - 0.5 * c1 + 1j * (-1.0 + 0.25 * c0 + 2.0 * c1)
+
+    values = plane(src0[:, None], src1[None, :])
+    expected = plane(dst0[:, None], dst1[None, :])
+
+    actual = Simulation._interpolate_plane_matrix_2d(values, src0, src1, dst0, dst1)
+
+    np.testing.assert_allclose(actual, expected, rtol=1e-13, atol=1e-13)
+
+
+def test_colocate_field_components_to_projection_3d_respects_yee_offsets():
+    sim = Simulation.__new__(Simulation)
+    sim.is_3d = True
+    sim.resolution = 1.0
+    grid_shape = (5, 5, 5)
+    field_arrays = {
+        comp: np.zeros(component_shape_3d(comp, grid_shape), dtype=np.float32)
+        for comp in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
+    }
+    field_arrays["permittivity"] = np.ones(grid_shape, dtype=np.float32)
+    sim.fields = type("F", (), field_arrays)()
+
+    class DummyXMonitor:
+        name = "yee_x"
+
+        @staticmethod
+        def get_grid_slice_3d(dx, dy, dz, field_shape):
+            del dx, dy, dz
+            normal_index = min(1, int(field_shape[2]) - 1)
+            return slice(1, 4), slice(1, 4), normal_index
+
+    def plane(c0, c1):
+        return 0.25 + 0.75 * c0 - 0.4 * c1 + 1j * (1.5 - 0.2 * c0 + 0.6 * c1)
+
+    monitor = DummyXMonitor()
+    target0 = np.array([1.5, 2.0, 2.5], dtype=float)
+    target1 = np.array([1.5, 2.0, 2.5], dtype=float)
+    projection = {
+        "axis": "x",
+        "analysis_coords0": target0,
+        "analysis_coords1": target1,
+    }
+    field_components = {}
+    for comp in ("Ey", "Ez", "Hy", "Hz"):
+        src0, src1 = sim._monitor_component_plane_coords_3d(monitor, comp, "x")
+        field_components[comp] = plane(src0[:, None], src1[None, :]).reshape(-1)
+
+    colocated = sim._colocate_field_components_to_projection_3d(
+        monitor,
+        field_components,
+        projection,
+    )
+
+    expected = plane(target0[:, None], target1[None, :]).reshape(-1)
+    for comp in ("Ey", "Ez", "Hy", "Hz"):
+        np.testing.assert_allclose(colocated[comp], expected, rtol=1e-13, atol=1e-13)
 
 
 def test_project_modal_coefficients_3d_group_recovers_multiple_modes():
