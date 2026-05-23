@@ -16,7 +16,7 @@ from beamz import (
     um,
 )
 from beamz.devices.sources.mode import ModeSource
-from beamz.simulation.core import SimulationResults
+from beamz.simulation.core import MonitorResults, SimulationResults
 
 
 def _close(fig_ax):
@@ -133,6 +133,22 @@ def test_monitor_plot_fields_and_power_are_standard_non_showing_api():
 
     field_fig, field_ax = _close(monitor.plot_fields())
     power_fig, power_ax = _close(monitor.plot_power())
+
+    assert field_fig is field_ax.figure
+    assert "Ez at t" in field_ax.get_title()
+    assert power_fig is power_ax.figure
+    assert power_ax.get_title() == "Power vs Time"
+
+
+def test_monitor_results_are_plottable():
+    monitor = Monitor(start=(0.0, 0.0), end=(1.0, 0.0))
+    monitor.fields["t"].append(0.0)
+    monitor.fields["Ez"].append(np.array([0.0, 1.0, 0.0]))
+    monitor.power_history.extend([1.0, 2.0, 1.0])
+    result = MonitorResults.from_monitor(monitor)
+
+    field_fig, field_ax = _close(result.plot(field="Ez"))
+    power_fig, power_ax = _close(result.plot_power())
 
     assert field_fig is field_ax.figure
     assert "Ez at t" in field_ax.get_title()

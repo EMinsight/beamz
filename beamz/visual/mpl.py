@@ -638,7 +638,12 @@ def plot_monitor_field(
     show=True,
 ):
     """Plot recorded field data from a monitor."""
-    payload = monitor.field_plot_data(field=field, time_index=time_index)
+    if hasattr(monitor, "field_plot_data"):
+        payload = monitor.field_plot_data(field=field, time_index=time_index)
+    else:
+        from beamz.visual.data import monitor_field_plot_data
+
+        payload = monitor_field_plot_data(monitor, field=field, time_index=time_index)
     fig, ax = _figure_axes(ax, figsize=figsize)
     if payload["monitor_type"] == "line":
         ax.plot(payload["x"], np.ravel(payload["array"]), "b-", linewidth=2)
@@ -774,7 +779,16 @@ def plot_monitor_power(
     show=True,
 ):
     """Plot monitor power history."""
-    payload = monitor.power_plot_data(log_scale=log_scale, db_scale=db_scale)
+    if hasattr(monitor, "power_plot_data"):
+        payload = monitor.power_plot_data(log_scale=log_scale, db_scale=db_scale)
+    else:
+        from beamz.visual.data import monitor_power_plot_data
+
+        payload = monitor_power_plot_data(
+            monitor,
+            log_scale=log_scale,
+            db_scale=db_scale,
+        )
     fig, ax = _figure_axes(ax, figsize=figsize)
     ax.plot(payload["time_steps"], payload["power"], "r-", linewidth=2)
     ax.set_yscale(payload["yscale"])

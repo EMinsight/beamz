@@ -158,6 +158,57 @@ class MonitorResults:
     frequency_flux_spectrum: np.ndarray
     objective_value: float | None = None
 
+    def _plot_proxy(self):
+        return SimpleNamespace(
+            fields={name: list(values) for name, values in self.fields.items()},
+            power_history=list(np.asarray(self.power_history, dtype=float)),
+            monitor_type=getattr(self.monitor, "monitor_type", "line"),
+            start=getattr(self.monitor, "start", (0.0, 0.0)),
+            end=getattr(self.monitor, "end", (0.0, 0.0)),
+            size=getattr(self.monitor, "size", (0.0, 0.0)),
+            name=getattr(self.monitor, "name", None),
+        )
+
+    def field_plot_data(self, **kwargs):
+        """Return monitor-field plot data from this result."""
+        from beamz.visual.data import monitor_field_plot_data
+
+        return monitor_field_plot_data(self._plot_proxy(), **kwargs)
+
+    def power_plot_data(self, **kwargs):
+        """Return monitor-power plot data from this result."""
+        from beamz.visual.data import monitor_power_plot_data
+
+        return monitor_power_plot_data(self._plot_proxy(), **kwargs)
+
+    def plot(self, **kwargs):
+        """Plot recorded monitor field data from this result."""
+        from beamz.visual.mpl import plot_monitor_field
+
+        kwargs.setdefault("show", False)
+        return plot_monitor_field(self._plot_proxy(), **kwargs)
+
+    def show(self, **kwargs):
+        """Display recorded monitor field data from this result."""
+        kwargs.setdefault("show", True)
+        return self.plot(**kwargs)
+
+    def plot_fields(self, **kwargs):
+        """Alias for :meth:`plot`."""
+        return self.plot(**kwargs)
+
+    def plot_power(self, **kwargs):
+        """Plot monitor power history from this result."""
+        from beamz.visual.mpl import plot_monitor_power
+
+        kwargs.setdefault("show", False)
+        return plot_monitor_power(self._plot_proxy(), **kwargs)
+
+    def show_power(self, **kwargs):
+        """Display monitor power history from this result."""
+        kwargs.setdefault("show", True)
+        return self.plot_power(**kwargs)
+
     @classmethod
     def from_monitor(cls, monitor: Monitor) -> "MonitorResults":
         fields = {
