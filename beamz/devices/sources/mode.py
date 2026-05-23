@@ -2823,6 +2823,12 @@ class ModeSource:
         kwargs.setdefault("show", True)
         return self.plot_spectrum(**kwargs)
 
+    def to_xarray(self, *, t=None):
+        """Return mode profile and signal data as an xarray Dataset."""
+        from beamz.data.xarray import mode_dataset
+
+        return mode_dataset(self, t=t)
+
     def to_plot_data(
         self, *, facecolor="none", edgecolor="crimson", alpha=0.8, linestyle="-"
     ):

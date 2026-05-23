@@ -1685,6 +1685,12 @@ class Monitor:
         kwargs.setdefault("show", True)
         return self.plot_power(**kwargs)
 
+    def to_xarray(self):
+        """Return recorded monitor data as an xarray Dataset."""
+        from beamz.data.xarray import monitor_dataset
+
+        return monitor_dataset(self)
+
     def animate_fields(self, **kwargs):
         """Animate recorded monitor field data using matplotlib."""
         from beamz.visual.mpl import animate_monitor_fields

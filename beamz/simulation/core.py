@@ -162,6 +162,11 @@ class MonitorResults:
         return SimpleNamespace(
             fields={name: list(values) for name, values in self.fields.items()},
             power_history=list(np.asarray(self.power_history, dtype=float)),
+            power_timestamps=list(np.asarray(self.power_timestamps, dtype=float)),
+            power_spectrum=np.asarray(self.power_spectrum),
+            power_spectrum_frequencies=np.asarray(
+                getattr(self.monitor, "power_spectrum_frequencies", ())
+            ),
             monitor_type=getattr(self.monitor, "monitor_type", "line"),
             start=getattr(self.monitor, "start", (0.0, 0.0)),
             end=getattr(self.monitor, "end", (0.0, 0.0)),
@@ -209,6 +214,12 @@ class MonitorResults:
         kwargs.setdefault("show", True)
         return self.plot_power(**kwargs)
 
+    def to_xarray(self):
+        """Return this monitor result as an xarray Dataset."""
+        from beamz.data.xarray import monitor_dataset
+
+        return monitor_dataset(self)
+
     @classmethod
     def from_monitor(cls, monitor: Monitor) -> "MonitorResults":
         fields = {
@@ -247,6 +258,8 @@ class SimulationResults(Mapping[str, Any]):
 
     simulation: "Simulation"
     fields: dict[str, np.ndarray] | None = None
+    field_times: np.ndarray | None = None
+    field_steps: np.ndarray | None = None
     monitors: tuple[Monitor, ...] = ()
     monitor_results: dict[str, MonitorResults] | None = None
     snapshots: tuple[dict[str, Any], ...] = ()
@@ -267,6 +280,10 @@ class SimulationResults(Mapping[str, Any]):
         payload = {}
         if self.fields is not None:
             payload["fields"] = self.fields
+        if self.field_times is not None:
+            payload["field_times"] = self.field_times
+        if self.field_steps is not None:
+            payload["field_steps"] = self.field_steps
         if self.monitors:
             payload["monitors"] = list(self.monitors)
         if self.monitor_results:
@@ -317,12 +334,20 @@ class SimulationResults(Mapping[str, Any]):
 
         return save_snapshot_video(self.snapshots, filename=filename, **kwargs)
 
+    def to_xarray(self):
+        """Return stored simulation field data as an xarray Dataset."""
+        from beamz.data.xarray import simulation_dataset
+
+        return simulation_dataset(self)
+
     @classmethod
     def from_run(
         cls,
         simulation: "Simulation",
         *,
         fields: dict[str, np.ndarray] | None = None,
+        field_times: np.ndarray | list[float] | None = None,
+        field_steps: np.ndarray | list[int] | None = None,
         monitors: list[Monitor] | tuple[Monitor, ...] = (),
         snapshots: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     ) -> "SimulationResults" | None:
@@ -338,6 +363,14 @@ class SimulationResults(Mapping[str, Any]):
         return cls(
             simulation=simulation,
             fields=fields,
+            field_times=(
+                None
+                if field_times is None
+                else np.asarray(field_times, dtype=float)
+            ),
+            field_steps=(
+                None if field_steps is None else np.asarray(field_steps, dtype=int)
+            ),
             monitors=monitor_tuple,
             monitor_results=monitor_results or None,
             snapshots=snapshot_tuple,
@@ -622,6 +655,8 @@ class Simulation:
             return np.array(getattr(self.fields, name))
 
         field_history = {name: [] for name in record_fields} if record_every else None
+        field_times = [] if record_every else None
+        field_steps = [] if record_every else None
         steps_done = 0
         progress_stride = max(1, num_steps // 100) if progress else None
 
@@ -632,6 +667,8 @@ class Simulation:
                 for name in record_fields:
                     if hasattr(self.fields, name):
                         field_history[name].append(np.array(getattr(self.fields, name)))
+                field_times.append(float(self.t))
+                field_steps.append(int(self.current_step))
 
             if snapshot_field is not None and (
                 self.current_step % snapshot_interval == 0
@@ -679,6 +716,8 @@ class Simulation:
         return SimulationResults.from_run(
             self,
             fields=fields_result,
+            field_times=field_times,
+            field_steps=field_steps,
             monitors=self.monitors,
             snapshots=snapshots,
         )
@@ -972,6 +1011,8 @@ class Simulation:
             raise ValueError("record_interval must be a positive integer")
 
         field_history = {name: [] for name in record_fields} if record_every else None
+        field_times = [] if record_every else None
+        field_steps = [] if record_every else None
         if self.current_step == 0:
             self._compiled_monitor_state = None
 
@@ -1178,6 +1219,8 @@ class Simulation:
                 for name in record_fields:
                     if hasattr(self.fields, name):
                         field_history[name].append(np.array(getattr(self.fields, name)))
+                field_times.append(float(self.t))
+                field_steps.append(int(self.current_step))
             if snapshot_data is not None:
                 from beamz.simulation.snapshots import collect_compiled_snapshots
 
@@ -1219,6 +1262,8 @@ class Simulation:
         return SimulationResults.from_run(
             self,
             fields=fields_result,
+            field_times=field_times,
+            field_steps=field_steps,
             monitors=self.monitors,
             snapshots=snapshots,
         )

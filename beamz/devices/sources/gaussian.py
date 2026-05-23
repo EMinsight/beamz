@@ -208,3 +208,9 @@ class GaussianSource:
         """Display the normalized source spectrum."""
         kwargs.setdefault("show", True)
         return self.plot_spectrum(**kwargs)
+
+    def to_xarray(self, *, t=None):
+        """Return source signal data as an xarray Dataset."""
+        from beamz.data.xarray import source_dataset
+
+        return source_dataset(self, t=t)
