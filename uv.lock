@@ -150,6 +150,8 @@ dependencies = [
     { name = "scipy", version = "1.17.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "shapely" },
     { name = "traitlets" },
+    { name = "xarray", version = "2025.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "xarray", version = "2025.12.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 
 [package.optional-dependencies]
@@ -205,6 +207,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'gpu'", specifier = ">=2.6.0" },
     { name = "traitlets", specifier = ">=5.14.0" },
     { name = "ubcpdk", marker = "extra == 'ubc'", specifier = "==2.7.0" },
+    { name = "xarray", specifier = ">=2024.0.0" },
 ]
 provides-extras = ["dev", "gpu", "ubc", "test"]
 
