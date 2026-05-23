@@ -3869,20 +3869,42 @@ class Simulation:
         return np.interp(freq_dst, freq_src, values, left=np.nan, right=np.nan)
 
     def _modal_dft_flux_diagnostics(self, port_map, monitor_by_name, waves, frequencies):
-        """Compare raw DFT flux monitors with modal overlap power."""
+        """Compare raw DFT flux monitors with selector-aware modal overlap power."""
 
         freqs = np.atleast_1d(np.asarray(frequencies, dtype=float))
         diagnostics = {}
         for name, spec in port_map.items():
             wave = waves.get(name, {})
-            p_plus = np.asarray(wave.get("P_plus", []), dtype=float)
-            p_minus = np.asarray(wave.get("P_minus", []), dtype=float)
-            if p_plus.size != freqs.size:
-                p_plus = np.full(freqs.shape, np.nan, dtype=float)
-            if p_minus.size != freqs.size:
-                p_minus = np.full(freqs.shape, np.nan, dtype=float)
+
+            def _wave_power(power_key, amplitude_key):
+                if power_key in wave:
+                    power = np.asarray(wave[power_key], dtype=float)
+                elif amplitude_key in wave:
+                    amplitude = np.asarray(wave[amplitude_key], dtype=np.complex128)
+                    power = np.abs(amplitude) ** 2
+                else:
+                    power = np.asarray([], dtype=float)
+                if power.size != freqs.size:
+                    return np.full(freqs.shape, np.nan, dtype=float)
+                return power
+
+            p_plus = _wave_power("P_plus", "a_plus")
+            p_minus = _wave_power("P_minus", "a_minus")
             modal_sum = p_plus + p_minus
             modal_net = p_plus - p_minus
+
+            incident_selector, scattered_selector = self._resolve_port_wave_selectors(
+                spec,
+                wave,
+                use_reference=bool(spec.reference_monitor),
+            )
+            if scattered_selector == "plus":
+                selected_power = p_plus
+                rejected_power = p_minus
+            else:
+                selected_power = p_minus
+                rejected_power = p_plus
+            selected_modal_net = selected_power - rejected_power
 
             def _flux_for_monitor(monitor_name):
                 monitor = monitor_by_name.get(monitor_name)
@@ -3899,11 +3921,17 @@ class Simulation:
             entry = {
                 "monitor": spec.monitor_name,
                 "monitor_flux": monitor_flux,
+                "incident_wave": incident_selector,
+                "scattered_wave": scattered_selector,
                 "P_plus": p_plus,
                 "P_minus": p_minus,
                 "P_modal_sum": modal_sum,
                 "P_modal_net": modal_net,
+                "P_selected": selected_power,
+                "P_rejected": rejected_power,
+                "P_selected_modal_net": selected_modal_net,
                 "flux_minus_modal_net": monitor_flux - modal_net,
+                "flux_minus_selected_modal_net": monitor_flux - selected_modal_net,
                 "abs_flux_minus_modal_sum": np.abs(monitor_flux) - modal_sum,
             }
             if spec.reference_monitor:

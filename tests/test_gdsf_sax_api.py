@@ -1938,6 +1938,12 @@ def test_get_S_matrix_modal_dft_respects_wave_selectors(monkeypatch):
         rtol=1e-12,
         atol=1e-12,
     )
+    out_check = result["diagnostics"]["monitor_flux_checks"]["out"]
+    assert out_check["incident_wave"] == "plus"
+    assert out_check["scattered_wave"] == "plus"
+    np.testing.assert_allclose(out_check["P_selected"], np.array([0.81, 0.64]))
+    np.testing.assert_allclose(out_check["P_rejected"], np.array([0.01, 0.01]))
+    np.testing.assert_allclose(out_check["P_selected_modal_net"], np.array([0.8, 0.63]))
 
 
 def test_get_S_matrix_modal_dft_auto_selectors_prefer_band_dominant_source_wave(
@@ -2006,6 +2012,12 @@ def test_get_S_matrix_modal_dft_auto_selectors_prefer_band_dominant_source_wave(
         rtol=1e-12,
         atol=1e-12,
     )
+    out_check = result["diagnostics"]["monitor_flux_checks"]["out"]
+    assert out_check["incident_wave"] == "plus"
+    assert out_check["scattered_wave"] == "minus"
+    np.testing.assert_allclose(out_check["P_selected"], np.array([0.25, 0.25]))
+    np.testing.assert_allclose(out_check["P_rejected"], np.array([0.16, 0.16]))
+    np.testing.assert_allclose(out_check["P_selected_modal_net"], np.array([0.09, 0.09]))
 
 
 def test_normalize_portspecs_rejects_invalid_wave_selector():
