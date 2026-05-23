@@ -542,15 +542,15 @@ while steps_done < total_steps:
         record_fields=list(xy_flux_fields),
         progress=False,
     )
-    f = chunk_result["fields"]
-    nrec = int(f["Ex"].shape[0])
+    f = chunk_result.to_xarray()
+    nrec = int(f["Ex"].sizes["t"])
     for i in range(nrec):
-        ex_i = f["Ex"][i]
-        ey_i = f["Ey"][i]
-        ez_i = f["Ez"][i]
-        hx_i = f["Hx"][i]
-        hy_i = f["Hy"][i]
-        hz_i = f["Hz"][i]
+        ex_i = f["Ex"].isel(t=i).values
+        ey_i = f["Ey"].isel(t=i).values
+        ez_i = f["Ez"].isel(t=i).values
+        hx_i = f["Hx"].isel(t=i).values
+        hy_i = f["Hy"].isel(t=i).values
+        hz_i = f["Hz"].isel(t=i).values
 
         nz = min(
             ex_i.shape[0],
@@ -886,9 +886,18 @@ plt.close(fig)
 # -----------------------------------------------------------------------------
 # Flux over time and normalized cumulative flux.
 # -----------------------------------------------------------------------------
-power = np.asarray(flux_monitor.power_history, dtype=np.float64)
-time_s = np.asarray(flux_monitor.power_timestamps, dtype=np.float64)
-if time_s.size == 0 and power.size > 0:
+flux_ds = flux_monitor.to_xarray()
+power_da = flux_ds["power"] if "power" in flux_ds else None
+power = (
+    np.asarray(power_da.values, dtype=np.float64)
+    if power_da is not None
+    else np.zeros(0, dtype=np.float64)
+)
+if power_da is not None and "t" in power_da.coords:
+    time_s = np.asarray(power_da.coords["t"].values, dtype=np.float64)
+elif power_da is not None and "power_t" in power_da.coords:
+    time_s = np.asarray(power_da.coords["power_t"].values, dtype=np.float64)
+else:
     time_s = np.arange(power.size, dtype=np.float64) * DT
 
 cumulative_flux = np.cumsum(np.maximum(power, 0.0)) * DT

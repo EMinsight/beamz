@@ -52,6 +52,7 @@ source = ModeSource(
     signal=signal,
     direction="+x",
 )
+source.to_xarray(t=time_steps)["signal"].plot()
 
 # Run the simulation
 sim = Simulation(
@@ -61,10 +62,14 @@ sim = Simulation(
     time=time_steps,
     resolution=DX,
 )
-sim.save_video(
+results = sim.save_video(
     "resring.mp4",
     field="Ez",
     animation_interval=15,
     video_fps=40,
     cmap="twilight_zero",
+    save_fields=["Ez"],
+    field_subsample=15,
 )
+field_ds = results.to_xarray()
+field_ds["Ez"].isel(t=-1).plot(x="x", y="y", cmap="RdBu")

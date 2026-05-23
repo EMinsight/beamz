@@ -24,7 +24,12 @@ PML_FORMULATION_2D = "sponge"
 def monitor_energy(monitor, dt):
     """Return integrated flux magnitude from a signed monitor trace."""
 
-    trace = np.real_if_close(np.asarray(monitor.power_history, dtype=np.complex128))
+    monitor_ds = monitor.to_xarray()
+    trace = (
+        np.real_if_close(np.asarray(monitor_ds["power"].values, dtype=np.complex128))
+        if "power" in monitor_ds
+        else np.zeros(0, dtype=np.complex128)
+    )
     return abs(float(np.real(np.sum(trace))) * dt)
 
 
@@ -158,10 +163,10 @@ for step in range(STEPS):
     print(f"[{step+1}/{STEPS}] Forward Sim...", end="\r")
     results = sim_fwd.run(save_fields=["Ez"], field_subsample=2)
 
-    # Extract field history and ensure NumPy arrays
+    fwd_ds = results.to_xarray() if results is not None else None
     fwd_ez_history = (
-        [np.array(field) for field in results["fields"]["Ez"]]
-        if results and "fields" in results
+        [np.asarray(frame) for frame in fwd_ds["Ez"].values]
+        if fwd_ds is not None and "Ez" in fwd_ds
         else []
     )
     transmission_fwd = transmission_percent(monitor_input_flux, output_monitor_fwd, DT)
@@ -197,9 +202,10 @@ for step in range(STEPS):
     )
 
     adj_results = sim_adj.run(save_fields=["Ez"], field_subsample=2)
+    adj_ds = adj_results.to_xarray() if adj_results is not None else None
     adj_ez_history = (
-        [np.array(field) for field in adj_results["fields"]["Ez"]]
-        if adj_results and "fields" in adj_results
+        [np.asarray(field) for field in adj_ds["Ez"].values]
+        if adj_ds is not None and "Ez" in adj_ds
         else []
     )
     transmission_back = transmission_percent(monitor_back_flux, backward_monitor, DT)
@@ -400,9 +406,10 @@ results_final = sim_final.run(save_fields=["Ez", "Hx", "Hy"], field_subsample=1)
 trans_final = transmission_percent(mon_in_final, mon_out_final, DT)
 
 print("Calculating energy flow...")
-Ez_t = np.array(results_final["fields"]["Ez"])
-Hx_t = np.array(results_final["fields"]["Hx"])
-Hy_t = np.array(results_final["fields"]["Hy"])
+final_ds = results_final.to_xarray()
+Ez_t = final_ds["Ez"].values
+Hx_t = final_ds["Hx"].values
+Hy_t = final_ds["Hy"].values
 
 min_x = min(Ez_t.shape[1], Hx_t.shape[1], Hy_t.shape[1])
 min_y = min(Ez_t.shape[2], Hx_t.shape[2], Hy_t.shape[2])
