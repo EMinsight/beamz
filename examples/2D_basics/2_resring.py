@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 
 from beamz import *
+import matplotlib.pyplot as plt
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -72,3 +73,4 @@ results = sim.save_video(
     field_subsample=15,
 )
 results.fields["Ez"].isel(t=-1).plot(x="x", y="y", cmap="RdBu")
+plt.show()

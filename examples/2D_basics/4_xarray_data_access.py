@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import matplotlib.pyplot as plt
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLES_ROOT = Path(__file__).resolve().parents[1]
@@ -81,3 +82,4 @@ center_ez.plot(x="x", y="t", cmap="RdBu")
 
 monitor_ds = results.monitor_results["output_line"].data
 monitor_ds["power"].plot()
+plt.show()

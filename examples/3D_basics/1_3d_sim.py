@@ -1,4 +1,5 @@
 from beamz import *
+import matplotlib.pyplot as plt
 import numpy as np
 
 WL = 0.6 * µm  # wavelength of the source
@@ -65,3 +66,4 @@ sim.show()
 
 # The simulation can stream fields with the matplotlib-backed live view.
 # sim.animate("Hy", animation_interval=2)
+plt.show()

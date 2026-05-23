@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 
 from beamz import *
+import matplotlib.pyplot as plt
 import numpy as np
 from beamz import calc_optimal_fdtd_params
 
@@ -62,3 +63,4 @@ sim = Simulation(
 )
 results = sim.run(save_fields=["Ez"], field_subsample=20, progress=False)
 results.fields["Ez"].isel(t=-1).plot(x="x", y="y", cmap="RdBu")
+plt.show()

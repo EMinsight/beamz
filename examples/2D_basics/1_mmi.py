@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 
 # Ensure local workspace package import when running from examples/.
@@ -111,3 +112,4 @@ sim = Simulation(
 )
 results = sim.run(save_fields=["Ez"], field_subsample=15, progress=False)
 results.fields["Ez"].isel(t=-1).plot(x="x", y="y", cmap="RdBu")
+plt.show()
