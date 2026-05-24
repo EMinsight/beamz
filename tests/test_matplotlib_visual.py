@@ -250,7 +250,7 @@ def test_mode_field_component_pairs_are_physical_labels():
     assert mode_field_component_pairs(display_components=explicit) == explicit
 
 
-def test_mode_field_plot_defaults_to_raw_abs_scale(monkeypatch):
+def test_mode_field_plot_defaults_to_tidy3d_percentile_abs_scale(monkeypatch):
     class Grid:
         permittivity = np.ones((2, 2, 1))
         resolution = 1.0
@@ -273,7 +273,8 @@ def test_mode_field_plot_defaults_to_raw_abs_scale(monkeypatch):
         show=False,
     )
 
-    assert fig.axes[0].images[0].get_clim() == (0.0, 4.0)
+    expected_vmax = float(np.nanpercentile(np.abs(e_fields[0, 1]), 99.5))
+    assert fig.axes[0].images[0].get_clim() == (0.0, expected_vmax)
     plt.close(fig)
 
 

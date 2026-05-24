@@ -824,7 +824,7 @@ def plot_mode_fields(
     normalize=False,
     vmin=None,
     vmax=None,
-    percentile=None,
+    percentile=99.5,
     figsize=(12, 12),
     show=True,
 ):
