@@ -1858,6 +1858,10 @@ class Monitor(RuntimeStateProxy):
             copied.position = tuple(
                 a + b for a, b in zip(copied.position, offset, strict=False)
             )
+        if getattr(copied, "center", None) is not None:
+            copied.center = tuple(
+                a + b for a, b in zip(copied.center, offset, strict=False)
+            )
         if getattr(copied, "vertices", None):
             copied.vertices = [
                 tuple(a + b for a, b in zip(vertex, offset, strict=False))

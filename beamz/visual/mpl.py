@@ -463,6 +463,186 @@ def _plot_tidy3d_marker(ax, marker, *, vertical_coord="y"):
         )
 
 
+def _tidy3d_origin_for_simulation(sim):
+    design = getattr(sim, "design", None)
+    offset = getattr(sim, "coordinate_offset", None)
+    if offset is not None:
+        return tuple(float(v) for v in offset)
+    return (
+        0.5 * float(getattr(design, "width", 0.0)),
+        0.5 * float(getattr(design, "height", 0.0)),
+        0.5 * float(getattr(design, "depth", 0.0) or 0.0),
+    )
+
+
+def _tidy3d_material_levels(sim):
+    eps = np.asarray(getattr(getattr(sim, "fields", None), "permittivity", ()))
+    finite = np.real(eps[np.isfinite(eps)]) if eps.size else np.asarray(())
+    if finite.size == 0:
+        return None, None
+    unique = np.unique(np.round(finite, decimals=8))
+    substrate = float(unique[1]) if unique.size >= 3 else None
+    core = float(unique[-1])
+    return core, substrate
+
+
+def _tidy3d_pml_thickness(sim):
+    for boundary in getattr(sim, "boundaries", ()) or ():
+        thickness = getattr(boundary, "thickness", None)
+        if thickness is not None:
+            return float(thickness)
+    return None
+
+
+def _normal_axis_from_device(device):
+    direction = getattr(device, "direction", None)
+    if direction is not None:
+        direction = str(direction).lower()
+        for axis in ("x", "y", "z"):
+            if axis in direction:
+                return axis
+    plane_normal = getattr(device, "plane_normal", None)
+    if plane_normal is not None:
+        return str(plane_normal).lower()
+    size = getattr(device, "size_spec", None)
+    if size is not None:
+        return ("x", "y", "z")[int(np.argmin(np.abs(np.asarray(size, dtype=float))))]
+    return None
+
+
+def _device_plane_center(device):
+    if hasattr(device, "center"):
+        return tuple(float(v) for v in getattr(device, "center"))
+    if hasattr(device, "position"):
+        return tuple(float(v) for v in getattr(device, "position"))
+    start = getattr(device, "start", None)
+    end = getattr(device, "end", None)
+    if start is not None and end is not None:
+        return tuple(0.5 * (float(a) + float(b)) for a, b in zip(start, end, strict=False))
+    return None
+
+
+def _device_span_for_axis(device, axis, transverse_axis):
+    start = getattr(device, "start", None)
+    end = getattr(device, "end", None)
+    idx = {"x": 0, "y": 1, "z": 2}[transverse_axis]
+    if start is not None and end is not None and len(start) > idx and len(end) > idx:
+        return (min(float(start[idx]), float(end[idx])), max(float(start[idx]), float(end[idx])))
+
+    center = _device_plane_center(device)
+    size = getattr(device, "size_spec", None)
+    if size is None and axis == "x":
+        size = (
+            0.0,
+            getattr(device, "width", 0.0) or 0.0,
+            getattr(device, "height", 0.0) or 0.0,
+        )
+    if center is not None and size is not None and len(size) > idx:
+        half = 0.5 * float(size[idx])
+        return (float(center[idx]) - half, float(center[idx]) + half)
+    return None
+
+
+def _tidy3d_device_markers(devices, origin, *, color, source=False):
+    markers_xy = []
+    markers_xz = []
+    ox, oy, oz = (float(v) for v in origin)
+    for device in devices:
+        axis = _normal_axis_from_device(device)
+        if axis != "x":
+            continue
+        center = _device_plane_center(device)
+        if center is None or len(center) < 3:
+            continue
+        y_span = _device_span_for_axis(device, axis, "y")
+        z_span = _device_span_for_axis(device, axis, "z")
+        base = {
+            "x": (float(center[0]) - ox) / µm,
+            "color": color,
+            "direction": getattr(device, "direction", "+x"),
+        }
+        if source:
+            base.update({"arrow": True, "arrow_y": (float(center[1]) - oy) / µm})
+        if y_span is not None:
+            markers_xy.append(
+                {
+                    **base,
+                    "span": ((y_span[0] - oy) / µm, (y_span[1] - oy) / µm),
+                }
+            )
+        if z_span is not None:
+            marker = {
+                **base,
+                "span": ((z_span[0] - oz) / µm, (z_span[1] - oz) / µm),
+            }
+            if source:
+                marker["arrow_y"] = (float(center[2]) - oz) / µm
+            markers_xz.append(marker)
+    return markers_xy, markers_xz
+
+
+def _plot_tidy3d_simulation_cross_sections(
+    sim,
+    *,
+    z=0.0,
+    y=0.0,
+    origin=None,
+    source_markers=True,
+    monitor_markers=True,
+    width_ratios=None,
+    xlim=None,
+    ylim=None,
+    zlim=None,
+    show=True,
+    figsize=(11, 4),
+):
+    if origin is None:
+        origin = _tidy3d_origin_for_simulation(sim)
+    z_abs = float(z) + float(origin[2])
+    y_abs = float(y) + float(origin[1])
+    grid = sim.design.rasterize(resolution=sim.resolution)
+    core_eps, substrate_eps = _tidy3d_material_levels(sim)
+    xy_markers = []
+    xz_markers = []
+    if source_markers:
+        source_xy, source_xz = _tidy3d_device_markers(
+            getattr(sim, "sources", ()),
+            origin,
+            color="#66bb6a",
+            source=True,
+        )
+        xy_markers.extend(source_xy)
+        xz_markers.extend(source_xz)
+    if monitor_markers:
+        monitor_xy, monitor_xz = _tidy3d_device_markers(
+            getattr(sim, "monitors", ()),
+            origin,
+            color="#f4a51c",
+            source=False,
+        )
+        xy_markers.extend(monitor_xy)
+        xz_markers.extend(monitor_xz)
+
+    return plot_tidy3d_cross_sections(
+        grid,
+        z=z_abs,
+        y=y_abs,
+        origin=origin,
+        substrate_z=float(origin[2]),
+        core_permittivity=core_eps,
+        substrate_permittivity=substrate_eps,
+        pml_thickness=_tidy3d_pml_thickness(sim),
+        xy_markers=xy_markers,
+        xz_markers=xz_markers,
+        figsize=figsize,
+        width_ratios=width_ratios,
+        xlim=xlim,
+        ylim=ylim,
+        zlim=zlim,
+        show=show,
+    )
+
+
 def plot_tidy3d_cross_sections(
     grid,
     *,
@@ -879,11 +1059,7 @@ def plot_tidy3d_dft_field(
 
     design = getattr(simulation, "design", None)
     if origin is None:
-        origin = (
-            0.5 * float(getattr(design, "width", 0.0)),
-            0.5 * float(getattr(design, "height", 0.0)),
-            0.0,
-        )
+        origin = _tidy3d_origin_for_simulation(simulation)
     ox, oy, oz = (float(v) for v in origin)
     x_coords = np.asarray(target1, dtype=float)
     y_coords = np.asarray(target0, dtype=float)
@@ -1046,12 +1222,45 @@ def plot_design(
 def plot_simulation(
     sim,
     *,
+    z=None,
+    y=None,
+    tidy3d=None,
+    source_markers=True,
+    monitor_markers=True,
+    width_ratios=None,
+    xlim=None,
+    ylim=None,
+    zlim=None,
+    origin=None,
     ax=None,
     figsize=None,
     show=True,
     title="Simulation Layout",
 ):
     """Plot a simulation layout with sources, monitors, and boundaries."""
+    use_tidy3d = tidy3d
+    if use_tidy3d is None:
+        use_tidy3d = bool(getattr(sim, "is_3d", False) and (z is not None or y is not None))
+    if use_tidy3d:
+        if ax is not None:
+            raise ValueError(
+                "Tidy3D-style cross-section plots create two axes; omit ax."
+            )
+        return _plot_tidy3d_simulation_cross_sections(
+            sim,
+            z=0.0 if z is None else z,
+            y=0.0 if y is None else y,
+            origin=origin,
+            source_markers=source_markers,
+            monitor_markers=monitor_markers,
+            width_ratios=width_ratios,
+            xlim=xlim,
+            ylim=ylim,
+            zlim=zlim,
+            figsize=(11, 4) if figsize is None else figsize,
+            show=show,
+        )
+
     payload = sim.to_plot_data()
     design_payload = payload["design"]
     if figsize is None:

@@ -163,6 +163,24 @@ class ModeSolver:
             raise NotImplementedError("ModeSolver plotting currently supports x-normal planes.")
         offset = getattr(self.simulation, "coordinate_offset", (0.0, 0.0, 0.0))
         plane_x = center[0] + offset[0]
+        if "origin" not in kwargs:
+            kwargs["origin"] = offset
+        if "window" not in kwargs:
+            plane = self.plane
+            plane_center = getattr(plane, "center", center)
+            plane_size = getattr(plane, "size", (0.0, 0.0, 0.0))
+            if len(plane_center) == 2:
+                plane_center = (plane_center[0], plane_center[1], 0.0)
+            if len(plane_size) == 2:
+                plane_size = (plane_size[0], plane_size[1], 0.0)
+            y_center = float(plane_center[1]) + float(offset[1])
+            z_center = float(plane_center[2]) + float(offset[2])
+            kwargs["window"] = (
+                y_center - 0.5 * float(plane_size[1]),
+                y_center + 0.5 * float(plane_size[1]),
+                z_center - 0.5 * float(plane_size[2]),
+                z_center + 0.5 * float(plane_size[2]),
+            )
         return plot_mode_fields(
             self.simulation.design.rasterize(resolution=self.simulation.resolution),
             plane_x=plane_x,

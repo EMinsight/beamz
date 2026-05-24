@@ -7,12 +7,18 @@ import numpy as np
 import pytest
 
 from beamz import (
+    BoundarySpec,
+    Box,
     Design,
+    FieldMonitor,
     GaussianSource,
+    GridSpec,
     Material,
+    Medium,
     Monitor,
     Rectangle,
     Simulation,
+    Structure,
     mode_field_component_pairs,
     plot_signal,
     plot_tidy3d_cross_sections,
@@ -405,6 +411,44 @@ def test_tidy3d_cross_sections_plot_grid_slices():
     assert axes[1].get_title() == "cross section at y=0.00 (um)"
     xy = np.asarray(axes[0].images[0].get_array())
     assert np.count_nonzero(xy == 1) > np.count_nonzero(xy == 0)
+
+
+def test_simulation_plot_uses_tidy3d_cross_sections_for_3d_slices():
+    si = Medium(permittivity=12.0)
+    sio2 = Medium(permittivity=2.25)
+    sim = Simulation(
+        size=(3 * um, 2 * um, 1.5 * um),
+        grid_spec=GridSpec.uniform(0.25 * um),
+        structures=[
+            Structure(
+                geometry=Box(center=(0.0, 0.0, -0.75 * um), size=(3 * um, 2 * um, 1.5 * um)),
+                medium=sio2,
+            ),
+            Structure(
+                geometry=Box(center=(0.0, 0.0, 0.1 * um), size=(3 * um, 0.3 * um, 0.2 * um)),
+                medium=si,
+            ),
+        ],
+        monitors=[
+            FieldMonitor(
+                center=(0.5 * um, 0.0, 0.0),
+                size=(0.0, 1.0 * um, 0.8 * um),
+                freqs=[1.0],
+                name="m",
+            )
+        ],
+        sources=[],
+        boundary_spec=BoundarySpec.all_sides(),
+        run_time=1e-15,
+    )
+
+    fig, axes = sim.plot(z=0.0, y=0.0, show=False)
+    plt.close(fig)
+
+    assert len(axes) == 2
+    assert axes[0].get_title() == "cross section at z=0.00 (um)"
+    assert axes[1].get_title() == "cross section at y=0.00 (um)"
+    assert axes[0].lines
 
 
 def test_tidy3d_field_frame_uses_xarray_results():
