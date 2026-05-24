@@ -24,6 +24,22 @@ class Material:
     def get_sample(self):
         return self.permittivity, self.permeability, self.conductivity
 
+    def copy(self):
+        """Create a copy of this material."""
+        return Material(
+            permittivity=self.permittivity,
+            permeability=self.permeability,
+            conductivity=self.conductivity,
+            k=self.k,
+            rho=self.rho,
+            cp=self.cp,
+            dn_dT=self.dn_dT,
+            T0=self.T0,
+        )
+
+
+Medium = Material
+
 
 # CustomMaterial: Function-based material for inverse design
 class CustomMaterial:

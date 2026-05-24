@@ -11,6 +11,8 @@ import numpy as np
 
 from beamz.const import LIGHT_SPEED, µm
 from beamz.design.core import Design
+from beamz.design.materials import Material
+from beamz.design.structures import Structure
 from beamz.devices.monitors.monitors import Monitor
 from beamz.devices.ports import Port
 from beamz.devices.sources.compiler import (
@@ -50,6 +52,50 @@ from beamz.simulation.fields import Fields
 from beamz.simulation.step_sequence import run_step_sequence
 from beamz.simulation.yee import component_coordinates_3d_um
 from beamz.visual.helpers import _finish_inline_progress, _print_inline_progress
+
+
+def _copy_with_update(obj, update=None):
+    import copy
+
+    copied = copy.deepcopy(obj)
+    if update:
+        for key, value in dict(update).items():
+            setattr(copied, key, value)
+    return copied
+
+
+def _material_index(material) -> float:
+    eps = getattr(material, "permittivity", 1.0)
+    try:
+        eps_value = float(np.max(np.real(np.asarray(eps))))
+    except Exception:
+        eps_value = 1.0
+    return float(np.sqrt(max(eps_value, 1.0)))
+
+
+def _max_index_for_specs(background, structures) -> float:
+    values = [_material_index(background)]
+    for structure in structures or ():
+        material = getattr(structure, "material", None) or getattr(
+            structure, "medium", None
+        )
+        if material is not None:
+            values.append(_material_index(material))
+    return max(values) if values else 1.0
+
+
+def _shift_device_to_domain(device, offset):
+    if hasattr(device, "shifted"):
+        return device.shifted(offset)
+    copied = _copy_with_update(device)
+    offset = tuple(float(v) for v in offset)
+    if hasattr(copied, "center") and copied.center is not None:
+        copied.center = tuple(a + b for a, b in zip(copied.center, offset, strict=False))
+    if hasattr(copied, "position") and copied.position is not None:
+        copied.position = tuple(
+            a + b for a, b in zip(copied.position, offset, strict=False)
+        )
+    return copied
 
 
 def _pml_merge_mode(key: str) -> str:
@@ -472,8 +518,86 @@ class Simulation:
         resolution: float = 0.02 * µm,
         time: np.ndarray = None,
         plane_2d: str = "xy",
+        *,
+        size=None,
+        structures: list | None = None,
+        medium=None,
+        boundary_spec=None,
+        grid_spec=None,
+        run_time: float | None = None,
     ):
+        coordinate_offset = (0.0, 0.0, 0.0)
+        if design is None:
+            if size is None:
+                raise ValueError("Simulation requires either design=... or size=....")
+            sim_size = tuple(float(v) for v in size)
+            if len(sim_size) == 2:
+                sim_size = (sim_size[0], sim_size[1], 0.0)
+            if len(sim_size) != 3:
+                raise ValueError("Simulation size must be a 2D or 3D tuple.")
+            background = medium if medium is not None else Material(1.0)
+            design = Design(
+                width=sim_size[0],
+                height=sim_size[1],
+                depth=sim_size[2],
+                material=background,
+            )
+            coordinate_offset = (
+                0.5 * sim_size[0],
+                0.5 * sim_size[1],
+                0.5 * sim_size[2],
+            )
+            for structure in structures or ():
+                if isinstance(structure, Structure):
+                    design += structure.to_beamz_structure(
+                        offset=coordinate_offset,
+                        domain_size=sim_size,
+                    )
+                elif hasattr(structure, "to_beamz_structure"):
+                    design += structure.to_beamz_structure(
+                        offset=coordinate_offset,
+                        domain_size=sim_size,
+                    )
+                else:
+                    copied = _copy_with_update(structure)
+                    if hasattr(copied, "shift"):
+                        copied = copied.shift(*coordinate_offset)
+                    design += copied
+
+            if grid_spec is not None:
+                resolution = grid_spec.resolve_resolution(
+                    max_index=_max_index_for_specs(background, structures or ())
+                )
+            if time is None and run_time is not None:
+                spec = grid_spec
+                if spec is None:
+                    from beamz.simulation.specs import GridSpec
+
+                    spec = GridSpec.uniform(resolution)
+                dims = 3 if sim_size[2] > 0 else 2
+                dt = spec.resolve_time_step(resolution, dims=dims)
+                time = np.arange(0.0, float(run_time) + 0.5 * dt, dt)
+
+        if boundary_spec is not None:
+            boundaries = list(getattr(boundary_spec, "boundaries", boundary_spec))
+        if coordinate_offset != (0.0, 0.0, 0.0):
+            sources = [
+                _shift_device_to_domain(source, coordinate_offset)
+                for source in (sources or [])
+            ]
+            monitors = [
+                _shift_device_to_domain(monitor, coordinate_offset)
+                for monitor in (monitors or [])
+            ]
         self.design = design
+        self.size = (
+            (float(design.width), float(design.height), float(design.depth))
+            if design is not None
+            else None
+        )
+        self.coordinate_offset = coordinate_offset
+        self.grid_spec = grid_spec
+        self.run_time = run_time
         sources = sources or []
         monitors = monitors or []
         boundaries = normalize_boundaries(
@@ -555,6 +679,17 @@ class Simulation:
         self._compiled_monitor_state = None
         self._compiled_step_source_specs = None
         self._imperative_step_sources = None
+
+    def copy(self, *, update=None):
+        """Return a configuration copy of the simulation."""
+        copied = _copy_with_update(self, update=update)
+        copied.current_step = 0
+        copied.t = float(copied.time[0]) if getattr(copied, "time", None) is not None else 0.0
+        copied._compiled_program = None
+        copied._compiled_program_signature = None
+        copied._compiled_program_cache = {}
+        copied._compiled_monitor_state = None
+        return copied
 
     @staticmethod
     def _dedupe_devices(devices):

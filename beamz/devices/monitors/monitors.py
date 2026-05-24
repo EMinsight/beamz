@@ -28,6 +28,29 @@ from beamz.shared_kernels import (
 logger = logging.getLogger(__name__)
 
 
+def _normalize_center_size(center, size):
+    center = tuple(float(v) for v in center)
+    size = tuple(float(v) for v in size)
+    if len(center) == 2:
+        center = (center[0], center[1], 0.0)
+    if len(size) == 2:
+        size = (size[0], size[1], 0.0)
+    if len(center) != 3 or len(size) != 3:
+        raise ValueError("center and size must be 2D or 3D coordinate tuples.")
+    return center, size
+
+
+def _plane_start_end_from_center_size(center, size):
+    center, size = _normalize_center_size(center, size)
+    abs_size = np.abs(np.asarray(size, dtype=float))
+    normal_index = int(np.argmin(abs_size))
+    lower = [center[i] - 0.5 * size[i] for i in range(3)]
+    upper = [center[i] + 0.5 * size[i] for i in range(3)]
+    lower[normal_index] = center[normal_index]
+    upper[normal_index] = center[normal_index]
+    return tuple(lower), tuple(upper)
+
+
 def _interp_complex_1d(
     values: np.ndarray,
     src_coords: np.ndarray,
@@ -1810,78 +1833,89 @@ class Monitor(RuntimeStateProxy):
         stats = self.get_field_statistics()
         return f"Monitor: {stats['monitor_type']} ({'3D' if stats['is_3d'] else '2D'}), {stats['total_records']} records"
 
-    def copy(self):
-        """Create a deep copy of the Monitor."""
-        if self.is_3d:
-            # 3D monitor
-            if hasattr(self, "end") and self.end is not None:
-                # Defined by start and end points
-                return Monitor(
-                    design=self.design,  # Reference to same design is okay
-                    start=self.start,
-                    end=self.end,
-                    record_fields=self.should_record_fields,
-                    accumulate_power=self.accumulate_power,
-                    live_update=self.live_update,
-                    record_interval=self.record_interval,
-                    max_history_steps=self.max_history_steps,
-                    dft_frequencies=self.dft_frequencies.copy(),
-                    dft_t_start=self.dft_t_start,
-                    dft_t_end=self.dft_t_end,
-                    dft_enabled=self.dft_enabled,
-                    dft_components=self.dft_components,
-                    dft_record_every_step=self.dft_record_every_step,
-                    dft_record_interval=self.dft_record_interval,
-                    dft_window=self.dft_window,
-                    dft_normalization=self.dft_normalization,
-                    dft_length_unit=self.dft_length_unit,
-                )
-            else:
-                # Defined by plane normal and position
-                return Monitor(
-                    design=self.design,  # Reference to same design is okay
-                    start=self.start,
-                    plane_normal=self.plane_normal,
-                    plane_position=self.plane_position,
-                    size=self.size,
-                    record_fields=self.should_record_fields,
-                    accumulate_power=self.accumulate_power,
-                    live_update=self.live_update,
-                    record_interval=self.record_interval,
-                    max_history_steps=self.max_history_steps,
-                    dft_frequencies=self.dft_frequencies.copy(),
-                    dft_t_start=self.dft_t_start,
-                    dft_t_end=self.dft_t_end,
-                    dft_enabled=self.dft_enabled,
-                    dft_components=self.dft_components,
-                    dft_record_every_step=self.dft_record_every_step,
-                    dft_record_interval=self.dft_record_interval,
-                    dft_window=self.dft_window,
-                    dft_normalization=self.dft_normalization,
-                    dft_length_unit=self.dft_length_unit,
-                )
-        else:
-            # 2D monitor
-            return Monitor(
-                design=self.design,  # Reference to same design is okay
-                start=self.start,
-                end=self.end,
-                record_fields=self.should_record_fields,
-                accumulate_power=self.accumulate_power,
-                live_update=self.live_update,
-                record_interval=self.record_interval,
-                max_history_steps=self.max_history_steps,
-                dft_frequencies=self.dft_frequencies.copy(),
-                dft_t_start=self.dft_t_start,
-                dft_t_end=self.dft_t_end,
-                dft_enabled=self.dft_enabled,
-                dft_components=self.dft_components,
-                dft_record_every_step=self.dft_record_every_step,
-                dft_record_interval=self.dft_record_interval,
-                dft_window=self.dft_window,
-                dft_normalization=self.dft_normalization,
-                dft_length_unit=self.dft_length_unit,
+    def copy(self, *, update=None):
+        """Create a configuration copy of the Monitor."""
+        import copy
+
+        copied = copy.deepcopy(self)
+        if update:
+            for key, value in dict(update).items():
+                setattr(copied, key, value)
+        return copied
+
+    def shifted(self, offset):
+        copied = self.copy()
+        offset = tuple(float(v) for v in offset)
+        if getattr(copied, "start", None) is not None:
+            copied.start = tuple(
+                a + b for a, b in zip(copied.start, offset, strict=False)
             )
+        if getattr(copied, "end", None) is not None:
+            copied.end = tuple(
+                a + b for a, b in zip(copied.end, offset, strict=False)
+            )
+        if getattr(copied, "position", None) is not None:
+            copied.position = tuple(
+                a + b for a, b in zip(copied.position, offset, strict=False)
+            )
+        if getattr(copied, "vertices", None):
+            copied.vertices = [
+                tuple(a + b for a, b in zip(vertex, offset, strict=False))
+                for vertex in copied.vertices
+            ]
+        if getattr(copied, "plane_normal", None) in {"x", "y", "z"}:
+            idx = {"x": 0, "y": 1, "z": 2}[copied.plane_normal]
+            copied.plane_position = float(copied.plane_position) + offset[idx]
+        return copied
+
+
+class FieldMonitor(Monitor):
+    """Frequency-domain field monitor specified by center, size, and frequencies."""
+
+    def __init__(
+        self,
+        *,
+        center,
+        size,
+        freqs,
+        name=None,
+        components=("Ex", "Ey", "Ez", "Hx", "Hy", "Hz"),
+        **kwargs,
+    ):
+        start, end = _plane_start_end_from_center_size(center, size)
+        self.center = tuple(float(v) for v in center)
+        self.size_spec = tuple(float(v) for v in size)
+        super().__init__(
+            start=start,
+            end=end,
+            name=name,
+            record_fields=False,
+            accumulate_power=False,
+            dft_enabled=True,
+            dft_frequencies=np.asarray(freqs, dtype=float),
+            dft_components=tuple(components),
+            **kwargs,
+        )
+
+
+class FluxMonitor(Monitor):
+    """Frequency-domain flux monitor specified by center, size, and frequencies."""
+
+    def __init__(self, *, center, size, freqs, name=None, **kwargs):
+        start, end = _plane_start_end_from_center_size(center, size)
+        self.center = tuple(float(v) for v in center)
+        self.size_spec = tuple(float(v) for v in size)
+        super().__init__(
+            start=start,
+            end=end,
+            name=name,
+            record_fields=False,
+            accumulate_power=False,
+            dft_enabled=True,
+            dft_frequencies=np.asarray(freqs, dtype=float),
+            dft_components=("Ex", "Ey", "Ez", "Hx", "Hy", "Hz"),
+            **kwargs,
+        )
 
 
 class ModeMonitor(Monitor):
@@ -1895,6 +1929,10 @@ class ModeMonitor(Monitor):
     def __init__(
         self,
         *args,
+        center=None,
+        size=None,
+        freqs=None,
+        mode_spec=None,
         direction,
         polarization,
         mode_index=0,
@@ -1904,6 +1942,19 @@ class ModeMonitor(Monitor):
         dft_enabled=None,
         **kwargs,
     ):
+        if center is not None or size is not None:
+            if center is None or size is None:
+                raise ValueError("ModeMonitor requires both center and size.")
+            start, end = _plane_start_end_from_center_size(center, size)
+            kwargs.setdefault("start", start)
+            kwargs.setdefault("end", end)
+            self.center = tuple(float(v) for v in center)
+            self.size_spec = tuple(float(v) for v in size)
+        if freqs is not None:
+            kwargs.setdefault("dft_frequencies", np.asarray(freqs, dtype=float))
+        self.mode_spec = mode_spec
+        if mode_spec is not None and mode_index == 0:
+            mode_index = int(getattr(mode_spec, "mode_index", 0))
         self.direction = _normalize_direction(direction)
         self.polarization = _normalize_polarization(polarization)
         self.mode_index = int(mode_index)

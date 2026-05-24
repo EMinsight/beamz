@@ -455,6 +455,125 @@ class Rectangle(Polygon):
         return new_rect
 
 
+class Box:
+    """Axis-aligned box specified by center and size.
+
+    This is a centered-geometry companion to :class:`Rectangle`. It is intended
+    for simulation construction APIs where coordinates are expressed relative to
+    the simulation center.
+    """
+
+    def __init__(self, center=(0, 0, 0), size=(1, 1, 1)):
+        if len(center) == 2:
+            center = (center[0], center[1], 0.0)
+        if len(size) == 2:
+            size = (size[0], size[1], 0.0)
+        if len(center) != 3 or len(size) != 3:
+            raise ValueError("Box center and size must be 2D or 3D coordinate tuples.")
+        self.center = tuple(float(v) for v in center)
+        self.size = tuple(float(v) for v in size)
+        finite_sizes = [abs(v) for v in self.size if np.isfinite(v)]
+        if any(v < 0 for v in finite_sizes):
+            raise ValueError(f"Box sizes must be non-negative, got {size!r}.")
+        self.material = None
+        self.position = self.lower
+        self.width = self.size[0]
+        self.height = self.size[1]
+        self.depth = self.size[2]
+        self.is_3d = bool(self.size[2] != 0)
+
+    @property
+    def lower(self):
+        return tuple(c - 0.5 * s for c, s in zip(self.center, self.size, strict=True))
+
+    @property
+    def upper(self):
+        return tuple(c + 0.5 * s for c, s in zip(self.center, self.size, strict=True))
+
+    def shifted(self, offset):
+        return Box(
+            center=tuple(c + d for c, d in zip(self.center, offset, strict=True)),
+            size=self.size,
+        )
+
+    def to_rectangle(self, offset=(0.0, 0.0, 0.0), material=None):
+        shifted = self.shifted(offset)
+        lower = shifted.lower
+        size = shifted.size
+        if not all(np.isfinite(v) for v in (*lower, *size)):
+            raise ValueError(
+                "Infinite Box sizes must be clipped by the Simulation(size=...) "
+                "constructor before rasterization."
+            )
+        return Rectangle(
+            position=lower,
+            width=max(float(size[0]), np.finfo(float).eps),
+            height=max(float(size[1]), np.finfo(float).eps),
+            depth=max(float(size[2]), 0.0),
+            material=material if material is not None else self.material,
+        )
+
+    def get_bounding_box(self):
+        return (*self.lower, *self.upper)
+
+    def point_in_polygon(self, x, y, z=None):
+        lower = self.lower
+        upper = self.upper
+        inside_xy = lower[0] <= x <= upper[0] and lower[1] <= y <= upper[1]
+        if z is None or self.size[2] == 0:
+            return inside_xy
+        return inside_xy and lower[2] <= z <= upper[2]
+
+    def copy(self):
+        copied = Box(center=self.center, size=self.size)
+        copied.material = self.material
+        return copied
+
+
+class Structure:
+    """Pair a geometry object with a material/medium."""
+
+    def __init__(self, geometry, medium=None, material=None):
+        self.geometry = geometry
+        self.material = material if material is not None else medium
+        if self.material is not None and hasattr(self.geometry, "material"):
+            self.geometry.material = self.material
+        self.medium = self.material
+
+    def __getattr__(self, name):
+        return getattr(self.geometry, name)
+
+    def get_bounding_box(self):
+        return self.geometry.get_bounding_box()
+
+    def point_in_polygon(self, x, y, z=None):
+        return self.geometry.point_in_polygon(x, y, z)
+
+    def to_beamz_structure(self, offset=(0.0, 0.0, 0.0), domain_size=None):
+        geometry = self.geometry
+        if isinstance(geometry, Box):
+            if domain_size is not None and any(not np.isfinite(v) for v in geometry.size):
+                clipped_size = tuple(
+                    float(domain)
+                    if not np.isfinite(size)
+                    else min(float(size), float(domain))
+                    for size, domain in zip(geometry.size, domain_size, strict=True)
+                )
+                geometry = Box(center=geometry.center, size=clipped_size)
+            return geometry.to_rectangle(offset=offset, material=self.material)
+
+        copied = geometry.copy() if hasattr(geometry, "copy") else geometry
+        if hasattr(copied, "shift"):
+            copied = copied.shift(*offset)
+        if self.material is not None:
+            copied.material = self.material
+        return copied
+
+    def copy(self):
+        geometry = self.geometry.copy() if hasattr(self.geometry, "copy") else self.geometry
+        return Structure(geometry=geometry, material=self.material)
+
+
 class Circle(Polygon):
     def __init__(
         self,

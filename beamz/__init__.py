@@ -20,20 +20,22 @@ from beamz.data import colocate_dataset, field_intensity, poynting_vector
 
 # Import design-related classes and functions
 from beamz.design.core import Design
-from beamz.design.materials import CustomMaterial, Material
+from beamz.design.materials import CustomMaterial, Material, Medium
 
 # Import simulation-related classes and functions
 from beamz.design.meshing import RegularGrid
 from beamz.design.structures import (
+    Box,
     Circle,
     CircularBend,
     Polygon,
     Rectangle,
     Ring,
     Sphere,
+    Structure,
     Taper,
 )
-from beamz.devices.monitors import ModeMonitor, Monitor
+from beamz.devices.monitors import FieldMonitor, FluxMonitor, ModeMonitor, Monitor
 from beamz.devices.ports import Port
 from beamz.devices.sources import GaussianSource, ModeSource
 from beamz.devices.sources.mode import solve_modes
@@ -59,6 +61,7 @@ from beamz.simulation.core import (
     Simulation,
     SimulationResults,
 )
+from beamz.simulation.specs import BoundarySpec, GaussianPulse, GridSpec, inf
 
 # Import UI helpers
 from beamz.visual.helpers import (
@@ -95,10 +98,13 @@ _exports = {
     "μm": μm,
     # Materials
     "Material": Material,
+    "Medium": Medium,
     "CustomMaterial": CustomMaterial,
     # Structures
     "design": design,
     "Design": Design,
+    "Box": Box,
+    "Structure": Structure,
     "Rectangle": Rectangle,
     "Circle": Circle,
     "Ring": Ring,
@@ -111,6 +117,8 @@ _exports = {
     "GaussianSource": GaussianSource,
     # Monitors
     "Monitor": Monitor,
+    "FieldMonitor": FieldMonitor,
+    "FluxMonitor": FluxMonitor,
     "ModeMonitor": ModeMonitor,
     "Port": Port,
     # Signals
@@ -124,6 +132,10 @@ _exports = {
     # Simulation
     "RegularGrid": RegularGrid,
     "Simulation": Simulation,
+    "GridSpec": GridSpec,
+    "GaussianPulse": GaussianPulse,
+    "BoundarySpec": BoundarySpec,
+    "inf": inf,
     "PortSpec": PortSpec,
     "MonitorResults": MonitorResults,
     "SimulationResults": SimulationResults,
