@@ -1279,14 +1279,29 @@ def _component_support_slices_3d(
 
 def _modal_power_3d_from_profiles(profiles, axis, d_area, direction_sign=1.0):
     """Compute 3D modal power from profiles on a cross-section."""
-    ex = profiles.get("Ex")
-    ey = profiles.get("Ey")
-    ez = profiles.get("Ez")
-    hx = profiles.get("Hx")
-    hy = profiles.get("Hy")
-    hz = profiles.get("Hz")
-    if any(v is None for v in (ex, ey, ez, hx, hy, hz)):
+    if axis == "x":
+        required = ("Ey", "Ez", "Hy", "Hz")
+    elif axis == "y":
+        required = ("Ex", "Ez", "Hx", "Hz")
+    elif axis == "z":
+        required = ("Ex", "Ey", "Hx", "Hy")
+    else:
         return 0.0
+    if any(profiles.get(name) is None for name in required):
+        return 0.0
+
+    def _profile(name):
+        value = profiles.get(name)
+        if value is None:
+            return np.zeros_like(np.asarray(profiles[required[0]], dtype=np.complex128))
+        return value
+
+    ex = _profile("Ex")
+    ey = _profile("Ey")
+    ez = _profile("Ez")
+    hx = _profile("Hx")
+    hy = _profile("Hy")
+    hz = _profile("Hz")
 
     ex = np.asarray(ex, dtype=np.complex128)
     ey = np.asarray(ey, dtype=np.complex128)

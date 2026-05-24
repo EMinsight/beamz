@@ -25,6 +25,7 @@ from beamz.devices.sources.mode import (
     _enforce_componentwise_parity,
     _make_3d_mode_basis_profiles,
     _modal_overlap_3d_profiles,
+    _normalize_3d_profiles_by_flux,
     _numeric_phase_delay,
     _select_core_confined_mode_index,  # noqa: F401 - compatibility monkeypatch hook
     _solve_numeric_k_axis,
@@ -2712,12 +2713,6 @@ class Simulation:
         eps_profile, local_idx, dl = self._monitor_profile_slice(
             monitor, parts["axis"], mode_pad_cells
         )
-        if self.is_3d and analysis_coords0 is not None and analysis_coords1 is not None:
-            dl = self._analysis_plane_sample_area(
-                analysis_coords0,
-                analysis_coords1,
-                float(self.resolution),
-            )
         solver_direction = spec.direction
         basis_direction = solver_direction
         backward_direction = self._opposite_port_direction(spec.direction)
@@ -3226,6 +3221,18 @@ class Simulation:
                 for name in proj_components
                 if name in mode_components_bwd
             }
+            mode_components_proj = _normalize_3d_profiles_by_flux(
+                mode_components_proj,
+                axis=parts["axis"],
+                d_area=float(dl),
+                direction_sign=direction_sign,
+            )
+            mode_components_bwd_proj = _normalize_3d_profiles_by_flux(
+                mode_components_bwd_proj,
+                axis=parts["axis"],
+                d_area=float(dl),
+                direction_sign=direction_sign,
+            )
             fwd_vec = np.concatenate([mode_components_proj[c] for c in proj_components])
             bwd_vec = np.concatenate(
                 [mode_components_bwd_proj[c] for c in proj_components]
@@ -3541,37 +3548,47 @@ class Simulation:
         mode_components = projection.get("mode_components", None)
         mode_components_bwd = projection.get("mode_components_bwd", None)
         overlap_matrix = projection.get("overlap_matrix", None)
-        mode_matrix = projection.get("mode_matrix", None)
         axis = str(projection.get("axis", "")).lower()
+        d_area = float(projection.get("d_area", 1.0))
+        direction_sign = float(projection.get("direction_sign", 1.0))
         if (
             isinstance(mode_components, dict)
             and isinstance(mode_components_bwd, dict)
-            and (overlap_matrix is not None or mode_matrix is not None)
+            and overlap_matrix is not None
             and axis in {"x", "y", "z"}
         ):
-            components = tuple(projection.get("components", ()))
-            if len(components) == 0:
-                raise ValueError("3D projection missing component list.")
-            field_vec = np.concatenate(
+            rhs = np.asarray(
                 [
-                    np.asarray(field_components[name], dtype=np.complex128).reshape(-1)
-                    for name in components
-                ]
+                    _safe_modal_overlap_3d(
+                        field_components,
+                        mode_components,
+                        axis,
+                        d_area,
+                        direction_sign=direction_sign,
+                    ),
+                    _safe_modal_overlap_3d(
+                        field_components,
+                        mode_components_bwd,
+                        axis,
+                        d_area,
+                        direction_sign=direction_sign,
+                    ),
+                ],
+                dtype=np.complex128,
             )
-            matrix = np.asarray(mode_matrix, dtype=np.complex128)
-            n = int(min(field_vec.size, matrix.shape[0]))
-            if matrix.ndim != 2 or matrix.shape[1] < 2 or n <= 0:
-                raise ValueError("Invalid 3D modal field system.")
-            system = matrix[:n, :2]
-            target = field_vec[:n]
-            cond = float(np.linalg.cond(system))
+            overlap = np.asarray(overlap_matrix, dtype=np.complex128)
+            cond = float(np.linalg.cond(overlap))
             if (
-                not np.all(np.isfinite(system))
-                or not np.all(np.isfinite(target))
+                not np.all(np.isfinite(overlap))
+                or not np.all(np.isfinite(rhs))
                 or not np.isfinite(cond)
             ):
-                raise ValueError("Invalid 3D modal field system.")
-            coeff = np.linalg.pinv(system) @ target
+                raise ValueError("Invalid 3D modal overlap system.")
+            system = overlap.T
+            if cond < 1e8:
+                coeff = np.linalg.solve(system, rhs)
+            else:
+                coeff = np.linalg.pinv(system) @ rhs
             return np.complex128(coeff[0]), np.complex128(coeff[1])
 
         components = tuple(projection.get("components", ()))
@@ -3616,6 +3633,8 @@ class Simulation:
         first = projections[0]
         components = tuple(first.get("components", ()))
         axis = str(first.get("axis", "")).lower()
+        d_area = float(first.get("d_area", 1.0))
+        direction_sign = float(first.get("direction_sign", 1.0))
         if len(components) == 0 or axis not in {"x", "y", "z"}:
             raise ValueError("3D modal group projection is missing components or axis.")
 
@@ -3644,6 +3663,48 @@ class Simulation:
                 }
             )
 
+        rhs = np.asarray(
+            [
+                _safe_modal_overlap_3d(
+                    field_components,
+                    mode,
+                    axis,
+                    d_area,
+                    direction_sign=direction_sign,
+                )
+                for mode in basis
+            ],
+            dtype=np.complex128,
+        )
+        overlap = np.asarray(
+            [
+                [
+                    _safe_modal_overlap_3d(
+                        basis_i,
+                        basis_j,
+                        axis,
+                        d_area,
+                        direction_sign=direction_sign,
+                    )
+                    for basis_j in basis
+                ]
+                for basis_i in basis
+            ],
+            dtype=np.complex128,
+        )
+        system = overlap.T
+        cond = float(np.linalg.cond(system))
+        if (
+            not np.all(np.isfinite(system))
+            or not np.all(np.isfinite(rhs))
+            or not np.isfinite(cond)
+        ):
+            raise ValueError("Invalid grouped 3D modal overlap system.")
+        if cond < 1e8:
+            coeff = np.linalg.solve(system, rhs)
+        else:
+            coeff = np.linalg.pinv(system) @ rhs
+
         field_parts = [
             np.asarray(field_components[name], dtype=np.complex128).reshape(-1)
             for name in components
@@ -3666,19 +3727,6 @@ class Simulation:
                 for mode in basis
             ]
         )
-        n = int(min(field_vec.size, mode_matrix.shape[0]))
-        if n <= 0 or mode_matrix.shape[1] <= 0:
-            raise ValueError("Invalid grouped 3D modal field system.")
-        system = mode_matrix[:n, :]
-        target = field_vec[:n]
-        cond = float(np.linalg.cond(system))
-        if (
-            not np.all(np.isfinite(system))
-            or not np.all(np.isfinite(target))
-            or not np.isfinite(cond)
-        ):
-            raise ValueError("Invalid grouped 3D modal field system.")
-        coeff = np.linalg.pinv(system) @ target
         diagnostics = (
             Simulation._modal_projection_reconstruction_diagnostics_from_matrix(
                 field_vec,

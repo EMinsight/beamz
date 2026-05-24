@@ -366,6 +366,22 @@ class TestModeSourceDiscreteHelpers:
         assert np.isfinite(p)
         assert np.isclose(abs(p), 1.0, rtol=1e-10, atol=1e-10)
 
+    def test_normalize_3d_profiles_by_flux_accepts_tangential_subset(self):
+        profiles = {
+            "Ey": np.ones((2, 2), dtype=np.complex128),
+            "Ez": np.zeros((2, 2), dtype=np.complex128),
+            "Hy": np.zeros((2, 2), dtype=np.complex128),
+            "Hz": np.ones((2, 2), dtype=np.complex128),
+        }
+        d_area = 0.25
+
+        out = mode_module._normalize_3d_profiles_by_flux(
+            dict(profiles), axis="x", d_area=d_area
+        )
+        p = mode_module._modal_power_3d_from_profiles(out, axis="x", d_area=d_area)
+
+        assert p == pytest.approx(1.0)
+
     def test_scale_3d_profiles_for_power_scales_flux(self):
         profiles = {
             "Ex": np.zeros((2, 2), dtype=np.complex128),

@@ -1403,6 +1403,8 @@ def test_build_port_projection_3d_builds_power_orthogonal_basis(monkeypatch):
     overlap = np.asarray(projection["overlap_matrix"], dtype=np.complex128)
     assert overlap.shape == (2, 2)
     assert np.isfinite(overlap).all()
+    np.testing.assert_allclose(np.abs(np.diag(overlap)), np.ones(2), atol=1e-12)
+    assert projection["d_area"] == pytest.approx(sim.resolution**2)
 
     a_fwd = Simulation._project_modal_coefficients_3d(
         projection["mode_components"], projection
