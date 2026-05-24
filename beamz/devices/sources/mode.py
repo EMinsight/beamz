@@ -2210,10 +2210,11 @@ class ModeSource(RuntimeStateProxy):
                 Hx_cropped = Hx_cropped * window
                 Ez_cropped = Ez_cropped * window
 
-            # For y-directed TMz launches the native full-Yee source pair must
-            # keep J and M with opposite handedness so the injected Ez/Hx pair
-            # carries power along the requested y direction.
-            jz_profile = dir_sign * Hx_cropped
+            # Match the rotated x-directed TMz launch on the native full-Yee
+            # lattice.  The mode solver's Hx gauge has the opposite sign from
+            # the Hy gauge used by x-propagation, so Jz needs the same leading
+            # minus sign as the x-directed branch.
+            jz_profile = -dir_sign * Hx_cropped
             my_profile = -dir_sign * Ez_cropped
             jz_profile, my_profile = _normalize_2d_pair_by_power(
                 jz_profile, my_profile, signed_flux_sign=1.0, dl=resolution

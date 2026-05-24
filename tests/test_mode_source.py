@@ -32,6 +32,7 @@ from beamz.devices.sources.solve import (
     _remap_mode_tuple_to_global,
     solve_modes,
 )
+from beamz.simulation.fields import Fields
 from tests.utils import TEST_WAVELENGTH, compute_field_energy
 
 
@@ -365,6 +366,102 @@ class TestModeSourceDiscreteHelpers:
         p = mode_module._modal_power_3d_from_profiles(out, axis="x", d_area=d_area)
         assert np.isfinite(p)
         assert np.isclose(abs(p), 1.0, rtol=1e-10, atol=1e-10)
+
+    def test_2d_tm_y_launch_is_transpose_of_x_launch(self):
+        wavelength = TEST_WAVELENGTH
+        n_core = 2.0
+        n_clad = 1.0
+        guide_w = 0.55 * wavelength
+        domain = 6.0 * wavelength
+        dx, dt = calc_optimal_fdtd_params(
+            wavelength,
+            n_core,
+            dims=2,
+            safety_factor=0.95,
+            points_per_wavelength=12,
+        )
+        signal = np.ones(8, dtype=float)
+
+        x_design = Design(
+            width=domain,
+            height=domain,
+            material=Material(permittivity=n_clad**2),
+        )
+        x_design += Rectangle(
+            position=(0.0, domain / 2 - guide_w / 2),
+            width=domain,
+            height=guide_w,
+            material=Material(permittivity=n_core**2),
+        )
+        y_design = Design(
+            width=domain,
+            height=domain,
+            material=Material(permittivity=n_clad**2),
+        )
+        y_design += Rectangle(
+            position=(domain / 2 - guide_w / 2, 0.0),
+            width=guide_w,
+            height=domain,
+            material=Material(permittivity=n_core**2),
+        )
+
+        x_grid = x_design.rasterize(resolution=dx)
+        y_grid = y_design.rasterize(resolution=dx)
+        x_fields = Fields(
+            x_grid.permittivity,
+            x_grid.conductivity,
+            x_grid.permeability,
+            dx,
+            plane_2d="xy",
+        )
+        y_fields = Fields(
+            y_grid.permittivity,
+            y_grid.conductivity,
+            y_grid.permeability,
+            dx,
+            plane_2d="xy",
+        )
+        x_source = ModeSource(
+            grid=x_grid,
+            center=(wavelength, domain / 2),
+            width=guide_w * 3,
+            wavelength=wavelength,
+            pol="tm",
+            signal=signal,
+            direction="+x",
+        )
+        y_source = ModeSource(
+            grid=y_grid,
+            center=(domain / 2, wavelength),
+            width=guide_w * 3,
+            wavelength=wavelength,
+            pol="tm",
+            signal=signal,
+            direction="+y",
+        )
+
+        x_source.initialize(x_fields.permittivity, dx, dt=dt)
+        y_source.initialize(y_fields.permittivity, dx, dt=dt)
+        x_source._inject_2d_h(x_fields, 1.0, dt, dx)
+        x_source._inject_2d_e(x_fields, 1.0, dt, dx)
+        y_source._inject_2d_h(y_fields, 1.0, dt, dx)
+        y_source._inject_2d_e(y_fields, 1.0, dt, dx)
+
+        x_ez = np.asarray(x_fields.Ez)
+        y_ez = np.asarray(y_fields.Ez)
+        np.testing.assert_allclose(
+            x_ez,
+            y_ez.T,
+            rtol=1e-6,
+            atol=max(float(np.max(np.abs(x_ez))) * 1e-6, 1e-12),
+        )
+
+        np.testing.assert_allclose(
+            np.max(np.abs(x_fields.Hy)),
+            np.max(np.abs(y_fields.Hx)),
+            rtol=1e-6,
+            atol=1e-12,
+        )
 
     def test_select_core_confined_mode_prefers_centered_mode(self):
         eps = np.ones((81, 1), dtype=float)
