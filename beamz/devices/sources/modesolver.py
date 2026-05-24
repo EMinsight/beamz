@@ -151,6 +151,13 @@ class ModeSolver:
     def plot_field_components(self, *_, **kwargs):
         from beamz.visual.mpl import plot_mode_fields
 
+        if "field_names" in kwargs:
+            kwargs["components"] = tuple(kwargs.pop("field_names"))
+        kwargs.pop("mode_indices", None)
+        if "f" in kwargs:
+            frequency = float(kwargs.pop("f"))
+        else:
+            frequency = float(self.freqs[0])
         axis, center, _spans = _plane_axis_and_spans(self.plane)
         if axis != "x":
             raise NotImplementedError("ModeSolver plotting currently supports x-normal planes.")
@@ -159,7 +166,7 @@ class ModeSolver:
         return plot_mode_fields(
             self.simulation.design.rasterize(resolution=self.simulation.resolution),
             plane_x=plane_x,
-            wavelength=LIGHT_SPEED / float(self.freqs[0]),
+            wavelength=LIGHT_SPEED / frequency,
             polarization=getattr(self.mode_spec, "polarization", None),
             num_modes=int(self.mode_spec.num_modes),
             show=kwargs.pop("show", False),
