@@ -37,7 +37,7 @@ from beamz.design.structures import (
 )
 from beamz.devices.monitors import FieldMonitor, FluxMonitor, ModeMonitor, Monitor
 from beamz.devices.ports import Port
-from beamz.devices.sources import GaussianSource, ModeSource
+from beamz.devices.sources import GaussianSource, ModeData, ModeSolver, ModeSource
 from beamz.devices.sources.mode import solve_modes
 from beamz.devices.sources.signals import plot_signal, ramped_cosine, signal_plot_data
 from beamz.optimization.autodiff import transform_density
@@ -61,7 +61,7 @@ from beamz.simulation.core import (
     Simulation,
     SimulationResults,
 )
-from beamz.simulation.specs import BoundarySpec, GaussianPulse, GridSpec, inf
+from beamz.simulation.specs import BoundarySpec, GaussianPulse, GridSpec, ModeSpec, inf
 
 # Import UI helpers
 from beamz.visual.helpers import (
@@ -114,6 +114,8 @@ _exports = {
     "Sphere": Sphere,
     # Sources
     "ModeSource": ModeSource,
+    "ModeSolver": ModeSolver,
+    "ModeData": ModeData,
     "GaussianSource": GaussianSource,
     # Monitors
     "Monitor": Monitor,
@@ -134,6 +136,7 @@ _exports = {
     "Simulation": Simulation,
     "GridSpec": GridSpec,
     "GaussianPulse": GaussianPulse,
+    "ModeSpec": ModeSpec,
     "BoundarySpec": BoundarySpec,
     "inf": inf,
     "PortSpec": PortSpec,

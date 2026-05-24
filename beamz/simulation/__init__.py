@@ -19,7 +19,7 @@ from beamz.simulation.core import (
     Simulation,
     SimulationResults,
 )
-from beamz.simulation.specs import BoundarySpec, GaussianPulse, GridSpec, inf
+from beamz.simulation.specs import BoundarySpec, GaussianPulse, GridSpec, ModeSpec, inf
 from beamz.simulation.yee import (
     component_coordinates_3d_um,
     component_coordinates_3d_um_serializable,
@@ -36,6 +36,7 @@ __all__ = [
     "SimulationResults",
     "GridSpec",
     "GaussianPulse",
+    "ModeSpec",
     "BoundarySpec",
     "inf",
     "CompiledRunConfig",

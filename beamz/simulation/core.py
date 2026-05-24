@@ -207,6 +207,26 @@ class MonitorResults:
     objective_value: float | None = None
     data: Any = None
 
+    @property
+    def flux(self):
+        if hasattr(self.monitor, "get_dft_flux"):
+            freqs = np.asarray(getattr(self.monitor, "get_dft_frequencies")(), dtype=float)
+            values = np.asarray(self.monitor.get_dft_flux(), dtype=float)
+            if freqs.size == values.size:
+                try:
+                    import xarray as xr
+
+                    return xr.DataArray(
+                        values,
+                        dims=("f",),
+                        coords={"f": ("f", freqs, {"units": "Hz"})},
+                        name="flux",
+                    )
+                except Exception:
+                    return values
+            return values
+        return np.asarray(self.frequency_flux_spectrum, dtype=float)
+
     def _plot_proxy(self):
         if self.data is not None and hasattr(self.data, "data_vars"):
             fields: dict[str, list[Any]] = {}
@@ -383,6 +403,14 @@ class SimulationResults(Mapping[str, Any]):
         )
 
     def __getitem__(self, key: str) -> Any:
+        if self.monitor_results and key in self.monitor_results:
+            result = self.monitor_results[key]
+            monitor = result.monitor
+            if type(monitor).__name__ == "ModeMonitor":
+                from beamz.data.modal import mode_monitor_data
+
+                return mode_monitor_data(self.simulation, monitor)
+            return result
         payload = self.to_dict()
         if key not in payload:
             raise KeyError(key)
@@ -410,8 +438,24 @@ class SimulationResults(Mapping[str, Any]):
             payload["snapshots"] = list(self.snapshots)
         return payload
 
-    def plot_field(self, **kwargs):
+    def plot_field(self, monitor_name=None, field=None, **kwargs):
         """Plot a stored field frame from this result."""
+        if monitor_name is not None:
+            monitor_results = self.monitor_results or {}
+            if monitor_name not in monitor_results:
+                raise KeyError(monitor_name)
+            monitor = monitor_results[monitor_name].monitor
+            if field is None:
+                field = kwargs.pop("field", "Ez")
+            from beamz.visual.mpl import plot_tidy3d_dft_field
+
+            kwargs.setdefault("show", False)
+            return plot_tidy3d_dft_field(
+                self.simulation,
+                monitor,
+                field=field,
+                **kwargs,
+            )
         from beamz.visual.mpl import plot_simulation_field
 
         kwargs.setdefault("show", False)

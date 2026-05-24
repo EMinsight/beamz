@@ -74,6 +74,17 @@ class GaussianPulse:
 
 
 @dataclass(frozen=True)
+class ModeSpec:
+    """Mode-solver selection options."""
+
+    num_modes: int = 1
+    mode_index: int = 0
+    polarization: str | None = None
+    target_neff: float | None = None
+    num_freqs: int | None = None
+
+
+@dataclass(frozen=True)
 class BoundarySpec:
     """Convenience container for simulation boundary construction."""
 

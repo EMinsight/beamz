@@ -1,5 +1,13 @@
 from .compiler import CompiledSourceSpec, compile_source_specs
 from .gaussian import GaussianSource
 from .mode import ModeSource
+from .modesolver import ModeData, ModeSolver
 
-__all__ = ["ModeSource", "GaussianSource", "CompiledSourceSpec", "compile_source_specs"]
+__all__ = [
+    "ModeSource",
+    "ModeSolver",
+    "ModeData",
+    "GaussianSource",
+    "CompiledSourceSpec",
+    "compile_source_specs",
+]

@@ -1713,6 +1713,24 @@ class ModeSource(RuntimeStateProxy):
         )
         self._state = _ModeSourceState()
 
+    def copy(self, *, update=None):
+        """Return a configuration copy of this mode source."""
+        import copy
+
+        copied = copy.deepcopy(self)
+        if update:
+            for key, value in dict(update).items():
+                setattr(copied, key, value)
+        return copied
+
+    def shifted(self, offset):
+        copied = self.copy()
+        offset = tuple(float(v) for v in offset)
+        copied.center = tuple(
+            a + b for a, b in zip(copied.center, offset, strict=False)
+        )
+        return copied
+
     def initialize(self, permittivity, resolution, dt=None):
         """Compute the mode and set up the source currents for all 6 components in 3D."""
         dx = dy = resolution

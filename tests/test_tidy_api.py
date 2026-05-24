@@ -77,3 +77,70 @@ def test_simulation_copy_update_is_reset_configuration_copy():
     assert copied is not sim
     assert copied.current_step == 0
     assert copied.sources == []
+
+
+def test_mode_monitor_result_exposes_labeled_amplitudes(monkeypatch):
+    freqs = np.array([1.0, 2.0])
+    mode_monitor = bz.ModeMonitor(
+        center=(0.0, 0.0, 0.0),
+        size=(0.0, 2.0, 2.0),
+        freqs=freqs,
+        mode_spec=bz.ModeSpec(num_modes=2),
+        name="mode",
+        direction="+x",
+        polarization="te",
+        record_fields=False,
+    )
+    sim = bz.Simulation(
+        size=(4.0, 4.0, 4.0),
+        sources=[],
+        monitors=[mode_monitor],
+        resolution=1.0,
+        time=np.array([0.0, 1e-15]),
+    )
+
+    def fake_extract(self, ports, frequencies, **kwargs):
+        del self, kwargs
+        np.testing.assert_allclose(frequencies, freqs)
+        return {
+            port.name: {
+                "a_plus": np.full(freqs.shape, port.mode_index + 1.0j),
+                "a_minus": np.full(freqs.shape, port.mode_index + 2.0j),
+            }
+            for port in ports
+        }
+
+    monkeypatch.setattr(bz.Simulation, "extract_port_waves_dft", fake_extract)
+
+    results = bz.SimulationResults.from_run(sim, monitors=sim.monitors)
+    mode_data = results["mode"]
+
+    assert mode_data.amps.dims == ("f", "direction", "mode_index")
+    np.testing.assert_allclose(
+        mode_data.amps.sel(direction="+", mode_index=1),
+        np.full(freqs.shape, 1.0 + 2.0j),
+    )
+
+
+def test_mode_solver_can_create_source_from_source_time():
+    sim = bz.Simulation(
+        size=(2.0, 2.0, 2.0),
+        structures=[],
+        sources=[],
+        monitors=[],
+        resolution=1.0,
+        time=np.linspace(0.0, 3e-15, 4),
+    )
+    plane = bz.Box(center=(-0.5, 0.0, 0.0), size=(0.0, 1.0, 1.0))
+    source_time = bz.GaussianPulse(freq0=2.0e14, fwidth=2.0e13)
+    solver = bz.ModeSolver(
+        simulation=sim,
+        plane=plane,
+        mode_spec=bz.ModeSpec(num_modes=1, polarization="te"),
+        freqs=[2.0e14],
+    )
+
+    source = solver.to_source(direction="+", source_time=source_time)
+
+    assert source.direction == "+x"
+    assert source.signal.shape == sim.time.shape
