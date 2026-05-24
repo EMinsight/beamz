@@ -76,7 +76,11 @@ class ModeData:
             neff_row = np.atleast_1d(self.neffs[f_idx])
             eps_profile = np.asarray(self.eps_profiles[f_idx])
             finite = np.real(eps_profile[np.isfinite(eps_profile)])
-            unique = np.unique(np.round(finite, decimals=8)) if finite.size else np.asarray(())
+            unique = (
+                np.unique(np.round(finite, decimals=8))
+                if finite.size
+                else np.asarray(())
+            )
             if unique.size >= 2:
                 core_threshold = 0.5 * (float(unique[-2]) + float(unique[-1]))
             elif unique.size == 1:
@@ -97,8 +101,12 @@ class ModeData:
                 total_te = float(np.sum(intensity_te))
                 total_tm = float(np.sum(intensity_tm))
                 total = max(total_te + total_tm, 1e-30)
-                core_te = float(np.sum(intensity_te[core])) if core.shape == ey.shape else 0.0
-                core_tm = float(np.sum(intensity_tm[core])) if core.shape == ez.shape else 0.0
+                core_te = (
+                    float(np.sum(intensity_te[core])) if core.shape == ey.shape else 0.0
+                )
+                core_tm = (
+                    float(np.sum(intensity_tm[core])) if core.shape == ez.shape else 0.0
+                )
                 numerator = (float(np.sum(intensity)) * dx_um**2) ** 2
                 denominator = max(float(np.sum(intensity**2)) * dx_um**2, 1e-30)
                 k_eff = float(max(np.imag(neff), 0.0))
@@ -154,7 +162,9 @@ class ModeSolver:
         axis_index = {"z": 0, "y": 1, "x": 2}[axis]
         grid_index = int(
             np.clip(
-                round(center[{"z": 2, "y": 1, "x": 0}[axis]] / self.simulation.resolution),
+                round(
+                    center[{"z": 2, "y": 1, "x": 0}[axis]] / self.simulation.resolution
+                ),
                 0,
                 eps.shape[axis_index] - 1,
             )
@@ -205,6 +215,7 @@ class ModeSolver:
         direction="+",
         source_time=None,
         polarization=None,
+        power=1.0,
     ):
         if source_time is None:
             freq0 = float(self.freqs[len(self.freqs) // 2])
@@ -219,9 +230,13 @@ class ModeSolver:
         profile_freqs = None
         if getattr(self.mode_spec, "num_freqs", None):
             count = int(self.mode_spec.num_freqs)
-            profile_freqs = np.linspace(float(np.min(self.freqs)), float(np.max(self.freqs)), count)
+            profile_freqs = np.linspace(
+                float(np.min(self.freqs)), float(np.max(self.freqs)), count
+            )
         return ModeSource(
-            grid=self.simulation.design.rasterize(resolution=self.simulation.resolution),
+            grid=self.simulation.design.rasterize(
+                resolution=self.simulation.resolution
+            ),
             center=center,
             width=float(spans[0]),
             height=float(spans[1]) if len(spans) > 1 else None,
@@ -231,6 +246,7 @@ class ModeSolver:
             signal_quadrature=signal_quadrature,
             profile_frequencies=profile_freqs,
             direction=full_direction,
+            power=power,
         )
 
     def sim_with_source(
@@ -240,12 +256,14 @@ class ModeSolver:
         direction="+",
         source_time=None,
         polarization=None,
+        power=1.0,
     ):
         source = self.to_source(
             mode_index=mode_index,
             direction=direction,
             source_time=source_time,
             polarization=polarization,
+            power=power,
         )
         return self.simulation.copy(update={"sources": [source]})
 
@@ -262,7 +280,9 @@ class ModeSolver:
             frequency = float(self.freqs[0])
         axis, center, _spans = _plane_axis_and_spans(self.plane)
         if axis != "x":
-            raise NotImplementedError("ModeSolver plotting currently supports x-normal planes.")
+            raise NotImplementedError(
+                "ModeSolver plotting currently supports x-normal planes."
+            )
         offset = getattr(self.simulation, "coordinate_offset", (0.0, 0.0, 0.0))
         plane_x = center[0] + offset[0]
         if "origin" not in kwargs:

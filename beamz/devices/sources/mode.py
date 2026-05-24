@@ -1355,6 +1355,34 @@ def _normalize_3d_profiles_by_flux(
     return profiles
 
 
+def _scale_profiles_for_power(profiles, power):
+    """Scale unit-power modal profiles to the requested launched power."""
+    power_value = float(power)
+    if not np.isfinite(power_value) or power_value < 0.0:
+        raise ValueError(
+            f"ModeSource power must be a non-negative finite value, got {power!r}."
+        )
+    if power_value == 1.0:
+        return profiles
+    scale = float(np.sqrt(power_value))
+    for key, value in profiles.items():
+        if value is not None:
+            profiles[key] = np.asarray(value) * scale
+    return profiles
+
+
+def _scale_pair_for_power(first, second, power):
+    power_value = float(power)
+    if not np.isfinite(power_value) or power_value < 0.0:
+        raise ValueError(
+            f"ModeSource power must be a non-negative finite value, got {power!r}."
+        )
+    if power_value == 1.0:
+        return first, second
+    scale = float(np.sqrt(power_value))
+    return np.asarray(first) * scale, np.asarray(second) * scale
+
+
 def _backward_3d_mode_from_forward(profiles):
     """Return the backward-going counterpart of a forward 3D modal field set."""
     out = {}
@@ -1692,6 +1720,7 @@ class ModeSource(RuntimeStateProxy):
         height=None,
         signal_quadrature=None,
         profile_frequencies=None,
+        power=1.0,
     ):
         self.grid = grid
         self.center = (
@@ -1706,6 +1735,12 @@ class ModeSource(RuntimeStateProxy):
         self.signal = signal
         self.signal_quadrature = signal_quadrature
         self.profile_frequencies = profile_frequencies
+        power_value = float(power)
+        if not np.isfinite(power_value) or power_value < 0.0:
+            raise ValueError(
+                f"ModeSource power must be a non-negative finite value, got {power!r}."
+            )
+        self.power = power_value
         self._signal_quadrature = None
         self._signal_quadrature_signature = None
         self.direction, self._direction_axis, self._direction_sign = _parse_direction(
@@ -1993,6 +2028,7 @@ class ModeSource(RuntimeStateProxy):
             d_area=float(resolution * resolution),
             direction_sign=self._direction_sign,
         )
+        profiles = _scale_profiles_for_power(profiles, self.power)
         # Store profiles on self
         self._Ex_profile = profiles.get("Ex")
         self._Ey_profile = profiles.get("Ey")
@@ -2122,6 +2158,9 @@ class ModeSource(RuntimeStateProxy):
             jz_profile, my_profile = _normalize_2d_pair_by_power(
                 jz_profile, my_profile, signed_flux_sign=-1.0, dl=resolution
             )
+            jz_profile, my_profile = _scale_pair_for_power(
+                jz_profile, my_profile, self.power
+            )
 
             self._jz_profile = jz_profile
             self._my_profile = my_profile
@@ -2169,6 +2208,9 @@ class ModeSource(RuntimeStateProxy):
             mz_profile = _to_real_profile(mz_profile)
             jy_profile, mz_profile = _normalize_2d_pair_by_power(
                 jy_profile, mz_profile, signed_flux_sign=1.0, dl=resolution
+            )
+            jy_profile, mz_profile = _scale_pair_for_power(
+                jy_profile, mz_profile, self.power
             )
 
             self._jy_profile = jy_profile
@@ -2242,6 +2284,9 @@ class ModeSource(RuntimeStateProxy):
             jz_profile, my_profile = _normalize_2d_pair_by_power(
                 jz_profile, my_profile, signed_flux_sign=1.0, dl=resolution
             )
+            jz_profile, my_profile = _scale_pair_for_power(
+                jz_profile, my_profile, self.power
+            )
 
             self._jz_profile = jz_profile
             self._my_profile = my_profile
@@ -2288,6 +2333,9 @@ class ModeSource(RuntimeStateProxy):
             mz_profile = _to_real_profile(mz_profile)
             jx_profile, mz_profile = _normalize_2d_pair_by_power(
                 jx_profile, mz_profile, signed_flux_sign=-1.0, dl=resolution
+            )
+            jx_profile, mz_profile = _scale_pair_for_power(
+                jx_profile, mz_profile, self.power
             )
 
             self._jx_profile = jx_profile

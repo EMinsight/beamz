@@ -24,7 +24,6 @@ from beamz import (
     Simulation,
     calc_optimal_fdtd_params,
     ramped_cosine,
-    um,
 )
 from beamz.devices.sources import mode as mode_module
 from beamz.devices.sources.solve import (
@@ -366,6 +365,36 @@ class TestModeSourceDiscreteHelpers:
         p = mode_module._modal_power_3d_from_profiles(out, axis="x", d_area=d_area)
         assert np.isfinite(p)
         assert np.isclose(abs(p), 1.0, rtol=1e-10, atol=1e-10)
+
+    def test_scale_3d_profiles_for_power_scales_flux(self):
+        profiles = {
+            "Ex": np.zeros((2, 2), dtype=np.complex128),
+            "Ey": np.ones((2, 2), dtype=np.complex128),
+            "Ez": np.zeros((2, 2), dtype=np.complex128),
+            "Hx": np.zeros((2, 2), dtype=np.complex128),
+            "Hy": np.zeros((2, 2), dtype=np.complex128),
+            "Hz": np.ones((2, 2), dtype=np.complex128),
+        }
+        unit = mode_module._normalize_3d_profiles_by_flux(
+            dict(profiles), axis="x", d_area=0.25
+        )
+        scaled = mode_module._scale_profiles_for_power(unit, 4.0)
+
+        p = mode_module._modal_power_3d_from_profiles(scaled, axis="x", d_area=0.25)
+        assert p == pytest.approx(4.0)
+
+    def test_scale_2d_pair_for_power_scales_flux(self):
+        h = np.ones(8, dtype=np.complex128)
+        e = np.ones(8, dtype=np.complex128)
+        h_unit, e_unit = mode_module._normalize_2d_pair_by_power(
+            h, e, signed_flux_sign=1.0, dl=0.25
+        )
+        h_scaled, e_scaled = mode_module._scale_pair_for_power(h_unit, e_unit, 9.0)
+
+        p = mode_module._modal_power_2d(
+            e_scaled, h_scaled, signed_flux_sign=1.0, dl=0.25
+        )
+        assert p == pytest.approx(9.0)
 
     def test_2d_tm_y_launch_is_transpose_of_x_launch(self):
         wavelength = TEST_WAVELENGTH
@@ -750,7 +779,6 @@ class TestModeSourcePropagation:
         wavelength = waveguide_domain["wavelength"]
         dx = waveguide_domain["dx"]
         dt = waveguide_domain["dt"]
-        domain_width = waveguide_domain["domain_width"]
         domain_height = waveguide_domain["domain_height"]
         core_width = waveguide_domain["core_width"]
 
@@ -815,7 +843,6 @@ class TestModeSourcePropagation:
         wavelength = waveguide_domain["wavelength"]
         dx = waveguide_domain["dx"]
         dt = waveguide_domain["dt"]
-        domain_width = waveguide_domain["domain_width"]
         domain_height = waveguide_domain["domain_height"]
         core_width = waveguide_domain["core_width"]
 
