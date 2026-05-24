@@ -27,6 +27,38 @@ def _plane_axis_and_spans(plane):
     return axis, tuple(float(v) for v in center), tuple(transverse)
 
 
+def _plane_center_and_size(plane):
+    center = getattr(plane, "center", None)
+    size = getattr(plane, "size", None)
+    if center is None or size is None:
+        center = getattr(plane, "position", (0.0, 0.0, 0.0))
+        size = getattr(plane, "size", (0.0, 1.0, 1.0))
+    if len(center) == 2:
+        center = (center[0], center[1], 0.0)
+    if len(size) == 2:
+        size = (size[0], size[1], 0.0)
+    return tuple(float(v) for v in center), tuple(float(v) for v in size)
+
+
+def _crop_profile_to_plane(eps_profile, *, profile_axes, center, size, resolution):
+    """Crop an extracted cross-section to the finite transverse size of a plane."""
+    grid_axis_to_coord_index = {0: 2, 1: 1, 2: 0}
+    slices = []
+    for dim, grid_axis in enumerate(profile_axes):
+        coord_index = grid_axis_to_coord_index[int(grid_axis)]
+        span = float(size[coord_index])
+        if span <= 0.0 or not np.isfinite(span):
+            slices.append(slice(None))
+            continue
+        midpoint = float(center[coord_index])
+        start = int(np.floor((midpoint - 0.5 * span) / resolution))
+        stop = int(np.ceil((midpoint + 0.5 * span) / resolution))
+        start = int(np.clip(start, 0, eps_profile.shape[dim] - 1))
+        stop = int(np.clip(stop, start + 1, eps_profile.shape[dim]))
+        slices.append(slice(start, stop))
+    return eps_profile[tuple(slices)]
+
+
 @dataclass(frozen=True)
 class ModeData:
     frequencies: np.ndarray
@@ -128,6 +160,15 @@ class ModeSolver:
             )
         )
         eps_profile = np.take(eps, grid_index, axis=axis_index)
+        _plane_center, plane_size = _plane_center_and_size(self.plane)
+        profile_axes = tuple(idx for idx in range(eps.ndim) if idx != axis_index)
+        eps_profile = _crop_profile_to_plane(
+            eps_profile,
+            profile_axes=profile_axes,
+            center=center,
+            size=plane_size,
+            resolution=float(self.simulation.resolution),
+        )
         neffs_by_freq = []
         e_by_freq = []
         h_by_freq = []

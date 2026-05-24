@@ -278,6 +278,35 @@ def test_mode_field_plot_defaults_to_tidy3d_percentile_abs_scale(monkeypatch):
     plt.close(fig)
 
 
+def test_mode_field_plot_solves_only_requested_window(monkeypatch):
+    class Grid:
+        permittivity = np.ones((6, 6, 1))
+        resolution = 1.0
+
+    seen = {}
+
+    def fake_solve_modes(**kwargs):
+        eps = np.asarray(kwargs["eps"])
+        seen["eps_shape"] = eps.shape
+        fields = np.ones((1, 3, *eps.shape), dtype=np.complex128)
+        return np.array([2.0]), fields, fields, 0
+
+    monkeypatch.setattr("beamz.devices.sources.solve.solve_modes", fake_solve_modes)
+
+    fig, _axes, _neffs = plot_mode_fields(
+        Grid(),
+        plane_x=0.0,
+        wavelength=1.55,
+        num_modes=1,
+        components=("Ey",),
+        window=(2.0, 4.0, 1.0, 5.0),
+        show=False,
+    )
+
+    assert seen["eps_shape"] == (4, 2)
+    plt.close(fig)
+
+
 def test_simulation_results_show_uses_stored_snapshots():
     design = Design(width=2 * um, height=1 * um, material=Material(1.0))
     sim = Simulation(

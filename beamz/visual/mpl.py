@@ -836,22 +836,6 @@ def plot_mode_fields(
     dx = float(getattr(grid, "resolution", 1.0))
     x_index = int(np.clip(round(float(plane_x) / dx), 0, eps.shape[2] - 1))
     eps_profile = eps[:, :, x_index]
-    neffs, e_fields, _h_fields, _ = solve_modes(
-        eps=eps_profile,
-        omega=2.0 * np.pi * LIGHT_SPEED / float(wavelength),
-        dL=dx,
-        m=int(num_modes),
-        direction=direction,
-        filter_pol=polarization,
-        target_neff=target_neff,
-        return_fields=True,
-    )
-    comp_map = {"Ex": 0, "Ey": 1, "Ez": 2}
-    display_components = mode_field_component_pairs(
-        components,
-        direction=direction,
-        display_components=display_components,
-    )
     if origin is None:
         design = getattr(grid, "design", None)
         origin = (
@@ -869,6 +853,23 @@ def plot_mode_fields(
     iy1 = int(np.clip(np.ceil(y1 / dx), iy0 + 1, eps_profile.shape[1]))
     iz0 = int(np.clip(np.floor(z0 / dx), 0, eps_profile.shape[0] - 1))
     iz1 = int(np.clip(np.ceil(z1 / dx), iz0 + 1, eps_profile.shape[0]))
+    eps_profile = eps_profile[iz0:iz1, iy0:iy1]
+    neffs, e_fields, _h_fields, _ = solve_modes(
+        eps=eps_profile,
+        omega=2.0 * np.pi * LIGHT_SPEED / float(wavelength),
+        dL=dx,
+        m=int(num_modes),
+        direction=direction,
+        filter_pol=polarization,
+        target_neff=target_neff,
+        return_fields=True,
+    )
+    comp_map = {"Ex": 0, "Ey": 1, "Ez": 2}
+    display_components = mode_field_component_pairs(
+        components,
+        direction=direction,
+        display_components=display_components,
+    )
     extent = [(y0 - oy) / µm, (y1 - oy) / µm, (z0 - oz) / µm, (z1 - oz) / µm]
 
     fig, axes = plt.subplots(
@@ -880,10 +881,7 @@ def plot_mode_fields(
     axes_arr = np.asarray(axes).reshape(int(num_modes), len(display_components))
     for mode_index in range(int(num_modes)):
         for col, (display_name, actual_name) in enumerate(display_components):
-            arr = np.squeeze(np.asarray(e_fields[mode_index, comp_map[actual_name]]))[
-                iz0:iz1,
-                iy0:iy1,
-            ]
+            arr = np.squeeze(np.asarray(e_fields[mode_index, comp_map[actual_name]]))
             val_key = str(val).lower()
             if val_key in {"abs", "magnitude"}:
                 plot_arr = np.abs(arr)

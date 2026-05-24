@@ -168,6 +168,38 @@ def test_mode_solver_source_polarization_can_be_set_independently():
     assert source.pol == "tm"
 
 
+def test_mode_solver_solves_only_finite_plane_size(monkeypatch):
+    sim = bz.Simulation(
+        size=(6.0, 6.0, 6.0),
+        structures=[],
+        sources=[],
+        monitors=[],
+        resolution=1.0,
+        time=np.linspace(0.0, 3e-15, 4),
+    )
+    plane = bz.Box(center=(0.0, 0.0, 0.0), size=(0.0, 2.0, 4.0))
+    solver = bz.ModeSolver(
+        simulation=sim,
+        plane=plane,
+        mode_spec=bz.ModeSpec(num_modes=1),
+        freqs=[2.0e14],
+    )
+    seen = {}
+
+    def fake_solve_modes(**kwargs):
+        eps = np.asarray(kwargs["eps"])
+        seen["eps_shape"] = eps.shape
+        fields = np.ones((1, 3, *eps.shape), dtype=np.complex128)
+        return np.array([2.0 + 0.0j]), fields, fields, 0
+
+    monkeypatch.setattr("beamz.devices.sources.modesolver.solve_modes", fake_solve_modes)
+
+    modes = solver.solve()
+
+    assert seen["eps_shape"] == (4, 2)
+    assert modes.eps_profiles.shape == (1, 4, 2)
+
+
 def test_mode_solver_plot_forwards_target_neff(monkeypatch):
     sim = bz.Simulation(
         size=(2.0, 2.0, 2.0),
