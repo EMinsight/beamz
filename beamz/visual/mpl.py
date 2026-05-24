@@ -1695,6 +1695,9 @@ def snapshot_figure(
 def show_snapshots(
     snapshots,
     *,
+    field=None,
+    frame=None,
+    time_index=None,
     cmap="twilight_zero",
     cmap_limits="dynamic",
     clean_visualization=False,
@@ -1707,10 +1710,28 @@ def show_snapshots(
     """Show a sequence of stored snapshot payloads."""
     if not snapshots:
         return None, None
+    selected_snapshots = tuple(snapshots)
+    if field is not None:
+        available_fields = {str(snapshot.get("field_name")) for snapshot in snapshots}
+        if str(field) not in available_fields:
+            raise ValueError(
+                f"Snapshot field {field!r} is not available. "
+                f"Available snapshot fields: {sorted(available_fields)}"
+            )
+        selected_snapshots = tuple(
+            snapshot
+            for snapshot in selected_snapshots
+            if str(snapshot.get("field_name")) == str(field)
+        )
+    if frame is not None and time_index is not None:
+        raise ValueError("Use either frame or time_index, not both.")
+    selected_frame = frame if frame is not None else time_index
+    if selected_frame is not None:
+        selected_snapshots = (selected_snapshots[int(selected_frame)],)
     plt = _pyplot()
     context = {"fig": None, "ax": None}
     vmin, vmax = resolve_cmap_limits(cmap_limits, vmin=vmin, vmax=vmax)
-    for snapshot in snapshots:
+    for snapshot in selected_snapshots:
         fig, ax = snapshot_figure(
             snapshot,
             cmap=cmap,

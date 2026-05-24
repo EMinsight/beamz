@@ -4,6 +4,7 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pytest
 
 from beamz import (
     Design,
@@ -13,9 +14,9 @@ from beamz import (
     Rectangle,
     Simulation,
     mode_field_component_pairs,
+    plot_signal,
     plot_tidy3d_cross_sections,
     plot_tidy3d_field_frame,
-    plot_signal,
     um,
 )
 from beamz.devices.sources.mode import ModeSource
@@ -269,6 +270,54 @@ def test_simulation_results_show_uses_stored_snapshots():
 
     assert fig is ax.figure
     assert "Ez at t" in ax.get_title()
+
+
+def test_simulation_results_show_snapshots_accepts_field_and_frame_aliases():
+    design = Design(width=2 * um, height=1 * um, material=Material(1.0))
+    sim = Simulation(
+        design=design,
+        sources=[],
+        monitors=[],
+        time=np.array([0.0, 1e-15]),
+        resolution=0.25 * um,
+    )
+    snapshots = (
+        {
+            "kind": "simulation_snapshot",
+            "field": np.zeros((2, 2)),
+            "field_name": "Ez",
+            "time": 0.0,
+            "step": 1,
+            "num_steps": 2,
+            "extent": (0.0, 2 * um, 0.0, 1 * um),
+            "units": "V/um",
+            "plane_2d": "xy",
+            "layout": sim.to_plot_data(),
+        },
+        {
+            "kind": "simulation_snapshot",
+            "field": np.ones((2, 2)),
+            "field_name": "Ez",
+            "time": 1e-15,
+            "step": 2,
+            "num_steps": 2,
+            "extent": (0.0, 2 * um, 0.0, 1 * um),
+            "units": "V/um",
+            "plane_2d": "xy",
+            "layout": sim.to_plot_data(),
+        },
+    )
+    results = SimulationResults(simulation=sim, snapshots=snapshots)
+
+    fig, ax = _close(
+        results.show(field="Ez", frame=1, clean_visualization=False, show=False)
+    )
+
+    assert fig is ax.figure
+    assert "step 2/2" in ax.get_title()
+
+    with pytest.raises(ValueError, match="Snapshot field 'Hz' is not available"):
+        results.show(field="Hz", show=False)
 
 
 def test_simulation_results_plot_field_uses_stored_fields():
