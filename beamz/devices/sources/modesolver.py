@@ -215,8 +215,6 @@ class ModeSolver:
             kwargs["components"] = tuple(kwargs.pop("field_names"))
         kwargs.pop("mode_indices", None)
         kwargs.setdefault("val", "abs")
-        kwargs.setdefault("normalize", True)
-        kwargs.setdefault("vmax", 0.95)
         if "f" in kwargs:
             frequency = float(kwargs.pop("f"))
         else:

@@ -197,6 +197,8 @@ def test_mode_solver_plot_forwards_target_neff(monkeypatch):
 
     assert seen["target_neff"] == 2.5
     assert seen["polarization"] is None
+    assert "normalize" not in seen
+    assert "vmax" not in seen
 
 
 def test_mode_data_dataframe_matches_tidy3d_columns():

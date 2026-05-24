@@ -20,6 +20,7 @@ from beamz import (
     Simulation,
     Structure,
     mode_field_component_pairs,
+    plot_mode_fields,
     plot_signal,
     plot_tidy3d_cross_sections,
     plot_tidy3d_field_frame,
@@ -247,6 +248,33 @@ def test_mode_field_component_pairs_are_physical_labels():
     ]
     explicit = [("E major", "Ez")]
     assert mode_field_component_pairs(display_components=explicit) == explicit
+
+
+def test_mode_field_plot_defaults_to_raw_abs_scale(monkeypatch):
+    class Grid:
+        permittivity = np.ones((2, 2, 1))
+        resolution = 1.0
+
+    e_fields = np.zeros((1, 3, 2, 2), dtype=np.complex128)
+    e_fields[0, 1] = np.array([[0.0, 2.0], [3.0, 4.0]])
+
+    def fake_solve_modes(**kwargs):
+        del kwargs
+        return np.array([2.0]), e_fields, e_fields, 0
+
+    monkeypatch.setattr("beamz.devices.sources.solve.solve_modes", fake_solve_modes)
+
+    fig, _axes, _neffs = plot_mode_fields(
+        Grid(),
+        plane_x=0.0,
+        wavelength=1.55,
+        num_modes=1,
+        components=("Ey",),
+        show=False,
+    )
+
+    assert fig.axes[0].images[0].get_clim() == (0.0, 4.0)
+    plt.close(fig)
 
 
 def test_simulation_results_show_uses_stored_snapshots():

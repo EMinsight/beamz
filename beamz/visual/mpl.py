@@ -824,7 +824,7 @@ def plot_mode_fields(
     normalize=False,
     vmin=None,
     vmax=None,
-    percentile=95.0,
+    percentile=None,
     figsize=(12, 12),
     show=True,
 ):
@@ -895,23 +895,41 @@ def plot_mode_fields(
                     scale = float(np.nanmax(finite_scale))
                     if scale > 0.0:
                         plot_arr = plot_arr / scale
-                default_vmax = float(np.nanpercentile(plot_arr, float(percentile)))
-                default_vmax = default_vmax if default_vmax > 0.0 else 1.0
+                finite_plot = plot_arr[np.isfinite(plot_arr)]
+                if percentile is None:
+                    default_vmax = float(np.nanmax(finite_plot)) if finite_plot.size else 1.0
+                else:
+                    default_vmax = float(np.nanpercentile(plot_arr, float(percentile)))
+                default_vmax = (
+                    default_vmax if np.isfinite(default_vmax) and default_vmax > 0.0 else 1.0
+                )
             elif val_key in {"real", "re"}:
                 plot_arr = np.real(arr)
                 label = f"Re({display_name})"
                 cmap = "RdBu"
                 default_vmin = None
-                default_vmax = np.nanpercentile(np.abs(plot_arr), float(percentile))
-                default_vmax = default_vmax if default_vmax > 0.0 else 1.0
+                finite_plot = np.abs(plot_arr[np.isfinite(plot_arr)])
+                if percentile is None:
+                    default_vmax = float(np.nanmax(finite_plot)) if finite_plot.size else 1.0
+                else:
+                    default_vmax = np.nanpercentile(np.abs(plot_arr), float(percentile))
+                default_vmax = (
+                    default_vmax if np.isfinite(default_vmax) and default_vmax > 0.0 else 1.0
+                )
                 default_vmin = -default_vmax
             elif val_key in {"imag", "imaginary", "im"}:
                 plot_arr = np.imag(arr)
                 label = f"Im({display_name})"
                 cmap = "RdBu"
                 default_vmin = None
-                default_vmax = np.nanpercentile(np.abs(plot_arr), float(percentile))
-                default_vmax = default_vmax if default_vmax > 0.0 else 1.0
+                finite_plot = np.abs(plot_arr[np.isfinite(plot_arr)])
+                if percentile is None:
+                    default_vmax = float(np.nanmax(finite_plot)) if finite_plot.size else 1.0
+                else:
+                    default_vmax = np.nanpercentile(np.abs(plot_arr), float(percentile))
+                default_vmax = (
+                    default_vmax if np.isfinite(default_vmax) and default_vmax > 0.0 else 1.0
+                )
                 default_vmin = -default_vmax
             else:
                 raise ValueError("val must be one of 'abs', 'real', or 'imag'.")
