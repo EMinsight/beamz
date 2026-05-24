@@ -157,7 +157,14 @@ class ModeSolver:
         )
         return self._modes
 
-    def to_source(self, *, mode_index=0, direction="+", source_time=None):
+    def to_source(
+        self,
+        *,
+        mode_index=0,
+        direction="+",
+        source_time=None,
+        polarization=None,
+    ):
         if source_time is None:
             freq0 = float(self.freqs[len(self.freqs) // 2])
             source_time = GaussianPulse(freq0=freq0, fwidth=freq0 / 10.0)
@@ -178,18 +185,26 @@ class ModeSolver:
             width=float(spans[0]),
             height=float(spans[1]) if len(spans) > 1 else None,
             wavelength=LIGHT_SPEED / freq0,
-            pol=getattr(self.mode_spec, "polarization", None) or "te",
+            pol=polarization or getattr(self.mode_spec, "polarization", None) or "te",
             signal=signal,
             signal_quadrature=signal_quadrature,
             profile_frequencies=profile_freqs,
             direction=full_direction,
         )
 
-    def sim_with_source(self, *, mode_index=0, direction="+", source_time=None):
+    def sim_with_source(
+        self,
+        *,
+        mode_index=0,
+        direction="+",
+        source_time=None,
+        polarization=None,
+    ):
         source = self.to_source(
             mode_index=mode_index,
             direction=direction,
             source_time=source_time,
+            polarization=polarization,
         )
         return self.simulation.copy(update={"sources": [source]})
 
@@ -235,6 +250,7 @@ class ModeSolver:
             wavelength=LIGHT_SPEED / frequency,
             polarization=getattr(self.mode_spec, "polarization", None),
             num_modes=int(self.mode_spec.num_modes),
+            target_neff=getattr(self.mode_spec, "target_neff", None),
             show=kwargs.pop("show", False),
             **kwargs,
         )

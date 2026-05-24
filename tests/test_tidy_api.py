@@ -146,6 +146,59 @@ def test_mode_solver_can_create_source_from_source_time():
     assert source.signal.shape == sim.time.shape
 
 
+def test_mode_solver_source_polarization_can_be_set_independently():
+    sim = bz.Simulation(
+        size=(2.0, 2.0, 2.0),
+        structures=[],
+        sources=[],
+        monitors=[],
+        resolution=1.0,
+        time=np.linspace(0.0, 3e-15, 4),
+    )
+    plane = bz.Box(center=(-0.5, 0.0, 0.0), size=(0.0, 1.0, 1.0))
+    solver = bz.ModeSolver(
+        simulation=sim,
+        plane=plane,
+        mode_spec=bz.ModeSpec(num_modes=1),
+        freqs=[2.0e14],
+    )
+
+    source = solver.to_source(direction="+", polarization="tm")
+
+    assert source.pol == "tm"
+
+
+def test_mode_solver_plot_forwards_target_neff(monkeypatch):
+    sim = bz.Simulation(
+        size=(2.0, 2.0, 2.0),
+        structures=[],
+        sources=[],
+        monitors=[],
+        resolution=1.0,
+        time=np.linspace(0.0, 3e-15, 4),
+    )
+    plane = bz.Box(center=(-0.5, 0.0, 0.0), size=(0.0, 1.0, 1.0))
+    solver = bz.ModeSolver(
+        simulation=sim,
+        plane=plane,
+        mode_spec=bz.ModeSpec(num_modes=1, target_neff=2.5),
+        freqs=[2.0e14],
+    )
+    seen = {}
+
+    def fake_plot_mode_fields(*args, **kwargs):
+        del args
+        seen.update(kwargs)
+        return None, None, np.array([2.5])
+
+    monkeypatch.setattr("beamz.visual.mpl.plot_mode_fields", fake_plot_mode_fields)
+
+    solver.plot_field_components(show=False)
+
+    assert seen["target_neff"] == 2.5
+    assert seen["polarization"] is None
+
+
 def test_mode_data_dataframe_matches_tidy3d_columns():
     data = bz.ModeData(
         frequencies=np.array([2.0e14]),
