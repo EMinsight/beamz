@@ -144,3 +144,28 @@ def test_mode_solver_can_create_source_from_source_time():
 
     assert source.direction == "+x"
     assert source.signal.shape == sim.time.shape
+
+
+def test_mode_data_dataframe_matches_tidy3d_columns():
+    data = bz.ModeData(
+        frequencies=np.array([2.0e14]),
+        neffs=np.array([[2.4 + 0.0j, 1.5 + 0.0j]]),
+        e_fields=np.ones((1, 2, 3, 2, 2), dtype=np.complex128),
+        h_fields=np.ones((1, 2, 3, 2, 2), dtype=np.complex128),
+        eps_profiles=np.array([[[1.0, 12.0], [1.0, 12.0]]]),
+        resolution=0.1 * bz.um,
+    )
+
+    df = data.to_dataframe()
+
+    assert list(df.columns) == [
+        "wavelength",
+        "n eff",
+        "k eff",
+        "loss (dB/cm)",
+        "TE (Ey) fraction",
+        "wg TE fraction",
+        "wg TM fraction",
+        "mode area",
+    ]
+    assert df.index.names == ["f", "mode_index"]

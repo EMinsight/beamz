@@ -33,17 +33,58 @@ class ModeData:
     neffs: np.ndarray
     e_fields: np.ndarray
     h_fields: np.ndarray
+    eps_profiles: np.ndarray
+    resolution: float
 
     def to_dataframe(self):
         rows = []
         index = []
+        dx_um = float(self.resolution) * 1e6
         for f_idx, freq in enumerate(self.frequencies):
             neff_row = np.atleast_1d(self.neffs[f_idx])
+            eps_profile = np.asarray(self.eps_profiles[f_idx])
+            finite = np.real(eps_profile[np.isfinite(eps_profile)])
+            unique = np.unique(np.round(finite, decimals=8)) if finite.size else np.asarray(())
+            if unique.size >= 2:
+                core_threshold = 0.5 * (float(unique[-2]) + float(unique[-1]))
+            elif unique.size == 1:
+                core_threshold = float(unique[-1])
+            else:
+                core_threshold = np.inf
+            core = np.real(eps_profile) >= core_threshold
+            wavelength = LIGHT_SPEED / float(freq)
+            wavelength_um = wavelength * 1e6
+            wavelength_cm = wavelength * 100.0
             for mode_index, neff in enumerate(neff_row):
+                e_field = np.asarray(self.e_fields[f_idx, mode_index])
+                ey = np.squeeze(e_field[1])
+                ez = np.squeeze(e_field[2])
+                intensity_te = np.abs(ey) ** 2
+                intensity_tm = np.abs(ez) ** 2
+                intensity = intensity_te + intensity_tm
+                total_te = float(np.sum(intensity_te))
+                total_tm = float(np.sum(intensity_tm))
+                total = max(total_te + total_tm, 1e-30)
+                core_te = float(np.sum(intensity_te[core])) if core.shape == ey.shape else 0.0
+                core_tm = float(np.sum(intensity_tm[core])) if core.shape == ez.shape else 0.0
+                numerator = (float(np.sum(intensity)) * dx_um**2) ** 2
+                denominator = max(float(np.sum(intensity**2)) * dx_um**2, 1e-30)
+                k_eff = float(max(np.imag(neff), 0.0))
+                loss_db_cm = (
+                    0.0
+                    if k_eff == 0.0
+                    else (4.0 * np.pi * k_eff / wavelength_cm) * (10.0 / np.log(10.0))
+                )
                 rows.append(
                     {
+                        "wavelength": float(wavelength_um),
                         "n eff": float(np.real(neff)),
-                        "k eff": float(max(np.imag(neff), 0.0)),
+                        "k eff": k_eff,
+                        "loss (dB/cm)": loss_db_cm,
+                        "TE (Ey) fraction": total_te / total,
+                        "wg TE fraction": core_te / max(total_te, 1e-30),
+                        "wg TM fraction": core_tm / max(total_tm, 1e-30),
+                        "mode area": numerator / denominator,
                     }
                 )
                 index.append((float(freq), int(mode_index)))
@@ -90,6 +131,7 @@ class ModeSolver:
         neffs_by_freq = []
         e_by_freq = []
         h_by_freq = []
+        eps_by_freq = []
         for freq in self.freqs:
             neffs, e_fields, h_fields, _ = solve_modes(
                 eps=eps_profile,
@@ -104,11 +146,14 @@ class ModeSolver:
             neffs_by_freq.append(np.asarray(neffs))
             e_by_freq.append(np.asarray(e_fields))
             h_by_freq.append(np.asarray(h_fields))
+            eps_by_freq.append(np.asarray(eps_profile))
         self._modes = ModeData(
             frequencies=self.freqs,
             neffs=np.asarray(neffs_by_freq),
             e_fields=np.asarray(e_by_freq),
             h_fields=np.asarray(h_by_freq),
+            eps_profiles=np.asarray(eps_by_freq),
+            resolution=float(self.simulation.resolution),
         )
         return self._modes
 
@@ -154,6 +199,9 @@ class ModeSolver:
         if "field_names" in kwargs:
             kwargs["components"] = tuple(kwargs.pop("field_names"))
         kwargs.pop("mode_indices", None)
+        kwargs.setdefault("val", "abs")
+        kwargs.setdefault("normalize", True)
+        kwargs.setdefault("vmax", 0.95)
         if "f" in kwargs:
             frequency = float(kwargs.pop("f"))
         else:

@@ -820,6 +820,11 @@ def plot_mode_fields(
     origin=None,
     direction="-x",
     target_neff=None,
+    val="abs",
+    normalize=False,
+    vmin=None,
+    vmax=None,
+    percentile=95.0,
     figsize=(12, 12),
     show=True,
 ):
@@ -879,12 +884,45 @@ def plot_mode_fields(
                 iz0:iz1,
                 iy0:iy1,
             ]
+            val_key = str(val).lower()
+            if val_key in {"abs", "magnitude"}:
+                plot_arr = np.abs(arr)
+                label = f"|{display_name}|"
+                cmap = "magma"
+                default_vmin = 0.0
+                finite_scale = plot_arr[np.isfinite(plot_arr)]
+                if normalize and finite_scale.size:
+                    scale = float(np.nanmax(finite_scale))
+                    if scale > 0.0:
+                        plot_arr = plot_arr / scale
+                default_vmax = float(np.nanpercentile(plot_arr, float(percentile)))
+                default_vmax = default_vmax if default_vmax > 0.0 else 1.0
+            elif val_key in {"real", "re"}:
+                plot_arr = np.real(arr)
+                label = f"Re({display_name})"
+                cmap = "RdBu"
+                default_vmin = None
+                default_vmax = np.nanpercentile(np.abs(plot_arr), float(percentile))
+                default_vmax = default_vmax if default_vmax > 0.0 else 1.0
+                default_vmin = -default_vmax
+            elif val_key in {"imag", "imaginary", "im"}:
+                plot_arr = np.imag(arr)
+                label = f"Im({display_name})"
+                cmap = "RdBu"
+                default_vmin = None
+                default_vmax = np.nanpercentile(np.abs(plot_arr), float(percentile))
+                default_vmax = default_vmax if default_vmax > 0.0 else 1.0
+                default_vmin = -default_vmax
+            else:
+                raise ValueError("val must be one of 'abs', 'real', or 'imag'.")
             ax = axes_arr[mode_index, col]
             im = ax.imshow(
-                np.abs(arr),
+                plot_arr,
                 origin="lower",
                 extent=extent,
-                cmap="magma",
+                cmap=cmap,
+                vmin=default_vmin if vmin is None else float(vmin),
+                vmax=default_vmax if vmax is None else float(vmax),
                 aspect="equal",
                 interpolation="nearest",
             )
@@ -897,7 +935,7 @@ def plot_mode_fields(
                 fraction=0.046,
                 pad=0.02,
                 extend="both",
-                label=f"|{display_name}|",
+                label=label,
             )
     _maybe_show(fig, show=show)
     return fig, axes, neffs
