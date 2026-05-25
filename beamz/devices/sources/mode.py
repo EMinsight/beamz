@@ -1881,6 +1881,26 @@ class ModeSource(RuntimeStateProxy):
                 setattr(copied, key, value)
         return copied
 
+    def calibrated_to_measured_power(self, measured_power, *, target_power=None):
+        """Return a copy whose requested power compensates a reference measurement.
+
+        ``measured_power`` is the source-normalized power measured from an otherwise
+        identical straight reference run. Since modal source fields scale as
+        ``sqrt(power)``, the measured power scales linearly with ``power``.
+        """
+        measured = float(measured_power)
+        if not np.isfinite(measured) or measured <= 0.0:
+            raise ValueError(
+                "measured_power must be a positive finite value, "
+                f"got {measured_power!r}."
+            )
+        target = self.power if target_power is None else float(target_power)
+        if not np.isfinite(target) or target < 0.0:
+            raise ValueError(
+                f"target_power must be a non-negative finite value, got {target_power!r}."
+            )
+        return self.copy(update={"power": self.power * target / measured})
+
     def shifted(self, offset):
         copied = self.copy()
         offset = tuple(float(v) for v in offset)

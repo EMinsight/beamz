@@ -41,6 +41,24 @@ def test_mode_source_spectrum_includes_modal_power_response():
     np.testing.assert_allclose(norm, expected, rtol=1e-12)
 
 
+def test_mode_source_can_be_calibrated_to_reference_power():
+    source = bz.ModeSource(
+        grid=object(),
+        center=(0.0, 0.0, 0.0),
+        width=1.0,
+        height=1.0,
+        wavelength=1.55,
+        pol="te",
+        signal=np.ones(8, dtype=float),
+        power=2.0,
+    )
+
+    calibrated = source.calibrated_to_measured_power(1.6, target_power=1.0)
+
+    assert source.power == 2.0
+    assert calibrated.power == 1.25
+
+
 def test_centered_structure_simulation_constructor_builds_design_and_time():
     si = bz.Medium(permittivity=12.0)
     sio2 = bz.Medium(permittivity=2.0)
