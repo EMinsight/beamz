@@ -1370,6 +1370,73 @@ def _normalize_3d_profiles_by_flux(
     return profiles
 
 
+def _phase_reference_3d_profiles(
+    profiles,
+    indices,
+    *,
+    axis,
+    dx,
+    dy,
+    dz,
+    omega,
+    k_num,
+    ref_coord,
+):
+    """Return modal profiles phase-shifted to one propagation-axis reference plane."""
+    out = {}
+    for name, value in profiles.items():
+        arr = np.asarray(value, dtype=np.complex128)
+        idx = None if indices is None else indices.get(name)
+        axis_idx = _axis_index_from_component_indices(idx, axis)
+        coord = _component_axis_coord(name, axis_idx, axis, dx, dy, dz)
+        delay = _numeric_phase_delay(float(omega), float(k_num), coord - ref_coord)
+        out[name] = arr * np.exp(-1j * float(omega) * delay)
+    return out
+
+
+def _normalize_3d_profiles_by_phase_referenced_flux(
+    profiles,
+    indices,
+    *,
+    axis,
+    d_area,
+    direction_sign,
+    dx,
+    dy,
+    dz,
+    omega,
+    k_num,
+    ref_coord,
+    eps=1e-18,
+):
+    """Normalize source profiles using the Yee-stagger phase-referenced flux."""
+    referenced = _phase_reference_3d_profiles(
+        profiles,
+        indices,
+        axis=axis,
+        dx=dx,
+        dy=dy,
+        dz=dz,
+        omega=omega,
+        k_num=k_num,
+        ref_coord=ref_coord,
+    )
+    flux = _modal_power_3d_from_profiles(
+        referenced,
+        axis=axis,
+        d_area=d_area,
+        direction_sign=direction_sign,
+    )
+    if (not np.isfinite(flux)) or abs(flux) <= eps:
+        return profiles, 1.0
+
+    scale = float(np.sqrt(1.0 / max(abs(flux), eps)))
+    scale = float(np.clip(scale, 1e-6, 1e6))
+    for key, value in profiles.items():
+        profiles[key] = np.asarray(value) * scale
+    return profiles, scale
+
+
 def _scale_profiles_for_power(profiles, power):
     """Scale unit-power modal profiles to the requested launched power."""
     power_value = float(power)
@@ -1698,6 +1765,7 @@ class ModeSource(RuntimeStateProxy):
         "_phase_ref_coord",
         "_phase_plane_coord",
         "_discrete_launch_max_shift",
+        "_launch_power_scale",
         "_launch_dt",
         "_initialized",
         "_resolution",
@@ -2099,12 +2167,38 @@ class ModeSource(RuntimeStateProxy):
         symmetric_axes = _detect_transverse_symmetry_axes(self._eps_profile_2d)
         if symmetric_axes:
             profiles = _enforce_componentwise_parity(profiles, symmetric_axes)
-        profiles = _normalize_3d_profiles_by_flux(
-            profiles,
-            axis=axis,
-            d_area=float(resolution * resolution),
-            direction_sign=self._direction_sign,
+        d_area = float(resolution * resolution)
+        dx = dy = dz = float(resolution)
+        ref_coord = _component_axis_coord(
+            _dominant_3d_pair(axis, self.pol)[1],
+            _axis_index_from_component_indices(
+                indices.get(_dominant_3d_pair(axis, self.pol)[1]),
+                axis,
+            ),
+            axis,
+            dx,
+            dy,
+            dz,
         )
+        k_num = (
+            _solve_numeric_k_axis(omega, dt, resolution, self._neff)
+            if dt is not None
+            else float(np.real(self._neff)) * float(omega) / LIGHT_SPEED
+        )
+        profiles, launch_power_scale = _normalize_3d_profiles_by_phase_referenced_flux(
+            profiles,
+            indices,
+            axis=axis,
+            d_area=d_area,
+            direction_sign=self._direction_sign,
+            dx=dx,
+            dy=dy,
+            dz=dz,
+            omega=omega,
+            k_num=k_num,
+            ref_coord=float(ref_coord),
+        )
+        self._launch_power_scale = float(launch_power_scale)
         profiles = _scale_profiles_for_power(profiles, self.power)
         # Store profiles on self
         self._Ex_profile = profiles.get("Ex")

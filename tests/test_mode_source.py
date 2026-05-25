@@ -382,6 +382,57 @@ class TestModeSourceDiscreteHelpers:
 
         assert p == pytest.approx(1.0)
 
+    def test_phase_referenced_3d_profile_normalization_accounts_for_yee_offset(self):
+        phase = 0.31
+        omega = 2.0
+        dx = 1.0
+        k_num = 2.0 * phase / dx
+        profiles = {
+            "Ey": np.ones((2, 2), dtype=np.complex128),
+            "Ez": np.zeros((2, 2), dtype=np.complex128),
+            "Hy": np.zeros((2, 2), dtype=np.complex128),
+            "Hz": np.ones((2, 2), dtype=np.complex128),
+        }
+        indices = {
+            "Ey": (slice(0, 2), slice(0, 2), 4),
+            "Ez": (slice(0, 2), slice(0, 2), 4),
+            "Hy": (slice(0, 2), slice(0, 2), 3),
+            "Hz": (slice(0, 2), slice(0, 2), 3),
+        }
+
+        out, scale = mode_module._normalize_3d_profiles_by_phase_referenced_flux(
+            dict(profiles),
+            indices,
+            axis="x",
+            d_area=0.25,
+            direction_sign=1.0,
+            dx=dx,
+            dy=dx,
+            dz=dx,
+            omega=omega,
+            k_num=k_num,
+            ref_coord=4.0 * dx,
+        )
+        referenced = mode_module._phase_reference_3d_profiles(
+            out,
+            indices,
+            axis="x",
+            dx=dx,
+            dy=dx,
+            dz=dx,
+            omega=omega,
+            k_num=k_num,
+            ref_coord=4.0 * dx,
+        )
+
+        assert scale == pytest.approx(np.sqrt(1.0 / (0.5 * np.cos(phase))))
+        power = mode_module._modal_power_3d_from_profiles(
+            referenced,
+            axis="x",
+            d_area=0.25,
+        )
+        assert power == pytest.approx(1.0)
+
     def test_scale_3d_profiles_for_power_scales_flux(self):
         profiles = {
             "Ex": np.zeros((2, 2), dtype=np.complex128),
