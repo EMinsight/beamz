@@ -77,7 +77,7 @@ def test_design_background_and_material_geometry_builds_design_and_time():
     )
 
     sim = bz.Simulation(
-        size=(4 * bz.um, 3 * bz.um, 2 * bz.um),
+        domain=(4 * bz.um, 3 * bz.um, 2 * bz.um),
         grid_spec=grid_spec,
         design=design,
         sources=[],
@@ -86,9 +86,22 @@ def test_design_background_and_material_geometry_builds_design_and_time():
     )
 
     assert sim.design.width == 4 * bz.um
+    assert sim.domain == (4 * bz.um, 3 * bz.um, 2 * bz.um)
     assert sim.design.depth == 2 * bz.um
     assert sim.resolution < 1.55 * bz.um / 10
     assert sim.time.size >= 2
+
+
+def test_simulation_rejects_conflicting_domain_and_size():
+    with pytest.raises(ValueError, match="domain"):
+        bz.Simulation(
+            domain=(2.0, 2.0, 1.0),
+            size=(2.0, 3.0, 1.0),
+            sources=[],
+            monitors=[],
+            resolution=0.5,
+            time=np.array([0.0, 1e-15]),
+        )
 
 
 def test_tidy3d_structure_medium_api_warns_but_still_builds():

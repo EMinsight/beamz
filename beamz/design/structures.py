@@ -504,7 +504,7 @@ class Box:
         size = shifted.size
         if not all(np.isfinite(v) for v in (*lower, *size)):
             raise ValueError(
-                "Infinite Box sizes must be clipped by the Simulation(size=...) "
+                "Infinite Box sizes must be clipped by the Simulation(domain=...) "
                 "constructor before rasterization."
             )
         return Rectangle(

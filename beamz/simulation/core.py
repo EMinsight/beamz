@@ -659,6 +659,7 @@ class Simulation:
         time: np.ndarray = None,
         plane_2d: str = "xy",
         *,
+        domain=None,
         size=None,
         structures: list | None = None,
         material=None,
@@ -669,6 +670,13 @@ class Simulation:
         run_time: float | None = None,
     ):
         coordinate_offset = (0.0, 0.0, 0.0)
+        if domain is not None and size is not None:
+            domain_tuple = tuple(float(v) for v in domain)
+            size_tuple = tuple(float(v) for v in size)
+            if domain_tuple != size_tuple:
+                raise ValueError("Pass only one of domain=... or size=....")
+        if domain is None:
+            domain = size
         if medium is not None:
             warnings.warn(
                 "Simulation(..., medium=...) is deprecated; use material=... or "
@@ -694,9 +702,9 @@ class Simulation:
             background_material = medium
 
         if design is None:
-            if size is None:
-                raise ValueError("Simulation requires either design=... or size=....")
-            sim_size = tuple(float(v) for v in size)
+            if domain is None:
+                raise ValueError("Simulation requires either design=... or domain=....")
+            sim_size = tuple(float(v) for v in domain)
             if len(sim_size) == 2:
                 sim_size = (sim_size[0], sim_size[1], 0.0)
             if len(sim_size) != 3:
@@ -735,8 +743,8 @@ class Simulation:
                 dims = 3 if sim_size[2] > 0 else 2
                 dt = spec.resolve_time_step(resolution, dims=dims)
                 time = np.arange(0.0, float(run_time) + 0.5 * dt, dt)
-        elif size is not None and getattr(design, "_centered_coordinates", False):
-            sim_size = tuple(float(v) for v in size)
+        elif domain is not None and getattr(design, "_centered_coordinates", False):
+            sim_size = tuple(float(v) for v in domain)
             if len(sim_size) == 2:
                 sim_size = (sim_size[0], sim_size[1], 0.0)
             if len(sim_size) != 3:
@@ -798,6 +806,7 @@ class Simulation:
             if design is not None
             else None
         )
+        self.domain = self.size
         self.coordinate_offset = coordinate_offset
         self.grid_spec = grid_spec
         self.run_time = run_time
