@@ -78,7 +78,9 @@ def _material_index(material) -> float:
 def _max_index_for_specs(background, structures) -> float:
     values = [_material_index(background)]
     for structure in structures or ():
-        material = getattr(structure, "material", None)
+        material = getattr(structure, "material", None) or getattr(
+            structure, "medium", None
+        )
         if material is not None:
             values.append(_material_index(material))
     return max(values) if values else 1.0
@@ -277,6 +279,7 @@ class MonitorResults:
     power_history: np.ndarray
     power_timestamps: np.ndarray
     power_spectrum: np.ndarray
+    frequency_flux_spectrum: np.ndarray
     source_spectrum_normalization: np.ndarray | None = None
     objective_value: float | None = None
     data: Any = None
@@ -313,13 +316,17 @@ class MonitorResults:
                 except Exception:
                     return values
             return values
-        return np.asarray(self.power_spectrum, dtype=float)
+        return np.asarray(self.frequency_flux_spectrum, dtype=float)
 
     def _plot_proxy(self):
         if self.data is not None and hasattr(self.data, "data_vars"):
             fields: dict[str, list[Any]] = {}
             for name, da in self.data.data_vars.items():
-                if str(name) not in {"power", "power_spectrum"}:
+                if str(name) not in {
+                    "power",
+                    "power_spectrum",
+                    "frequency_flux_spectrum",
+                }:
                     if "t" in da.dims:
                         fields.setdefault(
                             "t", list(np.asarray(da.coords["t"], dtype=float))
@@ -435,6 +442,14 @@ class MonitorResults:
         power_spectrum = np.asarray(
             getattr(monitor, "power_spectrum", ()), dtype=np.complex64
         )
+        state = getattr(monitor, "_state", None)
+        legacy_flux = (
+            getattr(state, "_frequency_flux_spectrum_legacy", None)
+            if state is not None
+            else None
+        )
+        if legacy_flux is None:
+            legacy_flux = power_spectrum
         result = cls(
             monitor=monitor,
             fields=fields,
@@ -445,6 +460,7 @@ class MonitorResults:
                 getattr(monitor, "power_timestamps", ()), dtype=float
             ),
             power_spectrum=power_spectrum,
+            frequency_flux_spectrum=np.asarray(legacy_flux, dtype=np.complex64),
             source_spectrum_normalization=source_spectrum_normalization,
             objective_value=getattr(monitor, "objective_value", None),
         )
@@ -660,6 +676,7 @@ class Simulation:
         structures: list | None = None,
         material=None,
         background=None,
+        medium=None,
         boundary_spec=None,
         grid_spec=None,
         run_time: float | None = None,
@@ -672,6 +689,13 @@ class Simulation:
                 raise ValueError("Pass only one of domain=... or size=....")
         if domain is None:
             domain = size
+        if medium is not None:
+            warnings.warn(
+                "Simulation(..., medium=...) is deprecated; use material=... or "
+                "Design(background=...) instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         if structures:
             warnings.warn(
                 "Simulation(..., structures=[...]) is deprecated; add geometry "
@@ -686,6 +710,8 @@ class Simulation:
         ):
             raise ValueError("Pass only one of background=... or material=....")
         background_material = background if background is not None else material
+        if background_material is None:
+            background_material = medium
 
         if design is None:
             if domain is None:
@@ -1264,6 +1290,30 @@ class Simulation:
 
         return source_j, source_m
 
+    def _create_jit_step(self):
+        """Deprecated private helper kept only to fail loudly."""
+        raise NotImplementedError(
+            "Simulation._create_jit_step() is deprecated because it is not kept "
+            "mathematically equivalent to the supported `step()` and "
+            "`run_compiled()` engines."
+        )
+
+    def _create_jit_step_h(self):
+        """Deprecated private helper kept only to fail loudly."""
+        raise NotImplementedError(
+            "Simulation._create_jit_step_h() is deprecated because it is not kept "
+            "mathematically equivalent to the supported `step()` and "
+            "`run_compiled()` engines."
+        )
+
+    def _create_jit_step_e(self):
+        """Deprecated private helper kept only to fail loudly."""
+        raise NotImplementedError(
+            "Simulation._create_jit_step_e() is deprecated because it is not kept "
+            "mathematically equivalent to the supported `step()` and "
+            "`run_compiled()` engines."
+        )
+
     def compile(self, num_steps=None, snapshot_field=None, snapshot_interval=None):
         """Compile the v0.3 packed-data simulation program."""
         if num_steps is None:
@@ -1716,6 +1766,56 @@ class Simulation:
             record_fields=record_fields,
             progress=progress,
         )
+
+    def run_jit_scan(self, num_steps=None, progress=True):
+        """Backward-compatible alias to `run_compiled` in v0.3."""
+        return self.run_compiled(
+            num_steps=num_steps,
+            record_interval=None,
+            record_fields=None,
+            progress=progress,
+        )
+
+    def _get_monitor_trace(self, monitor, field_component="Ez", reduction="mean"):
+        """Reduce monitor field snapshots to a 1D time trace."""
+        if field_component not in monitor.fields:
+            raise ValueError(
+                f"Monitor '{monitor.name}' has no field '{field_component}'. "
+                f"Available: {sorted(monitor.fields.keys())}"
+            )
+
+        raw = monitor.fields[field_component]
+        if raw is None or len(raw) == 0:
+            raise ValueError(
+                f"Monitor '{monitor.name}' has no recorded '{field_component}' data."
+            )
+
+        values = np.asarray(raw)
+        if values.ndim == 1:
+            trace = values
+        else:
+            flattened = values.reshape(values.shape[0], -1)
+            reduction_key = str(reduction).lower()
+            if reduction_key == "mean":
+                trace = np.mean(flattened, axis=1)
+            elif reduction_key == "sum":
+                trace = np.sum(flattened, axis=1)
+            elif reduction_key == "max_abs":
+                trace = np.max(np.abs(flattened), axis=1)
+            else:
+                raise ValueError(
+                    f"Unsupported reduction '{reduction}'. "
+                    "Use one of {'mean', 'sum', 'max_abs'}."
+                )
+
+        time_values = np.asarray(monitor.fields.get("t", []), dtype=float)
+        if time_values.size < trace.shape[0]:
+            if hasattr(self, "time") and len(self.time) >= trace.shape[0]:
+                time_values = np.asarray(self.time[: trace.shape[0]], dtype=float)
+            else:
+                time_values = np.arange(trace.shape[0], dtype=float) * float(self.dt)
+
+        return np.asarray(trace), np.asarray(time_values)
 
     @staticmethod
     def _safe_ratio(num, den, eps=1e-18):
@@ -3506,6 +3606,18 @@ class Simulation:
         return float(np.linalg.norm(target - recon) / denom)
 
     @staticmethod
+    def _modal_projection_reconstruction_residual_from_matrix(
+        field_vec,
+        mode_matrix,
+        coeff,
+    ):
+        return Simulation._modal_projection_reconstruction_diagnostics_from_matrix(
+            field_vec,
+            mode_matrix,
+            coeff,
+        )["residual"]
+
+    @staticmethod
     def _modal_projection_reconstruction_diagnostics_from_matrix(
         field_vec,
         mode_matrix,
@@ -5073,6 +5185,18 @@ class Simulation:
 
     def get_s_matrix_modal_cw(self, *args, **kwargs):
         return self.get_S_matrix_modal_cw(*args, **kwargs)
+
+    def get_S_matrix(self, *args, **kwargs):
+        raise RuntimeError(
+            "Simulation.get_S_matrix(...) is deprecated and removed. "
+            "Use Simulation.get_S_matrix_modal(...)."
+        )
+
+    def get_s_matrix(self, *args, **kwargs):
+        raise RuntimeError(
+            "Simulation.get_s_matrix(...) is deprecated and removed. "
+            "Use Simulation.get_s_matrix_modal(...)."
+        )
 
     def run(self, **kwargs):
         """Run complete FDTD simulation with optional snapshot streaming.

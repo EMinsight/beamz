@@ -457,7 +457,12 @@ class Rectangle(Polygon):
 
 
 class Box:
-    """Axis-aligned box specified by center and size."""
+    """Axis-aligned box specified by center and size.
+
+    This is a centered-geometry companion to :class:`Rectangle`. It is intended
+    for simulation construction APIs where coordinates are expressed relative to
+    the simulation center.
+    """
 
     def __init__(self, center=(0, 0, 0), size=(1, 1, 1), material=None):
         if len(center) == 2:
@@ -468,7 +473,7 @@ class Box:
             raise ValueError("Box center and size must be 2D or 3D coordinate tuples.")
         self.center = tuple(float(v) for v in center)
         self.size = tuple(float(v) for v in size)
-        finite_sizes = [v for v in self.size if np.isfinite(v)]
+        finite_sizes = [abs(v) for v in self.size if np.isfinite(v)]
         if any(v < 0 for v in finite_sizes):
             raise ValueError(f"Box sizes must be non-negative, got {size!r}.")
         self.material = material
@@ -528,7 +533,7 @@ class Box:
 class Structure:
     """Deprecated compatibility wrapper pairing geometry with a material."""
 
-    def __init__(self, geometry, material=None, _warn=True):
+    def __init__(self, geometry, medium=None, material=None, _warn=True):
         if _warn:
             warnings.warn(
                 "Structure is deprecated; attach material=... to the geometry and add "
@@ -536,10 +541,17 @@ class Structure:
                 DeprecationWarning,
                 stacklevel=2,
             )
+            if medium is not None:
+                warnings.warn(
+                    "Structure(..., medium=...) is deprecated; use material=... instead.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
         self.geometry = geometry
-        self.material = material
+        self.material = material if material is not None else medium
         if self.material is not None and hasattr(self.geometry, "material"):
             self.geometry.material = self.material
+        self.medium = self.material
 
     def __getattr__(self, name):
         return getattr(self.geometry, name)

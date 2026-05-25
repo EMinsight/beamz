@@ -6,11 +6,11 @@ import pytest
 
 from beamz import (
     LIGHT_SPEED,
+    Monitor,
     PML,
     Design,
     Material,
     ModeSource,
-    Monitor,
     Rectangle,
     Simulation,
     calc_optimal_fdtd_params,
@@ -612,3 +612,13 @@ def test_step_and_compiled_match_3d_monitor_power_and_dft():
         dft_rtol=3e-6,
     )
 
+
+def test_private_jit_step_builders_are_disabled():
+    sim, _ = _make_2d_sim(plane_2d="yz", steps=2)
+
+    with pytest.raises(NotImplementedError, match="deprecated"):
+        sim._create_jit_step()
+    with pytest.raises(NotImplementedError, match="deprecated"):
+        sim._create_jit_step_h()
+    with pytest.raises(NotImplementedError, match="deprecated"):
+        sim._create_jit_step_e()

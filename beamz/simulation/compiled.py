@@ -2328,6 +2328,7 @@ class CompiledSimulation:
                 dev.power_spectrum = (re + 1j * im).astype(np.complex64)
             else:
                 dev.power_spectrum = np.zeros((0,), dtype=np.complex64)
+            dev._frequency_flux_spectrum_legacy = dev.power_spectrum
 
             if spec.dft_enabled and spec.freq_count > 0 and spec.dft_point_count > 0:
                 comp_names = ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
@@ -2376,6 +2377,14 @@ class CompiledSimulation:
                         dtype=np.float64,
                     )
                     dev._dft_accum[comp_name] = re + 1j * im
+                try:
+                    phasor_flux = np.asarray(dev.get_dft_flux(), dtype=np.float64)
+                except ValueError:
+                    pass
+                else:
+                    dev._frequency_flux_spectrum_legacy = phasor_flux.astype(
+                        np.complex64
+                    )
             else:
                 dev._dft_weight_sum = np.zeros((0,), dtype=np.float64)
                 dev._dft_accum = {}

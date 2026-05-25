@@ -537,6 +537,21 @@ def monitor_dataset(monitor_or_result):
         if data is not None:
             data_vars[f"dft_{component}"] = data
 
+    if source_monitor is not monitor_or_result:
+        frequency_flux = np.asarray(
+            getattr(monitor_or_result, "frequency_flux_spectrum", ())
+        )
+        dft_freqs = np.asarray(
+            getattr(source_monitor, "dft_frequencies", ()), dtype=float
+        )
+        if frequency_flux.size and dft_freqs.size == frequency_flux.size:
+            data_vars["frequency_flux_spectrum"] = xr.DataArray(
+                frequency_flux,
+                dims=("f",),
+                coords={"f": ("f", dft_freqs, {"units": "Hz"})},
+                attrs={"monitor_name": getattr(monitor, "name", None)},
+            )
+
     return xr.Dataset(
         data_vars=data_vars,
         attrs={
