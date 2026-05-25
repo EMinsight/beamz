@@ -29,6 +29,7 @@ from beamz.devices.sources.mode import (
     _modal_power_3d_from_profiles,
     _numeric_phase_delay,
     _normalize_3d_profiles_by_flux,
+    _phase_reference_3d_profiles,
     _project_3d_profiles_to_real,
     _remap_3d_solver_components,
     _runtime_3d_profiles,
@@ -749,6 +750,34 @@ def _source_basis_branch_metrics(
         "backward_abs": float(abs(a_backward)),
         "backward_ratio": float(abs(a_backward) / max(abs(a_forward), 1e-30)),
     }
+
+
+def _source_phase_referenced_power(
+    source: ModeSource,
+    field_profiles: dict[str, np.ndarray],
+) -> float:
+    _profiles, indices = source._get_3d_profiles_and_indices()
+    axis = str(source._axis)
+    d_area = float(source._resolution * source._resolution)
+    referenced = _phase_reference_3d_profiles(
+        field_profiles,
+        indices,
+        axis=axis,
+        dx=float(source._resolution),
+        dy=float(source._resolution),
+        dz=float(source._resolution),
+        omega=float(source._omega_launch),
+        k_num=float(source._k_num_axis),
+        ref_coord=float(source._phase_ref_coord),
+    )
+    return float(
+        _modal_power_3d_from_profiles(
+            referenced,
+            axis=axis,
+            d_area=d_area,
+            direction_sign=float(source._direction_sign),
+        )
+    )
 
 
 def _max_complex_part(deltas: dict[str, np.ndarray]) -> tuple[float, float]:
@@ -2673,9 +2702,23 @@ def test_source_plane_full_incident_phasor_matches_runtime_profile_basis(
             t_h=-0.5 * dt,
         ),
     )
-    assert profile_metrics["forward_abs"] == pytest.approx(1.0, rel=1e-12)
+
+    phase_referenced_power = _source_phase_referenced_power(
+        source,
+        {
+            name: np.asarray(value, dtype=np.complex128)
+            for name, value in profiles.items()
+        },
+    )
+    assert phase_referenced_power == pytest.approx(float(source.power), rel=1e-12)
+    assert profile_metrics["forward_abs"] > 0.0
     assert profile_metrics["backward_ratio"] < 1e-12
-    assert phasor_metrics["forward_abs"] == pytest.approx(1.0, rel=1e-12)
+    for key in ("forward_abs", "backward_abs", "backward_ratio"):
+        assert phasor_metrics[key] == pytest.approx(
+            profile_metrics[key],
+            rel=1e-12,
+            abs=1e-12,
+        )
     assert phasor_metrics["backward_ratio"] < 1e-12
 
 
@@ -2777,9 +2820,22 @@ def test_source_plane_three_way_projection_localizes_rejected_branch_to_yee_upda
         ),
     )
 
-    assert profile_metrics["forward_abs"] == pytest.approx(1.0, rel=1e-12)
+    phase_referenced_power = _source_phase_referenced_power(
+        source,
+        {
+            name: np.asarray(value, dtype=np.complex128)
+            for name, value in profiles.items()
+        },
+    )
+    assert phase_referenced_power == pytest.approx(float(source.power), rel=1e-12)
+    assert profile_metrics["forward_abs"] > 0.0
     assert profile_metrics["backward_ratio"] < 1e-12
-    assert initial_metrics["forward_abs"] == pytest.approx(1.0, rel=1e-12)
+    for key in ("forward_abs", "backward_abs", "backward_ratio"):
+        assert initial_metrics[key] == pytest.approx(
+            profile_metrics[key],
+            rel=1e-12,
+            abs=1e-12,
+        )
     assert initial_metrics["backward_ratio"] < 1e-12
     assert full_update_metrics["forward_abs"] > 0.9
     assert full_update_metrics["backward_ratio"] < 0.15
