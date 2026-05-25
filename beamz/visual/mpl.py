@@ -486,6 +486,17 @@ def _tidy3d_material_levels(sim):
     return core, substrate
 
 
+def _tidy3d_field_display_scale_and_units(field):
+    """Return plot scale and units for Tidy3D-style field-monitor data."""
+    component = str(field)
+    family = component[:1].upper()
+    if family == "E":
+        return µm, "V/um"
+    if family == "H":
+        return µm, "A/um"
+    return 1.0, ""
+
+
 def _tidy3d_pml_thickness(sim):
     for boundary in getattr(sim, "boundaries", ()) or ():
         thickness = getattr(boundary, "thickness", None)
@@ -518,7 +529,9 @@ def _device_plane_center(device):
     start = getattr(device, "start", None)
     end = getattr(device, "end", None)
     if start is not None and end is not None:
-        return tuple(0.5 * (float(a) + float(b)) for a, b in zip(start, end, strict=False))
+        return tuple(
+            0.5 * (float(a) + float(b)) for a, b in zip(start, end, strict=False)
+        )
     return None
 
 
@@ -527,7 +540,10 @@ def _device_span_for_axis(device, axis, transverse_axis):
     end = getattr(device, "end", None)
     idx = {"x": 0, "y": 1, "z": 2}[transverse_axis]
     if start is not None and end is not None and len(start) > idx and len(end) > idx:
-        return (min(float(start[idx]), float(end[idx])), max(float(start[idx]), float(end[idx])))
+        return (
+            min(float(start[idx]), float(end[idx])),
+            max(float(start[idx]), float(end[idx])),
+        )
 
     center = _device_plane_center(device)
     size = getattr(device, "size_spec", None)
@@ -895,11 +911,15 @@ def plot_mode_fields(
                         plot_arr = plot_arr / scale
                 finite_plot = plot_arr[np.isfinite(plot_arr)]
                 if percentile is None:
-                    default_vmax = float(np.nanmax(finite_plot)) if finite_plot.size else 1.0
+                    default_vmax = (
+                        float(np.nanmax(finite_plot)) if finite_plot.size else 1.0
+                    )
                 else:
                     default_vmax = float(np.nanpercentile(plot_arr, float(percentile)))
                 default_vmax = (
-                    default_vmax if np.isfinite(default_vmax) and default_vmax > 0.0 else 1.0
+                    default_vmax
+                    if np.isfinite(default_vmax) and default_vmax > 0.0
+                    else 1.0
                 )
             elif val_key in {"real", "re"}:
                 plot_arr = np.real(arr)
@@ -908,11 +928,15 @@ def plot_mode_fields(
                 default_vmin = None
                 finite_plot = np.abs(plot_arr[np.isfinite(plot_arr)])
                 if percentile is None:
-                    default_vmax = float(np.nanmax(finite_plot)) if finite_plot.size else 1.0
+                    default_vmax = (
+                        float(np.nanmax(finite_plot)) if finite_plot.size else 1.0
+                    )
                 else:
                     default_vmax = np.nanpercentile(np.abs(plot_arr), float(percentile))
                 default_vmax = (
-                    default_vmax if np.isfinite(default_vmax) and default_vmax > 0.0 else 1.0
+                    default_vmax
+                    if np.isfinite(default_vmax) and default_vmax > 0.0
+                    else 1.0
                 )
                 default_vmin = -default_vmax
             elif val_key in {"imag", "imaginary", "im"}:
@@ -922,11 +946,15 @@ def plot_mode_fields(
                 default_vmin = None
                 finite_plot = np.abs(plot_arr[np.isfinite(plot_arr)])
                 if percentile is None:
-                    default_vmax = float(np.nanmax(finite_plot)) if finite_plot.size else 1.0
+                    default_vmax = (
+                        float(np.nanmax(finite_plot)) if finite_plot.size else 1.0
+                    )
                 else:
                     default_vmax = np.nanpercentile(np.abs(plot_arr), float(percentile))
                 default_vmax = (
-                    default_vmax if np.isfinite(default_vmax) and default_vmax > 0.0 else 1.0
+                    default_vmax
+                    if np.isfinite(default_vmax) and default_vmax > 0.0
+                    else 1.0
                 )
                 default_vmin = -default_vmax
             else:
@@ -1050,6 +1078,8 @@ def plot_tidy3d_dft_field(
     core_permittivity=None,
     xlim=None,
     ylim=None,
+    source_normalize=True,
+    show_units=True,
     show=True,
 ):
     """Plot a Tidy3D-like frequency-domain field from a DFT plane monitor."""
@@ -1098,6 +1128,19 @@ def plot_tidy3d_dft_field(
         target1 = np.asarray(target1, dtype=float)[: int(plane_shape[1])]
 
     arr = dft[f_idx].reshape(tuple(int(v) for v in plane_shape))
+    if source_normalize:
+        from beamz.simulation.core import _source_spectrum_normalization
+
+        source_norm = _source_spectrum_normalization(
+            getattr(simulation, "sources", ()), freqs
+        )
+        if source_norm is not None:
+            norm = np.asarray(source_norm, dtype=np.complex128).reshape(-1)
+            if norm.size == freqs.size and abs(norm[f_idx]) > 1e-12:
+                arr = arr / norm[f_idx]
+
+    field_scale, field_units = _tidy3d_field_display_scale_and_units(field)
+    arr = arr * field_scale
     val_key = str(val).lower()
     if val_key in {"real", "re"}:
         plot_arr = np.real(arr)
@@ -1224,6 +1267,8 @@ def plot_tidy3d_dft_field(
         cbar_label = f"|{label}|"
     else:
         cbar_label = f"{label_prefix}({label})"
+    if show_units and field_units:
+        cbar_label = f"{cbar_label} ({field_units})"
     fig.colorbar(
         im, ax=ax, label=cbar_label, extend="both" if val_key != "abs" else "max"
     )
@@ -1294,7 +1339,9 @@ def plot_simulation(
     """Plot a simulation layout with sources, monitors, and boundaries."""
     use_tidy3d = tidy3d
     if use_tidy3d is None:
-        use_tidy3d = bool(getattr(sim, "is_3d", False) and (z is not None or y is not None))
+        use_tidy3d = bool(
+            getattr(sim, "is_3d", False) and (z is not None or y is not None)
+        )
     if use_tidy3d:
         if ax is not None:
             raise ValueError(

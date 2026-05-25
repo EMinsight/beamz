@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import matplotlib
 
 matplotlib.use("Agg")
@@ -23,6 +25,7 @@ from beamz import (
     plot_mode_fields,
     plot_signal,
     plot_tidy3d_cross_sections,
+    plot_tidy3d_dft_field,
     plot_tidy3d_field_frame,
     um,
 )
@@ -429,6 +432,57 @@ def test_simulation_results_plot_field_selects_physical_coordinate():
     assert "z=" in ax.get_title()
 
 
+def test_tidy3d_dft_field_plot_source_normalizes_and_uses_micron_units():
+    class Source:
+        def source_spectrum(self, freqs, *, normalize=True):
+            assert normalize
+            return np.ones_like(np.asarray(freqs, dtype=float), dtype=np.complex128) / (
+                2.0 * np.pi
+            )
+
+    class DftPlaneMonitor:
+        is_3d = True
+        plane_normal = "z"
+        plane_position = 0.0
+        _compiled_dft_shape_3d = (2, 2)
+
+        def get_dft_frequencies(self):
+            return np.asarray([1.0])
+
+        def get_dft_component(self, component):
+            assert component == "Ey"
+            return np.full((1, 4), 6.0e6, dtype=np.complex128)
+
+        def get_analysis_plane_coords_3d(self, **_kwargs):
+            return (
+                np.asarray([0.125 * um, 0.375 * um]),
+                np.asarray([0.125 * um, 0.375 * um]),
+            )
+
+    simulation = SimpleNamespace(
+        resolution=0.25 * um,
+        fields=SimpleNamespace(permittivity=np.ones((1, 2, 2))),
+        sources=[Source()],
+        design=SimpleNamespace(width=0.5 * um, height=0.5 * um, depth=0.0),
+    )
+
+    fig, ax = plot_tidy3d_dft_field(
+        simulation,
+        DftPlaneMonitor(),
+        field="Ey",
+        percentile=100,
+        overlay_core=False,
+        show=False,
+    )
+    try:
+        image = ax.images[0]
+        np.testing.assert_allclose(image.get_array(), np.full((2, 2), 12.0 * np.pi))
+        assert image.get_clim() == pytest.approx((-12.0 * np.pi, 12.0 * np.pi))
+        assert fig.axes[-1].get_ylabel() == "Re(Ey) (V/um)"
+    finally:
+        plt.close(fig)
+
+
 def test_tidy3d_cross_sections_plot_grid_slices():
     design = Design(
         width=2 * um,
@@ -479,11 +533,15 @@ def test_simulation_plot_uses_tidy3d_cross_sections_for_3d_slices():
         grid_spec=GridSpec.uniform(0.25 * um),
         structures=[
             Structure(
-                geometry=Box(center=(0.0, 0.0, -0.75 * um), size=(3 * um, 2 * um, 1.5 * um)),
+                geometry=Box(
+                    center=(0.0, 0.0, -0.75 * um), size=(3 * um, 2 * um, 1.5 * um)
+                ),
                 medium=sio2,
             ),
             Structure(
-                geometry=Box(center=(0.0, 0.0, 0.1 * um), size=(3 * um, 0.3 * um, 0.2 * um)),
+                geometry=Box(
+                    center=(0.0, 0.0, 0.1 * um), size=(3 * um, 0.3 * um, 0.2 * um)
+                ),
                 medium=si,
             ),
         ],
