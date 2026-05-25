@@ -1737,6 +1737,15 @@ class ModeSource(RuntimeStateProxy):
         profile_frequencies=None,
         power=1.0,
         source_time=None,
+        num_freqs=None,
+        mode_neff=None,
+        mode_e_field=None,
+        mode_h_field=None,
+        mode_eps_profile_full=None,
+        mode_crop_slices=None,
+        mode_index=0,
+        mode_target_neff=None,
+        mode_num_modes=None,
     ):
         self.grid = grid
         self.center = (
@@ -1752,6 +1761,15 @@ class ModeSource(RuntimeStateProxy):
         self.signal_quadrature = signal_quadrature
         self.source_time = source_time
         self.profile_frequencies = profile_frequencies
+        self.num_freqs = None if num_freqs is None else int(num_freqs)
+        self.mode_neff = mode_neff
+        self.mode_e_field = mode_e_field
+        self.mode_h_field = mode_h_field
+        self.mode_eps_profile_full = mode_eps_profile_full
+        self.mode_crop_slices = mode_crop_slices
+        self.mode_index = int(mode_index)
+        self.mode_target_neff = mode_target_neff
+        self.mode_num_modes = None if mode_num_modes is None else int(mode_num_modes)
         power_value = float(power)
         if not np.isfinite(power_value) or power_value < 0.0:
             raise ValueError(
@@ -1767,14 +1785,23 @@ class ModeSource(RuntimeStateProxy):
 
     def source_spectrum(self, freqs, *, normalize: bool = True) -> np.ndarray | None:
         """Return this source's analytic spectrum when source-time metadata exists."""
+        freq_arr = np.asarray(freqs, dtype=float)
         source_time = getattr(self, "source_time", None)
         if source_time is None:
             return None
         if normalize and hasattr(source_time, "dft_normalization_spectrum"):
-            return source_time.dft_normalization_spectrum(freqs)
+            spectrum = source_time.dft_normalization_spectrum(freq_arr)
+            freq0 = float(
+                getattr(source_time, "freq0", LIGHT_SPEED / float(self.wavelength))
+            )
+            if np.isfinite(freq0) and freq0 > 0.0:
+                spectrum = np.asarray(spectrum, dtype=np.complex128) * np.sqrt(
+                    np.maximum(freq_arr, 0.0) / freq0
+                )
+            return spectrum
         if not hasattr(source_time, "spectrum"):
             return None
-        return source_time.spectrum(freqs, normalize=normalize)
+        return source_time.spectrum(freq_arr, normalize=normalize)
 
     def copy(self, *, update=None):
         """Return a configuration copy of this mode source."""
@@ -1890,34 +1917,56 @@ class ModeSource(RuntimeStateProxy):
         # continuum modes can otherwise dominate the sort order.
         target_neff = 0.98 * n_local_max
 
-        mode_candidates = 3
-        try:
-            neff_val, e_fields, h_fields, _ = solve_modes(
-                eps=eps_profile,
-                omega=omega,
-                dL=dL,
-                m=mode_candidates,
-                direction=solver_direction,
-                filter_pol=self.pol,
-                target_neff=target_neff,
-                return_fields=True,
+        precomputed_e = getattr(self, "mode_e_field", None)
+        precomputed_h = getattr(self, "mode_h_field", None)
+        if precomputed_e is not None and precomputed_h is not None:
+            E_mode = np.asarray(precomputed_e, dtype=np.complex128)
+            H_mode = np.asarray(precomputed_h, dtype=np.complex128)
+            if E_mode.shape[0] != 3 or H_mode.shape[0] != 3:
+                raise ValueError(
+                    "ModeSource precomputed mode_e_field and mode_h_field must "
+                    "have component axis length 3."
+                )
+            neff_val = np.asarray(
+                [
+                    (
+                        self.mode_neff
+                        if self.mode_neff is not None
+                        else np.sqrt(max(np.real(np.max(eps_profile_arr)), 1e-12))
+                    )
+                ],
+                dtype=np.complex128,
             )
-        except ValueError:
-            neff_val, e_fields, h_fields, _ = solve_modes(
-                eps=eps_profile,
-                omega=omega,
-                dL=dL,
-                m=1,
-                direction=solver_direction,
-                filter_pol=self.pol,
-                target_neff=target_neff,
-                return_fields=True,
-            )
+            self._neff = neff_val[0]
+        else:
+            mode_candidates = 3
+            try:
+                neff_val, e_fields, h_fields, _ = solve_modes(
+                    eps=eps_profile,
+                    omega=omega,
+                    dL=dL,
+                    m=mode_candidates,
+                    direction=solver_direction,
+                    filter_pol=self.pol,
+                    target_neff=target_neff,
+                    return_fields=True,
+                )
+            except ValueError:
+                neff_val, e_fields, h_fields, _ = solve_modes(
+                    eps=eps_profile,
+                    omega=omega,
+                    dL=dL,
+                    m=1,
+                    direction=solver_direction,
+                    filter_pol=self.pol,
+                    target_neff=target_neff,
+                    return_fields=True,
+                )
 
-        mode_idx = _select_core_confined_mode_index(eps_profile, e_fields, neff_val)
-        self._neff = neff_val[mode_idx]
-        E_mode = e_fields[mode_idx]
-        H_mode = h_fields[mode_idx]
+            mode_idx = _select_core_confined_mode_index(eps_profile, e_fields, neff_val)
+            self._neff = neff_val[mode_idx]
+            E_mode = e_fields[mode_idx]
+            H_mode = h_fields[mode_idx]
 
         # 3. Extract all 6 components and convert to JAX arrays
         Ex_raw = jnp.asarray(jnp.squeeze(E_mode[0]))

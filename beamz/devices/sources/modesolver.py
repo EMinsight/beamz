@@ -40,8 +40,8 @@ def _plane_center_and_size(plane):
     return tuple(float(v) for v in center), tuple(float(v) for v in size)
 
 
-def _crop_profile_to_plane(eps_profile, *, profile_axes, center, size, resolution):
-    """Crop an extracted cross-section to the finite transverse size of a plane."""
+def _profile_crop_slices(eps_profile, *, profile_axes, center, size, resolution):
+    """Return slices that crop an extracted cross-section to a finite plane."""
     grid_axis_to_coord_index = {0: 2, 1: 1, 2: 0}
     slices = []
     for dim, grid_axis in enumerate(profile_axes):
@@ -56,7 +56,32 @@ def _crop_profile_to_plane(eps_profile, *, profile_axes, center, size, resolutio
         start = int(np.clip(start, 0, eps_profile.shape[dim] - 1))
         stop = int(np.clip(stop, start + 1, eps_profile.shape[dim]))
         slices.append(slice(start, stop))
-    return eps_profile[tuple(slices)]
+    return tuple(slices)
+
+
+def _crop_profile_to_plane(eps_profile, *, profile_axes, center, size, resolution):
+    """Crop an extracted cross-section to the finite transverse size of a plane."""
+    return eps_profile[
+        _profile_crop_slices(
+            eps_profile,
+            profile_axes=profile_axes,
+            center=center,
+            size=size,
+            resolution=resolution,
+        )
+    ]
+
+
+def _chebyshev_frequency_nodes(freq0: float, fwidth: float, count: int) -> np.ndarray:
+    """Return sorted Chebyshev nodes over the Tidy3D broadband source interval."""
+    n = int(count)
+    if n <= 1:
+        return np.asarray([float(freq0)], dtype=float)
+    center = float(freq0)
+    half_width = 1.5 * float(fwidth)
+    k = np.arange(n, dtype=float)
+    nodes = center + half_width * np.cos((2.0 * k + 1.0) * np.pi / (2.0 * n))
+    return np.sort(nodes.astype(float))
 
 
 @dataclass(frozen=True)
@@ -154,31 +179,11 @@ class ModeSolver:
         self._modes = None
 
     def solve(self):
-        grid = self.simulation.design.rasterize(resolution=self.simulation.resolution)
-        eps = np.asarray(grid.permittivity)
-        axis, center, _spans = _plane_axis_and_spans(self.plane)
-        offset = getattr(self.simulation, "coordinate_offset", (0.0, 0.0, 0.0))
-        center = tuple(c + o for c, o in zip(center, offset, strict=True))
-        axis_index = {"z": 0, "y": 1, "x": 2}[axis]
-        grid_index = int(
-            np.clip(
-                round(
-                    center[{"z": 2, "y": 1, "x": 0}[axis]] / self.simulation.resolution
-                ),
-                0,
-                eps.shape[axis_index] - 1,
-            )
+        eps, axis, center, axis_index, grid_index, eps_profile_full, crop_slices = (
+            self._plane_eps_context()
         )
-        eps_profile = np.take(eps, grid_index, axis=axis_index)
-        _plane_center, plane_size = _plane_center_and_size(self.plane)
-        profile_axes = tuple(idx for idx in range(eps.ndim) if idx != axis_index)
-        eps_profile = _crop_profile_to_plane(
-            eps_profile,
-            profile_axes=profile_axes,
-            center=center,
-            size=plane_size,
-            resolution=float(self.simulation.resolution),
-        )
+        del eps, grid_index
+        eps_profile = eps_profile_full[crop_slices]
         neffs_by_freq = []
         e_by_freq = []
         h_by_freq = []
@@ -208,6 +213,50 @@ class ModeSolver:
         )
         return self._modes
 
+    def _plane_eps_context(self):
+        grid = self.simulation.design.rasterize(resolution=self.simulation.resolution)
+        eps = np.asarray(grid.permittivity)
+        axis, center, _spans = _plane_axis_and_spans(self.plane)
+        offset = getattr(self.simulation, "coordinate_offset", (0.0, 0.0, 0.0))
+        center = tuple(c + o for c, o in zip(center, offset, strict=True))
+        axis_index = {"z": 0, "y": 1, "x": 2}[axis]
+        grid_index = int(
+            np.clip(
+                round(
+                    center[{"z": 2, "y": 1, "x": 0}[axis]] / self.simulation.resolution
+                ),
+                0,
+                eps.shape[axis_index] - 1,
+            )
+        )
+        eps_profile_full = np.take(eps, grid_index, axis=axis_index)
+        _plane_center, plane_size = _plane_center_and_size(self.plane)
+        profile_axes = tuple(idx for idx in range(eps.ndim) if idx != axis_index)
+        crop_slices = _profile_crop_slices(
+            eps_profile_full,
+            profile_axes=profile_axes,
+            center=center,
+            size=plane_size,
+            resolution=float(self.simulation.resolution),
+        )
+        return (
+            eps,
+            axis,
+            center,
+            axis_index,
+            grid_index,
+            eps_profile_full,
+            crop_slices,
+        )
+
+    @staticmethod
+    def _embed_mode_fields(field, full_shape, crop_slices):
+        arr = np.asarray(field, dtype=np.complex128)
+        out = np.zeros((3, *tuple(full_shape)), dtype=np.complex128)
+        for comp in range(3):
+            out[(comp, *crop_slices)] = np.asarray(arr[comp], dtype=np.complex128)
+        return out
+
     def to_source(
         self,
         *,
@@ -227,11 +276,48 @@ class ModeSolver:
         sign = str(direction)[0] if str(direction).startswith(("+", "-")) else "+"
         full_direction = f"{sign}{axis}"
         freq0 = float(getattr(source_time, "freq0", self.freqs[len(self.freqs) // 2]))
+        (
+            _eps,
+            _axis,
+            _center_abs,
+            _axis_index,
+            _grid_index,
+            eps_profile_full,
+            crop_slices,
+        ) = self._plane_eps_context()
+        mode_count = max(int(mode_index) + 1, int(self.mode_spec.num_modes))
+        neffs, e_fields, h_fields, _ = solve_modes(
+            eps=eps_profile_full[crop_slices],
+            omega=2.0 * np.pi * freq0,
+            dL=self.simulation.resolution,
+            m=mode_count,
+            direction=full_direction,
+            filter_pol=polarization or self.mode_spec.polarization,
+            target_neff=self.mode_spec.target_neff,
+            return_fields=True,
+        )
+        selected = int(mode_index)
+        if selected >= len(neffs):
+            raise ValueError(
+                f"Requested mode_index={mode_index}, but only {len(neffs)} modes were found."
+            )
+        mode_e_field = self._embed_mode_fields(
+            e_fields[selected],
+            eps_profile_full.shape,
+            crop_slices,
+        )
+        mode_h_field = self._embed_mode_fields(
+            h_fields[selected],
+            eps_profile_full.shape,
+            crop_slices,
+        )
         profile_freqs = None
+        num_freqs = getattr(self.mode_spec, "num_freqs", None)
         if getattr(self.mode_spec, "num_freqs", None):
-            count = int(self.mode_spec.num_freqs)
-            profile_freqs = np.linspace(
-                float(np.min(self.freqs)), float(np.max(self.freqs)), count
+            profile_freqs = _chebyshev_frequency_nodes(
+                freq0,
+                float(getattr(source_time, "fwidth", freq0 / 10.0)),
+                int(self.mode_spec.num_freqs),
             )
         return ModeSource(
             grid=self.simulation.design.rasterize(
@@ -246,6 +332,15 @@ class ModeSolver:
             signal_quadrature=signal_quadrature,
             source_time=source_time,
             profile_frequencies=profile_freqs,
+            num_freqs=num_freqs,
+            mode_neff=neffs[selected],
+            mode_e_field=mode_e_field,
+            mode_h_field=mode_h_field,
+            mode_eps_profile_full=eps_profile_full,
+            mode_crop_slices=crop_slices,
+            mode_index=selected,
+            mode_target_neff=self.mode_spec.target_neff,
+            mode_num_modes=mode_count,
             direction=full_direction,
             power=power,
         )

@@ -21,6 +21,26 @@ def test_gaussian_pulse_dft_normalization_includes_native_monitor_scale():
     np.testing.assert_allclose(abs(norm[0]), 1.0 / (2.0 * np.pi), rtol=1e-12)
 
 
+def test_mode_source_spectrum_includes_modal_power_response():
+    pulse = bz.GaussianPulse(freq0=2.0e14, fwidth=2.0e13)
+    freqs = np.asarray([0.9 * pulse.freq0, pulse.freq0, 1.1 * pulse.freq0])
+    source = bz.ModeSource(
+        grid=object(),
+        center=(0.0, 0.0, 0.0),
+        width=1.0,
+        height=1.0,
+        wavelength=bz.LIGHT_SPEED / pulse.freq0,
+        pol="te",
+        signal=np.ones(8, dtype=float),
+        source_time=pulse,
+    )
+
+    norm = source.source_spectrum(freqs, normalize=True)
+
+    expected = pulse.dft_normalization_spectrum(freqs) * np.sqrt(freqs / pulse.freq0)
+    np.testing.assert_allclose(norm, expected, rtol=1e-12)
+
+
 def test_centered_structure_simulation_constructor_builds_design_and_time():
     si = bz.Medium(permittivity=12.0)
     sio2 = bz.Medium(permittivity=2.0)
@@ -247,6 +267,87 @@ def test_mode_solver_can_create_source_from_source_time():
     assert source.direction == "+x"
     assert source.signal.shape == sim.time.shape
     assert source.source_time is source_time
+
+
+def test_mode_solver_to_source_embeds_selected_cropped_mode(monkeypatch):
+    sim = bz.Simulation(
+        size=(6.0, 6.0, 6.0),
+        structures=[],
+        sources=[],
+        monitors=[],
+        resolution=1.0,
+        time=np.linspace(0.0, 3e-15, 4),
+    )
+    plane = bz.Box(center=(0.0, 0.0, 0.0), size=(0.0, 2.0, 4.0))
+    solver = bz.ModeSolver(
+        simulation=sim,
+        plane=plane,
+        mode_spec=bz.ModeSpec(num_modes=2, target_neff=2.3),
+        freqs=[2.0e14],
+    )
+    seen = {}
+
+    def fake_solve_modes(**kwargs):
+        eps = np.asarray(kwargs["eps"])
+        seen["eps_shape"] = eps.shape
+        seen["direction"] = kwargs["direction"]
+        seen["target_neff"] = kwargs["target_neff"]
+        fields = np.zeros((2, 3, *eps.shape), dtype=np.complex128)
+        fields[0] = 1.0
+        fields[1] = 2.0
+        return np.array([2.1 + 0.0j, 1.7 + 0.0j]), fields, 10.0 * fields, 0
+
+    monkeypatch.setattr(
+        "beamz.devices.sources.modesolver.solve_modes", fake_solve_modes
+    )
+
+    source = solver.to_source(mode_index=1, direction="+")
+
+    assert source.direction == "+x"
+    assert source.mode_neff == 1.7 + 0.0j
+    assert seen == {
+        "eps_shape": (4, 2),
+        "direction": "+x",
+        "target_neff": 2.3,
+    }
+    assert source.mode_e_field.shape == (3, 6, 6)
+    assert source.mode_h_field.shape == (3, 6, 6)
+    assert np.count_nonzero(source.mode_e_field[0] == 2.0) == 8
+    assert np.count_nonzero(source.mode_h_field[0] == 20.0) == 8
+    assert np.count_nonzero(source.mode_e_field[0]) == 8
+
+
+def test_mode_source_uses_precomputed_mode_without_resolving(monkeypatch):
+    sim = bz.Simulation(
+        size=(3.0, 3.0, 3.0),
+        structures=[],
+        sources=[],
+        monitors=[],
+        resolution=1.0,
+        time=np.linspace(0.0, 3e-15, 4),
+    )
+    source = bz.ModeSource(
+        grid=sim.design.rasterize(resolution=sim.resolution),
+        center=(1.0, 1.0, 1.0),
+        width=2.0,
+        height=2.0,
+        wavelength=1.5,
+        pol="te",
+        signal=np.ones(sim.time.shape),
+        direction="+x",
+        mode_neff=2.25 + 0.0j,
+        mode_e_field=np.ones((3, 3, 3), dtype=np.complex128),
+        mode_h_field=np.ones((3, 3, 3), dtype=np.complex128),
+    )
+
+    def fail_solve_modes(**_kwargs):
+        raise AssertionError("ModeSource should use the precomputed mode fields.")
+
+    monkeypatch.setattr("beamz.devices.sources.mode.solve_modes", fail_solve_modes)
+
+    source.initialize(sim.fields.permittivity, sim.resolution, dt=sim.dt)
+
+    assert source._neff == 2.25 + 0.0j
 
 
 def test_mode_solver_source_polarization_can_be_set_independently():
