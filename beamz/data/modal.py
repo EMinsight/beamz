@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 import xarray as xr
 
-from beamz.simulation.core import PortSpec
+from beamz.simulation.core import PortSpec, _source_spectrum_normalization
 
 
 @dataclass(frozen=True)
@@ -57,6 +57,18 @@ def mode_monitor_data(simulation, monitor):
         amps[:, 0, idx] = np.asarray(plus, dtype=np.complex128)
         amps[:, 1, idx] = np.asarray(minus, dtype=np.complex128)
 
+    source_norm = _source_spectrum_normalization(simulation.sources, freqs)
+    if source_norm is not None:
+        norm = np.asarray(source_norm, dtype=np.complex128).reshape(-1)
+        if norm.size == freqs.size:
+            valid = np.abs(norm) > 1e-12
+            amps = np.divide(
+                amps,
+                norm[:, None, None],
+                out=np.zeros_like(amps, dtype=np.complex128),
+                where=valid[:, None, None],
+            )
+
     amp_da = xr.DataArray(
         amps,
         dims=("f", "direction", "mode_index"),
@@ -76,6 +88,16 @@ def mode_monitor_data(simulation, monitor):
         except Exception:
             flux = np.asarray(())
         if flux.size == freqs.size:
+            if source_norm is not None:
+                norm = np.asarray(source_norm, dtype=np.complex128).reshape(-1)
+                if norm.size == flux.size:
+                    scale = np.abs(norm) ** 2
+                    flux = np.divide(
+                        flux,
+                        scale,
+                        out=np.zeros_like(flux, dtype=float),
+                        where=scale > 1e-24,
+                    )
             flux_da = xr.DataArray(
                 flux,
                 dims=("f",),

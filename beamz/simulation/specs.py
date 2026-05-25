@@ -39,14 +39,18 @@ class GridSpec:
         if self.resolution is not None:
             return float(self.resolution)
         if self.wavelength is None:
-            raise ValueError("GridSpec.auto requires wavelength when resolution is absent.")
+            raise ValueError(
+                "GridSpec.auto requires wavelength when resolution is absent."
+            )
         n_max = max(float(max_index), 1.0)
         return float(self.wavelength) / (n_max * float(self.min_steps_per_wvl))
 
     def resolve_time_step(self, resolution: float, *, dims: int) -> float:
         dim_count = max(1, int(dims))
-        return float(self.courant) * float(resolution) / (
-            LIGHT_SPEED * np.sqrt(float(dim_count))
+        return (
+            float(self.courant)
+            * float(resolution)
+            / (LIGHT_SPEED * np.sqrt(float(dim_count)))
         )
 
 
@@ -60,10 +64,32 @@ class GaussianPulse:
     offset: float = 4.0
     remove_dc_component: bool = True
 
+    def _time_width(self) -> float:
+        return 1.0 / (2.0 * np.pi * max(float(self.fwidth), 1e-30))
+
+    def spectrum(self, freqs, *, normalize: bool = False) -> np.ndarray:
+        """Return the analytic positive-frequency source spectrum."""
+        freq_arr = np.asarray(freqs, dtype=float)
+        fwidth = max(float(self.fwidth), 1e-30)
+        width = self._time_width()
+        peak = float(self.offset) / fwidth
+        df = freq_arr - float(self.freq0)
+        spectrum = (
+            float(self.amplitude)
+            * width
+            * np.sqrt(2.0 * np.pi)
+            * np.exp(-0.5 * (df / fwidth) ** 2)
+            * np.exp(1j * 2.0 * np.pi * df * peak)
+        )
+        if normalize:
+            center = float(self.amplitude) * width * np.sqrt(2.0 * np.pi)
+            spectrum = spectrum / max(abs(center), 1e-300)
+        return np.asarray(spectrum, dtype=np.complex128)
+
     def sample(self, time) -> tuple[np.ndarray, np.ndarray]:
         t = np.asarray(time, dtype=float)
-        width = 1.0 / max(float(self.fwidth), 1e-30)
-        peak = float(self.offset) * width
+        width = self._time_width()
+        peak = float(self.offset) / max(float(self.fwidth), 1e-30)
         envelope = float(self.amplitude) * np.exp(-((t - peak) ** 2) / (2.0 * width**2))
         phase = 2.0 * np.pi * float(self.freq0) * t
         signal = envelope * np.cos(phase)

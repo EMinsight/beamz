@@ -1736,6 +1736,7 @@ class ModeSource(RuntimeStateProxy):
         signal_quadrature=None,
         profile_frequencies=None,
         power=1.0,
+        source_time=None,
     ):
         self.grid = grid
         self.center = (
@@ -1749,6 +1750,7 @@ class ModeSource(RuntimeStateProxy):
             raise ValueError(f"pol must be 'te' or 'tm', got {pol!r}")
         self.signal = signal
         self.signal_quadrature = signal_quadrature
+        self.source_time = source_time
         self.profile_frequencies = profile_frequencies
         power_value = float(power)
         if not np.isfinite(power_value) or power_value < 0.0:
@@ -1762,6 +1764,13 @@ class ModeSource(RuntimeStateProxy):
             direction
         )
         self._state = _ModeSourceState()
+
+    def source_spectrum(self, freqs, *, normalize: bool = True) -> np.ndarray | None:
+        """Return this source's analytic spectrum when source-time metadata exists."""
+        source_time = getattr(self, "source_time", None)
+        if source_time is None or not hasattr(source_time, "spectrum"):
+            return None
+        return source_time.spectrum(freqs, normalize=normalize)
 
     def copy(self, *, update=None):
         """Return a configuration copy of this mode source."""

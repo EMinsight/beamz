@@ -244,6 +244,7 @@ class ModeSolver:
             pol=polarization or getattr(self.mode_spec, "polarization", None) or "te",
             signal=signal,
             signal_quadrature=signal_quadrature,
+            source_time=source_time,
             profile_frequencies=profile_freqs,
             direction=full_direction,
             power=power,

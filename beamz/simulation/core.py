@@ -197,6 +197,33 @@ class PortSpec:
     scattered_wave: Literal["plus", "minus", "auto"] = "minus"
 
 
+def _source_spectrum_normalization(sources, freqs) -> np.ndarray | None:
+    """Return a unit-center source spectrum for source-normalized DFT outputs."""
+    freq_arr = np.asarray(freqs, dtype=float).reshape(-1)
+    if freq_arr.size == 0:
+        return None
+    spectra = []
+    for source in sources or ():
+        spectrum = None
+        if hasattr(source, "source_spectrum"):
+            spectrum = source.source_spectrum(freq_arr, normalize=True)
+        source_time = getattr(source, "source_time", None)
+        if (
+            spectrum is None
+            and source_time is not None
+            and hasattr(source_time, "spectrum")
+        ):
+            spectrum = source_time.spectrum(freq_arr, normalize=True)
+        if spectrum is None:
+            continue
+        spectrum = np.asarray(spectrum, dtype=np.complex128).reshape(-1)
+        if spectrum.shape == freq_arr.shape and np.any(np.abs(spectrum) > 1e-12):
+            spectra.append(spectrum)
+    if not spectra:
+        return None
+    return spectra[0]
+
+
 @dataclass(frozen=True)
 class MonitorResults:
     """Snapshot of one monitor's recorded outputs."""
@@ -207,6 +234,7 @@ class MonitorResults:
     power_timestamps: np.ndarray
     power_spectrum: np.ndarray
     frequency_flux_spectrum: np.ndarray
+    source_spectrum_normalization: np.ndarray | None = None
     objective_value: float | None = None
     data: Any = None
 
@@ -217,6 +245,18 @@ class MonitorResults:
                 getattr(self.monitor, "get_dft_frequencies")(), dtype=float
             )
             values = np.asarray(self.monitor.get_dft_flux(), dtype=float)
+            norm = self.source_spectrum_normalization
+            if norm is not None:
+                norm_arr = np.asarray(norm, dtype=np.complex128).reshape(-1)
+                if norm_arr.size == values.size:
+                    scale = np.abs(norm_arr) ** 2
+                    valid = scale > 1e-24
+                    values = np.divide(
+                        values,
+                        scale,
+                        out=np.zeros_like(values, dtype=float),
+                        where=valid,
+                    )
             if freqs.size == values.size:
                 try:
                     import xarray as xr
@@ -343,7 +383,12 @@ class MonitorResults:
         return self.data
 
     @classmethod
-    def from_monitor(cls, monitor: Monitor) -> "MonitorResults":
+    def from_monitor(
+        cls,
+        monitor: Monitor,
+        *,
+        source_spectrum_normalization: np.ndarray | None = None,
+    ) -> "MonitorResults":
         fields = {
             name: tuple(values)
             for name, values in getattr(monitor, "fields", {}).items()
@@ -370,6 +415,7 @@ class MonitorResults:
             ),
             power_spectrum=power_spectrum,
             frequency_flux_spectrum=np.asarray(legacy_flux, dtype=np.complex64),
+            source_spectrum_normalization=source_spectrum_normalization,
             objective_value=getattr(monitor, "objective_value", None),
         )
         from dataclasses import replace
@@ -522,11 +568,22 @@ class SimulationResults(Mapping[str, Any]):
     ) -> "SimulationResults" | None:
         monitor_tuple = tuple(monitors)
         snapshot_tuple = tuple(snapshots)
-        monitor_results = {
-            getattr(monitor, "name", None)
-            or f"monitor_{idx}": MonitorResults.from_monitor(monitor)
-            for idx, monitor in enumerate(monitor_tuple)
-        }
+        monitor_results = {}
+        for idx, monitor in enumerate(monitor_tuple):
+            name = getattr(monitor, "name", None) or f"monitor_{idx}"
+            source_norm = None
+            if hasattr(monitor, "get_dft_frequencies"):
+                try:
+                    source_norm = _source_spectrum_normalization(
+                        simulation.sources,
+                        monitor.get_dft_frequencies(),
+                    )
+                except Exception:
+                    source_norm = None
+            monitor_results[name] = MonitorResults.from_monitor(
+                monitor,
+                source_spectrum_normalization=source_norm,
+            )
         if fields is None and not monitor_tuple and not snapshot_tuple:
             return None
         fields_dataset = None

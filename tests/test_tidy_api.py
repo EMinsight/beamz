@@ -3,6 +3,16 @@ import numpy as np
 import beamz as bz
 
 
+def test_gaussian_pulse_spectrum_uses_tidy3d_fwidth_convention():
+    pulse = bz.GaussianPulse(freq0=2.0e14, fwidth=2.0e13)
+
+    rel = np.abs(
+        pulse.spectrum([pulse.freq0, pulse.freq0 + pulse.fwidth], normalize=True)
+    )
+
+    np.testing.assert_allclose(rel, [1.0, np.exp(-0.5)], rtol=1e-12)
+
+
 def test_centered_structure_simulation_constructor_builds_design_and_time():
     si = bz.Medium(permittivity=12.0)
     sio2 = bz.Medium(permittivity=2.0)
@@ -13,7 +23,9 @@ def test_centered_structure_simulation_constructor_builds_design_and_time():
         grid_spec=grid_spec,
         structures=[
             bz.Structure(
-                geometry=bz.Box(center=(0, 0, -1 * bz.um), size=(bz.inf, bz.inf, 2 * bz.um)),
+                geometry=bz.Box(
+                    center=(0, 0, -1 * bz.um), size=(bz.inf, bz.inf, 2 * bz.um)
+                ),
                 medium=sio2,
             ),
             bz.Structure(
@@ -122,6 +134,88 @@ def test_mode_monitor_result_exposes_labeled_amplitudes(monkeypatch):
     )
 
 
+def test_mode_monitor_data_is_source_spectrum_normalized(monkeypatch):
+    freq0 = 2.0e14
+    fwidth = 2.0e13
+    freqs = np.array([freq0, freq0 + fwidth])
+    source_time = bz.GaussianPulse(freq0=freq0, fwidth=fwidth)
+    source_norm = source_time.spectrum(freqs, normalize=True)
+    mode_monitor = bz.ModeMonitor(
+        center=(0.0, 0.0, 0.0),
+        size=(0.0, 2.0, 2.0),
+        freqs=freqs,
+        mode_spec=bz.ModeSpec(num_modes=1),
+        name="mode",
+        direction="+x",
+        polarization="te",
+        record_fields=False,
+    )
+    monkeypatch.setattr(
+        mode_monitor,
+        "get_dft_flux",
+        lambda: 3.0 * np.abs(source_norm) ** 2,
+    )
+    sim = bz.Simulation(
+        size=(4.0, 4.0, 4.0),
+        sources=[type("Source", (), {"source_time": source_time})()],
+        monitors=[mode_monitor],
+        resolution=1.0,
+        time=np.array([0.0, 1e-15]),
+    )
+
+    def fake_extract(self, ports, frequencies, **kwargs):
+        del self, kwargs
+        np.testing.assert_allclose(frequencies, freqs)
+        return {
+            port.name: {
+                "a_plus": np.zeros(freqs.shape, dtype=np.complex128),
+                "a_minus": 2.0 * source_norm,
+            }
+            for port in ports
+        }
+
+    monkeypatch.setattr(bz.Simulation, "extract_port_waves_dft", fake_extract)
+
+    results = bz.SimulationResults.from_run(sim, monitors=sim.monitors)
+    mode_data = results["mode"]
+
+    np.testing.assert_allclose(
+        mode_data.amps.sel(direction="+", mode_index=0),
+        np.full(freqs.shape, 2.0 + 0.0j),
+    )
+    np.testing.assert_allclose(mode_data.flux, np.full(freqs.shape, 3.0))
+
+
+def test_flux_monitor_result_is_source_spectrum_normalized(monkeypatch):
+    freq0 = 2.0e14
+    fwidth = 2.0e13
+    freqs = np.array([freq0, freq0 + fwidth])
+    source_time = bz.GaussianPulse(freq0=freq0, fwidth=fwidth)
+    source_norm = source_time.spectrum(freqs, normalize=True)
+    flux_monitor = bz.FluxMonitor(
+        center=(0.0, 0.0, 0.0),
+        size=(0.0, 2.0, 2.0),
+        freqs=freqs,
+        name="flux",
+    )
+    monkeypatch.setattr(
+        flux_monitor,
+        "get_dft_flux",
+        lambda: 4.0 * np.abs(source_norm) ** 2,
+    )
+    sim = bz.Simulation(
+        size=(4.0, 4.0, 4.0),
+        sources=[type("Source", (), {"source_time": source_time})()],
+        monitors=[flux_monitor],
+        resolution=1.0,
+        time=np.array([0.0, 1e-15]),
+    )
+
+    results = bz.SimulationResults.from_run(sim, monitors=sim.monitors)
+
+    np.testing.assert_allclose(results["flux"].flux, np.full(freqs.shape, 4.0))
+
+
 def test_mode_solver_can_create_source_from_source_time():
     sim = bz.Simulation(
         size=(2.0, 2.0, 2.0),
@@ -144,6 +238,7 @@ def test_mode_solver_can_create_source_from_source_time():
 
     assert source.direction == "+x"
     assert source.signal.shape == sim.time.shape
+    assert source.source_time is source_time
 
 
 def test_mode_solver_source_polarization_can_be_set_independently():
@@ -192,7 +287,9 @@ def test_mode_solver_solves_only_finite_plane_size(monkeypatch):
         fields = np.ones((1, 3, *eps.shape), dtype=np.complex128)
         return np.array([2.0 + 0.0j]), fields, fields, 0
 
-    monkeypatch.setattr("beamz.devices.sources.modesolver.solve_modes", fake_solve_modes)
+    monkeypatch.setattr(
+        "beamz.devices.sources.modesolver.solve_modes", fake_solve_modes
+    )
 
     modes = solver.solve()
 

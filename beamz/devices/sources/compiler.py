@@ -547,6 +547,7 @@ def _compile_mode_source_3d_multifrequency(
         direction=src.direction,
         height=src.height,
         signal_quadrature=getattr(src, "signal_quadrature", None),
+        source_time=getattr(src, "source_time", None),
         power=getattr(src, "power", 1.0),
     )
     for freq, waveform in zip(nodes, subbands, strict=True):
