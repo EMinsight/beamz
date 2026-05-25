@@ -1768,7 +1768,11 @@ class ModeSource(RuntimeStateProxy):
     def source_spectrum(self, freqs, *, normalize: bool = True) -> np.ndarray | None:
         """Return this source's analytic spectrum when source-time metadata exists."""
         source_time = getattr(self, "source_time", None)
-        if source_time is None or not hasattr(source_time, "spectrum"):
+        if source_time is None:
+            return None
+        if normalize and hasattr(source_time, "dft_normalization_spectrum"):
+            return source_time.dft_normalization_spectrum(freqs)
+        if not hasattr(source_time, "spectrum"):
             return None
         return source_time.spectrum(freqs, normalize=normalize)
 

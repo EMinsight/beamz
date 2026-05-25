@@ -86,6 +86,10 @@ class GaussianPulse:
             spectrum = spectrum / max(abs(center), 1e-300)
         return np.asarray(spectrum, dtype=np.complex128)
 
+    def dft_normalization_spectrum(self, freqs) -> np.ndarray:
+        """Return the source spectrum in BeamZ's native monitor normalization."""
+        return self.spectrum(freqs, normalize=True) / (2.0 * np.pi)
+
     def sample(self, time) -> tuple[np.ndarray, np.ndarray]:
         t = np.asarray(time, dtype=float)
         width = self._time_width()

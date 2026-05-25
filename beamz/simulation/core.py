@@ -211,6 +211,12 @@ def _source_spectrum_normalization(sources, freqs) -> np.ndarray | None:
         if (
             spectrum is None
             and source_time is not None
+            and hasattr(source_time, "dft_normalization_spectrum")
+        ):
+            spectrum = source_time.dft_normalization_spectrum(freq_arr)
+        if (
+            spectrum is None
+            and source_time is not None
             and hasattr(source_time, "spectrum")
         ):
             spectrum = source_time.spectrum(freq_arr, normalize=True)

@@ -13,6 +13,14 @@ def test_gaussian_pulse_spectrum_uses_tidy3d_fwidth_convention():
     np.testing.assert_allclose(rel, [1.0, np.exp(-0.5)], rtol=1e-12)
 
 
+def test_gaussian_pulse_dft_normalization_includes_native_monitor_scale():
+    pulse = bz.GaussianPulse(freq0=2.0e14, fwidth=2.0e13)
+
+    norm = pulse.dft_normalization_spectrum([pulse.freq0])
+
+    np.testing.assert_allclose(abs(norm[0]), 1.0 / (2.0 * np.pi), rtol=1e-12)
+
+
 def test_centered_structure_simulation_constructor_builds_design_and_time():
     si = bz.Medium(permittivity=12.0)
     sio2 = bz.Medium(permittivity=2.0)
@@ -139,7 +147,7 @@ def test_mode_monitor_data_is_source_spectrum_normalized(monkeypatch):
     fwidth = 2.0e13
     freqs = np.array([freq0, freq0 + fwidth])
     source_time = bz.GaussianPulse(freq0=freq0, fwidth=fwidth)
-    source_norm = source_time.spectrum(freqs, normalize=True)
+    source_norm = source_time.dft_normalization_spectrum(freqs)
     mode_monitor = bz.ModeMonitor(
         center=(0.0, 0.0, 0.0),
         size=(0.0, 2.0, 2.0),
@@ -191,7 +199,7 @@ def test_flux_monitor_result_is_source_spectrum_normalized(monkeypatch):
     fwidth = 2.0e13
     freqs = np.array([freq0, freq0 + fwidth])
     source_time = bz.GaussianPulse(freq0=freq0, fwidth=fwidth)
-    source_norm = source_time.spectrum(freqs, normalize=True)
+    source_norm = source_time.dft_normalization_spectrum(freqs)
     flux_monitor = bz.FluxMonitor(
         center=(0.0, 0.0, 0.0),
         size=(0.0, 2.0, 2.0),
