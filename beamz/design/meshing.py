@@ -342,6 +342,7 @@ class RegularGrid(BaseMeshGrid):
         self.dy = self.resolution
         self.width = self.design.width
         self.height = self.design.height
+        self.depth = 0.0
 
     def __rasterize__(self):
         """Painters algorithm: rasterize design into a grid using super-sampling.

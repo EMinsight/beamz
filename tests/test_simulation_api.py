@@ -38,6 +38,25 @@ def test_simulation_accepts_explicit_sources_and_monitors():
     assert sim.monitors == [monitor]
 
 
+def test_simulation_accepts_rasterized_2d_grid_as_design():
+    design = Design(width=2 * um, height=2 * um, material=Material(permittivity=1.0))
+    grid = design.rasterize(resolution=0.5 * um)
+    source = GaussianSource(
+        position=(1 * um, 1 * um), width=0.2 * um, signal=[1.0, 0.0]
+    )
+
+    sim = Simulation(
+        design=grid,
+        sources=[source],
+        monitors=[],
+        time=_time_axis(),
+        resolution=0.5 * um,
+    )
+
+    assert sim.domain == (2 * um, 2 * um, 0.0)
+    assert not sim.is_3d
+
+
 def test_simulation_rejects_duplicate_named_monitors():
     design = Design(width=4 * um, height=4 * um, material=Material(permittivity=1.0))
     m1 = Monitor(start=(1 * um, 1 * um), end=(1 * um, 3 * um), name="port")

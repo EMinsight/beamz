@@ -86,6 +86,18 @@ def _max_index_for_specs(background, structures) -> float:
     return max(values) if values else 1.0
 
 
+def _design_depth(design) -> float:
+    return float(getattr(design, "depth", 0.0) or 0.0)
+
+
+def _design_domain(design):
+    return (float(design.width), float(design.height), _design_depth(design))
+
+
+def _design_is_3d(design) -> bool:
+    return bool(getattr(design, "is_3d", False) and _design_depth(design) > 0.0)
+
+
 def _structure_to_domain(structure, offset, domain_size):
     if isinstance(structure, Structure):
         return structure.to_beamz_structure(offset=offset, domain_size=domain_size)
@@ -801,22 +813,16 @@ class Simulation:
                 for monitor in (monitors or [])
             ]
         self.design = design
-        self.size = (
-            (float(design.width), float(design.height), float(design.depth))
-            if design is not None
-            else None
-        )
+        self.size = _design_domain(design) if design is not None else None
         self.domain = self.size
         self.coordinate_offset = coordinate_offset
         self.grid_spec = grid_spec
         self.run_time = run_time
         sources = sources or []
         monitors = monitors or []
-        boundaries = normalize_boundaries(
-            boundaries, is_3d=bool(design.is_3d and design.depth > 0)
-        )
+        boundaries = normalize_boundaries(boundaries, is_3d=_design_is_3d(design))
         self.resolution = resolution
-        self.is_3d = design.is_3d and design.depth > 0
+        self.is_3d = _design_is_3d(design)
         self.plane_2d = plane_2d.lower()
         if self.plane_2d not in ["xy", "yz", "xz"]:
             self.plane_2d = "xy"
