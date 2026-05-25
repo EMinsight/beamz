@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 import beamz as bz
 
@@ -59,29 +60,26 @@ def test_mode_source_can_be_calibrated_to_reference_power():
     assert calibrated.power == 1.25
 
 
-def test_centered_structure_simulation_constructor_builds_design_and_time():
-    si = bz.Medium(permittivity=12.0)
-    sio2 = bz.Medium(permittivity=2.0)
+def test_design_background_and_material_geometry_builds_design_and_time():
+    si = bz.Material(permittivity=12.0)
+    sio2 = bz.Material(permittivity=2.0)
     grid_spec = bz.GridSpec.auto(min_steps_per_wvl=10, wavelength=1.55 * bz.um)
+    design = bz.Design(background=sio2)
+    design += bz.Box(
+        center=(0, 0, -1 * bz.um),
+        size=(bz.inf, bz.inf, 2 * bz.um),
+        material=sio2,
+    )
+    design += bz.Box(
+        center=(0, 0, 0.11 * bz.um),
+        size=(4 * bz.um, 0.45 * bz.um, 0.22 * bz.um),
+        material=si,
+    )
 
     sim = bz.Simulation(
         size=(4 * bz.um, 3 * bz.um, 2 * bz.um),
         grid_spec=grid_spec,
-        structures=[
-            bz.Structure(
-                geometry=bz.Box(
-                    center=(0, 0, -1 * bz.um), size=(bz.inf, bz.inf, 2 * bz.um)
-                ),
-                medium=sio2,
-            ),
-            bz.Structure(
-                geometry=bz.Box(
-                    center=(0, 0, 0.11 * bz.um),
-                    size=(4 * bz.um, 0.45 * bz.um, 0.22 * bz.um),
-                ),
-                medium=si,
-            ),
-        ],
+        design=design,
         sources=[],
         monitors=[],
         run_time=2e-15,
@@ -91,6 +89,33 @@ def test_centered_structure_simulation_constructor_builds_design_and_time():
     assert sim.design.depth == 2 * bz.um
     assert sim.resolution < 1.55 * bz.um / 10
     assert sim.time.size >= 2
+
+
+def test_tidy3d_structure_medium_api_warns_but_still_builds():
+    si = bz.Material(permittivity=12.0)
+    sio2 = bz.Material(permittivity=2.0)
+
+    with pytest.warns(DeprecationWarning, match="Structure"):
+        core = bz.Structure(
+            geometry=bz.Box(center=(0.0, 0.0, 0.0), size=(1.0, 0.5, 0.2)),
+            medium=si,
+        )
+
+    with pytest.warns(DeprecationWarning) as warnings:
+        sim = bz.Simulation(
+            size=(2.0, 2.0, 1.0),
+            medium=sio2,
+            structures=[core],
+            sources=[],
+            monitors=[],
+            resolution=0.5,
+            time=np.array([0.0, 1e-15]),
+        )
+
+    messages = [str(w.message) for w in warnings]
+    assert any("medium" in message for message in messages)
+    assert any("structures" in message for message in messages)
+    assert sim.design.structures[-1].material is si
 
 
 def test_semantic_monitor_wrappers_create_dft_planes_and_shift_with_simulation():

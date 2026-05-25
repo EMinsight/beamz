@@ -1,4 +1,6 @@
-# Medium: Dispersionless medium.
+import warnings
+
+
 class Material:
     def __init__(
         self,
@@ -38,7 +40,14 @@ class Material:
         )
 
 
-Medium = Material
+def Medium(*args, **kwargs):
+    """Deprecated compatibility alias for :class:`Material`."""
+    warnings.warn(
+        "beamz.Medium is deprecated; use beamz.Material instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return Material(*args, **kwargs)
 
 
 # CustomMaterial: Function-based material for inverse design

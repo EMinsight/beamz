@@ -16,11 +16,9 @@ from beamz import (
     GaussianSource,
     GridSpec,
     Material,
-    Medium,
     Monitor,
     Rectangle,
     Simulation,
-    Structure,
     mode_field_component_pairs,
     plot_mode_fields,
     plot_signal,
@@ -526,25 +524,23 @@ def test_tidy3d_cross_sections_plot_grid_slices():
 
 
 def test_simulation_plot_uses_tidy3d_cross_sections_for_3d_slices():
-    si = Medium(permittivity=12.0)
-    sio2 = Medium(permittivity=2.25)
+    si = Material(permittivity=12.0)
+    sio2 = Material(permittivity=2.25)
+    design = Design(background=sio2)
+    design += Box(
+        center=(0.0, 0.0, -0.75 * um),
+        size=(3 * um, 2 * um, 1.5 * um),
+        material=sio2,
+    )
+    design += Box(
+        center=(0.0, 0.0, 0.1 * um),
+        size=(3 * um, 0.3 * um, 0.2 * um),
+        material=si,
+    )
     sim = Simulation(
         size=(3 * um, 2 * um, 1.5 * um),
         grid_spec=GridSpec.uniform(0.25 * um),
-        structures=[
-            Structure(
-                geometry=Box(
-                    center=(0.0, 0.0, -0.75 * um), size=(3 * um, 2 * um, 1.5 * um)
-                ),
-                medium=sio2,
-            ),
-            Structure(
-                geometry=Box(
-                    center=(0.0, 0.0, 0.1 * um), size=(3 * um, 0.3 * um, 0.2 * um)
-                ),
-                medium=si,
-            ),
-        ],
+        design=design,
         monitors=[
             FieldMonitor(
                 center=(0.5 * um, 0.0, 0.0),

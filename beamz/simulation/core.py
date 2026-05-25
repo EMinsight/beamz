@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -12,7 +13,7 @@ import numpy as np
 from beamz.const import LIGHT_SPEED, µm
 from beamz.design.core import Design
 from beamz.design.materials import Material
-from beamz.design.structures import Structure
+from beamz.design.structures import Box, Structure
 from beamz.devices.monitors.monitors import Monitor
 from beamz.devices.ports import Port
 from beamz.devices.sources.compiler import (
@@ -83,6 +84,33 @@ def _max_index_for_specs(background, structures) -> float:
         if material is not None:
             values.append(_material_index(material))
     return max(values) if values else 1.0
+
+
+def _structure_to_domain(structure, offset, domain_size):
+    if isinstance(structure, Structure):
+        return structure.to_beamz_structure(offset=offset, domain_size=domain_size)
+    if isinstance(structure, Box):
+        geometry = structure
+        if any(not np.isfinite(v) for v in geometry.size):
+            clipped_size = tuple(
+                float(domain)
+                if not np.isfinite(size)
+                else min(float(size), float(domain))
+                for size, domain in zip(geometry.size, domain_size, strict=True)
+            )
+            geometry = Box(
+                center=geometry.center,
+                size=clipped_size,
+                material=geometry.material,
+            )
+        return geometry.to_rectangle(offset=offset, material=geometry.material)
+    if hasattr(structure, "to_beamz_structure"):
+        return structure.to_beamz_structure(offset=offset, domain_size=domain_size)
+
+    copied = _copy_with_update(structure)
+    if hasattr(copied, "shift"):
+        copied = copied.shift(*offset)
+    return copied
 
 
 def _shift_device_to_domain(device, offset):
@@ -633,12 +661,38 @@ class Simulation:
         *,
         size=None,
         structures: list | None = None,
+        material=None,
+        background=None,
         medium=None,
         boundary_spec=None,
         grid_spec=None,
         run_time: float | None = None,
     ):
         coordinate_offset = (0.0, 0.0, 0.0)
+        if medium is not None:
+            warnings.warn(
+                "Simulation(..., medium=...) is deprecated; use material=... or "
+                "Design(background=...) instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        if structures:
+            warnings.warn(
+                "Simulation(..., structures=[...]) is deprecated; add geometry "
+                "with material=... to a Design and pass design=... instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        if (
+            background is not None
+            and material is not None
+            and background is not material
+        ):
+            raise ValueError("Pass only one of background=... or material=....")
+        background_material = background if background is not None else material
+        if background_material is None:
+            background_material = medium
+
         if design is None:
             if size is None:
                 raise ValueError("Simulation requires either design=... or size=....")
@@ -647,12 +701,16 @@ class Simulation:
                 sim_size = (sim_size[0], sim_size[1], 0.0)
             if len(sim_size) != 3:
                 raise ValueError("Simulation size must be a 2D or 3D tuple.")
-            background = medium if medium is not None else Material(1.0)
+            background_material = (
+                background_material
+                if background_material is not None
+                else Material(1.0)
+            )
             design = Design(
                 width=sim_size[0],
                 height=sim_size[1],
                 depth=sim_size[2],
-                material=background,
+                background=background_material,
             )
             coordinate_offset = (
                 0.5 * sim_size[0],
@@ -660,25 +718,58 @@ class Simulation:
                 0.5 * sim_size[2],
             )
             for structure in structures or ():
-                if isinstance(structure, Structure):
-                    design += structure.to_beamz_structure(
-                        offset=coordinate_offset,
-                        domain_size=sim_size,
-                    )
-                elif hasattr(structure, "to_beamz_structure"):
-                    design += structure.to_beamz_structure(
-                        offset=coordinate_offset,
-                        domain_size=sim_size,
-                    )
-                else:
-                    copied = _copy_with_update(structure)
-                    if hasattr(copied, "shift"):
-                        copied = copied.shift(*coordinate_offset)
-                    design += copied
+                design += _structure_to_domain(structure, coordinate_offset, sim_size)
 
             if grid_spec is not None:
                 resolution = grid_spec.resolve_resolution(
-                    max_index=_max_index_for_specs(background, structures or ())
+                    max_index=_max_index_for_specs(
+                        background_material, structures or ()
+                    )
+                )
+            if time is None and run_time is not None:
+                spec = grid_spec
+                if spec is None:
+                    from beamz.simulation.specs import GridSpec
+
+                    spec = GridSpec.uniform(resolution)
+                dims = 3 if sim_size[2] > 0 else 2
+                dt = spec.resolve_time_step(resolution, dims=dims)
+                time = np.arange(0.0, float(run_time) + 0.5 * dt, dt)
+        elif size is not None and getattr(design, "_centered_coordinates", False):
+            sim_size = tuple(float(v) for v in size)
+            if len(sim_size) == 2:
+                sim_size = (sim_size[0], sim_size[1], 0.0)
+            if len(sim_size) != 3:
+                raise ValueError("Simulation size must be a 2D or 3D tuple.")
+            background_material = (
+                background_material
+                if background_material is not None
+                else getattr(design, "background", None)
+            )
+            if background_material is None and design.structures:
+                background_material = getattr(design.structures[0], "material", None)
+            if background_material is None:
+                background_material = Material(1.0)
+            source_design = design
+            design = Design(
+                width=sim_size[0],
+                height=sim_size[1],
+                depth=sim_size[2],
+                background=background_material,
+            )
+            coordinate_offset = (
+                0.5 * sim_size[0],
+                0.5 * sim_size[1],
+                0.5 * sim_size[2],
+            )
+            for structure in source_design.structures[1:]:
+                design += _structure_to_domain(structure, coordinate_offset, sim_size)
+
+            if grid_spec is not None:
+                resolution = grid_spec.resolve_resolution(
+                    max_index=_max_index_for_specs(
+                        background_material, source_design.structures[1:]
+                    )
                 )
             if time is None and run_time is not None:
                 spec = grid_spec

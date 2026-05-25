@@ -1,5 +1,6 @@
 import colorsys
 import random
+import warnings
 
 import numpy as np
 
@@ -463,7 +464,7 @@ class Box:
     the simulation center.
     """
 
-    def __init__(self, center=(0, 0, 0), size=(1, 1, 1)):
+    def __init__(self, center=(0, 0, 0), size=(1, 1, 1), material=None):
         if len(center) == 2:
             center = (center[0], center[1], 0.0)
         if len(size) == 2:
@@ -475,7 +476,7 @@ class Box:
         finite_sizes = [abs(v) for v in self.size if np.isfinite(v)]
         if any(v < 0 for v in finite_sizes):
             raise ValueError(f"Box sizes must be non-negative, got {size!r}.")
-        self.material = None
+        self.material = material
         self.position = self.lower
         self.width = self.size[0]
         self.height = self.size[1]
@@ -494,6 +495,7 @@ class Box:
         return Box(
             center=tuple(c + d for c, d in zip(self.center, offset, strict=True)),
             size=self.size,
+            material=self.material,
         )
 
     def to_rectangle(self, offset=(0.0, 0.0, 0.0), material=None):
@@ -525,15 +527,26 @@ class Box:
         return inside_xy and lower[2] <= z <= upper[2]
 
     def copy(self):
-        copied = Box(center=self.center, size=self.size)
-        copied.material = self.material
-        return copied
+        return Box(center=self.center, size=self.size, material=self.material)
 
 
 class Structure:
-    """Pair a geometry object with a material/medium."""
+    """Deprecated compatibility wrapper pairing geometry with a material."""
 
-    def __init__(self, geometry, medium=None, material=None):
+    def __init__(self, geometry, medium=None, material=None, _warn=True):
+        if _warn:
+            warnings.warn(
+                "Structure is deprecated; attach material=... to the geometry and add "
+                "it to a Design instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            if medium is not None:
+                warnings.warn(
+                    "Structure(..., medium=...) is deprecated; use material=... instead.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
         self.geometry = geometry
         self.material = material if material is not None else medium
         if self.material is not None and hasattr(self.geometry, "material"):
@@ -552,7 +565,9 @@ class Structure:
     def to_beamz_structure(self, offset=(0.0, 0.0, 0.0), domain_size=None):
         geometry = self.geometry
         if isinstance(geometry, Box):
-            if domain_size is not None and any(not np.isfinite(v) for v in geometry.size):
+            if domain_size is not None and any(
+                not np.isfinite(v) for v in geometry.size
+            ):
                 clipped_size = tuple(
                     float(domain)
                     if not np.isfinite(size)
@@ -570,8 +585,10 @@ class Structure:
         return copied
 
     def copy(self):
-        geometry = self.geometry.copy() if hasattr(self.geometry, "copy") else self.geometry
-        return Structure(geometry=geometry, material=self.material)
+        geometry = (
+            self.geometry.copy() if hasattr(self.geometry, "copy") else self.geometry
+        )
+        return Structure(geometry=geometry, material=self.material, _warn=False)
 
 
 class Circle(Polygon):
