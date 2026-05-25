@@ -1,5 +1,4 @@
 import logging
-import warnings
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -112,7 +111,6 @@ class _MonitorState:
 
     fields: dict[str, list]
     power_spectrum: np.ndarray
-    _frequency_flux_spectrum_legacy: np.ndarray | None
     objective_value: Optional[float]
     power_accumulated: np.ndarray | None
     energy_history: list
@@ -148,7 +146,6 @@ class _MonitorState:
             power_spectrum=np.zeros(
                 power_spectrum_frequencies.shape, dtype=np.complex64
             ),
-            _frequency_flux_spectrum_legacy=None,
             objective_value=None,
             power_accumulated=None,
             energy_history=[],
@@ -172,7 +169,6 @@ class Monitor(RuntimeStateProxy):
     _RUNTIME_ATTRS = {
         "fields",
         "power_spectrum",
-        "_frequency_flux_spectrum_legacy",
         "objective_value",
         "power_accumulated",
         "energy_history",
@@ -190,53 +186,6 @@ class Monitor(RuntimeStateProxy):
         "_dft_last_rot",
         "_dft_base_dt",
     }
-
-    @property
-    def frequency_points(self):
-        warnings.warn(
-            "Monitor.frequency_points is deprecated; use "
-            "Monitor.power_spectrum_frequencies instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.power_spectrum_frequencies
-
-    @frequency_points.setter
-    def frequency_points(self, value):
-        warnings.warn(
-            "Monitor.frequency_points is deprecated; use "
-            "Monitor.power_spectrum_frequencies instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self.power_spectrum_frequencies = np.asarray(value, dtype=np.float64).ravel()
-        self.accumulate_frequency = bool(self.power_spectrum_frequencies.size > 0)
-
-    @property
-    def frequency_flux_spectrum(self):
-        warnings.warn(
-            "Monitor.frequency_flux_spectrum is deprecated; use "
-            "Monitor.power_spectrum for the time-domain power spectrum, or "
-            "Monitor.get_dft_flux() for phasor DFT flux.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        legacy = getattr(self, "_frequency_flux_spectrum_legacy", None)
-        if legacy is not None:
-            return legacy
-        return self.power_spectrum
-
-    @frequency_flux_spectrum.setter
-    def frequency_flux_spectrum(self, value):
-        warnings.warn(
-            "Monitor.frequency_flux_spectrum is deprecated; use "
-            "Monitor.power_spectrum instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        arr = np.asarray(value, dtype=np.complex64)
-        self.power_spectrum = arr
-        self._frequency_flux_spectrum_legacy = arr
 
     def __init__(
         self,
@@ -263,7 +212,6 @@ class Monitor(RuntimeStateProxy):
         dft_length_unit=µm,
         objective_function: Optional[Callable[["Monitor"], float]] = None,
         name: Optional[str] = None,
-        frequency_points=None,
         frequency_record_interval=1,
         power_spectrum_frequencies=None,
         power_spectrum_record_interval=None,
@@ -314,19 +262,6 @@ class Monitor(RuntimeStateProxy):
             if dft_components is not None
             else None
         )
-        if power_spectrum_frequencies is not None and frequency_points is not None:
-            raise ValueError(
-                "Use either power_spectrum_frequencies or deprecated frequency_points, "
-                "not both."
-            )
-        if frequency_points is not None:
-            warnings.warn(
-                "Monitor(frequency_points=...) is deprecated; use "
-                "Monitor(power_spectrum_frequencies=...) instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            power_spectrum_frequencies = frequency_points
         if power_spectrum_frequencies is None:
             freq_arr = np.zeros((0,), dtype=np.float64)
         else:
@@ -1595,12 +1530,6 @@ class Monitor(RuntimeStateProxy):
                 power_timestamps=self.power_timestamps,
                 power_spectrum_frequencies=self.power_spectrum_frequencies,
                 power_spectrum=self.power_spectrum,
-                frequency_points=self.power_spectrum_frequencies,
-                frequency_flux_spectrum=(
-                    self._frequency_flux_spectrum_legacy
-                    if self._frequency_flux_spectrum_legacy is not None
-                    else self.power_spectrum
-                ),
                 monitor_info={"type": self.monitor_type, "is_3d": self.is_3d},
             )
         else:
@@ -1619,21 +1548,9 @@ class Monitor(RuntimeStateProxy):
             self.power_spectrum_frequencies = np.asarray(
                 data["power_spectrum_frequencies"], dtype=np.float64
             )
-        elif "frequency_points" in data:
-            self.power_spectrum_frequencies = np.asarray(
-                data["frequency_points"], dtype=np.float64
-            )
         self.accumulate_frequency = bool(self.power_spectrum_frequencies.size > 0)
         if "power_spectrum" in data:
             self.power_spectrum = np.asarray(data["power_spectrum"], dtype=np.complex64)
-        elif "frequency_flux_spectrum" in data:
-            self.power_spectrum = np.asarray(
-                data["frequency_flux_spectrum"], dtype=np.complex64
-            )
-        if "frequency_flux_spectrum" in data:
-            self._frequency_flux_spectrum_legacy = np.asarray(
-                data["frequency_flux_spectrum"], dtype=np.complex64
-            )
 
     def to_plot_data(
         self, *, facecolor="none", edgecolor="navy", alpha=1.0, linestyle="-"

@@ -20,7 +20,7 @@ from beamz.data import colocate_dataset, field_intensity, poynting_vector
 
 # Import design-related classes and functions
 from beamz.design.core import Design
-from beamz.design.materials import CustomMaterial, Material, Medium
+from beamz.design.materials import CustomMaterial, Material
 
 # Import simulation-related classes and functions
 from beamz.design.meshing import RegularGrid
@@ -98,7 +98,6 @@ _exports = {
     "μm": μm,
     # Materials
     "Material": Material,
-    "Medium": Medium,
     "CustomMaterial": CustomMaterial,
     # Structures
     "design": design,

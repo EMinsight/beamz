@@ -1643,14 +1643,6 @@ def _inject_3d_h_fields(fields, profiles, indices, signal_h, dt, resolution, axi
         )
 
 
-def _inject_3d_fields(
-    fields, profiles, indices, signal_e, signal_h, dt, resolution, axis="x", pol="tm"
-):
-    """Inject all field components into a 3D field object (backward compat wrapper)."""
-    _inject_3d_h_fields(fields, profiles, indices, signal_h, dt, resolution, axis, pol)
-    _inject_3d_e_fields(fields, profiles, indices, signal_e, dt, resolution, axis, pol)
-
-
 def _inject_e_component(
     fields, comp, profiles, indices, j_source, sig, dt, res, sign=-1
 ):
@@ -2624,13 +2616,6 @@ class ModeSource(RuntimeStateProxy):
     def _get_signal_quadrature_value(self, time, dt):
         """Interpolate the quadrature drive used for complex modal phasors."""
         return _interpolate_time_signal(self._get_signal_quadrature(), time, dt)
-
-    def _get_analytic_signal_value(self, time, dt):
-        """Sample the analytic source waveform at an arbitrary time."""
-        return complex(
-            self._get_signal_value(time, dt),
-            self._get_signal_quadrature_value(time, dt),
-        )
 
     def inject_h(self, fields, t, dt, current_step, resolution, design):
         """Inject magnetic current (M) into H-fields after the H update."""

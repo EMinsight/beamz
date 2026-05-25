@@ -57,14 +57,6 @@ def test_gdsf_loader_mmi1x2_returns_materialized_design_and_ports():
         assert 0 <= cy <= loaded_design.height
 
 
-def test_get_S_matrix_proxy_raises_and_points_to_modal_api():
-    sim = Simulation.__new__(Simulation)
-    with pytest.raises(RuntimeError, match="get_S_matrix_modal"):
-        sim.get_S_matrix(input_ports=["o1"], output_ports=["o1"], source_port="o1")
-    with pytest.raises(RuntimeError, match="get_s_matrix_modal"):
-        sim.get_s_matrix(input_ports=["o1"], output_ports=["o1"], source_port="o1")
-
-
 def test_port_abstraction_derives_wave_selectors_from_incoming_direction():
     source = Port(name="o1", monitor="m1", direction="+x", polarization="tm")
     output = Port(name="o2", monitor="m2", direction="-x", polarization="tm")
@@ -668,24 +660,6 @@ def test_monitor_get_dft_flux_phase_aligns_leapfrog_h_phasor():
     mon._dft_weight_sum = np.ones((1,), dtype=float)
 
     np.testing.assert_allclose(mon.get_dft_flux(), [-0.5], rtol=1e-12, atol=1e-12)
-
-
-def test_monitor_frequency_points_aliases_are_deprecated():
-    with pytest.warns(DeprecationWarning, match="frequency_points"):
-        mon = Monitor(
-            start=(0.0, 0.0),
-            end=(0.0, 1.0),
-            frequency_points=[1.0, 2.0],
-            record_fields=False,
-        )
-    np.testing.assert_allclose(mon.power_spectrum_frequencies, [1.0, 2.0])
-
-    with pytest.warns(DeprecationWarning, match="frequency_points"):
-        np.testing.assert_allclose(mon.frequency_points, [1.0, 2.0])
-
-    mon.power_spectrum = np.array([1.0 + 0.0j, 2.0 + 0.0j], dtype=np.complex64)
-    with pytest.warns(DeprecationWarning, match="frequency_flux_spectrum"):
-        np.testing.assert_allclose(mon.frequency_flux_spectrum, mon.power_spectrum)
 
 
 def test_monitor_physical_dft_accum_matches_direct_sum():

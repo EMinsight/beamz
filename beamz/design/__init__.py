@@ -4,7 +4,7 @@ Design module for BEAMZ - Contains components for designing photonic structures.
 
 from beamz.design import io
 from beamz.design.core import Design
-from beamz.design.materials import CustomMaterial, Material, Medium
+from beamz.design.materials import CustomMaterial, Material
 from beamz.design.meshing import RegularGrid, RegularGrid3D, create_mesh
 from beamz.design.structures import (
     Box,
@@ -19,7 +19,6 @@ from beamz.design.structures import (
 
 __all__ = [
     "Material",
-    "Medium",
     "CustomMaterial",
     "Design",
     "Box",

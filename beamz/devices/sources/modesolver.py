@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-import pandas as pd
 
 from beamz.const import LIGHT_SPEED
 from beamz.devices.sources.mode import ModeSource
@@ -59,19 +58,6 @@ def _profile_crop_slices(eps_profile, *, profile_axes, center, size, resolution)
     return tuple(slices)
 
 
-def _crop_profile_to_plane(eps_profile, *, profile_axes, center, size, resolution):
-    """Crop an extracted cross-section to the finite transverse size of a plane."""
-    return eps_profile[
-        _profile_crop_slices(
-            eps_profile,
-            profile_axes=profile_axes,
-            center=center,
-            size=size,
-            resolution=resolution,
-        )
-    ]
-
-
 def _chebyshev_frequency_nodes(freq0: float, fwidth: float, count: int) -> np.ndarray:
     """Return sorted Chebyshev nodes over the Tidy3D broadband source interval."""
     n = int(count)
@@ -94,6 +80,8 @@ class ModeData:
     resolution: float
 
     def to_dataframe(self):
+        import pandas as pd
+
         rows = []
         index = []
         dx_um = float(self.resolution) * 1e6
