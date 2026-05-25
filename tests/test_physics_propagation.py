@@ -81,14 +81,14 @@ class TestFreeSpacePropagation:
             result["fields"]["Ez"], dx, dt_snapshot, threshold=0.2
         )
 
-        assert (
-            v_measured is not None
-        ), "Could not measure phase velocity - insufficient wavefront data"
+        assert v_measured is not None, (
+            "Could not measure phase velocity - insufficient wavefront data"
+        )
 
         # Check within 5% of c
         error = abs(v_measured - LIGHT_SPEED) / LIGHT_SPEED
         assert error < 0.05, (
-            f"Phase velocity error {error*100:.1f}% exceeds 5% tolerance. "
+            f"Phase velocity error {error * 100:.1f}% exceeds 5% tolerance. "
             f"Measured: {v_measured:.3e} m/s, Expected: {LIGHT_SPEED:.3e} m/s"
         )
 
@@ -154,7 +154,7 @@ class TestFreeSpacePropagation:
             if post_source_energies[i - 1] > 1e-30:  # Skip near-zero values
                 ratio = post_source_energies[i] / post_source_energies[i - 1]
                 assert ratio < max_growth_ratio, (
-                    f"Energy grew by {(ratio-1)*100:.1f}% at step {source_stop_idx + i}. "
+                    f"Energy grew by {(ratio - 1) * 100:.1f}% at step {source_stop_idx + i}. "
                     "This indicates numerical instability."
                 )
 

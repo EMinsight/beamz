@@ -251,6 +251,8 @@ def solve_modes(
 ]:
     if eps.ndim not in [1, 2]:
         raise ValueError("solve_modes expects a 1D or 2D permittivity array")
+    if npml < 0:
+        raise ValueError("npml must be non-negative")
 
     freq = omega / (2 * np.pi)
     axis_hint = propagation_axis if propagation_axis is not None else direction

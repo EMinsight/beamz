@@ -68,9 +68,7 @@ def _tm_xy_full_pec_step(ez, hx, hy, *, dx, dt, ez_mask, hx_mask, hy_mask):
 
 def _tm_xy_energy(ez, hx, hy, *, dx):
     electric = 0.5 * EPS_0 * np.sum(np.asarray(ez) ** 2)
-    magnetic = 0.5 * MU_0 * (
-        np.sum(np.asarray(hx) ** 2) + np.sum(np.asarray(hy) ** 2)
-    )
+    magnetic = 0.5 * MU_0 * (np.sum(np.asarray(hx) ** 2) + np.sum(np.asarray(hy) ** 2))
     return float((electric + magnetic) * dx * dx)
 
 
@@ -137,9 +135,7 @@ def _te_xy_pec_step(ex, ey, hz, *, dx, dt):
 
 
 def _te_xy_energy(ex, ey, hz, *, dx):
-    electric = 0.5 * EPS_0 * (
-        np.sum(np.asarray(ex) ** 2) + np.sum(np.asarray(ey) ** 2)
-    )
+    electric = 0.5 * EPS_0 * (np.sum(np.asarray(ex) ** 2) + np.sum(np.asarray(ey) ** 2))
     magnetic = 0.5 * MU_0 * np.sum(np.asarray(hz) ** 2)
     return float((electric + magnetic) * dx * dx)
 
@@ -161,12 +157,9 @@ def _build_x_propagating_packet(direction: str, *, ny=12, nx=192, dx=1e-6):
     x_ez = np.arange(nx + 1, dtype=np.float32) * dx
     x_hy = (np.arange(nx, dtype=np.float32) + 0.5) * dx
 
-    ez_profile = np.exp(-((x_ez - x0) / sigma) ** 2) * np.cos(k * (x_ez - x0))
+    ez_profile = np.exp(-(((x_ez - x0) / sigma) ** 2)) * np.cos(k * (x_ez - x0))
     hy_profile = (
-        sign
-        * np.exp(-((x_hy - x0) / sigma) ** 2)
-        * np.cos(k * (x_hy - x0))
-        / eta_0
+        sign * np.exp(-(((x_hy - x0) / sigma) ** 2)) * np.cos(k * (x_hy - x0)) / eta_0
     )
 
     ez = np.tile(ez_profile[None, :], (ny + 1, 1))
@@ -187,12 +180,9 @@ def _build_x_propagating_te_packet(direction: str, *, ny=13, nx=192, dx=1e-6):
     x_ey = (np.arange(nx, dtype=np.float32) + 0.5) * dx
     x_hz = np.arange(nx - 1, dtype=np.float32) * dx
 
-    ey_profile = np.exp(-((x_ey - x0) / sigma) ** 2) * np.cos(k * (x_ey - x0))
+    ey_profile = np.exp(-(((x_ey - x0) / sigma) ** 2)) * np.cos(k * (x_ey - x0))
     hz_profile = (
-        sign
-        * np.exp(-((x_hz - x0) / sigma) ** 2)
-        * np.cos(k * (x_hz - x0))
-        / eta_0
+        sign * np.exp(-(((x_hz - x0) / sigma) ** 2)) * np.cos(k * (x_hz - x0)) / eta_0
     )
 
     ex = np.zeros((ny, nx - 1), dtype=np.float32)
@@ -214,7 +204,9 @@ def test_ops_reject_generic_xy_tm_curls():
         ops.curl_e_to_h_2d((ex, ey, ez), 1.0, plane="xy")
 
     with pytest.raises(ValueError, match="does not handle plane='xy'"):
-        ops.curl_h_to_e_2d((hx, hy, hz), 1.0, (ex.shape, ey.shape, ez.shape), plane="xy")
+        ops.curl_h_to_e_2d(
+            (hx, hy, hz), 1.0, (ex.shape, ey.shape, ez.shape), plane="xy"
+        )
 
 
 def test_tm_xy_full_yee_curls_match_tmyz_identities():
@@ -233,11 +225,15 @@ def test_tm_xy_full_yee_curls_match_tmyz_identities():
     np.testing.assert_allclose(curl_hx, np.ones((ny, nx + 1)))
     np.testing.assert_allclose(curl_hy, -2.0 * np.ones((ny + 1, nx)))
 
-    hx = 3.0 * (np.arange(ny, dtype=np.float32)[:, None] + 0.5) * np.ones(
-        (1, nx + 1), dtype=np.float32
+    hx = (
+        3.0
+        * (np.arange(ny, dtype=np.float32)[:, None] + 0.5)
+        * np.ones((1, nx + 1), dtype=np.float32)
     )
-    hy = 5.0 * np.ones((ny + 1, 1), dtype=np.float32) * (
-        np.arange(nx, dtype=np.float32)[None, :] + 0.5
+    hy = (
+        5.0
+        * np.ones((ny + 1, 1), dtype=np.float32)
+        * (np.arange(nx, dtype=np.float32)[None, :] + 0.5)
     )
     curl_ez = tm_xy_curl_h_to_e_2d(hx, hy, 1.0, (ny + 1, nx + 1), frozenset())
     np.testing.assert_allclose(curl_ez[1:-1, 1:-1], 2.0)

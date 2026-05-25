@@ -1,5 +1,5 @@
-from dataclasses import dataclass
 import warnings
+from dataclasses import dataclass
 
 import jax.numpy as jnp
 import numpy as np
@@ -706,7 +706,9 @@ class PML(Boundary):
             )
 
         for spec in (*CPML_3D_H_DERIVATIVES, *CPML_3D_E_DERIVATIVES):
-            target_shape = tuple(int(v) for v in getattr(fields, spec.target_component).shape)
+            target_shape = tuple(
+                int(v) for v in getattr(fields, spec.target_component).shape
+            )
             sigma_1d, kappa_1d, alpha_1d = profile_for_spec(spec)
             out[f"cpml3d_{spec.name}_sigma"] = bcast_axis(
                 sigma_1d, spec.derivative_axis, target_shape
@@ -1284,7 +1286,9 @@ def build_h_boundary_views_for_e_3d(hx, hy, hz, boundaries):
     - ``hx_y``: for ``dHx/dy`` in the ``Ez`` update
     """
 
-    del boundaries  # Boundary selection lives here; current 3D policy uses compact Yee extension.
+    del (
+        boundaries
+    )  # Boundary selection lives here; current 3D policy uses compact Yee extension.
     return {
         "hz_y": _extend_axis_for_pec(
             hz, axis=1, source_offset=component_axis_offsets_3d("Hz")["y"]
@@ -1359,15 +1363,15 @@ def pec_curl_h_to_e_3d(hx, hy, hz, resolution, ex_shape, ey_shape, ez_shape):
         hy_x, axis=2, resolution=resolution
     ) - _adjacent_difference(hx_y, axis=1, resolution=resolution)
 
-    assert (
-        curl_hx.shape == ex_shape
-    ), f"curl_hx shape mismatch: {curl_hx.shape} vs {ex_shape}"
-    assert (
-        curl_hy.shape == ey_shape
-    ), f"curl_hy shape mismatch: {curl_hy.shape} vs {ey_shape}"
-    assert (
-        curl_hz.shape == ez_shape
-    ), f"curl_hz shape mismatch: {curl_hz.shape} vs {ez_shape}"
+    assert curl_hx.shape == ex_shape, (
+        f"curl_hx shape mismatch: {curl_hx.shape} vs {ex_shape}"
+    )
+    assert curl_hy.shape == ey_shape, (
+        f"curl_hy shape mismatch: {curl_hy.shape} vs {ey_shape}"
+    )
+    assert curl_hz.shape == ez_shape, (
+        f"curl_hz shape mismatch: {curl_hz.shape} vs {ez_shape}"
+    )
     return curl_hx, curl_hy, curl_hz
 
 
@@ -1423,15 +1427,15 @@ def pec_curl_e_to_h_3d(ex, ey, ez, resolution, hx_shape, hy_shape, hz_shape):
         ex[:, 1:, :] - ex[:, :-1, :]
     ) / resolution
 
-    assert (
-        curl_ex.shape == hx_shape
-    ), f"curl_ex shape mismatch: {curl_ex.shape} vs {hx_shape}"
-    assert (
-        curl_ey.shape == hy_shape
-    ), f"curl_ey shape mismatch: {curl_ey.shape} vs {hy_shape}"
-    assert (
-        curl_ez.shape == hz_shape
-    ), f"curl_ez shape mismatch: {curl_ez.shape} vs {hz_shape}"
+    assert curl_ex.shape == hx_shape, (
+        f"curl_ex shape mismatch: {curl_ex.shape} vs {hx_shape}"
+    )
+    assert curl_ey.shape == hy_shape, (
+        f"curl_ey shape mismatch: {curl_ey.shape} vs {hy_shape}"
+    )
+    assert curl_ez.shape == hz_shape, (
+        f"curl_ez shape mismatch: {curl_ez.shape} vs {hz_shape}"
+    )
     return curl_ex, curl_ey, curl_ez
 
 
@@ -1451,15 +1455,15 @@ def full_pec_curl_e_to_h_3d(ex, ey, ez, resolution, hx_shape, hy_shape, hz_shape
     dEx_dy = (ex[:, 1:, :] - ex[:, :-1, :]) / resolution
     curl_ez = dEy_dx - dEx_dy
 
-    assert (
-        curl_ex.shape == hx_shape
-    ), f"curl_ex shape mismatch: {curl_ex.shape} vs {hx_shape}"
-    assert (
-        curl_ey.shape == hy_shape
-    ), f"curl_ey shape mismatch: {curl_ey.shape} vs {hy_shape}"
-    assert (
-        curl_ez.shape == hz_shape
-    ), f"curl_ez shape mismatch: {curl_ez.shape} vs {hz_shape}"
+    assert curl_ex.shape == hx_shape, (
+        f"curl_ex shape mismatch: {curl_ex.shape} vs {hx_shape}"
+    )
+    assert curl_ey.shape == hy_shape, (
+        f"curl_ey shape mismatch: {curl_ey.shape} vs {hy_shape}"
+    )
+    assert curl_ez.shape == hz_shape, (
+        f"curl_ez shape mismatch: {curl_ez.shape} vs {hz_shape}"
+    )
     return curl_ex, curl_ey, curl_ez
 
 
@@ -1534,24 +1538,12 @@ def cpml_curl_h_to_e_3d(
             high_metallic=high_edge in metallic_edges,
         )
 
-    d_hz_dy = _adjacent_difference(
-        pad(hz, axis=1), axis=1, resolution=resolution
-    )
-    d_hy_dz = _adjacent_difference(
-        pad(hy, axis=0), axis=0, resolution=resolution
-    )
-    d_hx_dz = _adjacent_difference(
-        pad(hx, axis=0), axis=0, resolution=resolution
-    )
-    d_hz_dx = _adjacent_difference(
-        pad(hz, axis=2), axis=2, resolution=resolution
-    )
-    d_hy_dx = _adjacent_difference(
-        pad(hy, axis=2), axis=2, resolution=resolution
-    )
-    d_hx_dy = _adjacent_difference(
-        pad(hx, axis=1), axis=1, resolution=resolution
-    )
+    d_hz_dy = _adjacent_difference(pad(hz, axis=1), axis=1, resolution=resolution)
+    d_hy_dz = _adjacent_difference(pad(hy, axis=0), axis=0, resolution=resolution)
+    d_hx_dz = _adjacent_difference(pad(hx, axis=0), axis=0, resolution=resolution)
+    d_hz_dx = _adjacent_difference(pad(hz, axis=2), axis=2, resolution=resolution)
+    d_hy_dx = _adjacent_difference(pad(hy, axis=2), axis=2, resolution=resolution)
+    d_hx_dy = _adjacent_difference(pad(hx, axis=1), axis=1, resolution=resolution)
 
     term0, psi0 = _cpml_correct_native_term(
         d_hz_dy, psi_e_terms[0], a_e_terms[0], b_e_terms[0], inv_kappa_e_terms[0]
@@ -1585,12 +1577,12 @@ def full_pec_curl_e_to_h_2d_xy(ez, resolution, hx_shape, hy_shape):
     curl_hx = (ez[1:, :] - ez[:-1, :]) / resolution
     curl_hy = -(ez[:, 1:] - ez[:, :-1]) / resolution
 
-    assert (
-        curl_hx.shape == hx_shape
-    ), f"curl_hx shape mismatch: {curl_hx.shape} vs {hx_shape}"
-    assert (
-        curl_hy.shape == hy_shape
-    ), f"curl_hy shape mismatch: {curl_hy.shape} vs {hy_shape}"
+    assert curl_hx.shape == hx_shape, (
+        f"curl_hx shape mismatch: {curl_hx.shape} vs {hx_shape}"
+    )
+    assert curl_hy.shape == hy_shape, (
+        f"curl_hy shape mismatch: {curl_hy.shape} vs {hy_shape}"
+    )
     return curl_hx, curl_hy
 
 
@@ -1640,9 +1632,9 @@ def tm_xy_curl_h_to_e_2d(hx, hy, resolution, ez_shape, metallic_edges=frozenset(
     curl_hz = (
         hy_pad_x[:, 1:] - hy_pad_x[:, :-1] - (hx_pad_y[1:, :] - hx_pad_y[:-1, :])
     ) / resolution
-    assert (
-        curl_hz.shape == ez_shape
-    ), f"curl_hz shape mismatch: {curl_hz.shape} vs {ez_shape}"
+    assert curl_hz.shape == ez_shape, (
+        f"curl_hz shape mismatch: {curl_hz.shape} vs {ez_shape}"
+    )
     return curl_hz
 
 
@@ -1770,9 +1762,9 @@ def tm_xy_cpml_curl_h_to_e_2d(
         - (one / kappa_e_terms[1]) * d_hx_dy
         - psi_e_updated[1]
     )
-    assert (
-        curl_hz.shape == ez_shape
-    ), f"curl_hz shape mismatch: {curl_hz.shape} vs {ez_shape}"
+    assert curl_hz.shape == ez_shape, (
+        f"curl_hz shape mismatch: {curl_hz.shape} vs {ez_shape}"
+    )
     return curl_hz, psi_e_updated
 
 
@@ -1781,9 +1773,9 @@ def xy_te_curl_e_to_h_2d(ex, ey, resolution, hz_shape):
 
     resolution = _scalar_like(resolution, ex.dtype)
     curl_hz = (ey[:, 1:] - ey[:, :-1] - (ex[1:, :] - ex[:-1, :])) / resolution
-    assert (
-        curl_hz.shape == hz_shape
-    ), f"curl_hz shape mismatch: {curl_hz.shape} vs {hz_shape}"
+    assert curl_hz.shape == hz_shape, (
+        f"curl_hz shape mismatch: {curl_hz.shape} vs {hz_shape}"
+    )
     return curl_hz
 
 

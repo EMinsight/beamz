@@ -52,15 +52,18 @@ All development commands use the Makefile:
 make help          # Show all available commands
 make test          # Run tests with coverage
 make test-fast     # Run quick tests
-make format        # Format code (black + isort)
+make format        # Format code and fix package lint issues
 make lint          # Check code quality
+make dead-code     # Check for high-confidence dead code
+make audit         # Run lint, dead-code checks, and fast tests
 make build         # Build distribution
 ```
 
 Or use uv directly:
 ```bash
 uv run pytest tests/
-uv run black beamz/
+uv run --extra lint ruff check beamz/
+uv run --extra lint ruff format beamz/
 ```
 
 ### Adding Dependencies
@@ -129,14 +132,16 @@ make format-check
 
 ```bash
 make lint
+make dead-code
+make audit
 ```
 
 ### Configuration
 
 All tool configurations are in `pyproject.toml`:
 - pytest
-- black (line-length: 88, target: py310+)
-- isort (black-compatible)
+- ruff (formatting, import sorting, linting)
+- vulture (high-confidence dead-code audit)
 
 ## Version Release
 

@@ -7,7 +7,6 @@ other library.
 
 from __future__ import annotations
 
-
 import numpy as np
 
 from beamz.visual.helpers import get_si_scale_and_label

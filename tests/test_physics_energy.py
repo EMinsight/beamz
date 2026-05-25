@@ -139,7 +139,7 @@ class TestEnergyConservation:
         # Final energy should be small fraction of peak
         decay_ratio = final_energy / peak_energy if peak_energy > 0 else 0
         assert decay_ratio < 0.15, (
-            f"Final energy is {decay_ratio*100:.1f}% of peak. "
+            f"Final energy is {decay_ratio * 100:.1f}% of peak. "
             "Energy should decay more with PML."
         )
 
@@ -251,9 +251,9 @@ class TestEnergyConservation:
         initial_energy = energies[0]
         peak_energy = max(energies)
 
-        assert (
-            peak_energy > initial_energy
-        ), "Source should inject energy. Peak energy not greater than initial."
+        assert peak_energy > initial_energy, (
+            "Source should inject energy. Peak energy not greater than initial."
+        )
         assert peak_energy > 0, "Peak energy should be positive"
 
     def test_energy_in_dielectric(self, dielectric_domain):
@@ -311,6 +311,6 @@ class TestEnergyConservation:
         peak_idx = np.argmax(energies_correct)
         ratio = energies_correct[peak_idx] / energies_vacuum[peak_idx]
 
-        assert (
-            abs(ratio - eps_r) / eps_r < 0.01
-        ), f"Energy ratio {ratio:.2f} should be ε_r = {eps_r:.2f}"
+        assert abs(ratio - eps_r) / eps_r < 0.01, (
+            f"Energy ratio {ratio:.2f} should be ε_r = {eps_r:.2f}"
+        )

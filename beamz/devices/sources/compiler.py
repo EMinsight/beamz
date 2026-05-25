@@ -15,7 +15,7 @@ from beamz.devices.sources._materials import (
     component_permittivity_at,
 )
 from beamz.devices.sources.gaussian import GaussianSource
-from beamz.devices.sources.mode import ModeSource
+from beamz.devices.sources.mode import ModeSource, solve_modes
 
 
 @dataclass(frozen=True)
@@ -254,9 +254,7 @@ def _partition_weights_by_frequency(
         right = nodes[idx + 1]
         left_mask = (abs_freq >= left) & (abs_freq <= freq)
         right_mask = (abs_freq >= freq) & (abs_freq <= right)
-        weights[idx, left_mask] = (abs_freq[left_mask] - left) / max(
-            freq - left, 1e-30
-        )
+        weights[idx, left_mask] = (abs_freq[left_mask] - left) / max(freq - left, 1e-30)
         weights[idx, right_mask] = (right - abs_freq[right_mask]) / max(
             right - freq, 1e-30
         )
@@ -463,6 +461,19 @@ def _compile_mode_source(
 
     if is_3d:
         profile_frequencies = getattr(device, "profile_frequencies", None)
+        if profile_frequencies is None and getattr(device, "num_freqs", None):
+            source_time = getattr(device, "source_time", None)
+            freq0 = float(
+                getattr(source_time, "freq0", LIGHT_SPEED / float(device.wavelength))
+            )
+            fwidth = float(getattr(source_time, "fwidth", freq0 / 10.0))
+            count = int(getattr(device, "num_freqs"))
+            if count > 1:
+                k = np.arange(count, dtype=float)
+                profile_frequencies = np.sort(
+                    freq0
+                    + 1.5 * fwidth * np.cos((2.0 * k + 1.0) * np.pi / (2.0 * count))
+                )
         if profile_frequencies is not None:
             profile_frequencies = np.asarray(profile_frequencies, dtype=float).reshape(
                 -1
@@ -549,11 +560,31 @@ def _compile_mode_source_3d_multifrequency(
         direction=src.direction,
         height=src.height,
         signal_quadrature=getattr(src, "signal_quadrature", None),
+        source_time=getattr(src, "source_time", None),
+        num_freqs=None,
+        power=getattr(src, "power", 1.0),
+        mode_index=getattr(src, "mode_index", 0),
+        mode_target_neff=getattr(src, "mode_target_neff", None),
+        mode_num_modes=getattr(src, "mode_num_modes", None),
     )
     for freq, waveform in zip(nodes, subbands, strict=True):
+        finite_mode = _finite_plane_mode_fields_for_frequency(
+            src,
+            frequency=float(freq),
+            resolution=float(resolution),
+        )
+        mode_kwargs = {}
+        if finite_mode is not None:
+            mode_neff, mode_e_field, mode_h_field = finite_mode
+            mode_kwargs = {
+                "mode_neff": mode_neff,
+                "mode_e_field": mode_e_field,
+                "mode_h_field": mode_h_field,
+            }
         profile_src = ModeSource(
             wavelength=LIGHT_SPEED / float(freq),
             profile_frequencies=None,
+            **mode_kwargs,
             **common_kwargs,
         )
         profile_src.initialize(fields.permittivity, resolution, dt=dt)
@@ -573,6 +604,60 @@ def _compile_mode_source_3d_multifrequency(
             )
         )
     return tuple(specs)
+
+
+def _embed_mode_fields(
+    field: np.ndarray,
+    full_shape: tuple[int, ...],
+    crop_slices: tuple[slice, ...],
+) -> np.ndarray:
+    """Embed a cropped 3-component modal field into the full transverse plane."""
+    arr = np.asarray(field, dtype=np.complex128)
+    out = np.zeros((3, *tuple(int(v) for v in full_shape)), dtype=np.complex128)
+    for comp in range(3):
+        out[(comp, *crop_slices)] = arr[comp]
+    return out
+
+
+def _finite_plane_mode_fields_for_frequency(
+    src: ModeSource,
+    *,
+    frequency: float,
+    resolution: float,
+) -> tuple[np.complex128, np.ndarray, np.ndarray] | None:
+    """Solve the same finite modal plane as ``ModeSolver.to_source`` at a frequency."""
+    eps_full = getattr(src, "mode_eps_profile_full", None)
+    crop_slices = getattr(src, "mode_crop_slices", None)
+    if eps_full is None or crop_slices is None:
+        return None
+
+    eps_full = np.asarray(eps_full)
+    crop_slices = tuple(crop_slices)
+    mode_index = int(getattr(src, "mode_index", 0))
+    mode_count = max(
+        mode_index + 1,
+        int(getattr(src, "mode_num_modes", None) or (mode_index + 1)),
+    )
+    neffs, e_fields, h_fields, _ = solve_modes(
+        eps=eps_full[crop_slices],
+        omega=2.0 * np.pi * float(frequency),
+        dL=float(resolution),
+        m=mode_count,
+        direction=getattr(src, "direction", "+x"),
+        filter_pol=getattr(src, "pol", None),
+        target_neff=getattr(src, "mode_target_neff", None),
+        return_fields=True,
+    )
+    if mode_index >= len(neffs):
+        raise ValueError(
+            f"Requested mode_index={mode_index}, but only {len(neffs)} modes were found "
+            f"at {float(frequency):.6g} Hz."
+        )
+    return (
+        np.complex128(neffs[mode_index]),
+        _embed_mode_fields(e_fields[mode_index], eps_full.shape, crop_slices),
+        _embed_mode_fields(h_fields[mode_index], eps_full.shape, crop_slices),
+    )
 
 
 def _build_coeff(

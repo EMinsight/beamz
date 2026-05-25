@@ -24,7 +24,6 @@ from beamz import (
     Simulation,
     calc_optimal_fdtd_params,
     ramped_cosine,
-    um,
 )
 from beamz.devices.sources import mode as mode_module
 from beamz.devices.sources.solve import (
@@ -32,6 +31,7 @@ from beamz.devices.sources.solve import (
     _remap_mode_tuple_to_global,
     solve_modes,
 )
+from beamz.simulation.fields import Fields
 from tests.utils import TEST_WAVELENGTH, compute_field_energy
 
 
@@ -312,9 +312,9 @@ class TestModeSourceDiscreteHelpers:
         lhs = np.sin(0.5 * omega * dt)
         rhs = S * np.sin(0.5 * k_num * d_axis)
 
-        assert (
-            abs(lhs - rhs) < 1e-10
-        ), f"Discrete dispersion residual too large: lhs={lhs:.6e}, rhs={rhs:.6e}"
+        assert abs(lhs - rhs) < 1e-10, (
+            f"Discrete dispersion residual too large: lhs={lhs:.6e}, rhs={rhs:.6e}"
+        )
 
     def test_numeric_phase_delay_monotonic(self):
         wavelength = TEST_WAVELENGTH
@@ -365,6 +365,199 @@ class TestModeSourceDiscreteHelpers:
         p = mode_module._modal_power_3d_from_profiles(out, axis="x", d_area=d_area)
         assert np.isfinite(p)
         assert np.isclose(abs(p), 1.0, rtol=1e-10, atol=1e-10)
+
+    def test_normalize_3d_profiles_by_flux_accepts_tangential_subset(self):
+        profiles = {
+            "Ey": np.ones((2, 2), dtype=np.complex128),
+            "Ez": np.zeros((2, 2), dtype=np.complex128),
+            "Hy": np.zeros((2, 2), dtype=np.complex128),
+            "Hz": np.ones((2, 2), dtype=np.complex128),
+        }
+        d_area = 0.25
+
+        out = mode_module._normalize_3d_profiles_by_flux(
+            dict(profiles), axis="x", d_area=d_area
+        )
+        p = mode_module._modal_power_3d_from_profiles(out, axis="x", d_area=d_area)
+
+        assert p == pytest.approx(1.0)
+
+    def test_phase_referenced_3d_profile_normalization_accounts_for_yee_offset(self):
+        phase = 0.31
+        omega = 2.0
+        dx = 1.0
+        k_num = 2.0 * phase / dx
+        profiles = {
+            "Ey": np.ones((2, 2), dtype=np.complex128),
+            "Ez": np.zeros((2, 2), dtype=np.complex128),
+            "Hy": np.zeros((2, 2), dtype=np.complex128),
+            "Hz": np.ones((2, 2), dtype=np.complex128),
+        }
+        indices = {
+            "Ey": (slice(0, 2), slice(0, 2), 4),
+            "Ez": (slice(0, 2), slice(0, 2), 4),
+            "Hy": (slice(0, 2), slice(0, 2), 3),
+            "Hz": (slice(0, 2), slice(0, 2), 3),
+        }
+
+        out, scale = mode_module._normalize_3d_profiles_by_phase_referenced_flux(
+            dict(profiles),
+            indices,
+            axis="x",
+            d_area=0.25,
+            direction_sign=1.0,
+            dx=dx,
+            dy=dx,
+            dz=dx,
+            omega=omega,
+            k_num=k_num,
+            ref_coord=4.0 * dx,
+        )
+        referenced = mode_module._phase_reference_3d_profiles(
+            out,
+            indices,
+            axis="x",
+            dx=dx,
+            dy=dx,
+            dz=dx,
+            omega=omega,
+            k_num=k_num,
+            ref_coord=4.0 * dx,
+        )
+
+        assert scale == pytest.approx(np.sqrt(1.0 / (0.5 * np.cos(phase))))
+        power = mode_module._modal_power_3d_from_profiles(
+            referenced,
+            axis="x",
+            d_area=0.25,
+        )
+        assert power == pytest.approx(1.0)
+
+    def test_scale_3d_profiles_for_power_scales_flux(self):
+        profiles = {
+            "Ex": np.zeros((2, 2), dtype=np.complex128),
+            "Ey": np.ones((2, 2), dtype=np.complex128),
+            "Ez": np.zeros((2, 2), dtype=np.complex128),
+            "Hx": np.zeros((2, 2), dtype=np.complex128),
+            "Hy": np.zeros((2, 2), dtype=np.complex128),
+            "Hz": np.ones((2, 2), dtype=np.complex128),
+        }
+        unit = mode_module._normalize_3d_profiles_by_flux(
+            dict(profiles), axis="x", d_area=0.25
+        )
+        scaled = mode_module._scale_profiles_for_power(unit, 4.0)
+
+        p = mode_module._modal_power_3d_from_profiles(scaled, axis="x", d_area=0.25)
+        assert p == pytest.approx(4.0)
+
+    def test_scale_2d_pair_for_power_scales_flux(self):
+        h = np.ones(8, dtype=np.complex128)
+        e = np.ones(8, dtype=np.complex128)
+        h_unit, e_unit = mode_module._normalize_2d_pair_by_power(
+            h, e, signed_flux_sign=1.0, dl=0.25
+        )
+        h_scaled, e_scaled = mode_module._scale_pair_for_power(h_unit, e_unit, 9.0)
+
+        p = mode_module._modal_power_2d(
+            e_scaled, h_scaled, signed_flux_sign=1.0, dl=0.25
+        )
+        assert p == pytest.approx(9.0)
+
+    def test_2d_tm_y_launch_is_transpose_of_x_launch(self):
+        wavelength = TEST_WAVELENGTH
+        n_core = 2.0
+        n_clad = 1.0
+        guide_w = 0.55 * wavelength
+        domain = 6.0 * wavelength
+        dx, dt = calc_optimal_fdtd_params(
+            wavelength,
+            n_core,
+            dims=2,
+            safety_factor=0.95,
+            points_per_wavelength=12,
+        )
+        signal = np.ones(8, dtype=float)
+
+        x_design = Design(
+            width=domain,
+            height=domain,
+            material=Material(permittivity=n_clad**2),
+        )
+        x_design += Rectangle(
+            position=(0.0, domain / 2 - guide_w / 2),
+            width=domain,
+            height=guide_w,
+            material=Material(permittivity=n_core**2),
+        )
+        y_design = Design(
+            width=domain,
+            height=domain,
+            material=Material(permittivity=n_clad**2),
+        )
+        y_design += Rectangle(
+            position=(domain / 2 - guide_w / 2, 0.0),
+            width=guide_w,
+            height=domain,
+            material=Material(permittivity=n_core**2),
+        )
+
+        x_grid = x_design.rasterize(resolution=dx)
+        y_grid = y_design.rasterize(resolution=dx)
+        x_fields = Fields(
+            x_grid.permittivity,
+            x_grid.conductivity,
+            x_grid.permeability,
+            dx,
+            plane_2d="xy",
+        )
+        y_fields = Fields(
+            y_grid.permittivity,
+            y_grid.conductivity,
+            y_grid.permeability,
+            dx,
+            plane_2d="xy",
+        )
+        x_source = ModeSource(
+            grid=x_grid,
+            center=(wavelength, domain / 2),
+            width=guide_w * 3,
+            wavelength=wavelength,
+            pol="tm",
+            signal=signal,
+            direction="+x",
+        )
+        y_source = ModeSource(
+            grid=y_grid,
+            center=(domain / 2, wavelength),
+            width=guide_w * 3,
+            wavelength=wavelength,
+            pol="tm",
+            signal=signal,
+            direction="+y",
+        )
+
+        x_source.initialize(x_fields.permittivity, dx, dt=dt)
+        y_source.initialize(y_fields.permittivity, dx, dt=dt)
+        x_source._inject_2d_h(x_fields, 1.0, dt, dx)
+        x_source._inject_2d_e(x_fields, 1.0, dt, dx)
+        y_source._inject_2d_h(y_fields, 1.0, dt, dx)
+        y_source._inject_2d_e(y_fields, 1.0, dt, dx)
+
+        x_ez = np.asarray(x_fields.Ez)
+        y_ez = np.asarray(y_fields.Ez)
+        np.testing.assert_allclose(
+            x_ez,
+            y_ez.T,
+            rtol=1e-6,
+            atol=max(float(np.max(np.abs(x_ez))) * 1e-6, 1e-12),
+        )
+
+        np.testing.assert_allclose(
+            np.max(np.abs(x_fields.Hy)),
+            np.max(np.abs(y_fields.Hx)),
+            rtol=1e-6,
+            atol=1e-12,
+        )
 
     def test_select_core_confined_mode_prefers_centered_mode(self):
         eps = np.ones((81, 1), dtype=float)
@@ -497,9 +690,9 @@ class TestModeSourceEffectiveIndex:
         # Check neff is in valid range (allow small tolerance for numerical precision)
         # n_eff should be close to n_clad or between n_clad and n_core
         assert neff > 0, f"n_eff={neff:.4f} should be positive"
-        assert (
-            neff < n_core + 0.1
-        ), f"n_eff={neff:.4f} should not exceed n_core={n_core}"
+        assert neff < n_core + 0.1, (
+            f"n_eff={neff:.4f} should not exceed n_core={n_core}"
+        )
 
         # For well-confined mode, neff should be above n_clad
         # Allow small tolerance for numerical precision near cutoff
@@ -566,12 +759,12 @@ class TestModeSourceEffectiveIndex:
             neffs.append(float(np.real(source._neff)))
 
         # neff should increase with core width (allow small tolerance)
-        assert (
-            neffs[1] >= neffs[0] - 0.01
-        ), f"n_eff should increase with core width: {neffs}"
-        assert (
-            neffs[2] >= neffs[1] - 0.01
-        ), f"n_eff should increase with core width: {neffs}"
+        assert neffs[1] >= neffs[0] - 0.01, (
+            f"n_eff should increase with core width: {neffs}"
+        )
+        assert neffs[2] >= neffs[1] - 0.01, (
+            f"n_eff should increase with core width: {neffs}"
+        )
 
 
 @pytest.mark.simulation
@@ -632,9 +825,9 @@ class TestModeSourceProfile:
             center_idx = len(profile) // 2
             # Allow 20% deviation from center
             tolerance = int(len(profile) * 0.2)
-            assert (
-                abs(max_idx - center_idx) < tolerance
-            ), f"Peak at index {max_idx}, expected near {center_idx}"
+            assert abs(max_idx - center_idx) < tolerance, (
+                f"Peak at index {max_idx}, expected near {center_idx}"
+            )
         else:
             # 2D profile - check it has some structure
             assert np.max(np.abs(profile)) > 0, "Profile should have non-zero values"
@@ -653,7 +846,6 @@ class TestModeSourcePropagation:
         wavelength = waveguide_domain["wavelength"]
         dx = waveguide_domain["dx"]
         dt = waveguide_domain["dt"]
-        domain_width = waveguide_domain["domain_width"]
         domain_height = waveguide_domain["domain_height"]
         core_width = waveguide_domain["core_width"]
 
@@ -705,7 +897,7 @@ class TestModeSourcePropagation:
         if total > 1e-30:
             right_fraction = right_energy / total
             assert right_fraction > 0.5, (
-                f"Only {right_fraction*100:.1f}% energy downstream. "
+                f"Only {right_fraction * 100:.1f}% energy downstream. "
                 "Mode should propagate in +x direction."
             )
 
@@ -718,7 +910,6 @@ class TestModeSourcePropagation:
         wavelength = waveguide_domain["wavelength"]
         dx = waveguide_domain["dx"]
         dt = waveguide_domain["dt"]
-        domain_width = waveguide_domain["domain_width"]
         domain_height = waveguide_domain["domain_height"]
         core_width = waveguide_domain["core_width"]
 
@@ -776,7 +967,7 @@ class TestModeSourcePropagation:
         if total_energy > 1e-30:
             confinement = wg_energy / total_energy
             assert confinement > 0.5, (
-                f"Only {confinement*100:.1f}% energy in waveguide region. "
+                f"Only {confinement * 100:.1f}% energy in waveguide region. "
                 "Mode should be confined."
             )
 
@@ -891,9 +1082,9 @@ class TestModeSourcePolarization:
 
         profile = getattr(source, profile_attr)
         assert profile is not None, f"{profile_attr} should be defined for +y/{pol}"
-        assert (
-            float(np.max(np.abs(np.asarray(profile)))) > 1e-8
-        ), f"{profile_attr} is near zero for +y/{pol}; check component mapping"
+        assert float(np.max(np.abs(np.asarray(profile)))) > 1e-8, (
+            f"{profile_attr} is near zero for +y/{pol}; check component mapping"
+        )
 
     def test_invalid_direction_raises(self, waveguide_domain):
         """ModeSource should reject directions outside ±x/±y/±z."""
@@ -1231,12 +1422,12 @@ class TestModeSource3DSignGaugeParity:
         corr_h = _profile_correlation(h_plus, h_minus)
         corr_e = _profile_correlation(e_plus, e_minus)
 
-        assert (
-            corr_h < -0.60
-        ), f"{axis}/{pol} J-driving H profile should flip sign: corr={corr_h:.3f}"
-        assert (
-            corr_e > 0.60
-        ), f"{axis}/{pol} M-driving E profile should preserve sign: corr={corr_e:.3f}"
+        assert corr_h < -0.60, (
+            f"{axis}/{pol} J-driving H profile should flip sign: corr={corr_h:.3f}"
+        )
+        assert corr_e > 0.60, (
+            f"{axis}/{pol} M-driving E profile should preserve sign: corr={corr_e:.3f}"
+        )
 
 
 @pytest.mark.simulation
@@ -2160,9 +2351,9 @@ class TestModeSolver:
 
         assert len(neff) >= 1, "Should find at least one mode"
         neff_real = float(np.real(neff[0]))
-        assert (
-            n_clad < neff_real < n_core
-        ), f"n_eff={neff_real:.4f} should be between {n_clad} and {n_core}"
+        assert n_clad < neff_real < n_core, (
+            f"n_eff={neff_real:.4f} should be between {n_clad} and {n_core}"
+        )
 
     def test_filter_pol_uses_common_te_tm_mapping(self, waveguide_domain):
         """For +x propagation: TE should be Ey/Hz-like and TM should be Ez/Hy-like."""

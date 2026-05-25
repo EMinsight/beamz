@@ -13,7 +13,6 @@ from types import SimpleNamespace
 import numpy as np
 import xarray as xr
 
-
 _FIELD_UNITS = {
     "Ex": "V/m",
     "Ey": "V/m",

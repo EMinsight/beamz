@@ -4,8 +4,10 @@ from dataclasses import dataclass
 import jax.numpy as jnp
 import numpy as np
 
+from beamz._yee import component_axis_offsets_3d
 from beamz.const import EPS_0, LIGHT_SPEED, MU_0
 from beamz.devices._placement import snap_centered_extent, snap_mode_source_region
+from beamz.devices._runtime import RuntimeStateProxy
 from beamz.devices.sources._materials import (
     component_permeability_at,
     component_permittivity_at,
@@ -1205,9 +1207,7 @@ def _crop_and_window_all(
         te = min(te_end, field.shape[1])
         h_cells = max(0, fe - z_start)
         w_cells = max(0, te - t_start)
-        window = _make_tukey_window_2d(
-            h_cells, w_cells, alpha=alpha, use_jax=use_jax
-        )
+        window = _make_tukey_window_2d(h_cells, w_cells, alpha=alpha, use_jax=use_jax)
         profiles[name] = dir_sign * _crop_and_window_2d(
             field, z_start, fe, t_start, te, window
         )
@@ -1245,27 +1245,11 @@ def _component_support_stops_3d(
     col_start: int,
     col_stop: int,
 ) -> tuple[int, int]:
-    offsets = _component_axis_offsets_3d(component)
+    offsets = component_axis_offsets_3d(component)
     return (
         _support_stop_for_offset(row_start, row_stop, offsets[row_axis]),
         _support_stop_for_offset(col_start, col_stop, offsets[col_axis]),
     )
-
-
-def _component_axis_offsets_3d(component: str) -> dict[str, float]:
-    if component == "Ex":
-        return {"z": 0.0, "y": 0.0, "x": 0.5}
-    if component == "Ey":
-        return {"z": 0.0, "y": 0.5, "x": 0.0}
-    if component == "Ez":
-        return {"z": 0.5, "y": 0.0, "x": 0.0}
-    if component == "Hx":
-        return {"z": 0.5, "y": 0.5, "x": 0.0}
-    if component == "Hy":
-        return {"z": 0.5, "y": 0.0, "x": 0.5}
-    if component == "Hz":
-        return {"z": 0.0, "y": 0.5, "x": 0.5}
-    raise ValueError(f"Unsupported component {component!r}")
 
 
 def _component_support_slices_3d(
@@ -1295,14 +1279,29 @@ def _component_support_slices_3d(
 
 def _modal_power_3d_from_profiles(profiles, axis, d_area, direction_sign=1.0):
     """Compute 3D modal power from profiles on a cross-section."""
-    ex = profiles.get("Ex")
-    ey = profiles.get("Ey")
-    ez = profiles.get("Ez")
-    hx = profiles.get("Hx")
-    hy = profiles.get("Hy")
-    hz = profiles.get("Hz")
-    if any(v is None for v in (ex, ey, ez, hx, hy, hz)):
+    if axis == "x":
+        required = ("Ey", "Ez", "Hy", "Hz")
+    elif axis == "y":
+        required = ("Ex", "Ez", "Hx", "Hz")
+    elif axis == "z":
+        required = ("Ex", "Ey", "Hx", "Hy")
+    else:
         return 0.0
+    if any(profiles.get(name) is None for name in required):
+        return 0.0
+
+    def _profile(name):
+        value = profiles.get(name)
+        if value is None:
+            return np.zeros_like(np.asarray(profiles[required[0]], dtype=np.complex128))
+        return value
+
+    ex = _profile("Ex")
+    ey = _profile("Ey")
+    ez = _profile("Ez")
+    hx = _profile("Hx")
+    hy = _profile("Hy")
+    hz = _profile("Hz")
 
     ex = np.asarray(ex, dtype=np.complex128)
     ey = np.asarray(ey, dtype=np.complex128)
@@ -1369,6 +1368,101 @@ def _normalize_3d_profiles_by_flux(
     for key, value in profiles.items():
         profiles[key] = np.asarray(value) * scale
     return profiles
+
+
+def _phase_reference_3d_profiles(
+    profiles,
+    indices,
+    *,
+    axis,
+    dx,
+    dy,
+    dz,
+    omega,
+    k_num,
+    ref_coord,
+):
+    """Return modal profiles phase-shifted to one propagation-axis reference plane."""
+    out = {}
+    for name, value in profiles.items():
+        arr = np.asarray(value, dtype=np.complex128)
+        idx = None if indices is None else indices.get(name)
+        axis_idx = _axis_index_from_component_indices(idx, axis)
+        coord = _component_axis_coord(name, axis_idx, axis, dx, dy, dz)
+        delay = _numeric_phase_delay(float(omega), float(k_num), coord - ref_coord)
+        out[name] = arr * np.exp(-1j * float(omega) * delay)
+    return out
+
+
+def _normalize_3d_profiles_by_phase_referenced_flux(
+    profiles,
+    indices,
+    *,
+    axis,
+    d_area,
+    direction_sign,
+    dx,
+    dy,
+    dz,
+    omega,
+    k_num,
+    ref_coord,
+    eps=1e-18,
+):
+    """Normalize source profiles using the Yee-stagger phase-referenced flux."""
+    referenced = _phase_reference_3d_profiles(
+        profiles,
+        indices,
+        axis=axis,
+        dx=dx,
+        dy=dy,
+        dz=dz,
+        omega=omega,
+        k_num=k_num,
+        ref_coord=ref_coord,
+    )
+    flux = _modal_power_3d_from_profiles(
+        referenced,
+        axis=axis,
+        d_area=d_area,
+        direction_sign=direction_sign,
+    )
+    if (not np.isfinite(flux)) or abs(flux) <= eps:
+        return profiles, 1.0
+
+    scale = float(np.sqrt(1.0 / max(abs(flux), eps)))
+    scale = float(np.clip(scale, 1e-6, 1e6))
+    for key, value in profiles.items():
+        profiles[key] = np.asarray(value) * scale
+    return profiles, scale
+
+
+def _scale_profiles_for_power(profiles, power):
+    """Scale unit-power modal profiles to the requested launched power."""
+    power_value = float(power)
+    if not np.isfinite(power_value) or power_value < 0.0:
+        raise ValueError(
+            f"ModeSource power must be a non-negative finite value, got {power!r}."
+        )
+    if power_value == 1.0:
+        return profiles
+    scale = float(np.sqrt(power_value))
+    for key, value in profiles.items():
+        if value is not None:
+            profiles[key] = np.asarray(value) * scale
+    return profiles
+
+
+def _scale_pair_for_power(first, second, power):
+    power_value = float(power)
+    if not np.isfinite(power_value) or power_value < 0.0:
+        raise ValueError(
+            f"ModeSource power must be a non-negative finite value, got {power!r}."
+        )
+    if power_value == 1.0:
+        return first, second
+    scale = float(np.sqrt(power_value))
+    return np.asarray(first) * scale, np.asarray(second) * scale
 
 
 def _backward_3d_mode_from_forward(profiles):
@@ -1632,7 +1726,7 @@ def _match_shape(profile, target_shape):
 # ---------------------------------------------------------------------------
 
 
-class ModeSource:
+class ModeSource(RuntimeStateProxy):
     """Huygens mode source on Yee grid supporting ±x/±y in 2D and ±x/±y/±z in 3D.
 
     In 3D, injects all 6 field components (Ex, Ey, Ez, Hx, Hy, Hz) for accurate
@@ -1671,6 +1765,7 @@ class ModeSource:
         "_phase_ref_coord",
         "_phase_plane_coord",
         "_discrete_launch_max_shift",
+        "_launch_power_scale",
         "_launch_dt",
         "_initialized",
         "_resolution",
@@ -1685,14 +1780,8 @@ class ModeSource:
         "_x_end",
     }
 
-    def __getattr__(self, name):
-        if name in self._RUNTIME_ATTRS and "_state" in self.__dict__:
-            return getattr(self._state, name)
-        raise AttributeError(f"{type(self).__name__!s} has no attribute {name!r}")
-
     def __setattr__(self, name, value):
-        if name in self._RUNTIME_ATTRS and "_state" in self.__dict__:
-            setattr(self._state, name, value)
+        if self._set_runtime_attr(name, value):
             return
         if (
             name in {"signal", "signal_quadrature"}
@@ -1714,6 +1803,17 @@ class ModeSource:
         height=None,
         signal_quadrature=None,
         profile_frequencies=None,
+        power=1.0,
+        source_time=None,
+        num_freqs=None,
+        mode_neff=None,
+        mode_e_field=None,
+        mode_h_field=None,
+        mode_eps_profile_full=None,
+        mode_crop_slices=None,
+        mode_index=0,
+        mode_target_neff=None,
+        mode_num_modes=None,
     ):
         self.grid = grid
         self.center = (
@@ -1727,13 +1827,87 @@ class ModeSource:
             raise ValueError(f"pol must be 'te' or 'tm', got {pol!r}")
         self.signal = signal
         self.signal_quadrature = signal_quadrature
+        self.source_time = source_time
         self.profile_frequencies = profile_frequencies
+        self.num_freqs = None if num_freqs is None else int(num_freqs)
+        self.mode_neff = mode_neff
+        self.mode_e_field = mode_e_field
+        self.mode_h_field = mode_h_field
+        self.mode_eps_profile_full = mode_eps_profile_full
+        self.mode_crop_slices = mode_crop_slices
+        self.mode_index = int(mode_index)
+        self.mode_target_neff = mode_target_neff
+        self.mode_num_modes = None if mode_num_modes is None else int(mode_num_modes)
+        power_value = float(power)
+        if not np.isfinite(power_value) or power_value < 0.0:
+            raise ValueError(
+                f"ModeSource power must be a non-negative finite value, got {power!r}."
+            )
+        self.power = power_value
         self._signal_quadrature = None
         self._signal_quadrature_signature = None
         self.direction, self._direction_axis, self._direction_sign = _parse_direction(
             direction
         )
         self._state = _ModeSourceState()
+
+    def source_spectrum(self, freqs, *, normalize: bool = True) -> np.ndarray | None:
+        """Return this source's analytic spectrum when source-time metadata exists."""
+        freq_arr = np.asarray(freqs, dtype=float)
+        source_time = getattr(self, "source_time", None)
+        if source_time is None:
+            return None
+        if normalize and hasattr(source_time, "dft_normalization_spectrum"):
+            spectrum = source_time.dft_normalization_spectrum(freq_arr)
+            freq0 = float(
+                getattr(source_time, "freq0", LIGHT_SPEED / float(self.wavelength))
+            )
+            if np.isfinite(freq0) and freq0 > 0.0:
+                spectrum = np.asarray(spectrum, dtype=np.complex128) * np.sqrt(
+                    np.maximum(freq_arr, 0.0) / freq0
+                )
+            return spectrum
+        if not hasattr(source_time, "spectrum"):
+            return None
+        return source_time.spectrum(freq_arr, normalize=normalize)
+
+    def copy(self, *, update=None):
+        """Return a configuration copy of this mode source."""
+        import copy
+
+        copied = copy.deepcopy(self)
+        if update:
+            for key, value in dict(update).items():
+                setattr(copied, key, value)
+        return copied
+
+    def calibrated_to_measured_power(self, measured_power, *, target_power=None):
+        """Return a copy whose requested power compensates a reference measurement.
+
+        ``measured_power`` is the source-normalized power measured from an otherwise
+        identical straight reference run. Since modal source fields scale as
+        ``sqrt(power)``, the measured power scales linearly with ``power``.
+        """
+        measured = float(measured_power)
+        if not np.isfinite(measured) or measured <= 0.0:
+            raise ValueError(
+                "measured_power must be a positive finite value, "
+                f"got {measured_power!r}."
+            )
+        target = self.power if target_power is None else float(target_power)
+        if not np.isfinite(target) or target < 0.0:
+            raise ValueError(
+                f"target_power must be a non-negative finite value, got {target_power!r}."
+            )
+        return self.copy(update={"power": self.power * target / measured})
+
+    def shifted(self, offset):
+        copied = self.copy()
+        offset = tuple(float(v) for v in offset)
+        copied.center = tuple(
+            a + b for a, b in zip(copied.center, offset, strict=False)
+        )
+        return copied
 
     def initialize(self, permittivity, resolution, dt=None):
         """Compute the mode and set up the source currents for all 6 components in 3D."""
@@ -1831,34 +2005,56 @@ class ModeSource:
         # continuum modes can otherwise dominate the sort order.
         target_neff = 0.98 * n_local_max
 
-        mode_candidates = 3
-        try:
-            neff_val, e_fields, h_fields, _ = solve_modes(
-                eps=eps_profile,
-                omega=omega,
-                dL=dL,
-                m=mode_candidates,
-                direction=solver_direction,
-                filter_pol=self.pol,
-                target_neff=target_neff,
-                return_fields=True,
+        precomputed_e = getattr(self, "mode_e_field", None)
+        precomputed_h = getattr(self, "mode_h_field", None)
+        if precomputed_e is not None and precomputed_h is not None:
+            E_mode = np.asarray(precomputed_e, dtype=np.complex128)
+            H_mode = np.asarray(precomputed_h, dtype=np.complex128)
+            if E_mode.shape[0] != 3 or H_mode.shape[0] != 3:
+                raise ValueError(
+                    "ModeSource precomputed mode_e_field and mode_h_field must "
+                    "have component axis length 3."
+                )
+            neff_val = np.asarray(
+                [
+                    (
+                        self.mode_neff
+                        if self.mode_neff is not None
+                        else np.sqrt(max(np.real(np.max(eps_profile_arr)), 1e-12))
+                    )
+                ],
+                dtype=np.complex128,
             )
-        except ValueError:
-            neff_val, e_fields, h_fields, _ = solve_modes(
-                eps=eps_profile,
-                omega=omega,
-                dL=dL,
-                m=1,
-                direction=solver_direction,
-                filter_pol=self.pol,
-                target_neff=target_neff,
-                return_fields=True,
-            )
+            self._neff = neff_val[0]
+        else:
+            mode_candidates = 3
+            try:
+                neff_val, e_fields, h_fields, _ = solve_modes(
+                    eps=eps_profile,
+                    omega=omega,
+                    dL=dL,
+                    m=mode_candidates,
+                    direction=solver_direction,
+                    filter_pol=self.pol,
+                    target_neff=target_neff,
+                    return_fields=True,
+                )
+            except ValueError:
+                neff_val, e_fields, h_fields, _ = solve_modes(
+                    eps=eps_profile,
+                    omega=omega,
+                    dL=dL,
+                    m=1,
+                    direction=solver_direction,
+                    filter_pol=self.pol,
+                    target_neff=target_neff,
+                    return_fields=True,
+                )
 
-        mode_idx = _select_core_confined_mode_index(eps_profile, e_fields, neff_val)
-        self._neff = neff_val[mode_idx]
-        E_mode = e_fields[mode_idx]
-        H_mode = h_fields[mode_idx]
+            mode_idx = _select_core_confined_mode_index(eps_profile, e_fields, neff_val)
+            self._neff = neff_val[mode_idx]
+            E_mode = e_fields[mode_idx]
+            H_mode = h_fields[mode_idx]
 
         # 3. Extract all 6 components and convert to JAX arrays
         Ex_raw = jnp.asarray(jnp.squeeze(E_mode[0]))
@@ -1991,12 +2187,39 @@ class ModeSource:
         symmetric_axes = _detect_transverse_symmetry_axes(self._eps_profile_2d)
         if symmetric_axes:
             profiles = _enforce_componentwise_parity(profiles, symmetric_axes)
-        profiles = _normalize_3d_profiles_by_flux(
-            profiles,
-            axis=axis,
-            d_area=float(resolution * resolution),
-            direction_sign=self._direction_sign,
+        d_area = float(resolution * resolution)
+        dx = dy = dz = float(resolution)
+        ref_coord = _component_axis_coord(
+            _dominant_3d_pair(axis, self.pol)[1],
+            _axis_index_from_component_indices(
+                indices.get(_dominant_3d_pair(axis, self.pol)[1]),
+                axis,
+            ),
+            axis,
+            dx,
+            dy,
+            dz,
         )
+        k_num = (
+            _solve_numeric_k_axis(omega, dt, resolution, self._neff)
+            if dt is not None
+            else float(np.real(self._neff)) * float(omega) / LIGHT_SPEED
+        )
+        profiles, launch_power_scale = _normalize_3d_profiles_by_phase_referenced_flux(
+            profiles,
+            indices,
+            axis=axis,
+            d_area=d_area,
+            direction_sign=self._direction_sign,
+            dx=dx,
+            dy=dy,
+            dz=dz,
+            omega=omega,
+            k_num=k_num,
+            ref_coord=float(ref_coord),
+        )
+        self._launch_power_scale = float(launch_power_scale)
+        profiles = _scale_profiles_for_power(profiles, self.power)
         # Store profiles on self
         self._Ex_profile = profiles.get("Ex")
         self._Ey_profile = profiles.get("Ey")
@@ -2126,6 +2349,9 @@ class ModeSource:
             jz_profile, my_profile = _normalize_2d_pair_by_power(
                 jz_profile, my_profile, signed_flux_sign=-1.0, dl=resolution
             )
+            jz_profile, my_profile = _scale_pair_for_power(
+                jz_profile, my_profile, self.power
+            )
 
             self._jz_profile = jz_profile
             self._my_profile = my_profile
@@ -2173,6 +2399,9 @@ class ModeSource:
             mz_profile = _to_real_profile(mz_profile)
             jy_profile, mz_profile = _normalize_2d_pair_by_power(
                 jy_profile, mz_profile, signed_flux_sign=1.0, dl=resolution
+            )
+            jy_profile, mz_profile = _scale_pair_for_power(
+                jy_profile, mz_profile, self.power
             )
 
             self._jy_profile = jy_profile
@@ -2232,10 +2461,11 @@ class ModeSource:
                 Hx_cropped = Hx_cropped * window
                 Ez_cropped = Ez_cropped * window
 
-            # For y-directed TMz launches the native full-Yee source pair must
-            # keep J and M with opposite handedness so the injected Ez/Hx pair
-            # carries power along the requested y direction.
-            jz_profile = dir_sign * Hx_cropped
+            # Match the rotated x-directed TMz launch on the native full-Yee
+            # lattice.  The mode solver's Hx gauge has the opposite sign from
+            # the Hy gauge used by x-propagation, so Jz needs the same leading
+            # minus sign as the x-directed branch.
+            jz_profile = -dir_sign * Hx_cropped
             my_profile = -dir_sign * Ez_cropped
             jz_profile, my_profile = _normalize_2d_pair_by_power(
                 jz_profile, my_profile, signed_flux_sign=1.0, dl=resolution
@@ -2244,6 +2474,9 @@ class ModeSource:
             my_profile = _to_real_profile(my_profile)
             jz_profile, my_profile = _normalize_2d_pair_by_power(
                 jz_profile, my_profile, signed_flux_sign=1.0, dl=resolution
+            )
+            jz_profile, my_profile = _scale_pair_for_power(
+                jz_profile, my_profile, self.power
             )
 
             self._jz_profile = jz_profile
@@ -2291,6 +2524,9 @@ class ModeSource:
             mz_profile = _to_real_profile(mz_profile)
             jx_profile, mz_profile = _normalize_2d_pair_by_power(
                 jx_profile, mz_profile, signed_flux_sign=-1.0, dl=resolution
+            )
+            jx_profile, mz_profile = _scale_pair_for_power(
+                jx_profile, mz_profile, self.power
             )
 
             self._jx_profile = jx_profile
@@ -2555,10 +2791,9 @@ class ModeSource:
                 if amp_re == 0.0 and amp_im == 0.0:
                     continue
 
-                field_arrays[comp_name][shifted_idx] = (
-                    field_arrays[comp_name][shifted_idx]
-                    + _real_phasor_sample(profile_arr, amp_re, amp_im)
-                )
+                field_arrays[comp_name][shifted_idx] = field_arrays[comp_name][
+                    shifted_idx
+                ] + _real_phasor_sample(profile_arr, amp_re, amp_im)
 
         return field_arrays
 
@@ -2637,10 +2872,9 @@ class ModeSource:
 
                 delay = _numeric_phase_delay(omega, k_num, coord - ref_coord)
                 phase = float(omega) * (base_time - delay)
-                field_arrays[comp_name][shifted_idx] = (
-                    field_arrays[comp_name][shifted_idx]
-                    + profile_arr * np.exp(1j * phase)
-                )
+                field_arrays[comp_name][shifted_idx] = field_arrays[comp_name][
+                    shifted_idx
+                ] + profile_arr * np.exp(1j * phase)
 
         return field_arrays
 

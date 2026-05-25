@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -11,6 +12,8 @@ import numpy as np
 
 from beamz.const import LIGHT_SPEED, µm
 from beamz.design.core import Design
+from beamz.design.materials import Material
+from beamz.design.structures import Box, Structure
 from beamz.devices.monitors.monitors import Monitor
 from beamz.devices.ports import Port
 from beamz.devices.sources.compiler import (
@@ -23,6 +26,7 @@ from beamz.devices.sources.mode import (
     _enforce_componentwise_parity,
     _make_3d_mode_basis_profiles,
     _modal_overlap_3d_profiles,
+    _normalize_3d_profiles_by_flux,
     _numeric_phase_delay,
     _select_core_confined_mode_index,  # noqa: F401 - compatibility monkeypatch hook
     _solve_numeric_k_axis,
@@ -50,6 +54,91 @@ from beamz.simulation.fields import Fields
 from beamz.simulation.step_sequence import run_step_sequence
 from beamz.simulation.yee import component_coordinates_3d_um
 from beamz.visual.helpers import _finish_inline_progress, _print_inline_progress
+
+
+def _copy_with_update(obj, update=None):
+    import copy
+
+    copied = copy.deepcopy(obj)
+    if update:
+        for key, value in dict(update).items():
+            setattr(copied, key, value)
+    return copied
+
+
+def _material_index(material) -> float:
+    eps = getattr(material, "permittivity", 1.0)
+    try:
+        eps_value = float(np.max(np.real(np.asarray(eps))))
+    except Exception:
+        eps_value = 1.0
+    return float(np.sqrt(max(eps_value, 1.0)))
+
+
+def _max_index_for_specs(background, structures) -> float:
+    values = [_material_index(background)]
+    for structure in structures or ():
+        material = getattr(structure, "material", None) or getattr(
+            structure, "medium", None
+        )
+        if material is not None:
+            values.append(_material_index(material))
+    return max(values) if values else 1.0
+
+
+def _design_depth(design) -> float:
+    return float(getattr(design, "depth", 0.0) or 0.0)
+
+
+def _design_domain(design):
+    return (float(design.width), float(design.height), _design_depth(design))
+
+
+def _design_is_3d(design) -> bool:
+    return bool(getattr(design, "is_3d", False) and _design_depth(design) > 0.0)
+
+
+def _structure_to_domain(structure, offset, domain_size):
+    if isinstance(structure, Structure):
+        return structure.to_beamz_structure(offset=offset, domain_size=domain_size)
+    if isinstance(structure, Box):
+        geometry = structure
+        if any(not np.isfinite(v) for v in geometry.size):
+            clipped_size = tuple(
+                float(domain)
+                if not np.isfinite(size)
+                else min(float(size), float(domain))
+                for size, domain in zip(geometry.size, domain_size, strict=True)
+            )
+            geometry = Box(
+                center=geometry.center,
+                size=clipped_size,
+                material=geometry.material,
+            )
+        return geometry.to_rectangle(offset=offset, material=geometry.material)
+    if hasattr(structure, "to_beamz_structure"):
+        return structure.to_beamz_structure(offset=offset, domain_size=domain_size)
+
+    copied = _copy_with_update(structure)
+    if hasattr(copied, "shift"):
+        copied = copied.shift(*offset)
+    return copied
+
+
+def _shift_device_to_domain(device, offset):
+    if hasattr(device, "shifted"):
+        return device.shifted(offset)
+    copied = _copy_with_update(device)
+    offset = tuple(float(v) for v in offset)
+    if hasattr(copied, "center") and copied.center is not None:
+        copied.center = tuple(
+            a + b for a, b in zip(copied.center, offset, strict=False)
+        )
+    if hasattr(copied, "position") and copied.position is not None:
+        copied.position = tuple(
+            a + b for a, b in zip(copied.position, offset, strict=False)
+        )
+    return copied
 
 
 def _pml_merge_mode(key: str) -> str:
@@ -148,6 +237,39 @@ class PortSpec:
     scattered_wave: Literal["plus", "minus", "auto"] = "minus"
 
 
+def _source_spectrum_normalization(sources, freqs) -> np.ndarray | None:
+    """Return a unit-center source spectrum for source-normalized DFT outputs."""
+    freq_arr = np.asarray(freqs, dtype=float).reshape(-1)
+    if freq_arr.size == 0:
+        return None
+    spectra = []
+    for source in sources or ():
+        spectrum = None
+        if hasattr(source, "source_spectrum"):
+            spectrum = source.source_spectrum(freq_arr, normalize=True)
+        source_time = getattr(source, "source_time", None)
+        if (
+            spectrum is None
+            and source_time is not None
+            and hasattr(source_time, "dft_normalization_spectrum")
+        ):
+            spectrum = source_time.dft_normalization_spectrum(freq_arr)
+        if (
+            spectrum is None
+            and source_time is not None
+            and hasattr(source_time, "spectrum")
+        ):
+            spectrum = source_time.spectrum(freq_arr, normalize=True)
+        if spectrum is None:
+            continue
+        spectrum = np.asarray(spectrum, dtype=np.complex128).reshape(-1)
+        if spectrum.shape == freq_arr.shape and np.any(np.abs(spectrum) > 1e-12):
+            spectra.append(spectrum)
+    if not spectra:
+        return None
+    return spectra[0]
+
+
 @dataclass(frozen=True)
 class MonitorResults:
     """Snapshot of one monitor's recorded outputs."""
@@ -158,8 +280,43 @@ class MonitorResults:
     power_timestamps: np.ndarray
     power_spectrum: np.ndarray
     frequency_flux_spectrum: np.ndarray
+    source_spectrum_normalization: np.ndarray | None = None
     objective_value: float | None = None
     data: Any = None
+
+    @property
+    def flux(self):
+        if hasattr(self.monitor, "get_dft_flux"):
+            freqs = np.asarray(
+                getattr(self.monitor, "get_dft_frequencies")(), dtype=float
+            )
+            values = np.asarray(self.monitor.get_dft_flux(), dtype=float)
+            norm = self.source_spectrum_normalization
+            if norm is not None:
+                norm_arr = np.asarray(norm, dtype=np.complex128).reshape(-1)
+                if norm_arr.size == values.size:
+                    scale = np.abs(norm_arr) ** 2
+                    valid = scale > 1e-24
+                    values = np.divide(
+                        values,
+                        scale,
+                        out=np.zeros_like(values, dtype=float),
+                        where=valid,
+                    )
+            if freqs.size == values.size:
+                try:
+                    import xarray as xr
+
+                    return xr.DataArray(
+                        values,
+                        dims=("f",),
+                        coords={"f": ("f", freqs, {"units": "Hz"})},
+                        name="flux",
+                    )
+                except Exception:
+                    return values
+            return values
+        return np.asarray(self.frequency_flux_spectrum, dtype=float)
 
     def _plot_proxy(self):
         if self.data is not None and hasattr(self.data, "data_vars"):
@@ -272,7 +429,12 @@ class MonitorResults:
         return self.data
 
     @classmethod
-    def from_monitor(cls, monitor: Monitor) -> "MonitorResults":
+    def from_monitor(
+        cls,
+        monitor: Monitor,
+        *,
+        source_spectrum_normalization: np.ndarray | None = None,
+    ) -> "MonitorResults":
         fields = {
             name: tuple(values)
             for name, values in getattr(monitor, "fields", {}).items()
@@ -299,6 +461,7 @@ class MonitorResults:
             ),
             power_spectrum=power_spectrum,
             frequency_flux_spectrum=np.asarray(legacy_flux, dtype=np.complex64),
+            source_spectrum_normalization=source_spectrum_normalization,
             objective_value=getattr(monitor, "objective_value", None),
         )
         from dataclasses import replace
@@ -337,6 +500,14 @@ class SimulationResults(Mapping[str, Any]):
         )
 
     def __getitem__(self, key: str) -> Any:
+        if self.monitor_results and key in self.monitor_results:
+            result = self.monitor_results[key]
+            monitor = result.monitor
+            if type(monitor).__name__ == "ModeMonitor":
+                from beamz.data.modal import mode_monitor_data
+
+                return mode_monitor_data(self.simulation, monitor)
+            return result
         payload = self.to_dict()
         if key not in payload:
             raise KeyError(key)
@@ -364,8 +535,24 @@ class SimulationResults(Mapping[str, Any]):
             payload["snapshots"] = list(self.snapshots)
         return payload
 
-    def plot_field(self, **kwargs):
+    def plot_field(self, monitor_name=None, field=None, **kwargs):
         """Plot a stored field frame from this result."""
+        if monitor_name is not None:
+            monitor_results = self.monitor_results or {}
+            if monitor_name not in monitor_results:
+                raise KeyError(monitor_name)
+            monitor = monitor_results[monitor_name].monitor
+            if field is None:
+                field = kwargs.pop("field", "Ez")
+            from beamz.visual.mpl import plot_tidy3d_dft_field
+
+            kwargs.setdefault("show", False)
+            return plot_tidy3d_dft_field(
+                self.simulation,
+                monitor,
+                field=field,
+                **kwargs,
+            )
         from beamz.visual.mpl import plot_simulation_field
 
         kwargs.setdefault("show", False)
@@ -427,11 +614,22 @@ class SimulationResults(Mapping[str, Any]):
     ) -> "SimulationResults" | None:
         monitor_tuple = tuple(monitors)
         snapshot_tuple = tuple(snapshots)
-        monitor_results = {
-            getattr(monitor, "name", None)
-            or f"monitor_{idx}": MonitorResults.from_monitor(monitor)
-            for idx, monitor in enumerate(monitor_tuple)
-        }
+        monitor_results = {}
+        for idx, monitor in enumerate(monitor_tuple):
+            name = getattr(monitor, "name", None) or f"monitor_{idx}"
+            source_norm = None
+            if hasattr(monitor, "get_dft_frequencies"):
+                try:
+                    source_norm = _source_spectrum_normalization(
+                        simulation.sources,
+                        monitor.get_dft_frequencies(),
+                    )
+                except Exception:
+                    source_norm = None
+            monitor_results[name] = MonitorResults.from_monitor(
+                monitor,
+                source_spectrum_normalization=source_norm,
+            )
         if fields is None and not monitor_tuple and not snapshot_tuple:
             return None
         fields_dataset = None
@@ -472,15 +670,159 @@ class Simulation:
         resolution: float = 0.02 * µm,
         time: np.ndarray = None,
         plane_2d: str = "xy",
+        *,
+        domain=None,
+        size=None,
+        structures: list | None = None,
+        material=None,
+        background=None,
+        medium=None,
+        boundary_spec=None,
+        grid_spec=None,
+        run_time: float | None = None,
     ):
+        coordinate_offset = (0.0, 0.0, 0.0)
+        if domain is not None and size is not None:
+            domain_tuple = tuple(float(v) for v in domain)
+            size_tuple = tuple(float(v) for v in size)
+            if domain_tuple != size_tuple:
+                raise ValueError("Pass only one of domain=... or size=....")
+        if domain is None:
+            domain = size
+        if medium is not None:
+            warnings.warn(
+                "Simulation(..., medium=...) is deprecated; use material=... or "
+                "Design(background=...) instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        if structures:
+            warnings.warn(
+                "Simulation(..., structures=[...]) is deprecated; add geometry "
+                "with material=... to a Design and pass design=... instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        if (
+            background is not None
+            and material is not None
+            and background is not material
+        ):
+            raise ValueError("Pass only one of background=... or material=....")
+        background_material = background if background is not None else material
+        if background_material is None:
+            background_material = medium
+
+        if design is None:
+            if domain is None:
+                raise ValueError("Simulation requires either design=... or domain=....")
+            sim_size = tuple(float(v) for v in domain)
+            if len(sim_size) == 2:
+                sim_size = (sim_size[0], sim_size[1], 0.0)
+            if len(sim_size) != 3:
+                raise ValueError("Simulation size must be a 2D or 3D tuple.")
+            background_material = (
+                background_material
+                if background_material is not None
+                else Material(1.0)
+            )
+            design = Design(
+                width=sim_size[0],
+                height=sim_size[1],
+                depth=sim_size[2],
+                background=background_material,
+            )
+            coordinate_offset = (
+                0.5 * sim_size[0],
+                0.5 * sim_size[1],
+                0.5 * sim_size[2],
+            )
+            for structure in structures or ():
+                design += _structure_to_domain(structure, coordinate_offset, sim_size)
+
+            if grid_spec is not None:
+                resolution = grid_spec.resolve_resolution(
+                    max_index=_max_index_for_specs(
+                        background_material, structures or ()
+                    )
+                )
+            if time is None and run_time is not None:
+                spec = grid_spec
+                if spec is None:
+                    from beamz.simulation.specs import GridSpec
+
+                    spec = GridSpec.uniform(resolution)
+                dims = 3 if sim_size[2] > 0 else 2
+                dt = spec.resolve_time_step(resolution, dims=dims)
+                time = np.arange(0.0, float(run_time) + 0.5 * dt, dt)
+        elif domain is not None and getattr(design, "_centered_coordinates", False):
+            sim_size = tuple(float(v) for v in domain)
+            if len(sim_size) == 2:
+                sim_size = (sim_size[0], sim_size[1], 0.0)
+            if len(sim_size) != 3:
+                raise ValueError("Simulation size must be a 2D or 3D tuple.")
+            background_material = (
+                background_material
+                if background_material is not None
+                else getattr(design, "background", None)
+            )
+            if background_material is None and design.structures:
+                background_material = getattr(design.structures[0], "material", None)
+            if background_material is None:
+                background_material = Material(1.0)
+            source_design = design
+            design = Design(
+                width=sim_size[0],
+                height=sim_size[1],
+                depth=sim_size[2],
+                background=background_material,
+            )
+            coordinate_offset = (
+                0.5 * sim_size[0],
+                0.5 * sim_size[1],
+                0.5 * sim_size[2],
+            )
+            for structure in source_design.structures[1:]:
+                design += _structure_to_domain(structure, coordinate_offset, sim_size)
+
+            if grid_spec is not None:
+                resolution = grid_spec.resolve_resolution(
+                    max_index=_max_index_for_specs(
+                        background_material, source_design.structures[1:]
+                    )
+                )
+            if time is None and run_time is not None:
+                spec = grid_spec
+                if spec is None:
+                    from beamz.simulation.specs import GridSpec
+
+                    spec = GridSpec.uniform(resolution)
+                dims = 3 if sim_size[2] > 0 else 2
+                dt = spec.resolve_time_step(resolution, dims=dims)
+                time = np.arange(0.0, float(run_time) + 0.5 * dt, dt)
+
+        if boundary_spec is not None:
+            boundaries = list(getattr(boundary_spec, "boundaries", boundary_spec))
+        if coordinate_offset != (0.0, 0.0, 0.0):
+            sources = [
+                _shift_device_to_domain(source, coordinate_offset)
+                for source in (sources or [])
+            ]
+            monitors = [
+                _shift_device_to_domain(monitor, coordinate_offset)
+                for monitor in (monitors or [])
+            ]
         self.design = design
+        self.size = _design_domain(design) if design is not None else None
+        self.domain = self.size
+        self.coordinate_offset = coordinate_offset
+        self.grid_spec = grid_spec
+        self.run_time = run_time
         sources = sources or []
         monitors = monitors or []
-        boundaries = normalize_boundaries(
-            boundaries, is_3d=bool(design.is_3d and design.depth > 0)
-        )
+        boundaries = normalize_boundaries(boundaries, is_3d=_design_is_3d(design))
         self.resolution = resolution
-        self.is_3d = design.is_3d and design.depth > 0
+        self.is_3d = _design_is_3d(design)
         self.plane_2d = plane_2d.lower()
         if self.plane_2d not in ["xy", "yz", "xz"]:
             self.plane_2d = "xy"
@@ -555,6 +897,19 @@ class Simulation:
         self._compiled_monitor_state = None
         self._compiled_step_source_specs = None
         self._imperative_step_sources = None
+
+    def copy(self, *, update=None):
+        """Return a configuration copy of the simulation."""
+        copied = _copy_with_update(self, update=update)
+        copied.current_step = 0
+        copied.t = (
+            float(copied.time[0]) if getattr(copied, "time", None) is not None else 0.0
+        )
+        copied._compiled_program = None
+        copied._compiled_program_signature = None
+        copied._compiled_program_cache = {}
+        copied._compiled_monitor_state = None
+        return copied
 
     @staticmethod
     def _dedupe_devices(devices):
@@ -2527,12 +2882,6 @@ class Simulation:
         eps_profile, local_idx, dl = self._monitor_profile_slice(
             monitor, parts["axis"], mode_pad_cells
         )
-        if self.is_3d and analysis_coords0 is not None and analysis_coords1 is not None:
-            dl = self._analysis_plane_sample_area(
-                analysis_coords0,
-                analysis_coords1,
-                float(self.resolution),
-            )
         solver_direction = spec.direction
         basis_direction = solver_direction
         backward_direction = self._opposite_port_direction(spec.direction)
@@ -3041,6 +3390,18 @@ class Simulation:
                 for name in proj_components
                 if name in mode_components_bwd
             }
+            mode_components_proj = _normalize_3d_profiles_by_flux(
+                mode_components_proj,
+                axis=parts["axis"],
+                d_area=float(dl),
+                direction_sign=direction_sign,
+            )
+            mode_components_bwd_proj = _normalize_3d_profiles_by_flux(
+                mode_components_bwd_proj,
+                axis=parts["axis"],
+                d_area=float(dl),
+                direction_sign=direction_sign,
+            )
             fwd_vec = np.concatenate([mode_components_proj[c] for c in proj_components])
             bwd_vec = np.concatenate(
                 [mode_components_bwd_proj[c] for c in proj_components]
@@ -3396,9 +3757,6 @@ class Simulation:
             if cond < 1e8:
                 coeff = np.linalg.solve(system, rhs)
             else:
-                # Stay in modal-overlap space even when the biorthogonal system
-                # is poorly conditioned. This is the closest analogue to
-                # Meep-style eigenmode coefficient extraction we have.
                 coeff = np.linalg.pinv(system) @ rhs
             return np.complex128(coeff[0]), np.complex128(coeff[1])
 

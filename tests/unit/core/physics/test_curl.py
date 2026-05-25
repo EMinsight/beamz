@@ -61,7 +61,9 @@ def test_curl_h_to_e_3d_linear_field_has_constant_y_component():
     np.testing.assert_allclose(np.asarray(curl_hz)[:, 1:-1, 1:-1], 0.0, atol=1e-6)
 
 
-def _cpml_coefficients(shapes, *, sigma_value=0.5, kappa_value=1.5, alpha_value=0.1, dt=0.05):
+def _cpml_coefficients(
+    shapes, *, sigma_value=0.5, kappa_value=1.5, alpha_value=0.1, dt=0.05
+):
     a_terms = []
     b_terms = []
     inv_kappa_terms = []

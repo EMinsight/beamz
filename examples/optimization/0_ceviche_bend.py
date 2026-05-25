@@ -18,6 +18,7 @@ DX, DT = calc_optimal_fdtd_params(
 STEPS = 50  # reduce to 40 for faster optimization
 MAT_PENALTY = 0.3  # Target core material fraction (0.0 to 1.0)
 PENALTY_STRENGTH = 1  # Scaling factor for the penalty gradient
+GRADIENT_SCALE_PERCENTILE = 95.0  # Robust EM-gradient normalization percentile
 PML_FORMULATION_2D = "sponge"
 
 
@@ -38,6 +39,23 @@ def transmission_percent(input_monitor, output_monitor, dt):
     if input_energy <= 0.0:
         return 0.0
     return monitor_energy(output_monitor, dt) / input_energy * 100.0
+
+
+def normalize_gradient_in_mask(grad, region_mask, percentile=95.0):
+    """Normalize a masked gradient to a robust unit scale."""
+
+    values = np.asarray(grad[region_mask], dtype=float)
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return grad, 1.0
+
+    scale = float(np.percentile(np.abs(finite), percentile))
+    if not np.isfinite(scale) or scale <= 0.0:
+        scale = float(np.max(np.abs(finite)))
+    if not np.isfinite(scale) or scale <= 0.0:
+        return grad, 1.0
+
+    return grad / scale, scale
 
 
 # Design & Materials
@@ -101,7 +119,7 @@ opt = TopologyManager(
     design=design,
     region_mask=mask,
     resolution=DX,
-    learning_rate=0.015,
+    learning_rate=0.01,
     filter_radius=0.3
     * µm,  # Physical units: Controls minimum feature size AND boundary smoothness
     eps_min=N_CLAD**2,
@@ -177,8 +195,8 @@ for step in range(STEPS):
     # Backward source monitor (just downstream of source)
     monitor_back_flux = Monitor(
         design=grid,
-        start=(W / 2 - WG_W * 2, 1.5 * µm),
-        end=(W / 2 + WG_W * 2, 1.5 * µm),
+        start=(W / 2 + WG_W * 2, 1.5 * µm),
+        end=(W / 2 - WG_W * 2, 1.5 * µm),
         accumulate_power=True,
         record_fields=False,
     )
@@ -186,8 +204,8 @@ for step in range(STEPS):
     # Backward monitor at original input location (left waveguide)
     backward_monitor = Monitor(
         design=grid,
-        start=(1.5 * µm, H / 2 - WG_W * 2),
-        end=(1.5 * µm, H / 2 + WG_W * 2),
+        start=(1.5 * µm, H / 2 + WG_W * 2),
+        end=(1.5 * µm, H / 2 - WG_W * 2),
         accumulate_power=True,
         record_fields=False,
     )
@@ -224,6 +242,11 @@ for step in range(STEPS):
     # more than the material grid on each axis. Fold that padding back before
     # applying design-mask penalties and optimizer updates.
     grad_eps = opt.gradient_to_design_grid(grad_eps)
+    grad_eps, grad_scale = normalize_gradient_in_mask(
+        grad_eps,
+        mask,
+        percentile=GRADIENT_SCALE_PERCENTILE,
+    )
 
     # Measure Material Usage (Relative core material amount)
     # phys_density is 0 (cladding) to 1 (core)
@@ -254,7 +277,7 @@ for step in range(STEPS):
     mat_frac = np.mean(phys_density[mask])
 
     print(
-        f" Step {step+1}: Obj={total_obj:.2e} (Trans={transmission_pct:.1f}% | Fwd={transmission_fwd:.1f}% Bwd={transmission_back:.1f}%) | Mat={mat_frac:.1%} | MaxUp={max_update:.2e}",
+        f" Step {step+1}: Obj={total_obj:.2e} (Trans={transmission_pct:.1f}% | Fwd={transmission_fwd:.1f}% Bwd={transmission_back:.1f}%) | Mat={mat_frac:.1%} | GradScale={grad_scale:.1e} | MaxUp={max_update:.2e}",
         end="\r",
     )
 

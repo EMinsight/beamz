@@ -180,9 +180,9 @@ class TestFresnelCoefficients:
         T_analytical = analytical_fresnel_t(n1, n2)
 
         # Should have significant transmitted field
-        assert (
-            max_transmitted > 1e-10
-        ), f"No field transmitted. T_analytical={T_analytical:.3f}"
+        assert max_transmitted > 1e-10, (
+            f"No field transmitted. T_analytical={T_analytical:.3f}"
+        )
 
     def test_fresnel_energy_conservation_qualitative(self, dielectric_interface_domain):
         """Energy should be approximately conserved (R + T ≈ 1).
@@ -237,7 +237,7 @@ class TestFresnelCoefficients:
             if energies[i - 1] > 0.1 * peak_energy:  # Only check meaningful values
                 growth = energies[i] / energies[i - 1]
                 assert growth < 1.1, (
-                    f"Energy grew by {(growth-1)*100:.1f}% at step {i}. "
+                    f"Energy grew by {(growth - 1) * 100:.1f}% at step {i}. "
                     "Possible conservation violation."
                 )
 
@@ -267,6 +267,6 @@ class TestFresnelCoefficients:
             R = analytical_fresnel_r(n1, n2)
             T = analytical_fresnel_t(n1, n2)
 
-            assert (
-                abs(R + T - 1.0) < 1e-10
-            ), f"R + T = {R + T} != 1 for n1={n1}, n2={n2}"
+            assert abs(R + T - 1.0) < 1e-10, (
+                f"R + T = {R + T} != 1 for n1={n1}, n2={n2}"
+            )

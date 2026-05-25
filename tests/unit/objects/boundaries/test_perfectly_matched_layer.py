@@ -228,9 +228,7 @@ def test_pml_allows_material_extruded_through_absorber():
         )
 
     assert not [
-        warning
-        for warning in caught
-        if "PML material varies" in str(warning.message)
+        warning for warning in caught if "PML material varies" in str(warning.message)
     ]
 
 
@@ -315,14 +313,12 @@ def test_staggered_profile_shape_dtype_and_monotonicity():
         high_active=False,
         sample_kind="E",
     )
-    sigma_high_h, kappa_high_h, alpha_high_h = (
-        pml._compute_fdtdx_staggered_profile_1d(
-            total_samples=10,
-            spacing=0.1,
-            low_active=False,
-            high_active=True,
-            sample_kind="H",
-        )
+    sigma_high_h, kappa_high_h, alpha_high_h = pml._compute_fdtdx_staggered_profile_1d(
+        total_samples=10,
+        spacing=0.1,
+        low_active=False,
+        high_active=True,
+        sample_kind="H",
     )
 
     assert sigma_low_e.shape == (10,)
@@ -339,6 +335,11 @@ def test_staggered_profile_shape_dtype_and_monotonicity():
     assert sigma_high_h.dtype == jnp.float32
     assert kappa_high_h.dtype == jnp.float32
     assert alpha_high_h.dtype == jnp.float32
-    assert float(sigma_high_h[-1]) > float(sigma_high_h[-2]) > float(sigma_high_h[-3]) >= 0.0
+    assert (
+        float(sigma_high_h[-1])
+        > float(sigma_high_h[-2])
+        > float(sigma_high_h[-3])
+        >= 0.0
+    )
     assert float(kappa_high_h[-1]) > float(kappa_high_h[-2]) >= 1.0
     assert float(alpha_high_h[-1]) < float(alpha_high_h[-2]) < float(alpha_high_h[-3])

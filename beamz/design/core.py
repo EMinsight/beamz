@@ -16,6 +16,8 @@ from beamz.design.structures import (
     Ring,
 )
 
+_DEFAULT_DOMAIN_SIZE = object()
+
 
 def _material_key(material):
     """Return a hashable key for a material based on its physical properties."""
@@ -437,12 +439,34 @@ def _build_grid_from_cached_arrays(
 class Design:
     def __init__(
         self,
-        width: float = 4 * µm,
-        height: float = 4 * µm,
-        depth: float = 0,
+        width: float | object = _DEFAULT_DOMAIN_SIZE,
+        height: float | object = _DEFAULT_DOMAIN_SIZE,
+        depth: float | object = _DEFAULT_DOMAIN_SIZE,
         material: Material = None,
+        background: Material = None,
     ):
         """Create a design domain with specified dimensions and background material."""
+        width_is_default = width is _DEFAULT_DOMAIN_SIZE
+        height_is_default = height is _DEFAULT_DOMAIN_SIZE
+        depth_is_default = depth is _DEFAULT_DOMAIN_SIZE
+        background_arg = background
+        if width_is_default:
+            width = 4 * µm
+        if height_is_default:
+            height = 4 * µm
+        if depth_is_default:
+            depth = 0
+        explicit_size = not (
+            width_is_default and height_is_default and depth_is_default
+        )
+        if (
+            background_arg is not None
+            and material is not None
+            and background_arg is not material
+        ):
+            raise ValueError("Pass only one of background=... or material=....")
+        if background_arg is not None:
+            material = background_arg
         if material is None:
             material = Material(permittivity=1.0, permeability=1.0, conductivity=0.0)
         background = Rectangle(
@@ -453,8 +477,13 @@ class Design:
             material=material,
         )
         self.structures = [background]
+        self.background = material
         self.width, self.height, self.depth, self.time = width, height, depth, 0
         self.is_3d = depth is not None and depth > 0
+        self._explicit_size = explicit_size
+        self._centered_coordinates = bool(
+            background_arg is not None and not explicit_size
+        )
         self.layers: dict[int, list[Polygon]] = {}
 
     def __str__(self):
@@ -728,7 +757,7 @@ class Design:
             width=self.width,
             height=self.height,
             depth=self.depth,
-            material=background_material,
+            background=background_material,
         )
         new_design.structures = []
 
@@ -752,6 +781,11 @@ class Design:
             self.is_3d,
             self.depth,
             self.time,
+        )
+        new_design._explicit_size = self._explicit_size
+        new_design._centered_coordinates = self._centered_coordinates
+        new_design.background = (
+            new_design.structures[0].material if new_design.structures else None
         )
         new_design.layers = self.layers.copy() if hasattr(self, "layers") else {}
 

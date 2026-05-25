@@ -100,9 +100,9 @@ class TestDipoleRadiation:
         # All quadrants should have comparable energy (within factor of 3)
         if total > 0:
             fractions = [e / total for e in quadrant_energies]
-            assert (
-                min(fractions) > 0.1
-            ), f"Quadrant fractions {fractions} show non-omnidirectional emission"
+            assert min(fractions) > 0.1, (
+                f"Quadrant fractions {fractions} show non-omnidirectional emission"
+            )
 
     def test_dipole_power_scales_with_amplitude(self):
         """Radiated power should scale as amplitude squared.
@@ -236,9 +236,9 @@ class TestCavityResonance:
         # First mode (m=1)
         f1 = analytical_cavity_frequency(m=1, L=L, n=n)
         expected = LIGHT_SPEED / (2 * L)
-        assert (
-            abs(f1 - expected) / expected < 1e-10
-        ), f"f1={f1:.3e} vs expected {expected:.3e}"
+        assert abs(f1 - expected) / expected < 1e-10, (
+            f"f1={f1:.3e} vs expected {expected:.3e}"
+        )
 
         # Second mode (m=2)
         f2 = analytical_cavity_frequency(m=2, L=L, n=n)
@@ -315,7 +315,7 @@ class TestGridConvergence:
         if peak_energies[0] > 0:
             diff = abs(peak_energies[1] - peak_energies[0]) / peak_energies[0]
             assert diff < 0.5, (
-                f"Results differ by {diff*100:.1f}%. "
+                f"Results differ by {diff * 100:.1f}%. "
                 "Different resolutions should give similar results."
             )
 
@@ -465,6 +465,6 @@ class TestWaveguideGroupVelocity:
         total = mid_right_energy + mid_left_energy
         if total > 1e-30:
             right_frac = mid_right_energy / total
-            assert (
-                right_frac > 0.5
-            ), f"Only {right_frac*100:.1f}% energy downstream at midpoint"
+            assert right_frac > 0.5, (
+                f"Only {right_frac * 100:.1f}% energy downstream at midpoint"
+            )

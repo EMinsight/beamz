@@ -213,7 +213,9 @@ def _build_case(cfg: StraightWaveguideSParamConfig, *, resolution_ppw: int):
     return sim, monitors, monitor_x, freqs, pulse, dx, dt
 
 
-def _phase_linearity_residual(phase: np.ndarray, freqs: np.ndarray) -> tuple[float, float]:
+def _phase_linearity_residual(
+    phase: np.ndarray, freqs: np.ndarray
+) -> tuple[float, float]:
     ph = np.unwrap(np.asarray(phase, dtype=float))
     f = np.asarray(freqs, dtype=float)
     if ph.size < 3:

@@ -1,4 +1,6 @@
-# Medium: Dispersionless medium.
+import warnings
+
+
 class Material:
     def __init__(
         self,
@@ -23,6 +25,29 @@ class Material:
 
     def get_sample(self):
         return self.permittivity, self.permeability, self.conductivity
+
+    def copy(self):
+        """Create a copy of this material."""
+        return Material(
+            permittivity=self.permittivity,
+            permeability=self.permeability,
+            conductivity=self.conductivity,
+            k=self.k,
+            rho=self.rho,
+            cp=self.cp,
+            dn_dT=self.dn_dT,
+            T0=self.T0,
+        )
+
+
+def Medium(*args, **kwargs):
+    """Deprecated compatibility alias for :class:`Material`."""
+    warnings.warn(
+        "beamz.Medium is deprecated; use beamz.Material instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return Material(*args, **kwargs)
 
 
 # CustomMaterial: Function-based material for inverse design
@@ -70,8 +95,6 @@ class CustomMaterial:
                 bounds=((0, 10e-6), (0, 10e-6))  # 10 micron x 10 micron
             )
         """
-        import numpy as np
-
         # Store function-based definitions
         self.permittivity_func = permittivity_func
         self.permeability_func = permeability_func
@@ -264,8 +287,6 @@ class CustomMaterial:
 
     def copy(self):
         """Create a deep copy of the CustomMaterial."""
-        import numpy as np
-
         # Deep copy grids if they exist
         perm_grid = (
             self.permittivity_grid.copy()

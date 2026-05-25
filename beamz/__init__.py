@@ -16,35 +16,37 @@ from beamz.const import (
     µm,
     μm,  # noqa: F811 - public alias using Greek mu codepoint
 )
+from beamz.data import colocate_dataset, field_intensity, poynting_vector
 
 # Import design-related classes and functions
 from beamz.design.core import Design
-from beamz.design.materials import CustomMaterial, Material
+from beamz.design.materials import CustomMaterial, Material, Medium
 
 # Import simulation-related classes and functions
 from beamz.design.meshing import RegularGrid
 from beamz.design.structures import (
+    Box,
     Circle,
     CircularBend,
     Polygon,
     Rectangle,
     Ring,
     Sphere,
+    Structure,
     Taper,
 )
-from beamz.devices.monitors import ModeMonitor, Monitor
+from beamz.devices.monitors import FieldMonitor, FluxMonitor, ModeMonitor, Monitor
 from beamz.devices.ports import Port
-from beamz.devices.sources import GaussianSource, ModeSource
+from beamz.devices.sources import GaussianSource, ModeData, ModeSolver, ModeSource
 from beamz.devices.sources.mode import solve_modes
 from beamz.devices.sources.signals import plot_signal, ramped_cosine, signal_plot_data
-from beamz.data import colocate_dataset, field_intensity, poynting_vector
 from beamz.optimization.autodiff import transform_density
 from beamz.optimization.topology import (
     TopologyManager,
     compute_overlap_gradient,
     create_optimization_mask,
 )
-from beamz.simulation.boundaries import AbsorbingLayer, PEC, PML, Boundary
+from beamz.simulation.boundaries import PEC, PML, AbsorbingLayer, Boundary
 from beamz.simulation.compiled import (
     CompiledRunConfig,
     CompiledSimulation,
@@ -59,6 +61,7 @@ from beamz.simulation.core import (
     Simulation,
     SimulationResults,
 )
+from beamz.simulation.specs import BoundarySpec, GaussianPulse, GridSpec, ModeSpec, inf
 
 # Import UI helpers
 from beamz.visual.helpers import (
@@ -95,10 +98,13 @@ _exports = {
     "μm": μm,
     # Materials
     "Material": Material,
+    "Medium": Medium,
     "CustomMaterial": CustomMaterial,
     # Structures
     "design": design,
     "Design": Design,
+    "Box": Box,
+    "Structure": Structure,
     "Rectangle": Rectangle,
     "Circle": Circle,
     "Ring": Ring,
@@ -108,9 +114,13 @@ _exports = {
     "Sphere": Sphere,
     # Sources
     "ModeSource": ModeSource,
+    "ModeSolver": ModeSolver,
+    "ModeData": ModeData,
     "GaussianSource": GaussianSource,
     # Monitors
     "Monitor": Monitor,
+    "FieldMonitor": FieldMonitor,
+    "FluxMonitor": FluxMonitor,
     "ModeMonitor": ModeMonitor,
     "Port": Port,
     # Signals
@@ -124,6 +134,11 @@ _exports = {
     # Simulation
     "RegularGrid": RegularGrid,
     "Simulation": Simulation,
+    "GridSpec": GridSpec,
+    "GaussianPulse": GaussianPulse,
+    "ModeSpec": ModeSpec,
+    "BoundarySpec": BoundarySpec,
+    "inf": inf,
     "PortSpec": PortSpec,
     "MonitorResults": MonitorResults,
     "SimulationResults": SimulationResults,

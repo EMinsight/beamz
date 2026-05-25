@@ -342,6 +342,7 @@ class RegularGrid(BaseMeshGrid):
         self.dy = self.resolution
         self.width = self.design.width
         self.height = self.design.height
+        self.depth = 0.0
 
     def __rasterize__(self):
         """Painters algorithm: rasterize design into a grid using super-sampling.
@@ -352,8 +353,9 @@ class RegularGrid(BaseMeshGrid):
         for anti-aliasing.
         """
         width, height = self.design.width, self.design.height
-        grid_width, grid_height = int(width / self.resolution), int(
-            height / self.resolution
+        grid_width, grid_height = (
+            int(width / self.resolution),
+            int(height / self.resolution),
         )
         cell_size = self.resolution
 
@@ -724,9 +726,9 @@ class RegularGrid(BaseMeshGrid):
                 sample_dx,
                 sample_dy,
                 num_samples,
-                lambda x, y: inner_radius
-                <= np.hypot(x - center_x, y - center_y)
-                <= outer_radius,
+                lambda x, y: (
+                    inner_radius <= np.hypot(x - center_x, y - center_y) <= outer_radius
+                ),
                 cell_i=i,
                 cell_j=j,
                 cell_size=cell_size,
@@ -788,14 +790,19 @@ class RegularGrid(BaseMeshGrid):
             return
 
         if hasattr(structure, "point_in_polygon"):
-            contains_func = lambda x, y: structure.point_in_polygon(x, y)
+
+            def contains_func(x, y):
+                return structure.point_in_polygon(x, y)
+
         else:
-            contains_func = lambda x, y: any(
-                val != def_val
-                for val, def_val in zip(
-                    self.design.get_material_value(x, y, z=0), [1.0, 1.0, 0.0]
+
+            def contains_func(x, y):
+                return any(
+                    val != def_val
+                    for val, def_val in zip(
+                        self.design.get_material_value(x, y, z=0), [1.0, 1.0, 0.0]
+                    )
                 )
-            )
 
         if (
             hasattr(structure, "vertices")
@@ -1599,14 +1606,19 @@ class RegularGrid3D(BaseMeshGrid):
         num_samples = sample_dx.size * offsets_z.size
 
         if hasattr(structure, "point_in_polygon"):
-            contains_fn = lambda x, y, z: structure.point_in_polygon(x, y, z)
+
+            def contains_fn(x, y, z):
+                return structure.point_in_polygon(x, y, z)
+
         else:
-            contains_fn = lambda x, y, z: any(
-                val != def_val
-                for val, def_val in zip(
-                    self.design.get_material_value(x, y, z), [1.0, 1.0, 0.0]
+
+            def contains_fn(x, y, z):
+                return any(
+                    val != def_val
+                    for val, def_val in zip(
+                        self.design.get_material_value(x, y, z), [1.0, 1.0, 0.0]
+                    )
                 )
-            )
 
         for k in range(min_k, max_k):
             z_center = z_centers[k]

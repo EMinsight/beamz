@@ -31,9 +31,9 @@ def test_straight_waveguide_modal_sparams_are_physical_across_resolution_and_dis
 
         mid = np.asarray(result.s21_by_monitor["mid"], dtype=np.complex128)
         far = np.asarray(result.s21_by_monitor["far"], dtype=np.complex128)
-        mag_delta_db = 20.0 * np.log10(np.maximum(np.abs(far), 1e-12)) - 20.0 * np.log10(
-            np.maximum(np.abs(mid), 1e-12)
-        )
+        mag_delta_db = 20.0 * np.log10(
+            np.maximum(np.abs(far), 1e-12)
+        ) - 20.0 * np.log10(np.maximum(np.abs(mid), 1e-12))
         assert float(np.max(np.abs(mag_delta_db))) < 0.05
 
     ppw10, ppw12 = results

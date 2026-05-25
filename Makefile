@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-fast lint format clean build publish
+.PHONY: help install install-dev test test-fast lint dead-code audit format clean build publish
 
 help:  ## Show this help message
 	@echo "Usage: make [target]"
@@ -22,15 +22,20 @@ test-single:  ## Run a single test file (usage: make test-single FILE=test_physi
 	uv run pytest tests/$(FILE) -v --tb=short
 
 lint:  ## Run linting checks
-	uv run flake8 beamz/ tests/
+	uv run --extra lint ruff check beamz/
 
-format:  ## Format code with black and isort
-	uv run black beamz/ tests/
-	uv run isort beamz/ tests/
+dead-code:  ## Run high-confidence dead code checks
+	uv run --extra lint vulture beamz/ --min-confidence 80
+
+audit: lint dead-code test-fast  ## Run core code quality audit
+
+format:  ## Format code and fix package lint issues
+	uv run --extra lint ruff format beamz/ tests/
+	uv run --extra lint ruff check --fix beamz/
 
 format-check:  ## Check if code is formatted correctly
-	uv run black --check beamz/ tests/
-	uv run isort --check beamz/ tests/
+	uv run --extra lint ruff format --check beamz/ tests/
+	uv run --extra lint ruff check beamz/
 
 clean:  ## Clean build artifacts
 	rm -rf build/ dist/ *.egg-info/ .pytest_cache/ .coverage htmlcov/

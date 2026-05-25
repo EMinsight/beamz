@@ -219,7 +219,9 @@ def _assert_monitor_close(
 
 
 class _PointElectricCurrentSource:
-    def __init__(self, component: str, index: tuple[int, ...], *, frequency_scale: float):
+    def __init__(
+        self, component: str, index: tuple[int, ...], *, frequency_scale: float
+    ):
         self.component = str(component)
         self.index = tuple(int(v) for v in index)
         self.frequency_scale = float(frequency_scale)
@@ -358,7 +360,9 @@ def test_step_and_compiled_match_seeded_fields_with_sigma_pml_2d(plane_2d):
         boundaries=[PML(thickness=pml_thickness)],
     )
 
-    initial_fields = _seed_field_payload(reference, seed=2607 if plane_2d == "yz" else 2709)
+    initial_fields = _seed_field_payload(
+        reference, seed=2607 if plane_2d == "yz" else 2709
+    )
     _apply_field_payload(reference, initial_fields)
     _apply_field_payload(compiled, initial_fields)
 
@@ -490,7 +494,9 @@ def test_step_and_compiled_match_tm_mode_source_snapshots_without_fallback():
     for _ in range(steps):
         assert reference.step() is True
         if reference.current_step % snapshot_interval == 0:
-            reference_snapshots.append(np.asarray(reference.fields.Ez, dtype=np.float32))
+            reference_snapshots.append(
+                np.asarray(reference.fields.Ez, dtype=np.float32)
+            )
             reference_steps.append(reference.current_step)
 
     def _unexpected_step():
@@ -589,9 +595,7 @@ def test_step_and_compiled_match_3d_monitor_power_and_dft():
 
     ref_monitor = _build_monitor()
     cmp_monitor = _build_monitor()
-    reference, _ = _make_3d_sim(
-        steps=steps, sources=[source_a], monitors=[ref_monitor]
-    )
+    reference, _ = _make_3d_sim(steps=steps, sources=[source_a], monitors=[ref_monitor])
     compiled, _ = _make_3d_sim(steps=steps, sources=[source_b], monitors=[cmp_monitor])
 
     _run_reference(reference, steps)

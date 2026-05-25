@@ -66,13 +66,17 @@ def full_tm_xy_component_to_centered_grid(component: str, values):
     field = values
     if component == "Ez":
         if field.ndim != 2 or field.shape[0] < 2 or field.shape[1] < 2:
-            raise ValueError(f"Ez full-TM field must be at least 2x2, got {field.shape}")
+            raise ValueError(
+                f"Ez full-TM field must be at least 2x2, got {field.shape}"
+            )
         return 0.25 * (
             field[:-1, :-1] + field[:-1, 1:] + field[1:, :-1] + field[1:, 1:]
         )
     if component == "Hx":
         if field.ndim != 2 or field.shape[1] < 2:
-            raise ValueError(f"Hx full-TM field must have width >= 2, got {field.shape}")
+            raise ValueError(
+                f"Hx full-TM field must have width >= 2, got {field.shape}"
+            )
         return 0.5 * (field[:, :-1] + field[:, 1:])
     if component == "Hy":
         if field.ndim != 2 or field.shape[0] < 2:
@@ -243,11 +247,7 @@ def poynting_flux_3d(ex, ey, ez, hx, hy, hz, normal_axis, normal_sign=1.0):
 def physical_dft_sample_scale(weight, base_dt, record_interval, length_unit):
     """Return the physical-unit DFT accumulation scale for one sample."""
     return weight * (
-        base_dt
-        * record_interval
-        * LIGHT_SPEED
-        / length_unit
-        / np.sqrt(2.0 * np.pi)
+        base_dt * record_interval * LIGHT_SPEED / length_unit / np.sqrt(2.0 * np.pi)
     )
 
 

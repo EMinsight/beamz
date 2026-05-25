@@ -1,8 +1,9 @@
+from types import SimpleNamespace
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from types import SimpleNamespace
 
 from beamz import (
     LIGHT_SPEED,
@@ -20,8 +21,8 @@ from beamz import (
     um,
 )
 from beamz.const import EPS_0
-from beamz.devices.sources import compiler as source_compiler
 from beamz.devices.monitors.compiler import CompiledMonitorSpec
+from beamz.devices.sources import compiler as source_compiler
 from beamz.devices.sources.compiler import (
     _analytic_subband_waveforms,
     _as_slab_spec,
@@ -836,7 +837,9 @@ def test_compiled_dft_component_monitor_populated(small_sim_params):
     assert np.isfinite(hy_dft).all()
     assert np.max(np.abs(ez_dft)) > 0.0
     assert np.max(np.abs(hy_dft)) > 0.0
-    np.testing.assert_allclose(monitor.power_spectrum, np.zeros((0,), dtype=np.complex64))
+    np.testing.assert_allclose(
+        monitor.power_spectrum, np.zeros((0,), dtype=np.complex64)
+    )
     assert np.isfinite(monitor.get_dft_flux()).all()
 
 
@@ -1220,9 +1223,8 @@ def test_mode_source_uses_explicit_signal_quadrature():
 def test_analytic_subband_waveforms_reconstruct_input():
     dt = 1e-15
     t = np.arange(256, dtype=float) * dt
-    analytic = (
-        0.8 * np.exp(2j * np.pi * 120e12 * t)
-        + 0.2 * np.exp(2j * np.pi * 210e12 * t)
+    analytic = 0.8 * np.exp(2j * np.pi * 120e12 * t) + 0.2 * np.exp(
+        2j * np.pi * 210e12 * t
     )
 
     nodes, subbands = _analytic_subband_waveforms(
@@ -1233,7 +1235,9 @@ def test_analytic_subband_waveforms_reconstruct_input():
 
     assert nodes.shape == (3,)
     assert subbands.shape == (3, analytic.size)
-    np.testing.assert_allclose(np.sum(subbands, axis=0), analytic, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(
+        np.sum(subbands, axis=0), analytic, rtol=1e-12, atol=1e-12
+    )
 
 
 def test_compile_3d_multifrequency_mode_source_uses_temporary_profile_sources(
@@ -1293,6 +1297,139 @@ def test_compile_3d_multifrequency_mode_source_uses_temporary_profile_sources(
         atol=0.0,
     )
     assert [item[2] for item in seen] == [None, None, None]
+
+
+def test_compile_3d_mode_source_derives_chebyshev_profile_frequencies(monkeypatch):
+    dt = 1e-15
+    freq0 = 200e12
+    fwidth = 20e12
+    source_time = SimpleNamespace(freq0=freq0, fwidth=fwidth)
+    source = ModeSource(
+        grid=SimpleNamespace(),
+        center=(0.0, 0.0, 0.0),
+        width=1.0,
+        height=1.0,
+        wavelength=LIGHT_SPEED / freq0,
+        pol="te",
+        signal=np.ones(64, dtype=float),
+        direction="+x",
+        source_time=source_time,
+        num_freqs=3,
+    )
+    fields = SimpleNamespace(permittivity=jnp.ones((3, 3, 3), dtype=jnp.float32))
+    seen_freqs: list[float] = []
+
+    def fake_initialize(self, permittivity, resolution, dt=None):
+        del dt
+        self._initialized = True
+        self._is_3d = True
+        self._grid_shape = tuple(np.asarray(permittivity).shape)
+        self._resolution = float(resolution)
+
+    def fake_compile(profile_src, *_args, **_kwargs):
+        seen_freqs.append(float(LIGHT_SPEED / profile_src.wavelength))
+        return ()
+
+    monkeypatch.setattr(ModeSource, "initialize", fake_initialize)
+    monkeypatch.setattr(source_compiler, "_compile_mode_source_3d", fake_compile)
+
+    source_compiler._compile_mode_source(
+        source,
+        fields,
+        dt=dt,
+        num_steps=16,
+        t0=0.0,
+        resolution=1.0,
+        total_steps=64,
+    )
+
+    k = np.arange(3, dtype=float)
+    expected = np.sort(freq0 + 1.5 * fwidth * np.cos((2.0 * k + 1.0) * np.pi / 6.0))
+    np.testing.assert_allclose(seen_freqs, expected, rtol=1e-15, atol=0.0)
+
+
+def test_compile_3d_broadband_mode_source_reuses_finite_plane_context(monkeypatch):
+    dt = 1e-15
+    freq0 = 200e12
+    fwidth = 20e12
+    source_time = SimpleNamespace(freq0=freq0, fwidth=fwidth)
+    eps_full = np.ones((6, 7), dtype=float)
+    crop_slices = (slice(1, 4), slice(2, 6))
+    source = ModeSource(
+        grid=SimpleNamespace(),
+        center=(0.0, 0.0, 0.0),
+        width=1.0,
+        height=1.0,
+        wavelength=LIGHT_SPEED / freq0,
+        pol="te",
+        signal=np.ones(64, dtype=float),
+        direction="+x",
+        source_time=source_time,
+        num_freqs=3,
+        mode_eps_profile_full=eps_full,
+        mode_crop_slices=crop_slices,
+        mode_index=1,
+        mode_target_neff=2.3,
+        mode_num_modes=2,
+    )
+    fields = SimpleNamespace(permittivity=jnp.ones((3, 6, 7), dtype=jnp.float32))
+    seen_solves = []
+    seen_profile_sources = []
+
+    def fake_solve_modes(**kwargs):
+        eps = np.asarray(kwargs["eps"])
+        seen_solves.append(
+            {
+                "eps_shape": eps.shape,
+                "direction": kwargs["direction"],
+                "target_neff": kwargs["target_neff"],
+                "m": kwargs["m"],
+            }
+        )
+        fields_out = np.zeros((2, 3, *eps.shape), dtype=np.complex128)
+        fields_out[0] = 1.0
+        fields_out[1] = 2.0
+        return np.asarray([2.1, 1.9], dtype=np.complex128), fields_out, fields_out, 0
+
+    def fake_initialize(self, permittivity, resolution, dt=None):
+        del dt
+        self._initialized = True
+        self._is_3d = True
+        self._grid_shape = tuple(np.asarray(permittivity).shape)
+        self._resolution = float(resolution)
+
+    def fake_compile(profile_src, *_args, **_kwargs):
+        seen_profile_sources.append(profile_src)
+        return ()
+
+    monkeypatch.setattr(source_compiler, "solve_modes", fake_solve_modes)
+    monkeypatch.setattr(ModeSource, "initialize", fake_initialize)
+    monkeypatch.setattr(source_compiler, "_compile_mode_source_3d", fake_compile)
+
+    source_compiler._compile_mode_source(
+        source,
+        fields,
+        dt=dt,
+        num_steps=16,
+        t0=0.0,
+        resolution=1.0,
+        total_steps=64,
+    )
+
+    assert len(seen_solves) == 3
+    assert all(item == seen_solves[0] for item in seen_solves)
+    assert seen_solves[0] == {
+        "eps_shape": (3, 4),
+        "direction": "+x",
+        "target_neff": 2.3,
+        "m": 2,
+    }
+    assert len(seen_profile_sources) == 3
+    for profile_src in seen_profile_sources:
+        assert profile_src.mode_neff == 1.9 + 0.0j
+        assert profile_src.mode_e_field.shape == (3, 6, 7)
+        assert np.count_nonzero(profile_src.mode_e_field[0] == 2.0) == 12
+        assert np.count_nonzero(profile_src.mode_e_field[0]) == 12
 
 
 def test_compile_3d_mode_source_reinitializes_missing_launch_dt(monkeypatch):

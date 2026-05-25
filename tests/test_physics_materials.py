@@ -93,7 +93,7 @@ class TestWaveInMaterial:
 
         error = abs(v_measured - expected_velocity) / expected_velocity
         assert error < 0.08, (
-            f"Phase velocity error {error*100:.1f}% exceeds 8% in n={n_material}. "
+            f"Phase velocity error {error * 100:.1f}% exceeds 8% in n={n_material}. "
             f"Measured: {v_measured:.3e} m/s, Expected: {expected_velocity:.3e} m/s"
         )
 
@@ -170,9 +170,9 @@ class TestWaveInMaterial:
 
         error = abs(measured_wavelength - expected_wavelength) / expected_wavelength
         assert error < 0.10, (
-            f"Wavelength error {error*100:.1f}% exceeds 10%. "
-            f"Measured: {measured_wavelength/um:.3f} um, "
-            f"Expected: {expected_wavelength/um:.3f} um"
+            f"Wavelength error {error * 100:.1f}% exceeds 10%. "
+            f"Measured: {measured_wavelength / um:.3f} um, "
+            f"Expected: {expected_wavelength / um:.3f} um"
         )
 
     def test_permittivity_affects_propagation(self):
