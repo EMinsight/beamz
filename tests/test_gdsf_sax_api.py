@@ -1636,6 +1636,11 @@ def test_build_port_projection_3d_uses_solved_backward_mode_components(monkeypat
         "_make_3d_mode_basis_profiles",
         lambda profiles, axis, d_area=1.0, direction_sign=1.0: (dict(profiles), {}),
     )
+    monkeypatch.setattr(
+        core_mod,
+        "_normalize_3d_profiles_by_flux",
+        lambda profiles, axis, d_area=1.0, direction_sign=1.0: dict(profiles),
+    )
 
     def fake_solve_modes(
         eps,
