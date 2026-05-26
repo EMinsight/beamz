@@ -770,14 +770,13 @@ def _source_phase_referenced_power(
         k_num=float(source._k_num_axis),
         ref_coord=float(source._phase_ref_coord),
     )
-    return float(
-        _modal_power_3d_from_profiles(
-            referenced,
-            axis=axis,
-            d_area=d_area,
-            direction_sign=float(source._direction_sign),
-        )
+    signed_power = _modal_power_3d_from_profiles(
+        referenced,
+        axis=axis,
+        d_area=d_area,
+        direction_sign=float(source._direction_sign),
     )
+    return float(abs(signed_power))
 
 
 def _max_complex_part(deltas: dict[str, np.ndarray]) -> tuple[float, float]:
