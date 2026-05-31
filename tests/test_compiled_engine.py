@@ -7,6 +7,7 @@ import pytest
 
 from beamz import (
     LIGHT_SPEED,
+    Box,
     PEC,
     PML,
     Design,
@@ -280,6 +281,11 @@ def test_run_compiled_supports_3d_custom_current_source():
 
     sim_compiled.run_compiled(progress=False)
 
+    assert sim_compiled._compiled_program is not None
+    assert sim_compiled._compiled_program.fp_h_decay_x.size == 0
+    assert sim_compiled._compiled_program.fp_e_decay_x.size == 0
+    assert sim_compiled._compiled_program.fp_e_source_x.size > 0
+
     assert sim_compiled.current_step == len(t)
     for component in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz"):
         arr = np.asarray(getattr(sim_compiled.fields, component))
@@ -403,6 +409,77 @@ def test_split_3d_cpml_boundaries_preserve_identity_kappa_in_compiled_terms():
     assert np.asarray(program.cpml3d_inv_kappa_h_terms[3], dtype=np.float64)[
         cz, cy, cx
     ] == pytest.approx(1.0)
+
+
+def test_compiled_uses_sparse_shell_coefficients_3d():
+    wl = 1.55 * um
+    dx, dt = calc_optimal_fdtd_params(
+        wl, 1.0, dims=3, safety_factor=0.95, points_per_wavelength=8
+    )
+    design = Design(
+        width=3.0 * wl,
+        height=2.0 * wl,
+        depth=2.0 * wl,
+        material=Material(permittivity=1.0),
+    )
+    sim = Simulation(
+        design=design,
+        sources=[],
+        boundaries=[PML(edges="all", thickness=0.5 * wl, formulation="cpml")],
+        time=np.arange(0, 2 * dt, dt),
+        resolution=dx,
+    )
+
+    program = sim.compile(num_steps=1)
+
+    assert program.use_sparse_3d_e_coefficients
+    assert program.use_sparse_3d_h_coefficients
+    assert program.e_decay_x.shape == (0, 0, 0)
+    assert program.e_source_x.shape == (0, 0, 0)
+    assert program.h_decay_x.shape == (0, 0, 0)
+    assert program.h_source_x.shape == (0, 0, 0)
+    assert program.e_source_lossless_x.shape == sim.fields.Ex.shape
+    assert program.e_source_lossless_y.shape == sim.fields.Ey.shape
+    assert program.e_source_lossless_z.shape == sim.fields.Ez.shape
+    assert program.h_source_lossless_x.shape == ()
+    assert program.h_source_lossless_y.shape == ()
+    assert program.h_source_lossless_z.shape == ()
+    assert program.e_shell_decay_x
+    assert program.h_shell_decay_x
+
+
+def test_compiled_keeps_dense_coefficients_for_non_shell_3d_loss():
+    wl = 1.55 * um
+    dx, dt = calc_optimal_fdtd_params(
+        wl, 1.0, dims=3, safety_factor=0.95, points_per_wavelength=8
+    )
+    design = Design(
+        width=3.0 * wl,
+        height=3.0 * wl,
+        depth=3.0 * wl,
+        material=Material(permittivity=1.0),
+    )
+    design += Box(
+        center=(1.5 * wl, 1.5 * wl, 1.5 * wl),
+        size=(0.5 * wl, 0.5 * wl, 0.5 * wl),
+        material=Material(permittivity=2.0, conductivity=5.0),
+    )
+    sim = Simulation(
+        design=design,
+        sources=[],
+        boundaries=[],
+        time=np.arange(0, 2 * dt, dt),
+        resolution=dx,
+    )
+
+    program = sim.compile(num_steps=1)
+
+    assert not program.use_sparse_3d_e_coefficients
+    assert not program.use_sparse_3d_h_coefficients
+    assert program.e_decay_x.size > 0
+    assert program.e_source_x.size > 0
+    assert program.h_decay_x.size > 0
+    assert program.h_source_x.size > 0
 
 
 def test_compiled_3d_cpml_profiles_match_expected_x_boundary_embedding():
@@ -642,6 +719,31 @@ def test_run_snapshot_path_does_not_fall_back_to_python_step(small_sim_params):
     assert result is not None
     assert len(result["snapshots"]) > 0
     assert result["snapshots"][0]["step"] == 8
+
+
+def test_compiled_snapshot_state_warns_for_large_preallocation(
+    small_sim_params, monkeypatch
+):
+    wl, dx, _dt, domain, _steps, t, signal = small_sim_params
+    design = Design(width=domain, height=domain, material=Material(permittivity=1.0))
+    source = GaussianSource(
+        position=(domain / 2, domain / 2), width=wl / 6, signal=signal
+    )
+    sim = Simulation(
+        design=design,
+        sources=[source],
+        boundaries=[PML(thickness=1.2 * wl)],
+        time=t,
+        resolution=dx,
+    )
+    program = sim.compile(num_steps=2, snapshot_field="Ez", snapshot_interval=1)
+
+    monkeypatch.setenv("BEAMZ_SNAPSHOT_WARN_GIB", "1e-8")
+    with pytest.warns(RuntimeWarning, match="Compiled field snapshots will allocate"):
+        snapshot_state = program._empty_snapshot_state()
+
+    assert snapshot_state is not None
+    assert snapshot_state[0].shape[0] == 2
 
 
 def test_compiled_frequency_monitor_matches_direct_sum(small_sim_params):
@@ -1584,6 +1686,30 @@ def test_cache_reuse_across_equal_chunks(small_sim_params):
     # The program should have been compiled only once (all chunks are size 30).
     assert sim._compiled_program is not None
     assert sim._compiled_program.compile_count == 1
+
+
+def test_compile_cache_invalidates_when_specs_change(small_sim_params):
+    wl, dx, _dt, domain, _steps, t, signal = small_sim_params
+    design = Design(width=domain, height=domain, material=Material(permittivity=1.0))
+    source = GaussianSource(
+        position=(domain / 2, domain / 2), width=wl / 6, signal=signal
+    )
+    sim = Simulation(
+        design=design,
+        sources=[source],
+        boundaries=[PML(thickness=1.2 * wl)],
+        time=t,
+        resolution=dx,
+    )
+
+    with_source = sim.compile(num_steps=8)
+    assert with_source.source_specs
+
+    sim.sources = []
+    no_source = sim.compile(num_steps=8)
+
+    assert no_source is not with_source
+    assert no_source.source_specs == ()
 
 
 def test_waveform_absolute_indexing_correctness(small_sim_params):

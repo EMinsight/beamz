@@ -1,6 +1,7 @@
 import warnings
 from dataclasses import dataclass
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -312,52 +313,6 @@ class PML(Boundary):
             dist = jnp.clip(coords - (length - thickness), 0.0, None)
             mask, side_sigma, side_kappa, side_alpha = apply_side(dist)
             sigma = sigma + side_sigma
-            kappa = jnp.where(mask, side_kappa, kappa)
-            alpha = jnp.where(mask, side_alpha, alpha)
-
-        return sigma, kappa, alpha
-
-    def _compute_1d_cpml_profile_with_coords(
-        self,
-        coords,
-        length,
-        low_active,
-        high_active,
-        *,
-        sigma_order=None,
-        kappa_order=None,
-        alpha_order=None,
-    ):
-        """Compute 1D CPML profiles on explicit Yee sample coordinates."""
-
-        sigma = jnp.zeros_like(coords)
-        kappa = jnp.ones_like(coords)
-        alpha = jnp.zeros_like(coords)
-        thickness = max(float(self.thickness), 1e-30)
-        sigma_order = float(self.m if sigma_order is None else sigma_order)
-        kappa_order = float(self.m if kappa_order is None else kappa_order)
-        alpha_order = float(1.0 if alpha_order is None else alpha_order)
-
-        def apply_u(u):
-            u = jnp.clip(u, 0.0, 1.0)
-            side_sigma = self.sigma_max * jnp.power(u, sigma_order)
-            side_kappa = 1.0 + (self.kappa_max - 1.0) * jnp.power(u, kappa_order)
-            side_alpha = self.alpha_max * jnp.power(1.0 - u, alpha_order)
-            return side_sigma, side_kappa, side_alpha
-
-        if low_active:
-            u = (thickness - coords) / thickness
-            mask = u > 0
-            side_sigma, side_kappa, side_alpha = apply_u(u)
-            sigma = sigma + jnp.where(mask, side_sigma, 0.0)
-            kappa = jnp.where(mask, side_kappa, kappa)
-            alpha = jnp.where(mask, side_alpha, alpha)
-
-        if high_active:
-            u = (coords - (length - thickness)) / thickness
-            mask = u > 0
-            side_sigma, side_kappa, side_alpha = apply_u(u)
-            sigma = sigma + jnp.where(mask, side_sigma, 0.0)
             kappa = jnp.where(mask, side_kappa, kappa)
             alpha = jnp.where(mask, side_alpha, alpha)
 
@@ -1005,19 +960,6 @@ def sync_full_pec_3d_from_compact(fields, state: FullPec3DState) -> None:
         )
 
 
-def _tm_xy_ez_mask(shape: tuple[int, int], metallic_edges: set[str]) -> jnp.ndarray:
-    mask = np.zeros(shape, dtype=bool)
-    if "bottom" in metallic_edges:
-        mask[0, :] = True
-    if "top" in metallic_edges:
-        mask[-1, :] = True
-    if "left" in metallic_edges:
-        mask[:, 0] = True
-    if "right" in metallic_edges:
-        mask[:, -1] = True
-    return jnp.asarray(mask)
-
-
 def full_tm_2d_xy_masks(
     ez_shape: tuple[int, int], metallic_edges: set[str] | frozenset[str]
 ) -> dict[str, jnp.ndarray]:
@@ -1269,6 +1211,20 @@ def _cpml_correct_native_term(derivative, psi, a_term, b_term, inv_kappa_term):
     return corrected, psi_updated
 
 
+def _cpml_update_native_term(derivative, psi, a_term, b_term):
+    dtype = psi.dtype
+    derivative = jnp.asarray(derivative, dtype=dtype)
+    a_term = jnp.asarray(a_term, dtype=dtype)
+    b_term = jnp.asarray(b_term, dtype=dtype)
+    return b_term * psi + a_term * derivative
+
+
+def _cpml_corrected_update_term(derivative, psi, a_term, b_term, inv_kappa_term):
+    psi_updated = _cpml_update_native_term(derivative, psi, a_term, b_term)
+    corrected = derivative * jnp.asarray(inv_kappa_term, dtype=psi.dtype) + psi_updated
+    return corrected, psi_updated
+
+
 def build_h_boundary_views_for_e_3d(hx, hy, hz, boundaries):
     """Return H-field views for the 3D E update with boundaries applied outside ops.
 
@@ -1375,45 +1331,6 @@ def pec_curl_h_to_e_3d(hx, hy, hz, resolution, ex_shape, ey_shape, ez_shape):
     return curl_hx, curl_hy, curl_hz
 
 
-def _diff_integer_axis_with_high_pec_wall(arr, axis, resolution):
-    """Difference from an integer-aligned source axis to a half-step target axis.
-
-    Compact Beamz storage keeps the low PEC wall sample explicitly for
-    integer-aligned axes, but omits the corresponding high-wall sample. Meep's
-    metallic handling zeros the stored field at the wall, so the missing
-    high-side source plane is an explicit zero.
-    """
-
-    moved = jnp.moveaxis(arr, axis, 0)
-    interior = moved[1:] - moved[:-1]
-    high = -moved[-1:]
-    resolution = _scalar_like(resolution, moved.dtype)
-    out = jnp.concatenate([interior[:-1], high], axis=0) / resolution
-    return jnp.moveaxis(out, 0, axis)
-
-
-def full_pec_curl_h_to_e_3d(hx, hy, hz, resolution, ex_shape, ey_shape, ez_shape):
-    """Curl H -> E on the symmetric full 3D PEC Yee representation."""
-
-    resolution = _scalar_like(resolution, hx.dtype)
-    dHz_dy = (hz[:, 1:, :] - hz[:, :-1, :]) / resolution
-    dHy_dz = (hy[1:, :, :] - hy[:-1, :, :]) / resolution
-    curl_hx = jnp.zeros(ex_shape, dtype=hx.dtype)
-    curl_hx = curl_hx.at[1:-1, 1:-1, :].set(dHz_dy[1:-1, :, :] - dHy_dz[:, 1:-1, :])
-
-    dHx_dz = (hx[1:, :, :] - hx[:-1, :, :]) / resolution
-    dHz_dx = (hz[:, :, 1:] - hz[:, :, :-1]) / resolution
-    curl_hy = jnp.zeros(ey_shape, dtype=hx.dtype)
-    curl_hy = curl_hy.at[1:-1, :, 1:-1].set(dHx_dz[:, :, 1:-1] - dHz_dx[1:-1, :, :])
-
-    dHy_dx = (hy[:, :, 1:] - hy[:, :, :-1]) / resolution
-    dHx_dy = (hx[:, 1:, :] - hx[:, :-1, :]) / resolution
-    curl_hz = jnp.zeros(ez_shape, dtype=hx.dtype)
-    curl_hz = curl_hz.at[:, 1:-1, 1:-1].set(dHy_dx[:, 1:-1, :] - dHx_dy[:, :, 1:-1])
-
-    return curl_hx, curl_hy, curl_hz
-
-
 def pec_curl_e_to_h_3d(ex, ey, ez, resolution, hx_shape, hy_shape, hz_shape):
     """Compute the 3D H curl for a full-PEC cavity from explicit boundary layers."""
     resolution = _scalar_like(resolution, ex.dtype)
@@ -1439,32 +1356,171 @@ def pec_curl_e_to_h_3d(ex, ey, ez, resolution, hx_shape, hy_shape, hz_shape):
     return curl_ex, curl_ey, curl_ez
 
 
-def full_pec_curl_e_to_h_3d(ex, ey, ez, resolution, hx_shape, hy_shape, hz_shape):
-    """Curl E -> H on the symmetric full 3D PEC Yee representation."""
+def _full_pec_advance_h_component(field, curl, decay, source, mask):
+    if getattr(decay, "size", 0) == 0:
+        field = field - source * curl
+    else:
+        field = decay * field - source * curl
+    return jnp.where(mask, jnp.zeros((), dtype=field.dtype), field)
+
+
+def full_pec_update_h_from_e_3d(
+    ex,
+    ey,
+    ez,
+    hx,
+    hy,
+    hz,
+    resolution,
+    *,
+    h_decay,
+    h_source,
+    h_mask,
+    source_m=(None, None, None),
+):
+    """Update full-PEC H components without materializing a curl tuple."""
 
     resolution = _scalar_like(resolution, ex.dtype)
-    dEz_dy = (ez[:, 1:, :] - ez[:, :-1, :]) / resolution
-    dEy_dz = (ey[1:, :, :] - ey[:-1, :, :]) / resolution
-    curl_ex = dEz_dy - dEy_dz
+    h_decay_x, h_decay_y, h_decay_z = h_decay
+    h_source_x, h_source_y, h_source_z = h_source
+    hx_mask, hy_mask, hz_mask = h_mask
+    source_m_x, source_m_y, source_m_z = source_m
 
-    dEx_dz = (ex[1:, :, :] - ex[:-1, :, :]) / resolution
-    dEz_dx = (ez[:, :, 1:] - ez[:, :, :-1]) / resolution
-    curl_ey = dEx_dz - dEz_dx
+    curl_x = ((ez[:, 1:, :] - ez[:, :-1, :]) - (ey[1:, :, :] - ey[:-1, :, :])) / (
+        resolution
+    )
+    if source_m_x is not None:
+        curl_x = curl_x + source_m_x
+    hx = _full_pec_advance_h_component(
+        hx, curl_x, h_decay_x, h_source_x, hx_mask
+    )
 
-    dEy_dx = (ey[:, :, 1:] - ey[:, :, :-1]) / resolution
-    dEx_dy = (ex[:, 1:, :] - ex[:, :-1, :]) / resolution
-    curl_ez = dEy_dx - dEx_dy
+    curl_y = ((ex[1:, :, :] - ex[:-1, :, :]) - (ez[:, :, 1:] - ez[:, :, :-1])) / (
+        resolution
+    )
+    if source_m_y is not None:
+        curl_y = curl_y + source_m_y
+    hy = _full_pec_advance_h_component(
+        hy, curl_y, h_decay_y, h_source_y, hy_mask
+    )
 
-    assert curl_ex.shape == hx_shape, (
-        f"curl_ex shape mismatch: {curl_ex.shape} vs {hx_shape}"
+    curl_z = ((ey[:, :, 1:] - ey[:, :, :-1]) - (ex[:, 1:, :] - ex[:, :-1, :])) / (
+        resolution
     )
-    assert curl_ey.shape == hy_shape, (
-        f"curl_ey shape mismatch: {curl_ey.shape} vs {hy_shape}"
+    if source_m_z is not None:
+        curl_z = curl_z + source_m_z
+    hz = _full_pec_advance_h_component(
+        hz, curl_z, h_decay_z, h_source_z, hz_mask
     )
-    assert curl_ez.shape == hz_shape, (
-        f"curl_ez shape mismatch: {curl_ez.shape} vs {hz_shape}"
+
+    return hx, hy, hz
+
+
+def full_pec_h_update_coefficients_3d(state, dt):
+    """Return grouped H update coefficients for a full-PEC 3D state."""
+
+    sigma = (state.sigma_m_hx, state.sigma_m_hy, state.sigma_m_hz)
+    denom = tuple(1.0 + term * (dt / (2.0 * MU_0)) for term in sigma)
+    decay = tuple(
+        (1.0 - term * (dt / (2.0 * MU_0))) / den
+        for term, den in zip(sigma, denom, strict=True)
     )
-    return curl_ex, curl_ey, curl_ez
+    source = tuple((dt / MU_0) / den for den in denom)
+    return decay, source
+
+
+def _full_pec_region_coefficient(coeff, region, field_shape):
+    if getattr(coeff, "size", 0) == 0:
+        return coeff
+    if tuple(getattr(coeff, "shape", ())) == tuple(field_shape):
+        return coeff[region]
+    return coeff
+
+
+def _full_pec_advance_e_component(field, curl, decay, source, mask, region):
+    if getattr(decay, "size", 0) == 0:
+        values = field[region] + source[region] * curl
+    else:
+        decay = _full_pec_region_coefficient(decay, region, field.shape)
+        source = _full_pec_region_coefficient(source, region, field.shape)
+        values = decay * field[region] + source * curl
+    field = field.at[region].set(values)
+    return jnp.where(mask, jnp.zeros((), dtype=field.dtype), field)
+
+
+def full_pec_update_e_from_h_3d(
+    hx,
+    hy,
+    hz,
+    ex,
+    ey,
+    ez,
+    resolution,
+    *,
+    e_decay,
+    e_source,
+    e_mask,
+    source_j=(None, None, None),
+):
+    """Update full-PEC E components without building full zero-padded curl grids."""
+
+    resolution = _scalar_like(resolution, hx.dtype)
+    e_decay_x, e_decay_y, e_decay_z = e_decay
+    e_source_x, e_source_y, e_source_z = e_source
+    ex_mask, ey_mask, ez_mask = e_mask
+    source_j_x, source_j_y, source_j_z = source_j
+
+    region_x = (slice(1, -1), slice(1, -1), slice(None))
+    dHz_dy = (hz[:, 1:, :] - hz[:, :-1, :]) / resolution
+    dHy_dz = (hy[1:, :, :] - hy[:-1, :, :]) / resolution
+    curl_x = dHz_dy[1:-1, :, :] - dHy_dz[:, 1:-1, :]
+    if source_j_x is not None:
+        curl_x = curl_x + source_j_x[region_x]
+    ex = _full_pec_advance_e_component(
+        ex, curl_x, e_decay_x, e_source_x, ex_mask, region_x
+    )
+
+    region_y = (slice(1, -1), slice(None), slice(1, -1))
+    dHx_dz = (hx[1:, :, :] - hx[:-1, :, :]) / resolution
+    dHz_dx = (hz[:, :, 1:] - hz[:, :, :-1]) / resolution
+    curl_y = dHx_dz[:, :, 1:-1] - dHz_dx[1:-1, :, :]
+    if source_j_y is not None:
+        curl_y = curl_y + source_j_y[region_y]
+    ey = _full_pec_advance_e_component(
+        ey, curl_y, e_decay_y, e_source_y, ey_mask, region_y
+    )
+
+    region_z = (slice(None), slice(1, -1), slice(1, -1))
+    dHy_dx = (hy[:, :, 1:] - hy[:, :, :-1]) / resolution
+    dHx_dy = (hx[:, 1:, :] - hx[:, :-1, :]) / resolution
+    curl_z = dHy_dx[:, 1:-1, :] - dHx_dy[:, :, 1:-1]
+    if source_j_z is not None:
+        curl_z = curl_z + source_j_z[region_z]
+    ez = _full_pec_advance_e_component(
+        ez, curl_z, e_decay_z, e_source_z, ez_mask, region_z
+    )
+
+    return ex, ey, ez
+
+
+def full_pec_e_update_coefficients_3d(state, dt):
+    """Return grouped region-local E update coefficients for a full-PEC 3D state."""
+
+    conductivity = (state.sig_x_region, state.sig_y_region, state.sig_z_region)
+    permittivity = (state.eps_x_region, state.eps_y_region, state.eps_z_region)
+    denom = tuple(
+        1.0 + sigma * (dt / (2.0 * EPS_0 * eps))
+        for sigma, eps in zip(conductivity, permittivity, strict=True)
+    )
+    decay = tuple(
+        (1.0 - sigma * (dt / (2.0 * EPS_0 * eps))) / den
+        for sigma, eps, den in zip(conductivity, permittivity, denom, strict=True)
+    )
+    source = tuple(
+        (dt / (EPS_0 * eps)) / den
+        for eps, den in zip(permittivity, denom, strict=True)
+    )
+    return decay, source
 
 
 def cpml_curl_e_to_h_3d(
@@ -1511,6 +1567,216 @@ def cpml_curl_e_to_h_3d(
     curl_hy = term2 - term3
     curl_hz = term4 - term5
     return curl_hx, curl_hy, curl_hz, (psi0, psi1, psi2, psi3, psi4, psi5)
+
+
+def cpml_update_h_from_e_3d(
+    ex,
+    ey,
+    ez,
+    hx,
+    hy,
+    hz,
+    h_decay_x,
+    h_source_x,
+    h_decay_y,
+    h_source_y,
+    h_decay_z,
+    h_source_z,
+    resolution,
+    *,
+    a_h_terms,
+    b_h_terms,
+    inv_kappa_h_terms,
+    psi_h_terms,
+):
+    """CPML-corrected H update from E without returning full curl arrays."""
+
+    resolution = _scalar_like(resolution, ex.dtype)
+
+    term0, psi0 = _cpml_corrected_update_term(
+        (ez[:, 1:, :] - ez[:, :-1, :]) / resolution,
+        psi_h_terms[0],
+        a_h_terms[0],
+        b_h_terms[0],
+        inv_kappa_h_terms[0],
+    )
+    term1, psi1 = _cpml_corrected_update_term(
+        (ey[1:, :, :] - ey[:-1, :, :]) / resolution,
+        psi_h_terms[1],
+        a_h_terms[1],
+        b_h_terms[1],
+        inv_kappa_h_terms[1],
+    )
+    hx = h_decay_x * hx - h_source_x * (term0 - term1)
+
+    term2, psi2 = _cpml_corrected_update_term(
+        (ex[1:, :, :] - ex[:-1, :, :]) / resolution,
+        psi_h_terms[2],
+        a_h_terms[2],
+        b_h_terms[2],
+        inv_kappa_h_terms[2],
+    )
+    term3, psi3 = _cpml_corrected_update_term(
+        (ez[:, :, 1:] - ez[:, :, :-1]) / resolution,
+        psi_h_terms[3],
+        a_h_terms[3],
+        b_h_terms[3],
+        inv_kappa_h_terms[3],
+    )
+    hy = h_decay_y * hy - h_source_y * (term2 - term3)
+
+    term4, psi4 = _cpml_corrected_update_term(
+        (ey[:, :, 1:] - ey[:, :, :-1]) / resolution,
+        psi_h_terms[4],
+        a_h_terms[4],
+        b_h_terms[4],
+        inv_kappa_h_terms[4],
+    )
+    term5, psi5 = _cpml_corrected_update_term(
+        (ex[:, 1:, :] - ex[:, :-1, :]) / resolution,
+        psi_h_terms[5],
+        a_h_terms[5],
+        b_h_terms[5],
+        inv_kappa_h_terms[5],
+    )
+    hz = h_decay_z * hz - h_source_z * (term4 - term5)
+
+    return hx, hy, hz, (psi0, psi1, psi2, psi3, psi4, psi5)
+
+
+def apply_lossy_shell_from_lossless_3d(
+    updated_lossless,
+    old,
+    source_lossless,
+    slabs,
+    decay_slabs,
+    source_slabs,
+):
+    out = updated_lossless
+    for starts, sizes, decay_s, source_s in zip(
+        (slab[0] for slab in slabs),
+        (slab[1] for slab in slabs),
+        decay_slabs,
+        source_slabs,
+    ):
+        old_s = jax.lax.dynamic_slice(old, starts, sizes)
+        lossless_s = jax.lax.dynamic_slice(updated_lossless, starts, sizes)
+        if getattr(source_lossless, "ndim", 0) == 0:
+            source_ll_s = source_lossless
+        else:
+            source_ll_s = jax.lax.dynamic_slice(source_lossless, starts, sizes)
+        beta = source_s / source_ll_s
+        lossy_s = (decay_s - beta) * old_s + beta * lossless_s
+        out = jax.lax.dynamic_update_slice(out, lossy_s, starts)
+    return out
+
+
+def cpml_update_h_from_e_3d_shell_split(
+    ex,
+    ey,
+    ez,
+    hx,
+    hy,
+    hz,
+    h_source_lossless_x,
+    h_source_lossless_y,
+    h_source_lossless_z,
+    resolution,
+    *,
+    a_h_terms,
+    b_h_terms,
+    inv_kappa_h_terms,
+    psi_h_terms,
+    h_lossy_shell_x,
+    h_lossy_shell_y,
+    h_lossy_shell_z,
+    h_shell_decay_x,
+    h_shell_source_x,
+    h_shell_decay_y,
+    h_shell_source_y,
+    h_shell_decay_z,
+    h_shell_source_z,
+):
+    """CPML H update using lossless full-domain coefficients plus shell patches."""
+
+    resolution = _scalar_like(resolution, ex.dtype)
+
+    term0, psi0 = _cpml_corrected_update_term(
+        (ez[:, 1:, :] - ez[:, :-1, :]) / resolution,
+        psi_h_terms[0],
+        a_h_terms[0],
+        b_h_terms[0],
+        inv_kappa_h_terms[0],
+    )
+    term1, psi1 = _cpml_corrected_update_term(
+        (ey[1:, :, :] - ey[:-1, :, :]) / resolution,
+        psi_h_terms[1],
+        a_h_terms[1],
+        b_h_terms[1],
+        inv_kappa_h_terms[1],
+    )
+    hx_old = hx
+    hx = hx_old - h_source_lossless_x * (term0 - term1)
+    hx = apply_lossy_shell_from_lossless_3d(
+        hx,
+        hx_old,
+        h_source_lossless_x,
+        h_lossy_shell_x,
+        h_shell_decay_x,
+        h_shell_source_x,
+    )
+
+    term2, psi2 = _cpml_corrected_update_term(
+        (ex[1:, :, :] - ex[:-1, :, :]) / resolution,
+        psi_h_terms[2],
+        a_h_terms[2],
+        b_h_terms[2],
+        inv_kappa_h_terms[2],
+    )
+    term3, psi3 = _cpml_corrected_update_term(
+        (ez[:, :, 1:] - ez[:, :, :-1]) / resolution,
+        psi_h_terms[3],
+        a_h_terms[3],
+        b_h_terms[3],
+        inv_kappa_h_terms[3],
+    )
+    hy_old = hy
+    hy = hy_old - h_source_lossless_y * (term2 - term3)
+    hy = apply_lossy_shell_from_lossless_3d(
+        hy,
+        hy_old,
+        h_source_lossless_y,
+        h_lossy_shell_y,
+        h_shell_decay_y,
+        h_shell_source_y,
+    )
+
+    term4, psi4 = _cpml_corrected_update_term(
+        (ey[:, :, 1:] - ey[:, :, :-1]) / resolution,
+        psi_h_terms[4],
+        a_h_terms[4],
+        b_h_terms[4],
+        inv_kappa_h_terms[4],
+    )
+    term5, psi5 = _cpml_corrected_update_term(
+        (ex[:, 1:, :] - ex[:, :-1, :]) / resolution,
+        psi_h_terms[5],
+        a_h_terms[5],
+        b_h_terms[5],
+        inv_kappa_h_terms[5],
+    )
+    hz_old = hz
+    hz = hz_old - h_source_lossless_z * (term4 - term5)
+    hz = apply_lossy_shell_from_lossless_3d(
+        hz,
+        hz_old,
+        h_source_lossless_z,
+        h_lossy_shell_z,
+        h_shell_decay_z,
+        h_shell_source_z,
+    )
+
+    return hx, hy, hz, (psi0, psi1, psi2, psi3, psi4, psi5)
 
 
 def cpml_curl_h_to_e_3d(
@@ -1568,6 +1834,209 @@ def cpml_curl_h_to_e_3d(
     curl_ey = term2 - term3
     curl_ez = term4 - term5
     return curl_ex, curl_ey, curl_ez, (psi0, psi1, psi2, psi3, psi4, psi5)
+
+
+def cpml_update_e_from_h_3d(
+    hx,
+    hy,
+    hz,
+    ex,
+    ey,
+    ez,
+    e_decay_x,
+    e_source_x,
+    e_decay_y,
+    e_source_y,
+    e_decay_z,
+    e_source_z,
+    resolution,
+    *,
+    a_e_terms,
+    b_e_terms,
+    inv_kappa_e_terms,
+    psi_e_terms,
+    metallic_edges=frozenset(),
+):
+    """CPML-corrected E update from H without returning full curl arrays."""
+
+    metallic_edges = frozenset(metallic_edges or ())
+
+    def pad(arr, axis):
+        low_edge, high_edge = _edge_pair_for_axis(axis)
+        return _pad_with_boundary_ghosts(
+            arr,
+            axis,
+            low_metallic=low_edge in metallic_edges,
+            high_metallic=high_edge in metallic_edges,
+        )
+
+    term0, psi0 = _cpml_corrected_update_term(
+        _adjacent_difference(pad(hz, axis=1), axis=1, resolution=resolution),
+        psi_e_terms[0],
+        a_e_terms[0],
+        b_e_terms[0],
+        inv_kappa_e_terms[0],
+    )
+    term1, psi1 = _cpml_corrected_update_term(
+        _adjacent_difference(pad(hy, axis=0), axis=0, resolution=resolution),
+        psi_e_terms[1],
+        a_e_terms[1],
+        b_e_terms[1],
+        inv_kappa_e_terms[1],
+    )
+    ex = e_decay_x * ex + e_source_x * (term0 - term1)
+
+    term2, psi2 = _cpml_corrected_update_term(
+        _adjacent_difference(pad(hx, axis=0), axis=0, resolution=resolution),
+        psi_e_terms[2],
+        a_e_terms[2],
+        b_e_terms[2],
+        inv_kappa_e_terms[2],
+    )
+    term3, psi3 = _cpml_corrected_update_term(
+        _adjacent_difference(pad(hz, axis=2), axis=2, resolution=resolution),
+        psi_e_terms[3],
+        a_e_terms[3],
+        b_e_terms[3],
+        inv_kappa_e_terms[3],
+    )
+    ey = e_decay_y * ey + e_source_y * (term2 - term3)
+
+    term4, psi4 = _cpml_corrected_update_term(
+        _adjacent_difference(pad(hy, axis=2), axis=2, resolution=resolution),
+        psi_e_terms[4],
+        a_e_terms[4],
+        b_e_terms[4],
+        inv_kappa_e_terms[4],
+    )
+    term5, psi5 = _cpml_corrected_update_term(
+        _adjacent_difference(pad(hx, axis=1), axis=1, resolution=resolution),
+        psi_e_terms[5],
+        a_e_terms[5],
+        b_e_terms[5],
+        inv_kappa_e_terms[5],
+    )
+    ez = e_decay_z * ez + e_source_z * (term4 - term5)
+
+    return ex, ey, ez, (psi0, psi1, psi2, psi3, psi4, psi5)
+
+
+def cpml_update_e_from_h_3d_shell_split(
+    hx,
+    hy,
+    hz,
+    ex,
+    ey,
+    ez,
+    e_source_lossless_x,
+    e_source_lossless_y,
+    e_source_lossless_z,
+    resolution,
+    *,
+    a_e_terms,
+    b_e_terms,
+    inv_kappa_e_terms,
+    psi_e_terms,
+    e_lossy_shell_x,
+    e_lossy_shell_y,
+    e_lossy_shell_z,
+    e_shell_decay_x,
+    e_shell_source_x,
+    e_shell_decay_y,
+    e_shell_source_y,
+    e_shell_decay_z,
+    e_shell_source_z,
+    metallic_edges=frozenset(),
+):
+    """CPML E update using lossless material coefficients plus shell patches."""
+
+    metallic_edges = frozenset(metallic_edges or ())
+
+    def pad(arr, axis):
+        low_edge, high_edge = _edge_pair_for_axis(axis)
+        return _pad_with_boundary_ghosts(
+            arr,
+            axis,
+            low_metallic=low_edge in metallic_edges,
+            high_metallic=high_edge in metallic_edges,
+        )
+
+    term0, psi0 = _cpml_corrected_update_term(
+        _adjacent_difference(pad(hz, axis=1), axis=1, resolution=resolution),
+        psi_e_terms[0],
+        a_e_terms[0],
+        b_e_terms[0],
+        inv_kappa_e_terms[0],
+    )
+    term1, psi1 = _cpml_corrected_update_term(
+        _adjacent_difference(pad(hy, axis=0), axis=0, resolution=resolution),
+        psi_e_terms[1],
+        a_e_terms[1],
+        b_e_terms[1],
+        inv_kappa_e_terms[1],
+    )
+    ex_old = ex
+    ex = ex_old + e_source_lossless_x * (term0 - term1)
+    ex = apply_lossy_shell_from_lossless_3d(
+        ex,
+        ex_old,
+        e_source_lossless_x,
+        e_lossy_shell_x,
+        e_shell_decay_x,
+        e_shell_source_x,
+    )
+
+    term2, psi2 = _cpml_corrected_update_term(
+        _adjacent_difference(pad(hx, axis=0), axis=0, resolution=resolution),
+        psi_e_terms[2],
+        a_e_terms[2],
+        b_e_terms[2],
+        inv_kappa_e_terms[2],
+    )
+    term3, psi3 = _cpml_corrected_update_term(
+        _adjacent_difference(pad(hz, axis=2), axis=2, resolution=resolution),
+        psi_e_terms[3],
+        a_e_terms[3],
+        b_e_terms[3],
+        inv_kappa_e_terms[3],
+    )
+    ey_old = ey
+    ey = ey_old + e_source_lossless_y * (term2 - term3)
+    ey = apply_lossy_shell_from_lossless_3d(
+        ey,
+        ey_old,
+        e_source_lossless_y,
+        e_lossy_shell_y,
+        e_shell_decay_y,
+        e_shell_source_y,
+    )
+
+    term4, psi4 = _cpml_corrected_update_term(
+        _adjacent_difference(pad(hy, axis=2), axis=2, resolution=resolution),
+        psi_e_terms[4],
+        a_e_terms[4],
+        b_e_terms[4],
+        inv_kappa_e_terms[4],
+    )
+    term5, psi5 = _cpml_corrected_update_term(
+        _adjacent_difference(pad(hx, axis=1), axis=1, resolution=resolution),
+        psi_e_terms[5],
+        a_e_terms[5],
+        b_e_terms[5],
+        inv_kappa_e_terms[5],
+    )
+    ez_old = ez
+    ez = ez_old + e_source_lossless_z * (term4 - term5)
+    ez = apply_lossy_shell_from_lossless_3d(
+        ez,
+        ez_old,
+        e_source_lossless_z,
+        e_lossy_shell_z,
+        e_shell_decay_z,
+        e_shell_source_z,
+    )
+
+    return ex, ey, ez, (psi0, psi1, psi2, psi3, psi4, psi5)
 
 
 def full_pec_curl_e_to_h_2d_xy(ez, resolution, hx_shape, hy_shape):

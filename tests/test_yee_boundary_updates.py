@@ -7,9 +7,9 @@ from beamz.simulation.boundaries import (
     PEC,
     create_metallic_boundary_masks,
     full_pec_curl_e_to_h_2d_xy,
-    full_pec_curl_e_to_h_3d,
     full_pec_curl_h_to_e_2d_xy,
-    full_pec_curl_h_to_e_3d,
+    full_pec_update_e_from_h_3d,
+    full_pec_update_h_from_e_3d,
     has_full_pec_2d_xy,
     initialize_full_pec_3d_state,
     initialize_tm_2d_xy_state,
@@ -305,32 +305,54 @@ def test_xy_2d_full_pec_curls_match_full_shapes():
     assert curl_hz.shape == state.Ez.shape
 
 
-def test_full_pec_curls_match_full_shapes():
+def test_full_pec_updates_match_full_shapes():
     fields = _uniform_3d_fields()
     state = initialize_full_pec_3d_state(fields)
 
-    curl_ex, curl_ey, curl_ez = full_pec_curl_e_to_h_3d(
+    hx, hy, hz = full_pec_update_h_from_e_3d(
         state.Ex,
         state.Ey,
         state.Ez,
-        1.0,
-        state.Hx.shape,
-        state.Hy.shape,
-        state.Hz.shape,
-    )
-    assert curl_ex.shape == state.Hx.shape
-    assert curl_ey.shape == state.Hy.shape
-    assert curl_ez.shape == state.Hz.shape
-
-    curl_hx, curl_hy, curl_hz = full_pec_curl_h_to_e_3d(
         state.Hx,
         state.Hy,
         state.Hz,
         1.0,
-        state.Ex.shape,
-        state.Ey.shape,
-        state.Ez.shape,
+        h_decay=(
+            jnp.ones_like(state.Hx),
+            jnp.ones_like(state.Hy),
+            jnp.ones_like(state.Hz),
+        ),
+        h_source=(
+            jnp.ones_like(state.Hx),
+            jnp.ones_like(state.Hy),
+            jnp.ones_like(state.Hz),
+        ),
+        h_mask=(state.masks["Hx"], state.masks["Hy"], state.masks["Hz"]),
     )
-    assert curl_hx.shape == state.Ex.shape
-    assert curl_hy.shape == state.Ey.shape
-    assert curl_hz.shape == state.Ez.shape
+    assert hx.shape == state.Hx.shape
+    assert hy.shape == state.Hy.shape
+    assert hz.shape == state.Hz.shape
+
+    ex, ey, ez = full_pec_update_e_from_h_3d(
+        state.Hx,
+        state.Hy,
+        state.Hz,
+        state.Ex,
+        state.Ey,
+        state.Ez,
+        1.0,
+        e_decay=(
+            jnp.ones_like(state.Ex),
+            jnp.ones_like(state.Ey),
+            jnp.ones_like(state.Ez),
+        ),
+        e_source=(
+            jnp.ones_like(state.Ex),
+            jnp.ones_like(state.Ey),
+            jnp.ones_like(state.Ez),
+        ),
+        e_mask=(state.masks["Ex"], state.masks["Ey"], state.masks["Ez"]),
+    )
+    assert ex.shape == state.Ex.shape
+    assert ey.shape == state.Ey.shape
+    assert ez.shape == state.Ez.shape

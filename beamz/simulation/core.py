@@ -66,6 +66,92 @@ def _copy_with_update(obj, update=None):
     return copied
 
 
+def _compiled_cache_value_token(value, *, _seen=None):
+    """Build a conservative cache token for values that affect compiled specs."""
+    if _seen is None:
+        _seen = set()
+
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, slice):
+        return ("slice", value.start, value.stop, value.step)
+    if callable(value):
+        return ("callable", id(value))
+
+    try:
+        arr = np.asarray(value)
+    except Exception:
+        arr = None
+    if arr is not None and hasattr(value, "shape") and hasattr(value, "dtype"):
+        token = ("array", tuple(int(v) for v in arr.shape), str(arr.dtype))
+        if arr.size <= 4096:
+            try:
+                token = (*token, hash(arr.tobytes()))
+            except Exception:
+                token = (*token, id(value))
+        else:
+            token = (*token, id(value))
+        return token
+
+    obj_id = id(value)
+    if obj_id in _seen:
+        return ("cycle", obj_id)
+    _seen.add(obj_id)
+    try:
+        if isinstance(value, Mapping):
+            return (
+                "mapping",
+                tuple(
+                    sorted(
+                        (
+                            _compiled_cache_value_token(k, _seen=_seen),
+                            _compiled_cache_value_token(v, _seen=_seen),
+                        )
+                        for k, v in value.items()
+                    )
+                ),
+            )
+        if isinstance(value, (tuple, list)):
+            return (
+                type(value).__name__,
+                tuple(_compiled_cache_value_token(v, _seen=_seen) for v in value),
+            )
+        if isinstance(value, set):
+            return (
+                "set",
+                tuple(
+                    sorted(_compiled_cache_value_token(v, _seen=_seen) for v in value)
+                ),
+            )
+
+        attrs = getattr(value, "__dict__", None)
+        if attrs is not None:
+            runtime_attrs = set(getattr(value, "_RUNTIME_ATTRS", set()))
+            public_attrs = tuple(
+                sorted(
+                    (
+                        key,
+                        _compiled_cache_value_token(attr_value, _seen=_seen),
+                    )
+                    for key, attr_value in attrs.items()
+                    if key not in runtime_attrs and key != "_state"
+                )
+            )
+            return (
+                value.__class__.__module__,
+                value.__class__.__qualname__,
+                obj_id,
+                public_attrs,
+            )
+        return (type(value).__module__, type(value).__qualname__, repr(value))
+    finally:
+        _seen.discard(obj_id)
+
+
+def _compiled_cache_sequence_token(values):
+    return _compiled_cache_value_token(tuple(values or ()))
+
+
 def _material_index(material) -> float:
     eps = getattr(material, "permittivity", 1.0)
     try:
@@ -1051,109 +1137,6 @@ class Simulation:
                         self.current_step,
                     )
 
-    def _run_via_step_engine(
-        self,
-        *,
-        num_steps,
-        record_interval,
-        record_fields,
-        progress,
-        snapshot_field,
-        snapshot_interval,
-        snapshot_callback,
-        store_snapshots,
-    ):
-        """Reference execution path for differential checks and debugging."""
-        if record_fields is None:
-            record_fields = ["Ez"]
-
-        record_every = int(record_interval) if record_interval else None
-        if record_every is not None and record_every <= 0:
-            raise ValueError("record_interval must be a positive integer")
-
-        snapshots = []
-        snapshot_layout = None
-        if snapshot_field is not None:
-            from beamz.simulation.snapshots import (
-                _snapshot_units_and_scale,
-                validate_snapshot_field,
-            )
-            from beamz.visual.data import simulation_plot_data, snapshot_payload
-
-            validate_snapshot_field(self, snapshot_field)
-            snapshot_units, snapshot_scale = _snapshot_units_and_scale(snapshot_field)
-            snapshot_extent = (0.0, self.design.width, 0.0, self.design.height)
-        else:
-            snapshot_units = None
-            snapshot_scale = 1.0
-            snapshot_extent = None
-
-        def _snapshot_output_field(name):
-            return np.array(getattr(self.fields, name))
-
-        field_history = {name: [] for name in record_fields} if record_every else None
-        field_times = [] if record_every else None
-        field_steps = [] if record_every else None
-        steps_done = 0
-        progress_stride = max(1, num_steps // 100) if progress else None
-
-        while steps_done < num_steps and self.step():
-            steps_done += 1
-
-            if field_history is not None and (self.current_step % record_every == 0):
-                for name in record_fields:
-                    if hasattr(self.fields, name):
-                        field_history[name].append(np.array(getattr(self.fields, name)))
-                field_times.append(float(self.t))
-                field_steps.append(int(self.current_step))
-
-            if snapshot_field is not None and (
-                self.current_step % snapshot_interval == 0
-            ):
-                if snapshot_layout is None:
-                    snapshot_layout = simulation_plot_data(self)
-                snapshot = snapshot_payload(
-                    field=_snapshot_output_field(snapshot_field) * snapshot_scale,
-                    field_name=snapshot_field,
-                    t=self.t,
-                    step=self.current_step,
-                    num_steps=self.num_steps,
-                    extent=snapshot_extent,
-                    units=snapshot_units,
-                    plane_2d=self.plane_2d,
-                    layout=snapshot_layout,
-                )
-                if snapshot_callback is not None:
-                    snapshot_callback(snapshot)
-                if store_snapshots:
-                    snapshots.append(snapshot)
-
-            if progress and (
-                steps_done == num_steps
-                or steps_done == 1
-                or (steps_done % progress_stride) == 0
-            ):
-                _print_inline_progress(steps_done, num_steps)
-
-        if progress:
-            _finish_inline_progress()
-
-        fields_result = None
-        if field_history is not None:
-            fields_result = {
-                k: np.stack(v) if len(v) > 0 else np.zeros((0,))
-                for k, v in field_history.items()
-            }
-
-        return SimulationResults.from_run(
-            self,
-            fields=fields_result,
-            field_times=field_times,
-            field_steps=field_steps,
-            monitors=self.monitors,
-            snapshots=snapshots,
-        )
-
     def _compiled_step_source_groups(self):
         if self._compiled_step_source_specs is not None:
             return self._compiled_step_source_specs
@@ -1333,18 +1316,6 @@ class Simulation:
             loop_kind = "scan"
         else:
             raise ValueError("Invalid BEAMZ_COMPILED_LOOP_KIND (use: scan, fori_loop).")
-        e_shell_split = os.getenv("BEAMZ_ENABLE_E_SHELL_SPLIT", "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
-        h_shell_split = os.getenv("BEAMZ_ENABLE_H_SHELL_SPLIT", "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
         source_single_slab_dense = os.getenv(
             "BEAMZ_SOURCE_SINGLE_SLAB_DENSE", ""
         ).strip().lower() in {"1", "true", "yes", "on"}
@@ -1355,11 +1326,12 @@ class Simulation:
             self.is_3d,
             self.plane_2d,
             loop_kind,
-            e_shell_split,
-            h_shell_split,
             source_single_slab_dense,
             snapshot_field,
             snapshot_interval,
+            _compiled_cache_sequence_token(self.sources),
+            _compiled_cache_sequence_token(self.monitors),
+            _compiled_cache_sequence_token(self.boundaries),
         )
         cached = self._compiled_program_cache.get(signature)
         if cached is not None:
@@ -1775,47 +1747,6 @@ class Simulation:
             record_fields=None,
             progress=progress,
         )
-
-    def _get_monitor_trace(self, monitor, field_component="Ez", reduction="mean"):
-        """Reduce monitor field snapshots to a 1D time trace."""
-        if field_component not in monitor.fields:
-            raise ValueError(
-                f"Monitor '{monitor.name}' has no field '{field_component}'. "
-                f"Available: {sorted(monitor.fields.keys())}"
-            )
-
-        raw = monitor.fields[field_component]
-        if raw is None or len(raw) == 0:
-            raise ValueError(
-                f"Monitor '{monitor.name}' has no recorded '{field_component}' data."
-            )
-
-        values = np.asarray(raw)
-        if values.ndim == 1:
-            trace = values
-        else:
-            flattened = values.reshape(values.shape[0], -1)
-            reduction_key = str(reduction).lower()
-            if reduction_key == "mean":
-                trace = np.mean(flattened, axis=1)
-            elif reduction_key == "sum":
-                trace = np.sum(flattened, axis=1)
-            elif reduction_key == "max_abs":
-                trace = np.max(np.abs(flattened), axis=1)
-            else:
-                raise ValueError(
-                    f"Unsupported reduction '{reduction}'. "
-                    "Use one of {'mean', 'sum', 'max_abs'}."
-                )
-
-        time_values = np.asarray(monitor.fields.get("t", []), dtype=float)
-        if time_values.size < trace.shape[0]:
-            if hasattr(self, "time") and len(self.time) >= trace.shape[0]:
-                time_values = np.asarray(self.time[: trace.shape[0]], dtype=float)
-            else:
-                time_values = np.arange(trace.shape[0], dtype=float) * float(self.dt)
-
-        return np.asarray(trace), np.asarray(time_values)
 
     @staticmethod
     def _safe_ratio(num, den, eps=1e-18):
@@ -3604,18 +3535,6 @@ class Simulation:
         if denom <= 1e-30 or not np.isfinite(denom):
             return np.nan
         return float(np.linalg.norm(target - recon) / denom)
-
-    @staticmethod
-    def _modal_projection_reconstruction_residual_from_matrix(
-        field_vec,
-        mode_matrix,
-        coeff,
-    ):
-        return Simulation._modal_projection_reconstruction_diagnostics_from_matrix(
-            field_vec,
-            mode_matrix,
-            coeff,
-        )["residual"]
 
     @staticmethod
     def _modal_projection_reconstruction_diagnostics_from_matrix(
