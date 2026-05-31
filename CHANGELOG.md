@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.3.1 - 2026-05-31
+
+### Added
+- Added a compact demo example for the demux workflow.
+
+### Changed
+- Reduced memory load in boundary and compiled simulation paths.
+
+### Fixed
+- Fixed the demux example.
+
 ## v0.3.0 - 2026-05-26
 
 ### Added
