@@ -30,13 +30,26 @@ from beamz.devices.sources.compiler import (
     _compile_mode_source_3d,
     _sample_waveform,
 )
-from beamz.devices.sources.mode import _analytic_signal_quadrature
-from beamz.simulation.boundaries import initialize_full_pec_3d_state
+from beamz.devices.sources.mode import (
+    _analytic_signal_quadrature,
+    _ModeSource3DResidual,
+)
+from beamz.simulation import ops
+from beamz.simulation.boundaries import (
+    build_h_boundary_views_for_e_3d,
+    create_metallic_boundary_masks,
+    initialize_full_pec_3d_state,
+)
 from beamz.simulation.compiled import (
     CompiledRunConfig,
     CompiledSimulation,
     EngineState,
     MonitorState,
+)
+from beamz.shared_kernels import (
+    CPML_3D_E_DERIVATIVES,
+    CPML_3D_H_DERIVATIVES,
+    build_cpml_3d_primitive_terms,
 )
 
 pytestmark = [pytest.mark.compiled, pytest.mark.component]
@@ -393,9 +406,13 @@ def test_split_3d_cpml_boundaries_preserve_identity_kappa_in_compiled_terms():
     )
     program = sim.compile(num_steps=1)
 
-    cz = program.cpml3d_inv_kappa_e_terms[4].shape[0] // 2
-    cy = program.cpml3d_inv_kappa_e_terms[4].shape[1] // 2
-    cx = program.cpml3d_inv_kappa_e_terms[4].shape[2] // 2
+    assert program.use_primitive_cpml_3d_terms
+
+    cz = sim.fields.permittivity.shape[0] // 2
+    cy = sim.fields.permittivity.shape[1] // 2
+    cx = sim.fields.permittivity.shape[2] // 2
+    cx_e = program.cpml3d_kappa_e_terms[4].shape[2] // 2
+    cx_h = program.cpml3d_kappa_h_terms[3].shape[2] // 2
 
     assert np.asarray(sim.pml_data["kappa_x"], dtype=np.float64)[
         cz, cy, cx
@@ -403,15 +420,60 @@ def test_split_3d_cpml_boundaries_preserve_identity_kappa_in_compiled_terms():
     assert np.asarray(sim.pml_data["kappa_y"], dtype=np.float64)[
         cz, cy, cx
     ] == pytest.approx(1.0)
-    assert np.asarray(program.cpml3d_inv_kappa_e_terms[4], dtype=np.float64)[
-        cz, cy, cx
+    assert np.asarray(program.cpml3d_kappa_e_terms[4], dtype=np.float64)[
+        0, 0, cx_e
     ] == pytest.approx(1.0)
-    assert np.asarray(program.cpml3d_inv_kappa_h_terms[3], dtype=np.float64)[
-        cz, cy, cx
+    assert np.asarray(program.cpml3d_kappa_h_terms[3], dtype=np.float64)[
+        0, 0, cx_h
     ] == pytest.approx(1.0)
 
 
-def test_compiled_uses_sparse_shell_coefficients_3d():
+def test_cpml_3d_primitive_terms_fall_back_for_nonseparable_profiles():
+    shape = (3, 4, 5)
+    pml_data = {}
+    for spec in (*CPML_3D_H_DERIVATIVES, *CPML_3D_E_DERIVATIVES):
+        axis = {"z": 0, "y": 1, "x": 2}[spec.derivative_axis]
+        profile_shape = [1, 1, 1]
+        profile_shape[axis] = shape[axis]
+        base = jnp.linspace(0.0, 1.0, shape[axis], dtype=jnp.float32).reshape(
+            profile_shape
+        )
+        separable = jnp.broadcast_to(base, shape)
+        pml_data[f"cpml3d_{spec.name}_sigma"] = separable
+        pml_data[f"cpml3d_{spec.name}_kappa"] = 1.0 + separable
+        pml_data[f"cpml3d_{spec.name}_alpha"] = 0.1 * separable
+
+    key = f"cpml3d_{CPML_3D_E_DERIVATIVES[0].name}_sigma"
+    nonseparable = pml_data[key].at[1, 1, 1].add(0.25)
+    pml_data[key] = nonseparable
+
+    assert build_cpml_3d_primitive_terms(pml_data) is None
+
+
+def test_compiled_3d_metallic_edge_zeroing_matches_masks():
+    fields = SimpleNamespace(
+        Ex=jnp.ones((3, 4, 5), dtype=jnp.float32),
+        Ey=jnp.ones((3, 4, 5), dtype=jnp.float32),
+        Ez=jnp.ones((3, 4, 5), dtype=jnp.float32),
+        Hx=jnp.ones((3, 4, 5), dtype=jnp.float32),
+        Hy=jnp.ones((3, 4, 5), dtype=jnp.float32),
+        Hz=jnp.ones((3, 4, 5), dtype=jnp.float32),
+    )
+    edges = frozenset({"front", "bottom", "left"})
+    masks = create_metallic_boundary_masks(
+        fields,
+        [PEC(edges=list(edges))],
+        is_3d=True,
+    )
+
+    for component in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz"):
+        field = getattr(fields, component)
+        expected = jnp.where(masks[component], 0.0, field)
+        actual = CompiledSimulation._apply_metal_edges_3d(field, component, edges)
+        np.testing.assert_array_equal(np.asarray(actual), np.asarray(expected))
+
+
+def test_compiled_3d_cpml_uses_dense_update_coefficients():
     wl = 1.55 * um
     dx, dt = calc_optimal_fdtd_params(
         wl, 1.0, dims=3, safety_factor=0.95, points_per_wavelength=8
@@ -432,26 +494,29 @@ def test_compiled_uses_sparse_shell_coefficients_3d():
 
     program = sim.compile(num_steps=1)
 
-    assert program.use_sparse_3d_e_coefficients
-    assert program.use_sparse_3d_h_coefficients
-    assert program.e_decay_x.shape == (0, 0, 0)
-    assert program.e_source_x.shape == (0, 0, 0)
-    assert program.h_decay_x.shape == (0, 0, 0)
-    assert program.h_source_x.shape == (0, 0, 0)
+    assert program.use_cpml_3d
+    assert program.e_decay_x.shape == sim.fields.Ex.shape
+    assert program.e_source_x.shape == sim.fields.Ex.shape
+    assert program.h_decay_x.shape == sim.fields.Hx.shape
+    assert program.h_source_x.shape == sim.fields.Hx.shape
     assert program.e_source_lossless_x.shape == (0, 0, 0)
     assert program.e_source_lossless_y.shape == (0, 0, 0)
     assert program.e_source_lossless_z.shape == (0, 0, 0)
-    assert program.e_permittivity_x is sim.fields.eps_x
-    assert program.e_permittivity_y is sim.fields.eps_y
-    assert program.e_permittivity_z is sim.fields.eps_z
-    assert program.h_source_lossless_x.shape == ()
-    assert program.h_source_lossless_y.shape == ()
-    assert program.h_source_lossless_z.shape == ()
-    assert program.e_shell_decay_x
-    assert program.h_shell_decay_x
+    assert program.e_inv_permittivity_x.shape == (0, 0, 0)
+    assert program.e_inv_permittivity_y.shape == (0, 0, 0)
+    assert program.e_inv_permittivity_z.shape == (0, 0, 0)
+    assert program.ex_metal_mask.shape == (0, 0, 0)
+    assert program.hx_metal_mask.shape == (0, 0, 0)
+    assert program.field_shape_ex == tuple(sim.fields.Ex.shape)
+    assert program.field_shape_hx == tuple(sim.fields.Hx.shape)
+    assert program.e_conductivity_x.shape == (0, 0, 0)
+    assert program.h_sigma_m_x.shape == (0, 0, 0)
+    assert program.h_source_lossless_x.shape == (0, 0, 0)
+    assert program.h_source_lossless_y.shape == (0, 0, 0)
+    assert program.h_source_lossless_z.shape == (0, 0, 0)
 
 
-def test_sparse_3d_snapshot_shape_uses_permittivity_reference():
+def test_compiled_3d_snapshot_shape_uses_field_reference():
     wl = 1.55 * um
     dx, dt = calc_optimal_fdtd_params(
         wl, 1.0, dims=3, safety_factor=0.95, points_per_wavelength=8
@@ -473,12 +538,265 @@ def test_sparse_3d_snapshot_shape_uses_permittivity_reference():
     program = sim.compile(num_steps=2, snapshot_field="Ez", snapshot_interval=1)
     snapshot_state = program._empty_snapshot_state()
 
-    assert program.use_sparse_3d_e_coefficients
     assert program.e_source_lossless_z.shape == (0, 0, 0)
-    assert program.e_source_z.shape == (0, 0, 0)
+    assert program.e_source_z.shape == sim.fields.Ez.shape
     assert program._snapshot_field_shape() == tuple(sim.fields.Ez.shape)
     assert snapshot_state is not None
     assert snapshot_state[0].shape == (2, *sim.fields.Ez.shape)
+
+
+def test_compiled_3d_sponge_pml_uses_material_coefficients():
+    wl = 1.55 * um
+    dx, dt = calc_optimal_fdtd_params(
+        wl, 1.0, dims=3, safety_factor=0.95, points_per_wavelength=8
+    )
+    design = Design(
+        width=2.0 * wl,
+        height=2.0 * wl,
+        depth=1.5 * wl,
+        material=Material(permittivity=1.0),
+    )
+    sim = Simulation(
+        design=design,
+        sources=[],
+        boundaries=[PML(edges="all", thickness=0.5 * wl)],
+        time=np.arange(0, 2 * dt, dt),
+        resolution=dx,
+    )
+
+    program = sim.compile(num_steps=1)
+    assert not program.use_cpml_3d
+    assert program.e_decay_x.shape == (0, 0, 0)
+    assert program.e_source_x.shape == (0, 0, 0)
+    assert program.h_decay_x.shape == (0, 0, 0)
+    assert program.h_source_x.shape == (0, 0, 0)
+    assert program.e_source_lossless_x.shape == (0, 0, 0)
+    assert program.h_source_lossless_x.shape == (0, 0, 0)
+    assert program.e_conductivity_x is sim.fields.sig_x
+    assert program.h_sigma_m_x is sim.fields.sigma_m_hx
+    np.testing.assert_allclose(
+        np.asarray(program.e_inv_permittivity_x),
+        np.asarray(1.0 / sim.fields.eps_x),
+    )
+
+    sim.run_compiled(num_steps=1, progress=False)
+
+
+def test_material_3d_permittivity_e_update_matches_dense_source_grid():
+    key = jax.random.PRNGKey(7)
+    keys = jax.random.split(key, 9)
+    hx = jax.random.normal(keys[0], (3, 4, 6), dtype=jnp.float32)
+    hy = jax.random.normal(keys[1], (3, 5, 5), dtype=jnp.float32)
+    hz = jax.random.normal(keys[2], (4, 4, 5), dtype=jnp.float32)
+    ex = jax.random.normal(keys[3], (4, 5, 5), dtype=jnp.float32)
+    ey = jax.random.normal(keys[4], (4, 4, 6), dtype=jnp.float32)
+    ez = jax.random.normal(keys[5], (3, 5, 6), dtype=jnp.float32)
+    eps_x = 1.0 + jnp.abs(jax.random.normal(keys[6], ex.shape, dtype=jnp.float32))
+    eps_y = 1.0 + jnp.abs(jax.random.normal(keys[7], ey.shape, dtype=jnp.float32))
+    eps_z = 1.0 + jnp.abs(jax.random.normal(keys[8], ez.shape, dtype=jnp.float32))
+    inv_eps_x = 1.0 / eps_x
+    inv_eps_y = 1.0 / eps_y
+    inv_eps_z = 1.0 / eps_z
+    dt = jnp.asarray(1.0e-17, dtype=jnp.float32)
+    resolution = jnp.asarray(2.5e-8, dtype=jnp.float32)
+    views = build_h_boundary_views_for_e_3d(hx, hy, hz, None)
+
+    dense = ops.fused_update_e_lossless_3d(
+        hx,
+        hy,
+        hz,
+        ex,
+        ey,
+        ez,
+        dt / (jnp.asarray(EPS_0, dtype=jnp.float32) * eps_x),
+        dt / (jnp.asarray(EPS_0, dtype=jnp.float32) * eps_y),
+        dt / (jnp.asarray(EPS_0, dtype=jnp.float32) * eps_z),
+        resolution,
+        boundary_views=views,
+    )
+    material = ops.fused_update_e_lossless_3d_inv_permittivity(
+        hx,
+        hy,
+        hz,
+        ex,
+        ey,
+        ez,
+        inv_eps_x,
+        inv_eps_y,
+        inv_eps_z,
+        dt,
+        resolution,
+        boundary_views=views,
+    )
+
+    for dense_component, material_component in zip(dense, material, strict=True):
+        np.testing.assert_allclose(
+            np.asarray(material_component),
+            np.asarray(dense_component),
+            rtol=2e-6,
+            atol=1e-6,
+        )
+
+
+def test_lossless_h_update_incremental_matches_curl_formula():
+    key = jax.random.PRNGKey(11)
+    keys = jax.random.split(key, 6)
+    ex = jax.random.normal(keys[0], (4, 5, 5), dtype=jnp.float32)
+    ey = jax.random.normal(keys[1], (4, 4, 6), dtype=jnp.float32)
+    ez = jax.random.normal(keys[2], (3, 5, 6), dtype=jnp.float32)
+    hx = jax.random.normal(keys[3], (3, 4, 6), dtype=jnp.float32)
+    hy = jax.random.normal(keys[4], (3, 5, 5), dtype=jnp.float32)
+    hz = jax.random.normal(keys[5], (4, 4, 5), dtype=jnp.float32)
+    h_src = jnp.asarray(3.0e-12, dtype=jnp.float32)
+    resolution = jnp.asarray(2.5e-8, dtype=jnp.float32)
+    inv_res = 1.0 / resolution
+
+    expected_hx = (
+        hx
+        - h_src
+        * ((ez[:, 1:, :] - ez[:, :-1, :]) - (ey[1:, :, :] - ey[:-1, :, :]))
+        * inv_res
+    )
+    expected_hy = (
+        hy
+        - h_src
+        * ((ex[1:, :, :] - ex[:-1, :, :]) - (ez[:, :, 1:] - ez[:, :, :-1]))
+        * inv_res
+    )
+    expected_hz = (
+        hz
+        - h_src
+        * ((ey[:, :, 1:] - ey[:, :, :-1]) - (ex[:, 1:, :] - ex[:, :-1, :]))
+        * inv_res
+    )
+
+    actual = ops.fused_update_h_lossless_3d(
+        ex, ey, ez, hx, hy, hz, h_src, h_src, h_src, resolution
+    )
+    for actual_component, expected_component in zip(
+        actual, (expected_hx, expected_hy, expected_hz), strict=True
+    ):
+        np.testing.assert_allclose(
+            np.asarray(actual_component),
+            np.asarray(expected_component),
+            rtol=2e-6,
+            atol=1e-6,
+        )
+
+
+def test_primitive_material_3d_lossy_updates_match_dense_coefficients():
+    key = jax.random.PRNGKey(13)
+    keys = jax.random.split(key, 15)
+    hx = jax.random.normal(keys[0], (3, 4, 6), dtype=jnp.float32)
+    hy = jax.random.normal(keys[1], (3, 5, 5), dtype=jnp.float32)
+    hz = jax.random.normal(keys[2], (4, 4, 5), dtype=jnp.float32)
+    ex = jax.random.normal(keys[3], (4, 5, 5), dtype=jnp.float32)
+    ey = jax.random.normal(keys[4], (4, 4, 6), dtype=jnp.float32)
+    ez = jax.random.normal(keys[5], (3, 5, 6), dtype=jnp.float32)
+    eps_x = 1.0 + jnp.abs(jax.random.normal(keys[6], ex.shape, dtype=jnp.float32))
+    eps_y = 1.0 + jnp.abs(jax.random.normal(keys[7], ey.shape, dtype=jnp.float32))
+    eps_z = 1.0 + jnp.abs(jax.random.normal(keys[8], ez.shape, dtype=jnp.float32))
+    inv_eps_x = 1.0 / eps_x
+    inv_eps_y = 1.0 / eps_y
+    inv_eps_z = 1.0 / eps_z
+    sig_x = jnp.abs(jax.random.normal(keys[9], ex.shape, dtype=jnp.float32)) * 0.1
+    sig_y = jnp.abs(jax.random.normal(keys[10], ey.shape, dtype=jnp.float32)) * 0.1
+    sig_z = jnp.abs(jax.random.normal(keys[11], ez.shape, dtype=jnp.float32)) * 0.1
+    sigma_m_x = jnp.abs(jax.random.normal(keys[12], hx.shape, dtype=jnp.float32)) * 0.1
+    sigma_m_y = jnp.abs(jax.random.normal(keys[13], hy.shape, dtype=jnp.float32)) * 0.1
+    sigma_m_z = jnp.abs(jax.random.normal(keys[14], hz.shape, dtype=jnp.float32)) * 0.1
+    dt = jnp.asarray(1.0e-17, dtype=jnp.float32)
+    resolution = jnp.asarray(2.5e-8, dtype=jnp.float32)
+    views = build_h_boundary_views_for_e_3d(hx, hy, hz, None)
+
+    (h_decay_x, h_src_x, _), (h_decay_y, h_src_y, _), (h_decay_z, h_src_z, _) = (
+        ops.precompute_h_update_coefficients(sigma_m_x, dt),
+        ops.precompute_h_update_coefficients(sigma_m_y, dt),
+        ops.precompute_h_update_coefficients(sigma_m_z, dt),
+    )
+    dense_h = ops.fused_update_h_lossy_3d(
+        ex,
+        ey,
+        ez,
+        hx,
+        hy,
+        hz,
+        h_decay_x,
+        h_src_x,
+        h_decay_y,
+        h_src_y,
+        h_decay_z,
+        h_src_z,
+        resolution,
+    )
+    primitive_h = ops.fused_update_h_lossy_3d_material(
+        ex,
+        ey,
+        ez,
+        hx,
+        hy,
+        hz,
+        sigma_m_x,
+        sigma_m_y,
+        sigma_m_z,
+        dt,
+        resolution,
+    )
+
+    (e_decay_x, e_src_x, _), (e_decay_y, e_src_y, _), (e_decay_z, e_src_z, _) = (
+        ops.precompute_e_update_coefficients(
+            ex.shape, sig_x, eps_x, dt, (slice(None),) * 3
+        ),
+        ops.precompute_e_update_coefficients(
+            ey.shape, sig_y, eps_y, dt, (slice(None),) * 3
+        ),
+        ops.precompute_e_update_coefficients(
+            ez.shape, sig_z, eps_z, dt, (slice(None),) * 3
+        ),
+    )
+    dense_e = ops.fused_update_e_lossy_3d(
+        hx,
+        hy,
+        hz,
+        ex,
+        ey,
+        ez,
+        e_decay_x,
+        e_src_x,
+        e_decay_y,
+        e_src_y,
+        e_decay_z,
+        e_src_z,
+        resolution,
+        boundary_views=views,
+    )
+    primitive_e = ops.fused_update_e_lossy_3d_material(
+        hx,
+        hy,
+        hz,
+        ex,
+        ey,
+        ez,
+        sig_x,
+        inv_eps_x,
+        sig_y,
+        inv_eps_y,
+        sig_z,
+        inv_eps_z,
+        dt,
+        resolution,
+        boundary_views=views,
+    )
+
+    for primitive_component, dense_component in zip(
+        (*primitive_h, *primitive_e), (*dense_h, *dense_e), strict=True
+    ):
+        np.testing.assert_allclose(
+            np.asarray(primitive_component),
+            np.asarray(dense_component),
+            rtol=2e-6,
+            atol=1e-6,
+        )
 
 
 def test_simulation_memory_estimate_reports_fields_and_compiled_coefficients():
@@ -507,24 +825,25 @@ def test_simulation_memory_estimate_reports_fields_and_compiled_coefficients():
         for name in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
     )
     assert report["totals_by_category"]["yee_fields"] == field_bytes
-    assert report["compiled"]["config"]["use_sparse_3d_e_coefficients"]
     assert report["compiled"]["totals_by_category"]["compiled_update_coefficients"] > 0
     compiled_names = {entry["name"] for entry in report["compiled"]["entries"]}
     referenced_names = {
         entry["name"]
         for entry in report["compiled"]["referenced_inputs"]["entries"]
     }
-    assert "e_permittivity_x" not in compiled_names
-    assert {"e_permittivity_x", "e_permittivity_y", "e_permittivity_z"} <= (
-        referenced_names
+    assert not any(
+        key.startswith("use_") and key.endswith("_3d_e_coefficients")
+        for key in report["compiled"]["config"]
     )
+    assert "e_inv_permittivity_x" in compiled_names
+    assert "e_inv_permittivity_x" not in referenced_names
     assert (
         report["total_with_compiled_bytes"]
         == report["total_bytes"] + report["compiled"]["total_bytes"]
     )
 
 
-def test_compiled_keeps_dense_coefficients_for_non_shell_3d_loss():
+def test_compiled_uses_material_coefficients_for_3d_loss():
     wl = 1.55 * um
     dx, dt = calc_optimal_fdtd_params(
         wl, 1.0, dims=3, safety_factor=0.95, points_per_wavelength=8
@@ -543,19 +862,25 @@ def test_compiled_keeps_dense_coefficients_for_non_shell_3d_loss():
     sim = Simulation(
         design=design,
         sources=[],
-        boundaries=[],
+        boundaries=[PML(edges="all", thickness=0.5 * wl)],
         time=np.arange(0, 2 * dt, dt),
         resolution=dx,
     )
 
     program = sim.compile(num_steps=1)
 
-    assert not program.use_sparse_3d_e_coefficients
-    assert not program.use_sparse_3d_h_coefficients
-    assert program.e_decay_x.size > 0
-    assert program.e_source_x.size > 0
-    assert program.h_decay_x.size > 0
-    assert program.h_source_x.size > 0
+    assert program.e_decay_x.shape == (0, 0, 0)
+    assert program.e_source_x.shape == (0, 0, 0)
+    assert program.h_decay_x.shape == (0, 0, 0)
+    assert program.h_source_x.shape == (0, 0, 0)
+    assert program.e_conductivity_x is sim.fields.sig_x
+    np.testing.assert_allclose(
+        np.asarray(program.e_inv_permittivity_x),
+        np.asarray(1.0 / sim.fields.eps_x),
+    )
+    assert program.h_sigma_m_x is sim.fields.sigma_m_hx
+
+    sim.run_compiled(num_steps=1, progress=False)
 
 
 def test_compiled_3d_cpml_profiles_match_expected_x_boundary_embedding():
@@ -589,8 +914,6 @@ def test_compiled_3d_cpml_profiles_match_expected_x_boundary_embedding():
     program = sim.compile(num_steps=1)
 
     nx = int(sim.fields.permittivity.shape[2])
-    ny = int(sim.fields.permittivity.shape[1])
-    nz = int(sim.fields.permittivity.shape[0])
     pml_cells = int(round(thickness / dx))
 
     def expected_profile(count: int, *, sample_kind: str):
@@ -635,53 +958,48 @@ def test_compiled_3d_cpml_profiles_match_expected_x_boundary_embedding():
     sigma_e_x, kappa_e_x, alpha_e_x = expected_profile(nx, sample_kind="E")
     sigma_h_x, kappa_h_x, alpha_h_x = expected_profile(max(nx - 1, 0), sample_kind="H")
 
-    sigma_e_native = sigma_e_x[None, None, :].repeat(nz - 1, axis=0).repeat(ny, axis=1)
-    kappa_e_native = kappa_e_x[None, None, :].repeat(nz - 1, axis=0).repeat(ny, axis=1)
-    alpha_e_native = alpha_e_x[None, None, :].repeat(nz - 1, axis=0).repeat(ny, axis=1)
-    sigma_h_native = sigma_h_x[None, None, :].repeat(nz - 1, axis=0).repeat(ny, axis=1)
-    kappa_h_native = kappa_h_x[None, None, :].repeat(nz - 1, axis=0).repeat(ny, axis=1)
-    alpha_h_native = alpha_h_x[None, None, :].repeat(nz - 1, axis=0).repeat(ny, axis=1)
-
-    decay_e = (sigma_e_native / kappa_e_native + alpha_e_native) * (dt / EPS_0)
-    b_e = np.expm1(-decay_e) + 1.0
-    a_e = np.nan_to_num(
-        ((b_e - 1.0) * sigma_e_native)
-        / np.maximum(
-            (sigma_e_native + kappa_e_native * alpha_e_native) * kappa_e_native, 1e-30
-        )
-    )
-    decay_h = (sigma_h_native / kappa_h_native + alpha_h_native) * (dt / EPS_0)
-    b_h = np.expm1(-decay_h) + 1.0
-    a_h = np.nan_to_num(
-        ((b_h - 1.0) * sigma_h_native)
-        / np.maximum(
-            (sigma_h_native + kappa_h_native * alpha_h_native) * kappa_h_native, 1e-30
-        )
-    )
+    assert program.use_primitive_cpml_3d_terms
+    assert program.cpml3d_a_e_terms[4].shape == (0, 0, 0)
+    assert program.cpml3d_b_e_terms[4].shape == (0, 0, 0)
+    assert program.cpml3d_inv_kappa_e_terms[4].shape == (0, 0, 0)
+    assert program.cpml3d_sigma_e_terms[4].shape == (1, 1, nx)
+    assert program.cpml3d_sigma_h_terms[3].shape == (1, 1, max(nx - 1, 0))
 
     np.testing.assert_allclose(
-        np.asarray(program.cpml3d_inv_kappa_e_terms[4]),
-        1.0 / kappa_e_native,
+        np.asarray(program.cpml3d_sigma_e_terms[4][0, 0, :]),
+        sigma_e_x,
         rtol=1e-6,
         atol=1e-6,
     )
     np.testing.assert_allclose(
-        np.asarray(program.cpml3d_b_e_terms[4]), b_e, rtol=1e-6, atol=1e-6
-    )
-    np.testing.assert_allclose(
-        np.asarray(program.cpml3d_a_e_terms[4]), a_e, rtol=1e-6, atol=1e-6
-    )
-    np.testing.assert_allclose(
-        np.asarray(program.cpml3d_inv_kappa_h_terms[3]),
-        1.0 / kappa_h_native,
+        np.asarray(program.cpml3d_kappa_e_terms[4][0, 0, :]),
+        kappa_e_x,
         rtol=1e-6,
         atol=1e-6,
     )
     np.testing.assert_allclose(
-        np.asarray(program.cpml3d_b_h_terms[3]), b_h, rtol=1e-6, atol=1e-6
+        np.asarray(program.cpml3d_alpha_e_terms[4][0, 0, :]),
+        alpha_e_x,
+        rtol=1e-6,
+        atol=1e-6,
     )
     np.testing.assert_allclose(
-        np.asarray(program.cpml3d_a_h_terms[3]), a_h, rtol=1e-6, atol=1e-6
+        np.asarray(program.cpml3d_sigma_h_terms[3][0, 0, :]),
+        sigma_h_x,
+        rtol=1e-6,
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        np.asarray(program.cpml3d_kappa_h_terms[3][0, 0, :]),
+        kappa_h_x,
+        rtol=1e-6,
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        np.asarray(program.cpml3d_alpha_h_terms[3][0, 0, :]),
+        alpha_h_x,
+        rtol=1e-6,
+        atol=1e-6,
     )
 
 
@@ -1665,7 +1983,7 @@ def test_compile_3d_mode_source_reinitializes_missing_launch_dt(monkeypatch):
     assert seen_dt == [dt]
 
 
-def test_compile_3d_mode_source_uses_discrete_phasor_residual_slabs():
+def test_compile_3d_mode_source_uses_compact_phasor_residual_slabs():
     fields = SimpleNamespace(
         permittivity=jnp.ones((2, 2, 2)),
         permeability=jnp.ones((2, 2, 2)),
@@ -1680,31 +1998,28 @@ def test_compile_3d_mode_source_uses_discrete_phasor_residual_slabs():
         eps_z=jnp.full((1, 2, 2), 4.0),
     )
 
-    def h_delta(_fields, *, dt):
+    def compact_residuals(_fields, *, dt):
         del _fields, dt
-        return {
-            "Hx": np.zeros((1, 1, 2), dtype=np.float32),
-            "Hy": np.asarray([[[1.0 + 2.0j], [0.0]]], dtype=np.complex128),
-            "Hz": np.zeros((2, 1, 1), dtype=np.float32),
-        }
-
-    def e_delta(_fields, *, dt):
-        del _fields, dt
-        return {
-            "Ex": np.asarray(
-                [[[0.0], [3.0 - 4.0j]], [[0.0], [0.0]]],
-                dtype=np.complex128,
+        return (
+            _ModeSource3DResidual(
+                component="Hy",
+                timing="h",
+                index=(slice(0, 1), slice(0, 1), slice(0, 1)),
+                residual=np.asarray([[[1.0 + 2.0j]]], dtype=np.complex128),
             ),
-            "Ey": np.zeros((2, 1, 2), dtype=np.float32),
-            "Ez": np.zeros((1, 2, 2), dtype=np.float32),
-        }
+            _ModeSource3DResidual(
+                component="Ex",
+                timing="e",
+                index=(slice(0, 1), slice(1, 2), slice(0, 1)),
+                residual=np.asarray([[[3.0 - 4.0j]]], dtype=np.complex128),
+            ),
+        )
 
     source = SimpleNamespace(
         _axis="z",
         pol="te",
         _direction_sign=1.0,
-        _compute_discrete_3d_h_phasor_delta=h_delta,
-        _compute_discrete_3d_e_phasor_delta=e_delta,
+        _compute_discrete_3d_phasor_residuals=compact_residuals,
     )
     waveform = jnp.asarray([2.0, 3.0], dtype=jnp.float32)
     quadrature = jnp.asarray([5.0, 7.0], dtype=jnp.float32)

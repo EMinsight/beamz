@@ -1,7 +1,6 @@
 import warnings
 from dataclasses import dataclass
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -350,10 +349,17 @@ class PML(Boundary):
         alpha_order = float(1.0 if alpha_order is None else alpha_order)
 
         def apply_u(u):
-            u = jnp.clip(u, 0.0, 1.0)
-            side_sigma = self.sigma_max * jnp.power(u, sigma_order)
-            side_kappa = 1.0 + (self.kappa_max - 1.0) * jnp.power(u, kappa_order)
-            side_alpha = self.alpha_max * jnp.power(1.0 - u, alpha_order)
+            dtype = sigma.dtype
+            u = jnp.clip(jnp.asarray(u, dtype=dtype), 0.0, 1.0)
+            side_sigma = jnp.asarray(self.sigma_max, dtype=dtype) * jnp.power(
+                u, sigma_order
+            )
+            side_kappa = jnp.asarray(1.0, dtype=dtype) + (
+                jnp.asarray(self.kappa_max, dtype=dtype) - jnp.asarray(1.0, dtype=dtype)
+            ) * jnp.power(u, kappa_order)
+            side_alpha = jnp.asarray(self.alpha_max, dtype=dtype) * jnp.power(
+                jnp.asarray(1.0, dtype=dtype) - u, alpha_order
+            )
             return side_sigma, side_kappa, side_alpha
 
         def low_distances(count):
@@ -1225,6 +1231,57 @@ def _cpml_corrected_update_term(derivative, psi, a_term, b_term, inv_kappa_term)
     return corrected, psi_updated
 
 
+def _cpml_corrected_update_term_from_profiles(derivative, psi, sigma, kappa, alpha, dt):
+    dtype = psi.dtype
+    sigma = jnp.asarray(sigma, dtype=dtype)
+    kappa = jnp.maximum(jnp.asarray(kappa, dtype=dtype), _scalar_like(1.0, dtype))
+    alpha = jnp.asarray(alpha, dtype=dtype)
+    dt = _scalar_like(dt, dtype)
+    eps_0 = _scalar_like(EPS_0, dtype)
+    decay = (sigma / kappa + alpha) * (dt / eps_0)
+    b_term = jnp.expm1(-decay) + _scalar_like(1.0, dtype)
+    denom = sigma + kappa * alpha
+    a_term = jnp.nan_to_num(
+        ((b_term - _scalar_like(1.0, dtype)) * sigma)
+        / jnp.maximum(denom * kappa, _scalar_like(1e-30, dtype)),
+        nan=_scalar_like(0.0, dtype),
+        posinf=_scalar_like(0.0, dtype),
+        neginf=_scalar_like(0.0, dtype),
+    )
+    psi_updated = _cpml_update_native_term(derivative, psi, a_term, b_term)
+    corrected = derivative / kappa + psi_updated
+    return corrected, psi_updated
+
+
+def _cpml_correct_term(
+    derivative,
+    psi,
+    a_term,
+    b_term,
+    inv_kappa_term,
+    sigma,
+    kappa,
+    alpha,
+    dt,
+):
+    if sigma is not None:
+        return _cpml_corrected_update_term_from_profiles(
+            derivative,
+            psi,
+            sigma,
+            kappa,
+            alpha,
+            dt,
+        )
+    return _cpml_corrected_update_term(
+        derivative,
+        psi,
+        a_term,
+        b_term,
+        inv_kappa_term,
+    )
+
+
 def build_h_boundary_views_for_e_3d(hx, hy, hz, boundaries):
     """Return H-field views for the 3D E update with boundaries applied outside ops.
 
@@ -1391,27 +1448,21 @@ def full_pec_update_h_from_e_3d(
     )
     if source_m_x is not None:
         curl_x = curl_x + source_m_x
-    hx = _full_pec_advance_h_component(
-        hx, curl_x, h_decay_x, h_source_x, hx_mask
-    )
+    hx = _full_pec_advance_h_component(hx, curl_x, h_decay_x, h_source_x, hx_mask)
 
     curl_y = ((ex[1:, :, :] - ex[:-1, :, :]) - (ez[:, :, 1:] - ez[:, :, :-1])) / (
         resolution
     )
     if source_m_y is not None:
         curl_y = curl_y + source_m_y
-    hy = _full_pec_advance_h_component(
-        hy, curl_y, h_decay_y, h_source_y, hy_mask
-    )
+    hy = _full_pec_advance_h_component(hy, curl_y, h_decay_y, h_source_y, hy_mask)
 
     curl_z = ((ey[:, :, 1:] - ey[:, :, :-1]) - (ex[:, 1:, :] - ex[:, :-1, :])) / (
         resolution
     )
     if source_m_z is not None:
         curl_z = curl_z + source_m_z
-    hz = _full_pec_advance_h_component(
-        hz, curl_z, h_decay_z, h_source_z, hz_mask
-    )
+    hz = _full_pec_advance_h_component(hz, curl_z, h_decay_z, h_source_z, hz_mask)
 
     return hx, hy, hz
 
@@ -1517,8 +1568,7 @@ def full_pec_e_update_coefficients_3d(state, dt):
         for sigma, eps, den in zip(conductivity, permittivity, denom, strict=True)
     )
     source = tuple(
-        (dt / (EPS_0 * eps)) / den
-        for eps, den in zip(permittivity, denom, strict=True)
+        (dt / (EPS_0 * eps)) / den for eps, den in zip(permittivity, denom, strict=True)
     )
     return decay, source
 
@@ -1532,6 +1582,10 @@ def cpml_curl_e_to_h_3d(
     a_h_terms,
     b_h_terms,
     inv_kappa_h_terms,
+    sigma_h_terms=None,
+    kappa_h_terms=None,
+    alpha_h_terms=None,
+    dt=None,
     psi_h_terms,
 ):
     """CPML-corrected 3D curl E -> H on native Yee derivative terms."""
@@ -1544,24 +1598,25 @@ def cpml_curl_e_to_h_3d(
     d_ey_dx = (ey[:, :, 1:] - ey[:, :, :-1]) / resolution
     d_ex_dy = (ex[:, 1:, :] - ex[:, :-1, :]) / resolution
 
-    term0, psi0 = _cpml_correct_native_term(
-        d_ez_dy, psi_h_terms[0], a_h_terms[0], b_h_terms[0], inv_kappa_h_terms[0]
-    )
-    term1, psi1 = _cpml_correct_native_term(
-        d_ey_dz, psi_h_terms[1], a_h_terms[1], b_h_terms[1], inv_kappa_h_terms[1]
-    )
-    term2, psi2 = _cpml_correct_native_term(
-        d_ex_dz, psi_h_terms[2], a_h_terms[2], b_h_terms[2], inv_kappa_h_terms[2]
-    )
-    term3, psi3 = _cpml_correct_native_term(
-        d_ez_dx, psi_h_terms[3], a_h_terms[3], b_h_terms[3], inv_kappa_h_terms[3]
-    )
-    term4, psi4 = _cpml_correct_native_term(
-        d_ey_dx, psi_h_terms[4], a_h_terms[4], b_h_terms[4], inv_kappa_h_terms[4]
-    )
-    term5, psi5 = _cpml_correct_native_term(
-        d_ex_dy, psi_h_terms[5], a_h_terms[5], b_h_terms[5], inv_kappa_h_terms[5]
-    )
+    def correct(idx, derivative):
+        return _cpml_correct_term(
+            derivative,
+            psi_h_terms[idx],
+            a_h_terms[idx],
+            b_h_terms[idx],
+            inv_kappa_h_terms[idx],
+            None if sigma_h_terms is None else sigma_h_terms[idx],
+            None if kappa_h_terms is None else kappa_h_terms[idx],
+            None if alpha_h_terms is None else alpha_h_terms[idx],
+            dt,
+        )
+
+    term0, psi0 = correct(0, d_ez_dy)
+    term1, psi1 = correct(1, d_ey_dz)
+    term2, psi2 = correct(2, d_ex_dz)
+    term3, psi3 = correct(3, d_ez_dx)
+    term4, psi4 = correct(4, d_ey_dx)
+    term5, psi5 = correct(5, d_ex_dy)
 
     curl_hx = term0 - term1
     curl_hy = term2 - term3
@@ -1587,208 +1642,40 @@ def cpml_update_h_from_e_3d(
     a_h_terms,
     b_h_terms,
     inv_kappa_h_terms,
+    sigma_h_terms=None,
+    kappa_h_terms=None,
+    alpha_h_terms=None,
+    dt=None,
     psi_h_terms,
 ):
     """CPML-corrected H update from E without returning full curl arrays."""
 
     resolution = _scalar_like(resolution, ex.dtype)
 
-    term0, psi0 = _cpml_corrected_update_term(
-        (ez[:, 1:, :] - ez[:, :-1, :]) / resolution,
-        psi_h_terms[0],
-        a_h_terms[0],
-        b_h_terms[0],
-        inv_kappa_h_terms[0],
-    )
-    term1, psi1 = _cpml_corrected_update_term(
-        (ey[1:, :, :] - ey[:-1, :, :]) / resolution,
-        psi_h_terms[1],
-        a_h_terms[1],
-        b_h_terms[1],
-        inv_kappa_h_terms[1],
-    )
+    def correct(idx, derivative):
+        return _cpml_correct_term(
+            derivative,
+            psi_h_terms[idx],
+            a_h_terms[idx],
+            b_h_terms[idx],
+            inv_kappa_h_terms[idx],
+            None if sigma_h_terms is None else sigma_h_terms[idx],
+            None if kappa_h_terms is None else kappa_h_terms[idx],
+            None if alpha_h_terms is None else alpha_h_terms[idx],
+            dt,
+        )
+
+    term0, psi0 = correct(0, (ez[:, 1:, :] - ez[:, :-1, :]) / resolution)
+    term1, psi1 = correct(1, (ey[1:, :, :] - ey[:-1, :, :]) / resolution)
     hx = h_decay_x * hx - h_source_x * (term0 - term1)
 
-    term2, psi2 = _cpml_corrected_update_term(
-        (ex[1:, :, :] - ex[:-1, :, :]) / resolution,
-        psi_h_terms[2],
-        a_h_terms[2],
-        b_h_terms[2],
-        inv_kappa_h_terms[2],
-    )
-    term3, psi3 = _cpml_corrected_update_term(
-        (ez[:, :, 1:] - ez[:, :, :-1]) / resolution,
-        psi_h_terms[3],
-        a_h_terms[3],
-        b_h_terms[3],
-        inv_kappa_h_terms[3],
-    )
+    term2, psi2 = correct(2, (ex[1:, :, :] - ex[:-1, :, :]) / resolution)
+    term3, psi3 = correct(3, (ez[:, :, 1:] - ez[:, :, :-1]) / resolution)
     hy = h_decay_y * hy - h_source_y * (term2 - term3)
 
-    term4, psi4 = _cpml_corrected_update_term(
-        (ey[:, :, 1:] - ey[:, :, :-1]) / resolution,
-        psi_h_terms[4],
-        a_h_terms[4],
-        b_h_terms[4],
-        inv_kappa_h_terms[4],
-    )
-    term5, psi5 = _cpml_corrected_update_term(
-        (ex[:, 1:, :] - ex[:, :-1, :]) / resolution,
-        psi_h_terms[5],
-        a_h_terms[5],
-        b_h_terms[5],
-        inv_kappa_h_terms[5],
-    )
+    term4, psi4 = correct(4, (ey[:, :, 1:] - ey[:, :, :-1]) / resolution)
+    term5, psi5 = correct(5, (ex[:, 1:, :] - ex[:, :-1, :]) / resolution)
     hz = h_decay_z * hz - h_source_z * (term4 - term5)
-
-    return hx, hy, hz, (psi0, psi1, psi2, psi3, psi4, psi5)
-
-
-def apply_lossy_shell_from_lossless_3d(
-    updated_lossless,
-    old,
-    source_lossless,
-    slabs,
-    decay_slabs,
-    source_slabs,
-    *,
-    source_permittivity=None,
-    dt=None,
-):
-    out = updated_lossless
-    for starts, sizes, decay_s, source_s in zip(
-        (slab[0] for slab in slabs),
-        (slab[1] for slab in slabs),
-        decay_slabs,
-        source_slabs,
-    ):
-        old_s = jax.lax.dynamic_slice(old, starts, sizes)
-        lossless_s = jax.lax.dynamic_slice(updated_lossless, starts, sizes)
-        if getattr(source_lossless, "ndim", 0) == 0:
-            source_ll_s = source_lossless
-        elif getattr(source_lossless, "size", 0) == 0:
-            if source_permittivity is None or dt is None:
-                raise ValueError(
-                    "source_permittivity and dt are required when "
-                    "source_lossless is empty."
-                )
-            eps_s = jax.lax.dynamic_slice(source_permittivity, starts, sizes)
-            source_ll_s = dt / (_scalar_like(EPS_0, eps_s.dtype) * eps_s)
-        else:
-            source_ll_s = jax.lax.dynamic_slice(source_lossless, starts, sizes)
-        beta = source_s / source_ll_s
-        lossy_s = (decay_s - beta) * old_s + beta * lossless_s
-        out = jax.lax.dynamic_update_slice(out, lossy_s, starts)
-    return out
-
-
-def cpml_update_h_from_e_3d_shell_split(
-    ex,
-    ey,
-    ez,
-    hx,
-    hy,
-    hz,
-    h_source_lossless_x,
-    h_source_lossless_y,
-    h_source_lossless_z,
-    resolution,
-    *,
-    a_h_terms,
-    b_h_terms,
-    inv_kappa_h_terms,
-    psi_h_terms,
-    h_lossy_shell_x,
-    h_lossy_shell_y,
-    h_lossy_shell_z,
-    h_shell_decay_x,
-    h_shell_source_x,
-    h_shell_decay_y,
-    h_shell_source_y,
-    h_shell_decay_z,
-    h_shell_source_z,
-):
-    """CPML H update using lossless full-domain coefficients plus shell patches."""
-
-    resolution = _scalar_like(resolution, ex.dtype)
-
-    term0, psi0 = _cpml_corrected_update_term(
-        (ez[:, 1:, :] - ez[:, :-1, :]) / resolution,
-        psi_h_terms[0],
-        a_h_terms[0],
-        b_h_terms[0],
-        inv_kappa_h_terms[0],
-    )
-    hx_old = hx
-    hx = hx_old - h_source_lossless_x * term0
-    term1, psi1 = _cpml_corrected_update_term(
-        (ey[1:, :, :] - ey[:-1, :, :]) / resolution,
-        psi_h_terms[1],
-        a_h_terms[1],
-        b_h_terms[1],
-        inv_kappa_h_terms[1],
-    )
-    hx = hx + h_source_lossless_x * term1
-    hx = apply_lossy_shell_from_lossless_3d(
-        hx,
-        hx_old,
-        h_source_lossless_x,
-        h_lossy_shell_x,
-        h_shell_decay_x,
-        h_shell_source_x,
-    )
-
-    term2, psi2 = _cpml_corrected_update_term(
-        (ex[1:, :, :] - ex[:-1, :, :]) / resolution,
-        psi_h_terms[2],
-        a_h_terms[2],
-        b_h_terms[2],
-        inv_kappa_h_terms[2],
-    )
-    hy_old = hy
-    hy = hy_old - h_source_lossless_y * term2
-    term3, psi3 = _cpml_corrected_update_term(
-        (ez[:, :, 1:] - ez[:, :, :-1]) / resolution,
-        psi_h_terms[3],
-        a_h_terms[3],
-        b_h_terms[3],
-        inv_kappa_h_terms[3],
-    )
-    hy = hy + h_source_lossless_y * term3
-    hy = apply_lossy_shell_from_lossless_3d(
-        hy,
-        hy_old,
-        h_source_lossless_y,
-        h_lossy_shell_y,
-        h_shell_decay_y,
-        h_shell_source_y,
-    )
-
-    term4, psi4 = _cpml_corrected_update_term(
-        (ey[:, :, 1:] - ey[:, :, :-1]) / resolution,
-        psi_h_terms[4],
-        a_h_terms[4],
-        b_h_terms[4],
-        inv_kappa_h_terms[4],
-    )
-    hz_old = hz
-    hz = hz_old - h_source_lossless_z * term4
-    term5, psi5 = _cpml_corrected_update_term(
-        (ex[:, 1:, :] - ex[:, :-1, :]) / resolution,
-        psi_h_terms[5],
-        a_h_terms[5],
-        b_h_terms[5],
-        inv_kappa_h_terms[5],
-    )
-    hz = hz + h_source_lossless_z * term5
-    hz = apply_lossy_shell_from_lossless_3d(
-        hz,
-        hz_old,
-        h_source_lossless_z,
-        h_lossy_shell_z,
-        h_shell_decay_z,
-        h_shell_source_z,
-    )
 
     return hx, hy, hz, (psi0, psi1, psi2, psi3, psi4, psi5)
 
@@ -1802,6 +1689,10 @@ def cpml_curl_h_to_e_3d(
     a_e_terms,
     b_e_terms,
     inv_kappa_e_terms,
+    sigma_e_terms=None,
+    kappa_e_terms=None,
+    alpha_e_terms=None,
+    dt=None,
     psi_e_terms,
     metallic_edges=frozenset(),
 ):
@@ -1825,24 +1716,25 @@ def cpml_curl_h_to_e_3d(
     d_hy_dx = _adjacent_difference(pad(hy, axis=2), axis=2, resolution=resolution)
     d_hx_dy = _adjacent_difference(pad(hx, axis=1), axis=1, resolution=resolution)
 
-    term0, psi0 = _cpml_correct_native_term(
-        d_hz_dy, psi_e_terms[0], a_e_terms[0], b_e_terms[0], inv_kappa_e_terms[0]
-    )
-    term1, psi1 = _cpml_correct_native_term(
-        d_hy_dz, psi_e_terms[1], a_e_terms[1], b_e_terms[1], inv_kappa_e_terms[1]
-    )
-    term2, psi2 = _cpml_correct_native_term(
-        d_hx_dz, psi_e_terms[2], a_e_terms[2], b_e_terms[2], inv_kappa_e_terms[2]
-    )
-    term3, psi3 = _cpml_correct_native_term(
-        d_hz_dx, psi_e_terms[3], a_e_terms[3], b_e_terms[3], inv_kappa_e_terms[3]
-    )
-    term4, psi4 = _cpml_correct_native_term(
-        d_hy_dx, psi_e_terms[4], a_e_terms[4], b_e_terms[4], inv_kappa_e_terms[4]
-    )
-    term5, psi5 = _cpml_correct_native_term(
-        d_hx_dy, psi_e_terms[5], a_e_terms[5], b_e_terms[5], inv_kappa_e_terms[5]
-    )
+    def correct(idx, derivative):
+        return _cpml_correct_term(
+            derivative,
+            psi_e_terms[idx],
+            a_e_terms[idx],
+            b_e_terms[idx],
+            inv_kappa_e_terms[idx],
+            None if sigma_e_terms is None else sigma_e_terms[idx],
+            None if kappa_e_terms is None else kappa_e_terms[idx],
+            None if alpha_e_terms is None else alpha_e_terms[idx],
+            dt,
+        )
+
+    term0, psi0 = correct(0, d_hz_dy)
+    term1, psi1 = correct(1, d_hy_dz)
+    term2, psi2 = correct(2, d_hx_dz)
+    term3, psi3 = correct(3, d_hz_dx)
+    term4, psi4 = correct(4, d_hy_dx)
+    term5, psi5 = correct(5, d_hx_dy)
 
     curl_ex = term0 - term1
     curl_ey = term2 - term3
@@ -1868,6 +1760,10 @@ def cpml_update_e_from_h_3d(
     a_e_terms,
     b_e_terms,
     inv_kappa_e_terms,
+    sigma_e_terms=None,
+    kappa_e_terms=None,
+    alpha_e_terms=None,
+    dt=None,
     psi_e_terms,
     metallic_edges=frozenset(),
 ):
@@ -1884,193 +1780,48 @@ def cpml_update_e_from_h_3d(
             high_metallic=high_edge in metallic_edges,
         )
 
-    term0, psi0 = _cpml_corrected_update_term(
+    def correct(idx, derivative):
+        return _cpml_correct_term(
+            derivative,
+            psi_e_terms[idx],
+            a_e_terms[idx],
+            b_e_terms[idx],
+            inv_kappa_e_terms[idx],
+            None if sigma_e_terms is None else sigma_e_terms[idx],
+            None if kappa_e_terms is None else kappa_e_terms[idx],
+            None if alpha_e_terms is None else alpha_e_terms[idx],
+            dt,
+        )
+
+    term0, psi0 = correct(
+        0,
         _adjacent_difference(pad(hz, axis=1), axis=1, resolution=resolution),
-        psi_e_terms[0],
-        a_e_terms[0],
-        b_e_terms[0],
-        inv_kappa_e_terms[0],
     )
-    term1, psi1 = _cpml_corrected_update_term(
+    term1, psi1 = correct(
+        1,
         _adjacent_difference(pad(hy, axis=0), axis=0, resolution=resolution),
-        psi_e_terms[1],
-        a_e_terms[1],
-        b_e_terms[1],
-        inv_kappa_e_terms[1],
     )
     ex = e_decay_x * ex + e_source_x * (term0 - term1)
 
-    term2, psi2 = _cpml_corrected_update_term(
+    term2, psi2 = correct(
+        2,
         _adjacent_difference(pad(hx, axis=0), axis=0, resolution=resolution),
-        psi_e_terms[2],
-        a_e_terms[2],
-        b_e_terms[2],
-        inv_kappa_e_terms[2],
     )
-    term3, psi3 = _cpml_corrected_update_term(
+    term3, psi3 = correct(
+        3,
         _adjacent_difference(pad(hz, axis=2), axis=2, resolution=resolution),
-        psi_e_terms[3],
-        a_e_terms[3],
-        b_e_terms[3],
-        inv_kappa_e_terms[3],
     )
     ey = e_decay_y * ey + e_source_y * (term2 - term3)
 
-    term4, psi4 = _cpml_corrected_update_term(
+    term4, psi4 = correct(
+        4,
         _adjacent_difference(pad(hy, axis=2), axis=2, resolution=resolution),
-        psi_e_terms[4],
-        a_e_terms[4],
-        b_e_terms[4],
-        inv_kappa_e_terms[4],
     )
-    term5, psi5 = _cpml_corrected_update_term(
+    term5, psi5 = correct(
+        5,
         _adjacent_difference(pad(hx, axis=1), axis=1, resolution=resolution),
-        psi_e_terms[5],
-        a_e_terms[5],
-        b_e_terms[5],
-        inv_kappa_e_terms[5],
     )
     ez = e_decay_z * ez + e_source_z * (term4 - term5)
-
-    return ex, ey, ez, (psi0, psi1, psi2, psi3, psi4, psi5)
-
-
-def cpml_update_e_from_h_3d_shell_split(
-    hx,
-    hy,
-    hz,
-    ex,
-    ey,
-    ez,
-    e_source_lossless_x,
-    e_source_lossless_y,
-    e_source_lossless_z,
-    e_permittivity_x,
-    e_permittivity_y,
-    e_permittivity_z,
-    dt,
-    resolution,
-    *,
-    a_e_terms,
-    b_e_terms,
-    inv_kappa_e_terms,
-    psi_e_terms,
-    e_lossy_shell_x,
-    e_lossy_shell_y,
-    e_lossy_shell_z,
-    e_shell_decay_x,
-    e_shell_source_x,
-    e_shell_decay_y,
-    e_shell_source_y,
-    e_shell_decay_z,
-    e_shell_source_z,
-    metallic_edges=frozenset(),
-):
-    """CPML E update using lossless material coefficients plus shell patches."""
-
-    metallic_edges = frozenset(metallic_edges or ())
-    dt = _scalar_like(dt, ex.dtype)
-
-    def pad(arr, axis):
-        low_edge, high_edge = _edge_pair_for_axis(axis)
-        return _pad_with_boundary_ghosts(
-            arr,
-            axis,
-            low_metallic=low_edge in metallic_edges,
-            high_metallic=high_edge in metallic_edges,
-        )
-
-    def e_scale(source_lossless, permittivity, dtype):
-        if getattr(source_lossless, "size", 0) > 0:
-            return source_lossless
-        return dt / (_scalar_like(EPS_0, dtype) * permittivity)
-
-    term0, psi0 = _cpml_corrected_update_term(
-        _adjacent_difference(pad(hz, axis=1), axis=1, resolution=resolution),
-        psi_e_terms[0],
-        a_e_terms[0],
-        b_e_terms[0],
-        inv_kappa_e_terms[0],
-    )
-    ex_old = ex
-    ex_source = e_scale(e_source_lossless_x, e_permittivity_x, ex.dtype)
-    ex = ex_old + ex_source * term0
-    term1, psi1 = _cpml_corrected_update_term(
-        _adjacent_difference(pad(hy, axis=0), axis=0, resolution=resolution),
-        psi_e_terms[1],
-        a_e_terms[1],
-        b_e_terms[1],
-        inv_kappa_e_terms[1],
-    )
-    ex = ex - ex_source * term1
-    ex = apply_lossy_shell_from_lossless_3d(
-        ex,
-        ex_old,
-        e_source_lossless_x,
-        e_lossy_shell_x,
-        e_shell_decay_x,
-        e_shell_source_x,
-        source_permittivity=e_permittivity_x,
-        dt=dt,
-    )
-
-    term2, psi2 = _cpml_corrected_update_term(
-        _adjacent_difference(pad(hx, axis=0), axis=0, resolution=resolution),
-        psi_e_terms[2],
-        a_e_terms[2],
-        b_e_terms[2],
-        inv_kappa_e_terms[2],
-    )
-    ey_old = ey
-    ey_source = e_scale(e_source_lossless_y, e_permittivity_y, ey.dtype)
-    ey = ey_old + ey_source * term2
-    term3, psi3 = _cpml_corrected_update_term(
-        _adjacent_difference(pad(hz, axis=2), axis=2, resolution=resolution),
-        psi_e_terms[3],
-        a_e_terms[3],
-        b_e_terms[3],
-        inv_kappa_e_terms[3],
-    )
-    ey = ey - ey_source * term3
-    ey = apply_lossy_shell_from_lossless_3d(
-        ey,
-        ey_old,
-        e_source_lossless_y,
-        e_lossy_shell_y,
-        e_shell_decay_y,
-        e_shell_source_y,
-        source_permittivity=e_permittivity_y,
-        dt=dt,
-    )
-
-    term4, psi4 = _cpml_corrected_update_term(
-        _adjacent_difference(pad(hy, axis=2), axis=2, resolution=resolution),
-        psi_e_terms[4],
-        a_e_terms[4],
-        b_e_terms[4],
-        inv_kappa_e_terms[4],
-    )
-    ez_old = ez
-    ez_source = e_scale(e_source_lossless_z, e_permittivity_z, ez.dtype)
-    ez = ez_old + ez_source * term4
-    term5, psi5 = _cpml_corrected_update_term(
-        _adjacent_difference(pad(hx, axis=1), axis=1, resolution=resolution),
-        psi_e_terms[5],
-        a_e_terms[5],
-        b_e_terms[5],
-        inv_kappa_e_terms[5],
-    )
-    ez = ez - ez_source * term5
-    ez = apply_lossy_shell_from_lossless_3d(
-        ez,
-        ez_old,
-        e_source_lossless_z,
-        e_lossy_shell_z,
-        e_shell_decay_z,
-        e_shell_source_z,
-        source_permittivity=e_permittivity_z,
-        dt=dt,
-    )
 
     return ex, ey, ez, (psi0, psi1, psi2, psi3, psi4, psi5)
 
@@ -2162,6 +1913,12 @@ def tm_xy_cpml_curl_e_to_h_2d(
     """
 
     dtype = ez.dtype
+    psi_h_dtype = jnp.asarray(psi_h_terms).dtype
+    sigma_h_terms = jnp.asarray(sigma_h_terms, dtype=dtype)
+    kappa_h_aux_terms = jnp.asarray(kappa_h_aux_terms, dtype=dtype)
+    alpha_h_terms = jnp.asarray(alpha_h_terms, dtype=dtype)
+    kappa_h_direct_terms = jnp.asarray(kappa_h_direct_terms, dtype=dtype)
+    psi_h_terms = jnp.asarray(psi_h_terms, dtype=dtype)
     resolution = _scalar_like(resolution, dtype)
     one = _scalar_like(1.0, dtype)
     zero = _scalar_like(0.0, dtype)
@@ -2191,6 +1948,7 @@ def tm_xy_cpml_curl_e_to_h_2d(
     psi_h_updated = b_terms * psi_h_terms + a_terms * d_terms
     psi_h_updated = psi_h_updated.at[0, -1, :].set(zero)
     psi_h_updated = psi_h_updated.at[1, :, -1].set(zero)
+    psi_h_updated = psi_h_updated.astype(psi_h_dtype)
     curl_hx = (one / jnp.maximum(kappa_h_direct_terms[0, :-1, :], one)) * d_ez_dy_full[
         :-1, :
     ] + psi_h_updated[0, :-1, :]
@@ -2199,7 +1957,7 @@ def tm_xy_cpml_curl_e_to_h_2d(
         + psi_h_updated[1, :, :-1]
     )
 
-    return curl_hx, curl_hy, psi_h_updated
+    return curl_hx.astype(dtype), curl_hy.astype(dtype), psi_h_updated
 
 
 def tm_xy_cpml_curl_h_to_e_2d(
@@ -2223,6 +1981,11 @@ def tm_xy_cpml_curl_h_to_e_2d(
     """
 
     dtype = hx.dtype
+    psi_e_dtype = jnp.asarray(psi_e_terms).dtype
+    sigma_e_terms = jnp.asarray(sigma_e_terms, dtype=dtype)
+    kappa_e_terms = jnp.asarray(kappa_e_terms, dtype=dtype)
+    alpha_e_terms = jnp.asarray(alpha_e_terms, dtype=dtype)
+    psi_e_terms = jnp.asarray(psi_e_terms, dtype=dtype)
     resolution = _scalar_like(resolution, dtype)
     one = _scalar_like(1.0, dtype)
     zero = _scalar_like(0.0, dtype)
@@ -2261,6 +2024,7 @@ def tm_xy_cpml_curl_h_to_e_2d(
         neginf=zero,
     )
     psi_e_updated = b_terms * psi_e_terms + a_terms * d_terms
+    psi_e_updated = psi_e_updated.astype(psi_e_dtype)
     curl_hz = (
         (one / kappa_e_terms[0]) * d_hy_dx
         + psi_e_updated[0]
@@ -2270,7 +2034,7 @@ def tm_xy_cpml_curl_h_to_e_2d(
     assert curl_hz.shape == ez_shape, (
         f"curl_hz shape mismatch: {curl_hz.shape} vs {ez_shape}"
     )
-    return curl_hz, psi_e_updated
+    return curl_hz.astype(dtype), psi_e_updated
 
 
 def xy_te_curl_e_to_h_2d(ex, ey, resolution, hz_shape):

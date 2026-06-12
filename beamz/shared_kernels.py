@@ -33,6 +33,16 @@ class Cpml3DTerms:
 
 
 @dataclass(frozen=True)
+class Cpml3DPrimitiveTerms:
+    sigma_h_terms: tuple[jnp.ndarray, ...]
+    kappa_h_terms: tuple[jnp.ndarray, ...]
+    alpha_h_terms: tuple[jnp.ndarray, ...]
+    sigma_e_terms: tuple[jnp.ndarray, ...]
+    kappa_e_terms: tuple[jnp.ndarray, ...]
+    alpha_e_terms: tuple[jnp.ndarray, ...]
+
+
+@dataclass(frozen=True)
 class CpmlDerivative3DSpec:
     """A single split-field CPML derivative term on the Yee lattice."""
 
@@ -205,6 +215,74 @@ def build_cpml_3d_terms(
     )
 
 
+def build_cpml_3d_primitive_terms(
+    pml_data: dict[str, jnp.ndarray] | None,
+) -> Cpml3DPrimitiveTerms | None:
+    if pml_data is None:
+        return None
+
+    axis_index = {"z": 0, "y": 1, "x": 2}
+
+    def compact_axis_profile(arr, axis_name):
+        arr = jnp.asarray(arr, dtype=jnp.float32)
+        if arr.ndim != 3:
+            return arr
+        idx = [0, 0, 0]
+        idx[axis_index[axis_name]] = slice(None)
+        profile = arr[tuple(idx)]
+        shape = [1, 1, 1]
+        shape[axis_index[axis_name]] = profile.shape[0]
+        compact = jnp.reshape(profile, tuple(shape))
+        if not np.allclose(
+            np.asarray(arr),
+            np.asarray(jnp.broadcast_to(compact, arr.shape)),
+            rtol=1e-6,
+            atol=1e-7,
+        ):
+            return None
+        return compact
+
+    def read_terms(specs, suffix):
+        terms = []
+        for spec in specs:
+            term = compact_axis_profile(
+                pml_data[f"cpml3d_{spec.name}_{suffix}"],
+                spec.derivative_axis,
+            )
+            if term is None:
+                return None
+            terms.append(term)
+        return tuple(terms)
+
+    sigma_h_terms = read_terms(CPML_3D_H_DERIVATIVES, "sigma")
+    kappa_h_terms = read_terms(CPML_3D_H_DERIVATIVES, "kappa")
+    alpha_h_terms = read_terms(CPML_3D_H_DERIVATIVES, "alpha")
+    sigma_e_terms = read_terms(CPML_3D_E_DERIVATIVES, "sigma")
+    kappa_e_terms = read_terms(CPML_3D_E_DERIVATIVES, "kappa")
+    alpha_e_terms = read_terms(CPML_3D_E_DERIVATIVES, "alpha")
+    if any(
+        terms is None
+        for terms in (
+            sigma_h_terms,
+            kappa_h_terms,
+            alpha_h_terms,
+            sigma_e_terms,
+            kappa_e_terms,
+            alpha_e_terms,
+        )
+    ):
+        return None
+
+    return Cpml3DPrimitiveTerms(
+        sigma_h_terms=sigma_h_terms,
+        kappa_h_terms=kappa_h_terms,
+        alpha_h_terms=alpha_h_terms,
+        sigma_e_terms=sigma_e_terms,
+        kappa_e_terms=kappa_e_terms,
+        alpha_e_terms=alpha_e_terms,
+    )
+
+
 def poynting_magnitude_2d(ez, hx, hy):
     """Return |E x H| for 2D TM monitor samples."""
     sx = -ez * hy
@@ -265,7 +343,7 @@ def advance_e_from_curl(field, curl, conductivity, permittivity, dt, region):
     factor = (1.0 - conductivity * (dt / (2.0 * EPS_0 * permittivity))) / denom
     source = (dt / (EPS_0 * permittivity)) / denom
     new_values = field[region] * factor + source * curl[region]
-    return field.at[region].set(new_values)
+    return field.at[region].set(new_values.astype(field.dtype))
 
 
 def advance_h_from_coefficients(field, curl, decay, source):

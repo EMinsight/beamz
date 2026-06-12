@@ -37,6 +37,7 @@ from beamz.shared_kernels import (
     advance_e_from_coefficients,
     advance_h_from_coefficients,
     apply_zero_mask,
+    build_cpml_3d_primitive_terms,
     build_cpml_3d_terms,
     build_tm_xy_cpml_terms,
     full_tm_xy_component_to_centered_grid,
@@ -52,12 +53,9 @@ from beamz.shared_kernels import (
 )
 from beamz.simulation import ops
 from beamz.simulation.boundaries import (
-    apply_lossy_shell_from_lossless_3d,
     build_h_boundary_views_for_e_3d,
     cpml_update_e_from_h_3d,
-    cpml_update_e_from_h_3d_shell_split,
     cpml_update_h_from_e_3d,
-    cpml_update_h_from_e_3d_shell_split,
     create_metallic_boundary_masks,
     full_pec_curl_e_to_h_2d_xy,
     full_pec_curl_h_to_e_2d_xy,
@@ -253,6 +251,24 @@ def _empty_cpml_3d_terms(dtype=jnp.float32) -> tuple[jnp.ndarray, ...]:
     return tuple(jnp.zeros((0, 0, 0), dtype=dtype) for _ in range(6))
 
 
+def _cpml_3d_h_term_shapes(hx, hy, hz) -> tuple[tuple[int, ...], ...]:
+    return (hx.shape, hx.shape, hy.shape, hy.shape, hz.shape, hz.shape)
+
+
+def _cpml_3d_e_term_shapes(ex, ey, ez) -> tuple[tuple[int, ...], ...]:
+    return (ex.shape, ex.shape, ey.shape, ey.shape, ez.shape, ez.shape)
+
+
+def _cpml_3d_shapes_match(terms, shapes) -> bool:
+    return len(terms) == len(shapes) and all(
+        tuple(term.shape) == tuple(shape) for term, shape in zip(terms, shapes)
+    )
+
+
+def _zeros_for_cpml_3d_shapes(shapes, dtype) -> tuple[jnp.ndarray, ...]:
+    return tuple(jnp.zeros(shape, dtype=dtype) for shape in shapes)
+
+
 def _empty_like_rank(arr: jnp.ndarray) -> jnp.ndarray:
     return jnp.zeros((0,) * arr.ndim, dtype=arr.dtype)
 
@@ -313,42 +329,36 @@ class UpdateCoefficients(NamedTuple):
     h_decay_x: jnp.ndarray
     h_source_x: jnp.ndarray
     h_source_lossless_x: jnp.ndarray
+    h_sigma_m_x: jnp.ndarray
     h_decay_y: jnp.ndarray
     h_source_y: jnp.ndarray
     h_source_lossless_y: jnp.ndarray
+    h_sigma_m_y: jnp.ndarray
     h_decay_z: jnp.ndarray
     h_source_z: jnp.ndarray
     h_source_lossless_z: jnp.ndarray
+    h_sigma_m_z: jnp.ndarray
     e_decay_x: jnp.ndarray
     e_source_x: jnp.ndarray
     e_source_lossless_x: jnp.ndarray
-    e_permittivity_x: jnp.ndarray
+    e_conductivity_x: jnp.ndarray
+    e_inv_permittivity_x: jnp.ndarray
     e_decay_y: jnp.ndarray
     e_source_y: jnp.ndarray
     e_source_lossless_y: jnp.ndarray
-    e_permittivity_y: jnp.ndarray
+    e_conductivity_y: jnp.ndarray
+    e_inv_permittivity_y: jnp.ndarray
     e_decay_z: jnp.ndarray
     e_source_z: jnp.ndarray
     e_source_lossless_z: jnp.ndarray
-    e_permittivity_z: jnp.ndarray
+    e_conductivity_z: jnp.ndarray
+    e_inv_permittivity_z: jnp.ndarray
     tm_h_decay_x: jnp.ndarray
     tm_h_source_x: jnp.ndarray
     tm_h_decay_y: jnp.ndarray
     tm_h_source_y: jnp.ndarray
     tm_e_decay_z: jnp.ndarray
     tm_e_source_z: jnp.ndarray
-    h_shell_decay_x: tuple[jnp.ndarray, ...]
-    h_shell_source_x: tuple[jnp.ndarray, ...]
-    h_shell_decay_y: tuple[jnp.ndarray, ...]
-    h_shell_source_y: tuple[jnp.ndarray, ...]
-    h_shell_decay_z: tuple[jnp.ndarray, ...]
-    h_shell_source_z: tuple[jnp.ndarray, ...]
-    e_shell_decay_x: tuple[jnp.ndarray, ...]
-    e_shell_source_x: tuple[jnp.ndarray, ...]
-    e_shell_decay_y: tuple[jnp.ndarray, ...]
-    e_shell_source_y: tuple[jnp.ndarray, ...]
-    e_shell_decay_z: tuple[jnp.ndarray, ...]
-    e_shell_source_z: tuple[jnp.ndarray, ...]
 
 
 class RunState(NamedTuple):
@@ -382,47 +392,47 @@ class CompiledSimulation:
     source_specs: tuple[CompiledSourceSpec, ...]
     monitor_specs: tuple[CompiledMonitorSpec, ...]
     monitor_devices: tuple[Monitor, ...]
+    field_shape_ex: tuple[int, ...]
+    field_shape_ey: tuple[int, ...]
+    field_shape_ez: tuple[int, ...]
+    field_shape_hx: tuple[int, ...]
+    field_shape_hy: tuple[int, ...]
+    field_shape_hz: tuple[int, ...]
 
     # Static update coefficients (full-grid, dense updates; no per-step scatters)
     h_decay_x: jnp.ndarray
     h_source_x: jnp.ndarray
     h_source_lossless_x: jnp.ndarray
+    h_sigma_m_x: jnp.ndarray
     h_decay_y: jnp.ndarray
     h_source_y: jnp.ndarray
     h_source_lossless_y: jnp.ndarray
+    h_sigma_m_y: jnp.ndarray
     h_decay_z: jnp.ndarray
     h_source_z: jnp.ndarray
     h_source_lossless_z: jnp.ndarray
+    h_sigma_m_z: jnp.ndarray
     e_decay_x: jnp.ndarray
     e_source_x: jnp.ndarray
     e_source_lossless_x: jnp.ndarray
-    e_permittivity_x: jnp.ndarray
+    e_conductivity_x: jnp.ndarray
+    e_inv_permittivity_x: jnp.ndarray
     e_decay_y: jnp.ndarray
     e_source_y: jnp.ndarray
     e_source_lossless_y: jnp.ndarray
-    e_permittivity_y: jnp.ndarray
+    e_conductivity_y: jnp.ndarray
+    e_inv_permittivity_y: jnp.ndarray
     e_decay_z: jnp.ndarray
     e_source_z: jnp.ndarray
     e_source_lossless_z: jnp.ndarray
-    e_permittivity_z: jnp.ndarray
+    e_conductivity_z: jnp.ndarray
+    e_inv_permittivity_z: jnp.ndarray
     tm_h_decay_x: jnp.ndarray
     tm_h_source_x: jnp.ndarray
     tm_h_decay_y: jnp.ndarray
     tm_h_source_y: jnp.ndarray
     tm_e_decay_z: jnp.ndarray
     tm_e_source_z: jnp.ndarray
-    h_shell_decay_x: tuple[jnp.ndarray, ...]
-    h_shell_source_x: tuple[jnp.ndarray, ...]
-    h_shell_decay_y: tuple[jnp.ndarray, ...]
-    h_shell_source_y: tuple[jnp.ndarray, ...]
-    h_shell_decay_z: tuple[jnp.ndarray, ...]
-    h_shell_source_z: tuple[jnp.ndarray, ...]
-    e_shell_decay_x: tuple[jnp.ndarray, ...]
-    e_shell_source_x: tuple[jnp.ndarray, ...]
-    e_shell_decay_y: tuple[jnp.ndarray, ...]
-    e_shell_source_y: tuple[jnp.ndarray, ...]
-    e_shell_decay_z: tuple[jnp.ndarray, ...]
-    e_shell_source_z: tuple[jnp.ndarray, ...]
     tm_ez_mask: jnp.ndarray
     tm_hx_mask: jnp.ndarray
     tm_hy_mask: jnp.ndarray
@@ -443,7 +453,14 @@ class CompiledSimulation:
     cpml3d_a_e_terms: tuple[jnp.ndarray, ...]
     cpml3d_b_e_terms: tuple[jnp.ndarray, ...]
     cpml3d_inv_kappa_e_terms: tuple[jnp.ndarray, ...]
+    cpml3d_sigma_h_terms: tuple[jnp.ndarray, ...]
+    cpml3d_kappa_h_terms: tuple[jnp.ndarray, ...]
+    cpml3d_alpha_h_terms: tuple[jnp.ndarray, ...]
+    cpml3d_sigma_e_terms: tuple[jnp.ndarray, ...]
+    cpml3d_kappa_e_terms: tuple[jnp.ndarray, ...]
+    cpml3d_alpha_e_terms: tuple[jnp.ndarray, ...]
     cpml3d_metallic_edges: frozenset[str]
+    use_primitive_cpml_3d_terms: bool
     full_pec_3d: bool
     fp_h_decay_x: jnp.ndarray
     fp_h_source_x: jnp.ndarray
@@ -463,22 +480,6 @@ class CompiledSimulation:
     fp_hx_mask: jnp.ndarray
     fp_hy_mask: jnp.ndarray
     fp_hz_mask: jnp.ndarray
-
-    # Optional boundary-shell slabs where lossy update differs from lossless one.
-    e_use_lossy_shell_x: bool
-    e_lossy_shell_x: tuple[tuple[tuple[int, int, int], tuple[int, int, int]], ...]
-    e_use_lossy_shell_y: bool
-    e_lossy_shell_y: tuple[tuple[tuple[int, int, int], tuple[int, int, int]], ...]
-    e_use_lossy_shell_z: bool
-    e_lossy_shell_z: tuple[tuple[tuple[int, int, int], tuple[int, int, int]], ...]
-    h_use_lossy_shell_x: bool
-    h_lossy_shell_x: tuple[tuple[tuple[int, int, int], tuple[int, int, int]], ...]
-    h_use_lossy_shell_y: bool
-    h_lossy_shell_y: tuple[tuple[tuple[int, int, int], tuple[int, int, int]], ...]
-    h_use_lossy_shell_z: bool
-    h_lossy_shell_z: tuple[tuple[tuple[int, int, int], tuple[int, int, int]], ...]
-    use_sparse_3d_h_coefficients: bool
-    use_sparse_3d_e_coefficients: bool
 
     # Explicit metallic-wall masks aligned to the Yee staggering.
     ex_metal_mask: jnp.ndarray
@@ -507,31 +508,19 @@ class CompiledSimulation:
         )
 
     def _snapshot_field_shape(self) -> tuple[int, ...]:
-        def _first_nonempty_shape(*arrays: jnp.ndarray) -> tuple[int, ...]:
-            for arr in arrays:
-                if arr.size > 0:
-                    return tuple(arr.shape)
-            return tuple()
-
         field_name = self.config.snapshot_field
         if field_name == "Ex":
-            return _first_nonempty_shape(
-                self.e_source_lossless_x, self.e_source_x, self.e_permittivity_x
-            )
+            return self.field_shape_ex
         if field_name == "Ey":
-            return _first_nonempty_shape(
-                self.e_source_lossless_y, self.e_source_y, self.e_permittivity_y
-            )
+            return self.field_shape_ey
         if field_name == "Ez":
-            return _first_nonempty_shape(
-                self.e_source_lossless_z, self.e_source_z, self.e_permittivity_z
-            )
+            return self.field_shape_ez
         if field_name == "Hx":
-            return tuple(self.hx_metal_mask.shape)
+            return self.field_shape_hx
         if field_name == "Hy":
-            return tuple(self.hy_metal_mask.shape)
+            return self.field_shape_hy
         if field_name == "Hz":
-            return tuple(self.hz_metal_mask.shape)
+            return self.field_shape_hz
         raise ValueError(f"Unsupported snapshot field: {field_name}")
 
     def _empty_snapshot_state(
@@ -588,11 +577,12 @@ class CompiledSimulation:
                 and spec.slab_starts is not None
                 and spec.slab_sizes is not None
             ):
-                patch = spec.coeff * amp
+                patch = (spec.coeff * amp).astype(out.dtype)
                 cur = jax.lax.dynamic_slice(out, spec.slab_starts, spec.slab_sizes)
                 out = jax.lax.dynamic_update_slice(out, cur + patch, spec.slab_starts)
             else:
-                out = out.at[spec.index].add(spec.coeff * amp)
+                patch = (spec.coeff * amp).astype(out.dtype)
+                out = out.at[spec.index].add(patch)
         return out
 
     def _apply_batched_slabs(
@@ -622,8 +612,8 @@ class CompiledSimulation:
                     for d in range(ndim)
                 )
                 dense_coeff = jnp.pad(group.coeffs[0], pad_width)
-                return arr + dense_coeff * amp
-            patch = group.coeffs[0] * amp
+                return arr + (dense_coeff * amp).astype(arr.dtype)
+            patch = (group.coeffs[0] * amp).astype(arr.dtype)
             cur = jax.lax.dynamic_slice(arr, starts_0, group.max_sizes)
             return jax.lax.dynamic_update_slice(arr, cur + patch, starts_0)
 
@@ -631,7 +621,7 @@ class CompiledSimulation:
 
             def apply_one(out, i: int):
                 amp_i = group.waveforms[i, safe_idx]
-                patch_i = group.coeffs[i] * amp_i
+                patch_i = (group.coeffs[i] * amp_i).astype(out.dtype)
                 starts_i = group.starts_tuple[i]
                 cur_i = jax.lax.dynamic_slice(out, starts_i, group.max_sizes)
                 return jax.lax.dynamic_update_slice(out, cur_i + patch_i, starts_i)
@@ -640,7 +630,7 @@ class CompiledSimulation:
 
         def body(i, out):
             amp = group.waveforms[i, safe_idx]
-            patch = group.coeffs[i] * amp
+            patch = (group.coeffs[i] * amp).astype(out.dtype)
             starts_i = [group.starts[i, d] for d in range(ndim)]
             cur = jax.lax.dynamic_slice(out, starts_i, group.max_sizes)
             return jax.lax.dynamic_update_slice(out, cur + patch, starts_i)
@@ -664,24 +654,40 @@ class CompiledSimulation:
     def _apply_metal_mask(self, arr: jnp.ndarray, mask: jnp.ndarray) -> jnp.ndarray:
         return jnp.where(mask, jnp.asarray(0.0, dtype=arr.dtype), arr)
 
-    def _apply_lossy_shell(
-        self,
-        updated: jnp.ndarray,
-        old: jnp.ndarray,
-        curl: jnp.ndarray,
-        decay: jnp.ndarray,
-        source: jnp.ndarray,
-        slabs: tuple[tuple[tuple[int, int, int], tuple[int, int, int]], ...],
+    @staticmethod
+    def _apply_metal_edges_3d(
+        arr: jnp.ndarray, component: str, metallic_edges: frozenset[str]
     ) -> jnp.ndarray:
-        """Apply lossy E update only on precomputed disjoint boundary slabs."""
-        out = updated
-        for starts, sizes in slabs:
-            old_s = jax.lax.dynamic_slice(old, starts, sizes)
-            curl_s = jax.lax.dynamic_slice(curl, starts, sizes)
-            decay_s = jax.lax.dynamic_slice(decay, starts, sizes)
-            source_s = jax.lax.dynamic_slice(source, starts, sizes)
-            lossy_s = decay_s * old_s + source_s * curl_s
-            out = jax.lax.dynamic_update_slice(out, lossy_s, starts)
+        """Zero compact-grid Yee samples constrained by low-side PEC walls."""
+
+        out = arr
+        zero = jnp.asarray(0.0, dtype=arr.dtype)
+        if component == "Ex":
+            if "front" in metallic_edges:
+                out = out.at[0, :, :].set(zero)
+            if "bottom" in metallic_edges:
+                out = out.at[:, 0, :].set(zero)
+        elif component == "Ey":
+            if "front" in metallic_edges:
+                out = out.at[0, :, :].set(zero)
+            if "left" in metallic_edges:
+                out = out.at[:, :, 0].set(zero)
+        elif component == "Ez":
+            if "bottom" in metallic_edges:
+                out = out.at[:, 0, :].set(zero)
+            if "left" in metallic_edges:
+                out = out.at[:, :, 0].set(zero)
+        elif component == "Hx":
+            if "left" in metallic_edges:
+                out = out.at[:, :, 0].set(zero)
+        elif component == "Hy":
+            if "bottom" in metallic_edges:
+                out = out.at[:, 0, :].set(zero)
+        elif component == "Hz":
+            if "front" in metallic_edges:
+                out = out.at[0, :, :].set(zero)
+        else:
+            raise ValueError(f"Unsupported 3D field component {component!r}")
         return out
 
     def _monitor_power_2d(
@@ -1379,24 +1385,12 @@ class CompiledSimulation:
                 if s.is_3d and not bool(getattr(s, "dft_enabled", False))
             )
             field_shapes = {
-                "Ex": tuple(
-                    self.e_source_lossless_x.shape
-                    if self.e_source_lossless_x.size > 0
-                    else self.e_source_x.shape
-                ),
-                "Ey": tuple(
-                    self.e_source_lossless_y.shape
-                    if self.e_source_lossless_y.size > 0
-                    else self.e_source_y.shape
-                ),
-                "Ez": tuple(
-                    self.e_source_lossless_z.shape
-                    if self.e_source_lossless_z.size > 0
-                    else self.e_source_z.shape
-                ),
-                "Hx": tuple(self.hx_metal_mask.shape),
-                "Hy": tuple(self.hy_metal_mask.shape),
-                "Hz": tuple(self.hz_metal_mask.shape),
+                "Ex": self.field_shape_ex,
+                "Ey": self.field_shape_ey,
+                "Ez": self.field_shape_ez,
+                "Hx": self.field_shape_hx,
+                "Hy": self.field_shape_hy,
+                "Hz": self.field_shape_hz,
             }
             batched_mon = compile_batched_monitor_data(batchable_3d, field_shapes)
             # Keep DFT monitors unbatched for deterministic per-component modal
@@ -1442,48 +1436,23 @@ class CompiledSimulation:
             snapshot_state=None,
         ):
             h_decay_x, h_source_x = coeffs.h_decay_x, coeffs.h_source_x
-            h_source_lossless_x = coeffs.h_source_lossless_x
+            h_sigma_m_x = coeffs.h_sigma_m_x
             h_decay_y, h_source_y = coeffs.h_decay_y, coeffs.h_source_y
-            h_source_lossless_y = coeffs.h_source_lossless_y
+            h_sigma_m_y = coeffs.h_sigma_m_y
             h_decay_z, h_source_z = coeffs.h_decay_z, coeffs.h_source_z
-            h_source_lossless_z = coeffs.h_source_lossless_z
+            h_sigma_m_z = coeffs.h_sigma_m_z
             e_decay_x, e_source_x = coeffs.e_decay_x, coeffs.e_source_x
-            e_source_lossless_x = coeffs.e_source_lossless_x
-            e_permittivity_x = coeffs.e_permittivity_x
+            e_conductivity_x = coeffs.e_conductivity_x
+            e_inv_permittivity_x = coeffs.e_inv_permittivity_x
             e_decay_y, e_source_y = coeffs.e_decay_y, coeffs.e_source_y
-            e_source_lossless_y = coeffs.e_source_lossless_y
-            e_permittivity_y = coeffs.e_permittivity_y
+            e_conductivity_y = coeffs.e_conductivity_y
+            e_inv_permittivity_y = coeffs.e_inv_permittivity_y
             e_decay_z, e_source_z = coeffs.e_decay_z, coeffs.e_source_z
-            e_source_lossless_z = coeffs.e_source_lossless_z
-            e_permittivity_z = coeffs.e_permittivity_z
+            e_conductivity_z = coeffs.e_conductivity_z
+            e_inv_permittivity_z = coeffs.e_inv_permittivity_z
             tm_h_decay_x, tm_h_source_x = coeffs.tm_h_decay_x, coeffs.tm_h_source_x
             tm_h_decay_y, tm_h_source_y = coeffs.tm_h_decay_y, coeffs.tm_h_source_y
             tm_e_decay_z, tm_e_source_z = coeffs.tm_e_decay_z, coeffs.tm_e_source_z
-            h_shell_decay_x = coeffs.h_shell_decay_x
-            h_shell_source_x = coeffs.h_shell_source_x
-            h_shell_decay_y = coeffs.h_shell_decay_y
-            h_shell_source_y = coeffs.h_shell_source_y
-            h_shell_decay_z = coeffs.h_shell_decay_z
-            h_shell_source_z = coeffs.h_shell_source_z
-            e_shell_decay_x = coeffs.e_shell_decay_x
-            e_shell_source_x = coeffs.e_shell_source_x
-            e_shell_decay_y = coeffs.e_shell_decay_y
-            e_shell_source_y = coeffs.e_shell_source_y
-            e_shell_decay_z = coeffs.e_shell_decay_z
-            e_shell_source_z = coeffs.e_shell_source_z
-
-            use_lossy_shell_ex = self.e_use_lossy_shell_x
-            use_lossy_shell_ey = self.e_use_lossy_shell_y
-            use_lossy_shell_ez = self.e_use_lossy_shell_z
-            lossy_shell_ex = self.e_lossy_shell_x
-            lossy_shell_ey = self.e_lossy_shell_y
-            lossy_shell_ez = self.e_lossy_shell_z
-            use_lossy_shell_hx = self.h_use_lossy_shell_x
-            use_lossy_shell_hy = self.h_use_lossy_shell_y
-            use_lossy_shell_hz = self.h_use_lossy_shell_z
-            lossy_shell_hx = self.h_lossy_shell_x
-            lossy_shell_hy = self.h_lossy_shell_y
-            lossy_shell_hz = self.h_lossy_shell_z
             ex_metal_mask = self.ex_metal_mask
             ey_metal_mask = self.ey_metal_mask
             ez_metal_mask = self.ez_metal_mask
@@ -1494,8 +1463,7 @@ class CompiledSimulation:
             use_cpml_tm_xy = self.use_cpml_tm_xy
             use_cpml_3d = self.use_cpml_3d
             full_pec_3d = self.full_pec_3d
-            use_sparse_3d_h_coefficients = self.use_sparse_3d_h_coefficients
-            use_sparse_3d_e_coefficients = self.use_sparse_3d_e_coefficients
+            metallic_edges_3d = self.cpml3d_metallic_edges
             tm_ez_mask = self.tm_ez_mask
             tm_hx_mask = self.tm_hx_mask
             tm_hy_mask = self.tm_hy_mask
@@ -1513,30 +1481,26 @@ class CompiledSimulation:
                         cpml_psi_e_terms=jnp.zeros_like(self.cpml_sigma_e_terms)
                     )
             if use_cpml_3d:
-                if len(engine_state.cpml3d_psi_h_terms) != len(
-                    self.cpml3d_b_h_terms
-                ) or any(
-                    psi.shape != coeff.shape
-                    for psi, coeff in zip(
-                        engine_state.cpml3d_psi_h_terms, self.cpml3d_b_h_terms
-                    )
+                h_psi_shapes = _cpml_3d_h_term_shapes(
+                    engine_state.hx, engine_state.hy, engine_state.hz
+                )
+                e_psi_shapes = _cpml_3d_e_term_shapes(
+                    engine_state.ex, engine_state.ey, engine_state.ez
+                )
+                if not _cpml_3d_shapes_match(
+                    engine_state.cpml3d_psi_h_terms, h_psi_shapes
                 ):
                     engine_state = engine_state._replace(
-                        cpml3d_psi_h_terms=tuple(
-                            jnp.zeros_like(term) for term in self.cpml3d_b_h_terms
+                        cpml3d_psi_h_terms=_zeros_for_cpml_3d_shapes(
+                            h_psi_shapes, engine_state.hx.dtype
                         )
                     )
-                if len(engine_state.cpml3d_psi_e_terms) != len(
-                    self.cpml3d_b_e_terms
-                ) or any(
-                    psi.shape != coeff.shape
-                    for psi, coeff in zip(
-                        engine_state.cpml3d_psi_e_terms, self.cpml3d_b_e_terms
-                    )
+                if not _cpml_3d_shapes_match(
+                    engine_state.cpml3d_psi_e_terms, e_psi_shapes
                 ):
                     engine_state = engine_state._replace(
-                        cpml3d_psi_e_terms=tuple(
-                            jnp.zeros_like(term) for term in self.cpml3d_b_e_terms
+                        cpml3d_psi_e_terms=_zeros_for_cpml_3d_shapes(
+                            e_psi_shapes, engine_state.ex.dtype
                         )
                     )
 
@@ -1588,7 +1552,12 @@ class CompiledSimulation:
                         fp_ey = fp_ey.at[:-1, :-1, :-1].set(ey)
                         fp_ez = fp_ez.at[:-1, :-1, :-1].set(ez)
                     eng = eng._replace(
-                        ex=ex, ey=ey, ez=ez, fp_ex=fp_ex, fp_ey=fp_ey, fp_ez=fp_ez
+                        ex=ex.astype(eng.ex.dtype),
+                        ey=ey.astype(eng.ey.dtype),
+                        ez=ez.astype(eng.ez.dtype),
+                        fp_ex=fp_ex.astype(eng.fp_ex.dtype),
+                        fp_ey=fp_ey.astype(eng.fp_ey.dtype),
+                        fp_ez=fp_ez.astype(eng.fp_ez.dtype),
                     )
                     return _merge_carry(
                         eng, mon, mat, snap_fields, snap_steps, snap_times, snap_count
@@ -1614,23 +1583,15 @@ class CompiledSimulation:
                         if cpml_psi_e_terms.shape != self.cpml_sigma_e_terms.shape:
                             cpml_psi_e_terms = jnp.zeros_like(self.cpml_sigma_e_terms)
                     if use_cpml_3d:
-                        if len(cpml3d_psi_h_terms) != len(self.cpml3d_b_h_terms) or any(
-                            psi.shape != coeff.shape
-                            for psi, coeff in zip(
-                                cpml3d_psi_h_terms, self.cpml3d_b_h_terms
+                        h_psi_shapes = _cpml_3d_h_term_shapes(hx, hy, hz)
+                        e_psi_shapes = _cpml_3d_e_term_shapes(ex, ey, ez)
+                        if not _cpml_3d_shapes_match(cpml3d_psi_h_terms, h_psi_shapes):
+                            cpml3d_psi_h_terms = _zeros_for_cpml_3d_shapes(
+                                h_psi_shapes, hx.dtype
                             )
-                        ):
-                            cpml3d_psi_h_terms = tuple(
-                                jnp.zeros_like(term) for term in self.cpml3d_b_h_terms
-                            )
-                        if len(cpml3d_psi_e_terms) != len(self.cpml3d_b_e_terms) or any(
-                            psi.shape != coeff.shape
-                            for psi, coeff in zip(
-                                cpml3d_psi_e_terms, self.cpml3d_b_e_terms
-                            )
-                        ):
-                            cpml3d_psi_e_terms = tuple(
-                                jnp.zeros_like(term) for term in self.cpml3d_b_e_terms
+                        if not _cpml_3d_shapes_match(cpml3d_psi_e_terms, e_psi_shapes):
+                            cpml3d_psi_e_terms = _zeros_for_cpml_3d_shapes(
+                                e_psi_shapes, ex.dtype
                             )
 
                     if is_3d and full_pec_3d:
@@ -1658,105 +1619,9 @@ class CompiledSimulation:
                         hy = fp_hy[:-1, :-1, :-1]
                         hz = fp_hz[:-1, :-1, :-1]
                     elif is_3d:
-                        if use_sparse_3d_h_coefficients:
-                            if self.use_cpml_3d:
-                                hx, hy, hz, cpml3d_psi_h_terms = (
-                                    cpml_update_h_from_e_3d_shell_split(
-                                        ex,
-                                        ey,
-                                        ez,
-                                        hx,
-                                        hy,
-                                        hz,
-                                        h_source_lossless_x,
-                                        h_source_lossless_y,
-                                        h_source_lossless_z,
-                                        resolution,
-                                        a_h_terms=self.cpml3d_a_h_terms,
-                                        b_h_terms=self.cpml3d_b_h_terms,
-                                        inv_kappa_h_terms=(
-                                            self.cpml3d_inv_kappa_h_terms
-                                        ),
-                                        psi_h_terms=cpml3d_psi_h_terms,
-                                        h_lossy_shell_x=lossy_shell_hx,
-                                        h_lossy_shell_y=lossy_shell_hy,
-                                        h_lossy_shell_z=lossy_shell_hz,
-                                        h_shell_decay_x=h_shell_decay_x,
-                                        h_shell_source_x=h_shell_source_x,
-                                        h_shell_decay_y=h_shell_decay_y,
-                                        h_shell_source_y=h_shell_source_y,
-                                        h_shell_decay_z=h_shell_decay_z,
-                                        h_shell_source_z=h_shell_source_z,
-                                    )
-                                )
-                            else:
-                                hx_old, hy_old, hz_old = hx, hy, hz
-                                hx, hy, hz = ops.fused_update_h_lossless_3d(
-                                    ex,
-                                    ey,
-                                    ez,
-                                    hx,
-                                    hy,
-                                    hz,
-                                    h_source_lossless_x,
-                                    h_source_lossless_y,
-                                    h_source_lossless_z,
-                                    resolution,
-                                )
-                                if use_lossy_shell_hx:
-                                    hx = apply_lossy_shell_from_lossless_3d(
-                                        hx,
-                                        hx_old,
-                                        h_source_lossless_x,
-                                        lossy_shell_hx,
-                                        h_shell_decay_x,
-                                        h_shell_source_x,
-                                    )
-                                if use_lossy_shell_hy:
-                                    hy = apply_lossy_shell_from_lossless_3d(
-                                        hy,
-                                        hy_old,
-                                        h_source_lossless_y,
-                                        lossy_shell_hy,
-                                        h_shell_decay_y,
-                                        h_shell_source_y,
-                                    )
-                                if use_lossy_shell_hz:
-                                    hz = apply_lossy_shell_from_lossless_3d(
-                                        hz,
-                                        hz_old,
-                                        h_source_lossless_z,
-                                        lossy_shell_hz,
-                                        h_shell_decay_z,
-                                        h_shell_source_z,
-                                    )
-                        else:
-                            if self.use_cpml_3d:
-                                hx, hy, hz, cpml3d_psi_h_terms = (
-                                    cpml_update_h_from_e_3d(
-                                        ex,
-                                        ey,
-                                        ez,
-                                        hx,
-                                        hy,
-                                        hz,
-                                        h_decay_x,
-                                        h_source_x,
-                                        h_decay_y,
-                                        h_source_y,
-                                        h_decay_z,
-                                        h_source_z,
-                                        resolution,
-                                        a_h_terms=self.cpml3d_a_h_terms,
-                                        b_h_terms=self.cpml3d_b_h_terms,
-                                        inv_kappa_h_terms=(
-                                            self.cpml3d_inv_kappa_h_terms
-                                        ),
-                                        psi_h_terms=cpml3d_psi_h_terms,
-                                    )
-                                )
-                            else:
-                                hx, hy, hz = ops.fused_update_h_lossy_3d(
+                        if self.use_cpml_3d:
+                            hx, hy, hz, cpml3d_psi_h_terms = (
+                                cpml_update_h_from_e_3d(
                                     ex,
                                     ey,
                                     ez,
@@ -1770,7 +1635,42 @@ class CompiledSimulation:
                                     h_decay_z,
                                     h_source_z,
                                     resolution,
+                                    a_h_terms=self.cpml3d_a_h_terms,
+                                    b_h_terms=self.cpml3d_b_h_terms,
+                                    inv_kappa_h_terms=self.cpml3d_inv_kappa_h_terms,
+                                    sigma_h_terms=(
+                                        self.cpml3d_sigma_h_terms
+                                        if self.use_primitive_cpml_3d_terms
+                                        else None
+                                    ),
+                                    kappa_h_terms=(
+                                        self.cpml3d_kappa_h_terms
+                                        if self.use_primitive_cpml_3d_terms
+                                        else None
+                                    ),
+                                    alpha_h_terms=(
+                                        self.cpml3d_alpha_h_terms
+                                        if self.use_primitive_cpml_3d_terms
+                                        else None
+                                    ),
+                                    dt=dt_scalar,
+                                    psi_h_terms=cpml3d_psi_h_terms,
                                 )
+                            )
+                        else:
+                            hx, hy, hz = ops.fused_update_h_lossy_3d_material(
+                                ex,
+                                ey,
+                                ez,
+                                hx,
+                                hy,
+                                hz,
+                                h_sigma_m_x,
+                                h_sigma_m_y,
+                                h_sigma_m_z,
+                                dt_scalar,
+                                resolution,
+                            )
                     elif use_physical_tm_xy:
                         if tm_full_pec:
                             curl_tm_hx, curl_tm_hy = full_pec_curl_e_to_h_2d_xy(
@@ -1815,74 +1715,46 @@ class CompiledSimulation:
                             ),
                             tm_hy_mask,
                         )
-                        hz_old = hz
-                        if use_lossy_shell_hz:
-                            hz = hz_old - h_source_lossless_z * curl_ez
-                            hz = self._apply_lossy_shell(
-                                updated=hz,
-                                old=hz_old,
-                                curl=curl_ez,
-                                decay=h_decay_z,
-                                source=-h_source_z,
-                                slabs=lossy_shell_hz,
-                            )
-                        else:
-                            hz = h_decay_z * hz_old - h_source_z * curl_ez
+                        hz = h_decay_z * hz - h_source_z * curl_ez
                     else:
                         curl_ex, curl_ey, curl_ez = ops.curl_e_to_h_2d(
                             (ex, ey, ez),
                             resolution,
                             plane=plane_2d,
                         )
-                        hx_old, hy_old, hz_old = hx, hy, hz
-                        if use_lossy_shell_hx:
-                            hx = hx_old - h_source_lossless_x * curl_ex
-                            hx = self._apply_lossy_shell(
-                                updated=hx,
-                                old=hx_old,
-                                curl=curl_ex,
-                                decay=h_decay_x,
-                                source=-h_source_x,
-                                slabs=lossy_shell_hx,
-                            )
-                        else:
-                            hx = h_decay_x * hx_old - h_source_x * curl_ex
-                        if use_lossy_shell_hy:
-                            hy = hy_old - h_source_lossless_y * curl_ey
-                            hy = self._apply_lossy_shell(
-                                updated=hy,
-                                old=hy_old,
-                                curl=curl_ey,
-                                decay=h_decay_y,
-                                source=-h_source_y,
-                                slabs=lossy_shell_hy,
-                            )
-                        else:
-                            hy = h_decay_y * hy_old - h_source_y * curl_ey
-                        if use_lossy_shell_hz:
-                            hz = hz_old - h_source_lossless_z * curl_ez
-                            hz = self._apply_lossy_shell(
-                                updated=hz,
-                                old=hz_old,
-                                curl=curl_ez,
-                                decay=h_decay_z,
-                                source=-h_source_z,
-                                slabs=lossy_shell_hz,
-                            )
-                        else:
-                            hz = h_decay_z * hz_old - h_source_z * curl_ez
+                        hx = h_decay_x * hx - h_source_x * curl_ex
+                        hy = h_decay_y * hy - h_source_y * curl_ey
+                        hz = h_decay_z * hz - h_source_z * curl_ez
 
                     eng = eng._replace(
-                        hx=hx,
-                        hy=hy,
-                        hz=hz,
-                        fp_hx=fp_hx,
-                        fp_hy=fp_hy,
-                        fp_hz=fp_hz,
-                        cpml_psi_h_terms=cpml_psi_h_terms,
-                        cpml_psi_e_terms=cpml_psi_e_terms,
-                        cpml3d_psi_h_terms=cpml3d_psi_h_terms,
-                        cpml3d_psi_e_terms=cpml3d_psi_e_terms,
+                        hx=hx.astype(eng.hx.dtype),
+                        hy=hy.astype(eng.hy.dtype),
+                        hz=hz.astype(eng.hz.dtype),
+                        fp_hx=fp_hx.astype(eng.fp_hx.dtype),
+                        fp_hy=fp_hy.astype(eng.fp_hy.dtype),
+                        fp_hz=fp_hz.astype(eng.fp_hz.dtype),
+                        cpml_psi_h_terms=cpml_psi_h_terms.astype(
+                            eng.cpml_psi_h_terms.dtype
+                        ),
+                        cpml_psi_e_terms=cpml_psi_e_terms.astype(
+                            eng.cpml_psi_e_terms.dtype
+                        ),
+                        cpml3d_psi_h_terms=tuple(
+                            term.astype(ref.dtype)
+                            for term, ref in zip(
+                                cpml3d_psi_h_terms,
+                                eng.cpml3d_psi_h_terms,
+                                strict=True,
+                            )
+                        ),
+                        cpml3d_psi_e_terms=tuple(
+                            term.astype(ref.dtype)
+                            for term, ref in zip(
+                                cpml3d_psi_e_terms,
+                                eng.cpml3d_psi_e_terms,
+                                strict=True,
+                            )
+                        ),
                     )
                     return _merge_carry(
                         eng, mon, mat, snap_fields, snap_steps, snap_times, snap_count
@@ -1905,11 +1777,25 @@ class CompiledSimulation:
                         fp_hx = fp_hx.at[:-1, :-1, :-1].set(hx_post)
                         fp_hy = fp_hy.at[:-1, :-1, :-1].set(hy_post)
                         fp_hz = fp_hz.at[:-1, :-1, :-1].set(hz)
-                    hx = self._apply_metal_mask(hx_post, hx_metal_mask)
-                    hy = self._apply_metal_mask(hy_post, hy_metal_mask)
-                    hz = self._apply_metal_mask(hz, hz_metal_mask)
+                    if is_3d:
+                        hx = self._apply_metal_edges_3d(
+                            hx_post, "Hx", metallic_edges_3d
+                        )
+                        hy = self._apply_metal_edges_3d(
+                            hy_post, "Hy", metallic_edges_3d
+                        )
+                        hz = self._apply_metal_edges_3d(hz, "Hz", metallic_edges_3d)
+                    else:
+                        hx = self._apply_metal_mask(hx_post, hx_metal_mask)
+                        hy = self._apply_metal_mask(hy_post, hy_metal_mask)
+                        hz = self._apply_metal_mask(hz, hz_metal_mask)
                     eng = eng._replace(
-                        hx=hx, hy=hy, hz=hz, fp_hx=fp_hx, fp_hy=fp_hy, fp_hz=fp_hz
+                        hx=hx.astype(eng.hx.dtype),
+                        hy=hy.astype(eng.hy.dtype),
+                        hz=hz.astype(eng.hz.dtype),
+                        fp_hx=fp_hx.astype(eng.fp_hx.dtype),
+                        fp_hy=fp_hy.astype(eng.fp_hy.dtype),
+                        fp_hz=fp_hz.astype(eng.fp_hz.dtype),
                     )
                     return _merge_carry(
                         eng, mon, mat, snap_fields, snap_steps, snap_times, snap_count
@@ -1950,145 +1836,9 @@ class CompiledSimulation:
                         ey = fp_ey[:-1, :-1, :-1]
                         ez = fp_ez[:-1, :-1, :-1]
                     elif is_3d:
-                        if use_sparse_3d_e_coefficients:
-                            if self.use_cpml_3d:
-                                ex, ey, ez, cpml3d_psi_e_terms = (
-                                    cpml_update_e_from_h_3d_shell_split(
-                                        hx,
-                                        hy,
-                                        hz,
-                                        ex,
-                                        ey,
-                                        ez,
-                                        e_source_lossless_x,
-                                        e_source_lossless_y,
-                                        e_source_lossless_z,
-                                        e_permittivity_x,
-                                        e_permittivity_y,
-                                        e_permittivity_z,
-                                        dt_scalar,
-                                        resolution,
-                                        a_e_terms=self.cpml3d_a_e_terms,
-                                        b_e_terms=self.cpml3d_b_e_terms,
-                                        inv_kappa_e_terms=(
-                                            self.cpml3d_inv_kappa_e_terms
-                                        ),
-                                        psi_e_terms=cpml3d_psi_e_terms,
-                                        e_lossy_shell_x=lossy_shell_ex,
-                                        e_lossy_shell_y=lossy_shell_ey,
-                                        e_lossy_shell_z=lossy_shell_ez,
-                                        e_shell_decay_x=e_shell_decay_x,
-                                        e_shell_source_x=e_shell_source_x,
-                                        e_shell_decay_y=e_shell_decay_y,
-                                        e_shell_source_y=e_shell_source_y,
-                                        e_shell_decay_z=e_shell_decay_z,
-                                        e_shell_source_z=e_shell_source_z,
-                                        metallic_edges=self.cpml3d_metallic_edges,
-                                    )
-                                )
-                            else:
-                                boundary_views = build_h_boundary_views_for_e_3d(
-                                    hx, hy, hz, None
-                                )
-                                ex_old, ey_old, ez_old = ex, ey, ez
-                                e_source_runtime_x = (
-                                    e_source_lossless_x
-                                    if e_source_lossless_x.size > 0
-                                    else dt_scalar
-                                    / (
-                                        jnp.asarray(ops.EPS_0, dtype=ex.dtype)
-                                        * e_permittivity_x
-                                    )
-                                )
-                                e_source_runtime_y = (
-                                    e_source_lossless_y
-                                    if e_source_lossless_y.size > 0
-                                    else dt_scalar
-                                    / (
-                                        jnp.asarray(ops.EPS_0, dtype=ey.dtype)
-                                        * e_permittivity_y
-                                    )
-                                )
-                                e_source_runtime_z = (
-                                    e_source_lossless_z
-                                    if e_source_lossless_z.size > 0
-                                    else dt_scalar
-                                    / (
-                                        jnp.asarray(ops.EPS_0, dtype=ez.dtype)
-                                        * e_permittivity_z
-                                    )
-                                )
-                                ex, ey, ez = ops.fused_update_e_lossless_3d(
-                                    hx,
-                                    hy,
-                                    hz,
-                                    ex,
-                                    ey,
-                                    ez,
-                                    e_source_runtime_x,
-                                    e_source_runtime_y,
-                                    e_source_runtime_z,
-                                    resolution,
-                                    boundary_views=boundary_views,
-                                )
-                                if use_lossy_shell_ex:
-                                    ex = apply_lossy_shell_from_lossless_3d(
-                                        ex,
-                                        ex_old,
-                                        e_source_lossless_x,
-                                        lossy_shell_ex,
-                                        e_shell_decay_x,
-                                        e_shell_source_x,
-                                    )
-                                if use_lossy_shell_ey:
-                                    ey = apply_lossy_shell_from_lossless_3d(
-                                        ey,
-                                        ey_old,
-                                        e_source_lossless_y,
-                                        lossy_shell_ey,
-                                        e_shell_decay_y,
-                                        e_shell_source_y,
-                                    )
-                                if use_lossy_shell_ez:
-                                    ez = apply_lossy_shell_from_lossless_3d(
-                                        ez,
-                                        ez_old,
-                                        e_source_lossless_z,
-                                        lossy_shell_ez,
-                                        e_shell_decay_z,
-                                        e_shell_source_z,
-                                    )
-                        else:
-                            if self.use_cpml_3d:
-                                ex, ey, ez, cpml3d_psi_e_terms = (
-                                    cpml_update_e_from_h_3d(
-                                        hx,
-                                        hy,
-                                        hz,
-                                        ex,
-                                        ey,
-                                        ez,
-                                        e_decay_x,
-                                        e_source_x,
-                                        e_decay_y,
-                                        e_source_y,
-                                        e_decay_z,
-                                        e_source_z,
-                                        resolution,
-                                        a_e_terms=self.cpml3d_a_e_terms,
-                                        b_e_terms=self.cpml3d_b_e_terms,
-                                        inv_kappa_e_terms=(
-                                            self.cpml3d_inv_kappa_e_terms
-                                        ),
-                                        psi_e_terms=cpml3d_psi_e_terms,
-                                        metallic_edges=self.cpml3d_metallic_edges,
-                                    )
-                                )
-                            else:
-                                boundary_views = build_h_boundary_views_for_e_3d(
-                                    hx, hy, hz, None
-                                )
-                                ex, ey, ez = ops.fused_update_e_lossy_3d(
+                        if self.use_cpml_3d:
+                            ex, ey, ez, cpml3d_psi_e_terms = (
+                                cpml_update_e_from_h_3d(
                                     hx,
                                     hy,
                                     hz,
@@ -2102,8 +1852,50 @@ class CompiledSimulation:
                                     e_decay_z,
                                     e_source_z,
                                     resolution,
-                                    boundary_views=boundary_views,
+                                    a_e_terms=self.cpml3d_a_e_terms,
+                                    b_e_terms=self.cpml3d_b_e_terms,
+                                    inv_kappa_e_terms=self.cpml3d_inv_kappa_e_terms,
+                                    sigma_e_terms=(
+                                        self.cpml3d_sigma_e_terms
+                                        if self.use_primitive_cpml_3d_terms
+                                        else None
+                                    ),
+                                    kappa_e_terms=(
+                                        self.cpml3d_kappa_e_terms
+                                        if self.use_primitive_cpml_3d_terms
+                                        else None
+                                    ),
+                                    alpha_e_terms=(
+                                        self.cpml3d_alpha_e_terms
+                                        if self.use_primitive_cpml_3d_terms
+                                        else None
+                                    ),
+                                    dt=dt_scalar,
+                                    psi_e_terms=cpml3d_psi_e_terms,
+                                    metallic_edges=self.cpml3d_metallic_edges,
                                 )
+                            )
+                        else:
+                            boundary_views = build_h_boundary_views_for_e_3d(
+                                hx, hy, hz, None
+                            )
+                            ex, ey, ez = ops.fused_update_e_lossy_3d_material(
+                                hx,
+                                hy,
+                                hz,
+                                ex,
+                                ey,
+                                ez,
+                                e_conductivity_x,
+                                e_inv_permittivity_x,
+                                e_conductivity_y,
+                                e_inv_permittivity_y,
+                                e_conductivity_z,
+                                e_inv_permittivity_z,
+                                dt_scalar,
+                                resolution,
+                                boundary_views=boundary_views,
+                            )
                     elif use_physical_tm_xy:
                         curl_hx, curl_hy = xy_te_curl_h_to_e_2d(
                             hz,
@@ -2137,31 +1929,8 @@ class CompiledSimulation:
                                 ez.shape,
                                 tm_metallic_edges,
                             )
-                        ex_old, ey_old = ex, ey
-                        if use_lossy_shell_ex:
-                            ex = ex_old + e_source_lossless_x * curl_hx
-                            ex = self._apply_lossy_shell(
-                                updated=ex,
-                                old=ex_old,
-                                curl=curl_hx,
-                                decay=e_decay_x,
-                                source=e_source_x,
-                                slabs=lossy_shell_ex,
-                            )
-                        else:
-                            ex = e_decay_x * ex_old + e_source_x * curl_hx
-                        if use_lossy_shell_ey:
-                            ey = ey_old + e_source_lossless_y * curl_hy
-                            ey = self._apply_lossy_shell(
-                                updated=ey,
-                                old=ey_old,
-                                curl=curl_hy,
-                                decay=e_decay_y,
-                                source=e_source_y,
-                                slabs=lossy_shell_ey,
-                            )
-                        else:
-                            ey = e_decay_y * ey_old + e_source_y * curl_hy
+                        ex = e_decay_x * ex + e_source_x * curl_hx
+                        ey = e_decay_y * ey + e_source_y * curl_hy
                         ez = apply_zero_mask(
                             advance_e_from_coefficients(
                                 ez, curl_tm_ez, tm_e_decay_z, tm_e_source_z
@@ -2175,53 +1944,28 @@ class CompiledSimulation:
                             (ex.shape, ey.shape, ez.shape),
                             plane=plane_2d,
                         )
-                        ex_old, ey_old, ez_old = ex, ey, ez
-                        if use_lossy_shell_ex:
-                            ex = ex_old + e_source_lossless_x * curl_hx
-                            ex = self._apply_lossy_shell(
-                                updated=ex,
-                                old=ex_old,
-                                curl=curl_hx,
-                                decay=e_decay_x,
-                                source=e_source_x,
-                                slabs=lossy_shell_ex,
-                            )
-                        else:
-                            ex = e_decay_x * ex_old + e_source_x * curl_hx
-                        if use_lossy_shell_ey:
-                            ey = ey_old + e_source_lossless_y * curl_hy
-                            ey = self._apply_lossy_shell(
-                                updated=ey,
-                                old=ey_old,
-                                curl=curl_hy,
-                                decay=e_decay_y,
-                                source=e_source_y,
-                                slabs=lossy_shell_ey,
-                            )
-                        else:
-                            ey = e_decay_y * ey_old + e_source_y * curl_hy
-                        if use_lossy_shell_ez:
-                            ez = ez_old + e_source_lossless_z * curl_hz
-                            ez = self._apply_lossy_shell(
-                                updated=ez,
-                                old=ez_old,
-                                curl=curl_hz,
-                                decay=e_decay_z,
-                                source=e_source_z,
-                                slabs=lossy_shell_ez,
-                            )
-                        else:
-                            ez = e_decay_z * ez_old + e_source_z * curl_hz
+                        ex = e_decay_x * ex + e_source_x * curl_hx
+                        ey = e_decay_y * ey + e_source_y * curl_hy
+                        ez = e_decay_z * ez + e_source_z * curl_hz
 
                     eng = eng._replace(
-                        ex=ex,
-                        ey=ey,
-                        ez=ez,
-                        fp_ex=fp_ex,
-                        fp_ey=fp_ey,
-                        fp_ez=fp_ez,
-                        cpml_psi_e_terms=cpml_psi_e_terms,
-                        cpml3d_psi_e_terms=cpml3d_psi_e_terms,
+                        ex=ex.astype(eng.ex.dtype),
+                        ey=ey.astype(eng.ey.dtype),
+                        ez=ez.astype(eng.ez.dtype),
+                        fp_ex=fp_ex.astype(eng.fp_ex.dtype),
+                        fp_ey=fp_ey.astype(eng.fp_ey.dtype),
+                        fp_ez=fp_ez.astype(eng.fp_ez.dtype),
+                        cpml_psi_e_terms=cpml_psi_e_terms.astype(
+                            eng.cpml_psi_e_terms.dtype
+                        ),
+                        cpml3d_psi_e_terms=tuple(
+                            term.astype(ref.dtype)
+                            for term, ref in zip(
+                                cpml3d_psi_e_terms,
+                                eng.cpml3d_psi_e_terms,
+                                strict=True,
+                            )
+                        ),
                     )
                     return _merge_carry(
                         eng, mon, mat, snap_fields, snap_steps, snap_times, snap_count
@@ -2240,13 +1984,25 @@ class CompiledSimulation:
                         fp_ex = fp_ex.at[:-1, :-1, :-1].set(ex)
                         fp_ey = fp_ey.at[:-1, :-1, :-1].set(ey)
                         fp_ez = fp_ez.at[:-1, :-1, :-1].set(ez)
-                    ex = self._apply_metal_mask(ex, ex_metal_mask)
-                    ey = self._apply_metal_mask(ey, ey_metal_mask)
-                    ez = self._apply_metal_mask(ez, ez_metal_mask)
+                    if is_3d:
+                        ex = self._apply_metal_edges_3d(ex, "Ex", metallic_edges_3d)
+                        ey = self._apply_metal_edges_3d(ey, "Ey", metallic_edges_3d)
+                        ez = self._apply_metal_edges_3d(ez, "Ez", metallic_edges_3d)
+                    else:
+                        ex = self._apply_metal_mask(ex, ex_metal_mask)
+                        ey = self._apply_metal_mask(ey, ey_metal_mask)
+                        ez = self._apply_metal_mask(ez, ez_metal_mask)
                     if use_physical_tm_xy:
-                        ez = jnp.where(tm_ez_mask, jnp.asarray(0.0, dtype=ez.dtype), ez)
+                        ez = jnp.where(
+                            tm_ez_mask, jnp.asarray(0.0, dtype=ez.dtype), ez
+                        )
                     eng = eng._replace(
-                        ex=ex, ey=ey, ez=ez, fp_ex=fp_ex, fp_ey=fp_ey, fp_ez=fp_ez
+                        ex=ex.astype(eng.ex.dtype),
+                        ey=ey.astype(eng.ey.dtype),
+                        ez=ez.astype(eng.ez.dtype),
+                        fp_ex=fp_ex.astype(eng.fp_ex.dtype),
+                        fp_ey=fp_ey.astype(eng.fp_ey.dtype),
+                        fp_ez=fp_ez.astype(eng.fp_ez.dtype),
                     )
                     return _merge_carry(
                         eng, mon, mat, snap_fields, snap_steps, snap_times, snap_count
@@ -2300,7 +2056,10 @@ class CompiledSimulation:
                     new_step = eng.current_step
                     new_time = eng.t
                     should_snapshot = (new_step % snapshot_interval) == 0
-                    slot = jnp.minimum(snap_count, snap_fields.shape[0] - 1)
+                    slot = jnp.minimum(
+                        snap_count,
+                        jnp.asarray(snap_fields.shape[0] - 1, dtype=snap_count.dtype),
+                    )
                     snapshot_values = _snapshot_values(
                         ex,
                         ey,
@@ -2312,7 +2071,11 @@ class CompiledSimulation:
                         tm_hx=new_tm_hx if use_physical_tm_xy else None,
                         tm_hy=new_tm_hy if use_physical_tm_xy else None,
                     )
-                    field_start = (slot,) + (0,) * snapshot_values.ndim
+                    snapshot_values = snapshot_values.astype(snap_fields.dtype)
+                    field_start = (slot,) + tuple(
+                        jnp.asarray(0, dtype=slot.dtype)
+                        for _ in range(snapshot_values.ndim)
+                    )
                     snap_fields = jax.lax.cond(
                         should_snapshot,
                         lambda buf: jax.lax.dynamic_update_slice(
@@ -2426,9 +2189,12 @@ class CompiledSimulation:
 
         update_names = set(UpdateCoefficients._fields)
         referenced_update_names = {
-            "e_permittivity_x",
-            "e_permittivity_y",
-            "e_permittivity_z",
+            "h_sigma_m_x",
+            "h_sigma_m_y",
+            "h_sigma_m_z",
+            "e_conductivity_x",
+            "e_conductivity_y",
+            "e_conductivity_z",
         }
         for name in referenced_update_names:
             _add_array_entries(
@@ -2466,6 +2232,12 @@ class CompiledSimulation:
             "cpml3d_a_e_terms",
             "cpml3d_b_e_terms",
             "cpml3d_inv_kappa_e_terms",
+            "cpml3d_sigma_h_terms",
+            "cpml3d_kappa_h_terms",
+            "cpml3d_alpha_h_terms",
+            "cpml3d_sigma_e_terms",
+            "cpml3d_kappa_e_terms",
+            "cpml3d_alpha_e_terms",
             "fp_h_decay_x",
             "fp_h_source_x",
             "fp_h_decay_y",
@@ -2595,12 +2367,7 @@ class CompiledSimulation:
             "is_3d": bool(self.config.is_3d),
             "loop_kind": self.config.loop_kind,
             "use_cpml_3d": bool(self.use_cpml_3d),
-            "use_sparse_3d_e_coefficients": bool(
-                self.use_sparse_3d_e_coefficients
-            ),
-            "use_sparse_3d_h_coefficients": bool(
-                self.use_sparse_3d_h_coefficients
-            ),
+            "use_primitive_cpml_3d_terms": bool(self.use_primitive_cpml_3d_terms),
         }
         return report
 
@@ -2801,167 +2568,10 @@ def monitor_dft_point_size(specs: tuple[CompiledMonitorSpec, ...]) -> int:
     return int(max(int(getattr(spec, "dft_point_count", 0)) for spec in specs))
 
 
-def _edge_full_thickness(mask: np.ndarray, axis: int) -> tuple[int, int]:
-    """Count leading/trailing planes that are fully lossy along a given axis."""
-    other_axes = tuple(i for i in range(mask.ndim) if i != axis)
-    plane_all = mask.all(axis=other_axes)
-
-    left = 0
-    n = plane_all.shape[0]
-    while left < n and bool(plane_all[left]):
-        left += 1
-
-    right = 0
-    while right < (n - left) and bool(plane_all[n - 1 - right]):
-        right += 1
-    return left, right
-
-
-def _region_offsets_and_sizes(
-    field_shape: tuple[int, ...],
-    region: tuple[slice, ...],
-) -> tuple[tuple[int, ...], tuple[int, ...]] | None:
-    """Return region starts/sizes for slice-only regions with unit strides."""
-    if len(field_shape) != len(region):
-        return None
-
-    starts: list[int] = []
-    sizes: list[int] = []
-    for dim, key in zip(field_shape, region):
-        if not isinstance(key, slice):
-            return None
-        start, stop, step = key.indices(dim)
-        if step != 1:
-            return None
-        starts.append(int(start))
-        sizes.append(int(max(stop - start, 0)))
-    return tuple(starts), tuple(sizes)
-
-
-def _infer_lossy_shell_slabs(
-    field_shape: tuple[int, ...],
-    region: tuple[slice, ...],
-    conductivity_region: jnp.ndarray,
-) -> tuple[bool, tuple[tuple[tuple[int, int, int], tuple[int, int, int]], ...]]:
-    """Infer disjoint boundary-shell slabs from conductivity mask.
-
-    Returns (enabled, slabs). Enabled is True only if the lossy mask can be represented as
-    a standard disjoint shell decomposition in 3D.
-    """
-    if len(field_shape) != 3:
-        return False, tuple()
-
-    region_layout = _region_offsets_and_sizes(field_shape, region)
-    if region_layout is None:
-        return False, tuple()
-    region_starts, region_sizes = region_layout
-    if len(region_sizes) != 3 or any(s <= 0 for s in region_sizes):
-        return False, tuple()
-
-    local_mask = np.asarray(conductivity_region) > 0.0
-    if tuple(local_mask.shape) != tuple(region_sizes):
-        return False, tuple()
-    if not local_mask.any():
-        return False, tuple()
-
-    zL, zR = _edge_full_thickness(local_mask, axis=0)
-    yL, yR = _edge_full_thickness(local_mask, axis=1)
-    xL, xR = _edge_full_thickness(local_mask, axis=2)
-
-    nz, ny, nx = region_sizes
-    z0, z1 = zL, nz - zR
-    y0, y1 = yL, ny - yR
-    x0, x1 = xL, nx - xR
-    if z0 > z1 or y0 > y1 or x0 > x1:
-        return False, tuple()
-
-    slabs: list[tuple[tuple[int, int, int], tuple[int, int, int]]] = []
-
-    def add_slab(starts: tuple[int, int, int], sizes: tuple[int, int, int]):
-        if all(s > 0 for s in sizes):
-            slabs.append((starts, sizes))
-
-    # Disjoint shell: z faces, then y faces within z-core, then x faces within yz-core.
-    add_slab((0, 0, 0), (zL, ny, nx))
-    add_slab((z1, 0, 0), (zR, ny, nx))
-    add_slab((z0, 0, 0), (max(z1 - z0, 0), yL, nx))
-    add_slab((z0, y1, 0), (max(z1 - z0, 0), yR, nx))
-    add_slab((z0, y0, 0), (max(z1 - z0, 0), max(y1 - y0, 0), xL))
-    add_slab((z0, y0, x1), (max(z1 - z0, 0), max(y1 - y0, 0), xR))
-
-    if not slabs:
-        return False, tuple()
-
-    recon = np.zeros(region_sizes, dtype=bool)
-    for starts, sizes in slabs:
-        z, y, x = starts
-        dz, dy, dx = sizes
-        recon[z : z + dz, y : y + dy, x : x + dx] = True
-
-    if not np.array_equal(recon, local_mask):
-        return False, tuple()
-
-    z_off, y_off, x_off = region_starts
-    global_slabs = tuple(
-        (
-            (starts[0] + z_off, starts[1] + y_off, starts[2] + x_off),
-            sizes,
-        )
-        for starts, sizes in slabs
-    )
-    return True, global_slabs
-
-
 def _has_positive_conductivity(conductivity_region: jnp.ndarray) -> bool:
     return bool(np.asarray(conductivity_region).size) and bool(
         (np.asarray(conductivity_region) > 0.0).any()
     )
-
-
-def _slice_coefficient_slabs(
-    arr: jnp.ndarray,
-    slabs: tuple[tuple[tuple[int, int, int], tuple[int, int, int]], ...],
-) -> tuple[jnp.ndarray, ...]:
-    out: list[jnp.ndarray] = []
-    for starts, sizes in slabs:
-        z, y, x = starts
-        dz, dy, dx = sizes
-        out.append(arr[z : z + dz, y : y + dy, x : x + dx])
-    return tuple(out)
-
-
-def _slice_region_slabs(
-    arr: jnp.ndarray,
-    *,
-    field_shape: tuple[int, int, int],
-    region: tuple[slice, slice, slice],
-    slabs: tuple[tuple[tuple[int, int, int], tuple[int, int, int]], ...],
-) -> tuple[jnp.ndarray, ...]:
-    layout = _region_offsets_and_sizes(field_shape, region)
-    if layout is None:
-        raise ValueError("Cannot slice slab coefficients for non-unit slice region.")
-    region_starts, _region_sizes = layout
-    out: list[jnp.ndarray] = []
-    for starts, sizes in slabs:
-        local_starts = tuple(starts[d] - region_starts[d] for d in range(3))
-        z, y, x = local_starts
-        dz, dy, dx = sizes
-        out.append(arr[z : z + dz, y : y + dy, x : x + dx])
-    return tuple(out)
-
-
-def _precompute_h_update_coefficient_slabs(
-    sigma_m: jnp.ndarray,
-    slabs: tuple[tuple[tuple[int, int, int], tuple[int, int, int]], ...],
-    dt: float,
-) -> tuple[tuple[jnp.ndarray, ...], tuple[jnp.ndarray, ...]]:
-    decay_slabs: list[jnp.ndarray] = []
-    source_slabs: list[jnp.ndarray] = []
-    for sigma_s in _slice_coefficient_slabs(sigma_m, slabs):
-        decay_s, source_s, _ = ops.precompute_h_update_coefficients(sigma_s, dt)
-        decay_slabs.append(decay_s)
-        source_slabs.append(source_s)
-    return tuple(decay_slabs), tuple(source_slabs)
 
 
 def _precompute_e_lossless_source_coefficient(
@@ -2974,36 +2584,6 @@ def _precompute_e_lossless_source_coefficient(
     source = jnp.zeros(shape, dtype=jnp.float32)
     local = (dt / (ops.EPS_0 * permittivity)).astype(jnp.float32)
     return source.at[region].set(local)
-
-
-def _precompute_e_update_coefficient_slabs(
-    *,
-    field_shape: tuple[int, int, int],
-    conductivity: jnp.ndarray,
-    permittivity: jnp.ndarray,
-    dt: float,
-    region: tuple[slice, slice, slice],
-    slabs: tuple[tuple[tuple[int, int, int], tuple[int, int, int]], ...],
-) -> tuple[tuple[jnp.ndarray, ...], tuple[jnp.ndarray, ...]]:
-    conductivity_slabs = _slice_region_slabs(
-        conductivity, field_shape=field_shape, region=region, slabs=slabs
-    )
-    permittivity_slabs = _slice_region_slabs(
-        permittivity, field_shape=field_shape, region=region, slabs=slabs
-    )
-    decay_slabs: list[jnp.ndarray] = []
-    source_slabs: list[jnp.ndarray] = []
-    for conductivity_s, permittivity_s in zip(
-        conductivity_slabs, permittivity_slabs, strict=True
-    ):
-        denom = 1.0 + conductivity_s * (dt / (2.0 * ops.EPS_0 * permittivity_s))
-        decay_s = (
-            1.0 - conductivity_s * (dt / (2.0 * ops.EPS_0 * permittivity_s))
-        ) / denom
-        source_s = (dt / (ops.EPS_0 * permittivity_s)) / denom
-        decay_slabs.append(decay_s.astype(jnp.float32))
-        source_slabs.append(source_s.astype(jnp.float32))
-    return tuple(decay_slabs), tuple(source_slabs)
 
 
 def compile_simulation(
@@ -3086,158 +2666,63 @@ def compile_simulation(
         snapshot_interval=int(getattr(run_cfg, "snapshot_interval", 0) or 0),
     )
 
-    use_sparse_3d_h_coefficients = False
-    use_sparse_3d_e_coefficients = False
-    if bool(run_cfg.is_3d):
-        e_use_lossy_shell_x, e_lossy_shell_x = _infer_lossy_shell_slabs(
-            field_shape=tuple(fields.Ex.shape),
-            region=fields.region_x,
-            conductivity_region=fields.sig_x,
-        )
-        e_use_lossy_shell_y, e_lossy_shell_y = _infer_lossy_shell_slabs(
-            field_shape=tuple(fields.Ey.shape),
-            region=fields.region_y,
-            conductivity_region=fields.sig_y,
-        )
-        e_use_lossy_shell_z, e_lossy_shell_z = _infer_lossy_shell_slabs(
-            field_shape=tuple(fields.Ez.shape),
-            region=fields.region_z,
-            conductivity_region=fields.sig_z,
-        )
-        h_use_lossy_shell_x, h_lossy_shell_x = _infer_lossy_shell_slabs(
-            field_shape=tuple(fields.Hx.shape),
-            region=(slice(None), slice(None), slice(None)),
-            conductivity_region=fields.sigma_m_hx,
-        )
-        h_use_lossy_shell_y, h_lossy_shell_y = _infer_lossy_shell_slabs(
-            field_shape=tuple(fields.Hy.shape),
-            region=(slice(None), slice(None), slice(None)),
-            conductivity_region=fields.sigma_m_hy,
-        )
-        h_use_lossy_shell_z, h_lossy_shell_z = _infer_lossy_shell_slabs(
-            field_shape=tuple(fields.Hz.shape),
-            region=(slice(None), slice(None), slice(None)),
-            conductivity_region=fields.sigma_m_hz,
-        )
-
-        e_has_loss_x = _has_positive_conductivity(fields.sig_x)
-        e_has_loss_y = _has_positive_conductivity(fields.sig_y)
-        e_has_loss_z = _has_positive_conductivity(fields.sig_z)
-        h_has_loss_x = _has_positive_conductivity(fields.sigma_m_hx)
-        h_has_loss_y = _has_positive_conductivity(fields.sigma_m_hy)
-        h_has_loss_z = _has_positive_conductivity(fields.sigma_m_hz)
-
-        use_sparse_3d_e_coefficients = (
-            (not e_has_loss_x or e_use_lossy_shell_x)
-            and (not e_has_loss_y or e_use_lossy_shell_y)
-            and (not e_has_loss_z or e_use_lossy_shell_z)
-        )
-        use_sparse_3d_h_coefficients = (
-            (not h_has_loss_x or h_use_lossy_shell_x)
-            and (not h_has_loss_y or h_use_lossy_shell_y)
-            and (not h_has_loss_z or h_use_lossy_shell_z)
-        )
-
-        if not use_sparse_3d_e_coefficients:
-            e_use_lossy_shell_x, e_use_lossy_shell_y, e_use_lossy_shell_z = (
-                False,
-                False,
-                False,
-            )
-            e_lossy_shell_x, e_lossy_shell_y, e_lossy_shell_z = (
-                tuple(),
-                tuple(),
-                tuple(),
-            )
-        if not use_sparse_3d_h_coefficients:
-            h_use_lossy_shell_x, h_use_lossy_shell_y, h_use_lossy_shell_z = (
-                False,
-                False,
-                False,
-            )
-            h_lossy_shell_x, h_lossy_shell_y, h_lossy_shell_z = (
-                tuple(),
-                tuple(),
-                tuple(),
-            )
-    else:
-        e_use_lossy_shell_x, e_lossy_shell_x = False, tuple()
-        e_use_lossy_shell_y, e_lossy_shell_y = False, tuple()
-        e_use_lossy_shell_z, e_lossy_shell_z = False, tuple()
-        h_use_lossy_shell_x, h_lossy_shell_x = False, tuple()
-        h_use_lossy_shell_y, h_lossy_shell_y = False, tuple()
-        h_use_lossy_shell_z, h_lossy_shell_z = False, tuple()
+    has_cpml_3d = bool(
+        run_cfg.is_3d
+        and getattr(fields, "has_cpml", False)
+        and getattr(fields, "pml_data", None)
+    )
+    full_pec_3d_static = bool(run_cfg.is_3d and has_full_pec_3d(boundaries))
+    use_3d_material_coefficients = bool(
+        run_cfg.is_3d and (not has_cpml_3d) and (not full_pec_3d_static)
+    )
 
     empty3 = jnp.zeros((0, 0, 0), dtype=jnp.float32)
-    if use_sparse_3d_h_coefficients:
+    if use_3d_material_coefficients:
         h_decay_x = h_source_x = h_decay_y = h_source_y = empty3
         h_decay_z = h_source_z = empty3
-        h_source_lossless_x = h_source_lossless_y = h_source_lossless_z = jnp.asarray(
-            dt / ops.MU_0, dtype=jnp.float32
-        )
-        h_shell_decay_x, h_shell_source_x = _precompute_h_update_coefficient_slabs(
-            fields.sigma_m_hx, h_lossy_shell_x, dt
-        )
-        h_shell_decay_y, h_shell_source_y = _precompute_h_update_coefficient_slabs(
-            fields.sigma_m_hy, h_lossy_shell_y, dt
-        )
-        h_shell_decay_z, h_shell_source_z = _precompute_h_update_coefficient_slabs(
-            fields.sigma_m_hz, h_lossy_shell_z, dt
-        )
+        h_source_lossless_x = h_source_lossless_y = h_source_lossless_z = empty3
+        h_sigma_m_x = fields.sigma_m_hx
+        h_sigma_m_y = fields.sigma_m_hy
+        h_sigma_m_z = fields.sigma_m_hz
     else:
-        (h_decay_x, h_source_x, h_source_lossless_x), (
-            h_decay_y,
-            h_source_y,
-            h_source_lossless_y,
-        ), (h_decay_z, h_source_z, h_source_lossless_z) = (
+        (
+            (h_decay_x, h_source_x, h_source_lossless_x),
+            (
+                h_decay_y,
+                h_source_y,
+                h_source_lossless_y,
+            ),
+            (h_decay_z, h_source_z, h_source_lossless_z),
+        ) = (
             ops.precompute_h_update_coefficients(fields.sigma_m_hx, dt),
             ops.precompute_h_update_coefficients(fields.sigma_m_hy, dt),
             ops.precompute_h_update_coefficients(fields.sigma_m_hz, dt),
         )
-        h_shell_decay_x = h_shell_source_x = tuple()
-        h_shell_decay_y = h_shell_source_y = tuple()
-        h_shell_decay_z = h_shell_source_z = tuple()
+        h_sigma_m_x = h_sigma_m_y = h_sigma_m_z = empty3
 
-    if use_sparse_3d_e_coefficients:
+    if use_3d_material_coefficients:
         e_decay_x = e_source_x = e_decay_y = e_source_y = empty3
         e_decay_z = e_source_z = empty3
         e_source_lossless_x = e_source_lossless_y = e_source_lossless_z = empty3
-        e_permittivity_x = fields.eps_x
-        e_permittivity_y = fields.eps_y
-        e_permittivity_z = fields.eps_z
-        e_shell_decay_x, e_shell_source_x = _precompute_e_update_coefficient_slabs(
-            field_shape=tuple(fields.Ex.shape),
-            conductivity=fields.sig_x,
-            permittivity=fields.eps_x,
-            dt=dt,
-            region=fields.region_x,
-            slabs=e_lossy_shell_x,
-        )
-        e_shell_decay_y, e_shell_source_y = _precompute_e_update_coefficient_slabs(
-            field_shape=tuple(fields.Ey.shape),
-            conductivity=fields.sig_y,
-            permittivity=fields.eps_y,
-            dt=dt,
-            region=fields.region_y,
-            slabs=e_lossy_shell_y,
-        )
-        e_shell_decay_z, e_shell_source_z = _precompute_e_update_coefficient_slabs(
-            field_shape=tuple(fields.Ez.shape),
-            conductivity=fields.sig_z,
-            permittivity=fields.eps_z,
-            dt=dt,
-            region=fields.region_z,
-            slabs=e_lossy_shell_z,
-        )
+        e_conductivity_x = fields.sig_x
+        e_conductivity_y = fields.sig_y
+        e_conductivity_z = fields.sig_z
+        e_inv_permittivity_x = 1.0 / fields.eps_x
+        e_inv_permittivity_y = 1.0 / fields.eps_y
+        e_inv_permittivity_z = 1.0 / fields.eps_z
     else:
-        (e_decay_x, e_source_x, e_source_lossless_x), (
-            e_decay_y,
-            e_source_y,
-            e_source_lossless_y,
-        ), (
-            e_decay_z,
-            e_source_z,
-            e_source_lossless_z,
+        (
+            (e_decay_x, e_source_x, e_source_lossless_x),
+            (
+                e_decay_y,
+                e_source_y,
+                e_source_lossless_y,
+            ),
+            (
+                e_decay_z,
+                e_source_z,
+                e_source_lossless_z,
+            ),
         ) = (
             ops.precompute_e_update_coefficients(
                 shape=fields.Ex.shape,
@@ -3261,10 +2746,8 @@ def compile_simulation(
                 region=fields.region_z,
             ),
         )
-        e_permittivity_x = e_permittivity_y = e_permittivity_z = empty3
-        e_shell_decay_x = e_shell_source_x = tuple()
-        e_shell_decay_y = e_shell_source_y = tuple()
-        e_shell_decay_z = e_shell_source_z = tuple()
+        e_conductivity_x = e_conductivity_y = e_conductivity_z = empty3
+        e_inv_permittivity_x = e_inv_permittivity_y = e_inv_permittivity_z = empty3
     use_physical_tm_xy = False
     use_cpml_tm_xy = False
     use_cpml_3d = False
@@ -3282,7 +2765,14 @@ def compile_simulation(
     cpml3d_a_e_terms = _empty_cpml_3d_terms(jnp.float32)
     cpml3d_b_e_terms = _empty_cpml_3d_terms(jnp.float32)
     cpml3d_inv_kappa_e_terms = _empty_cpml_3d_terms(jnp.float32)
+    cpml3d_sigma_h_terms = _empty_cpml_3d_terms(jnp.float32)
+    cpml3d_kappa_h_terms = _empty_cpml_3d_terms(jnp.float32)
+    cpml3d_alpha_h_terms = _empty_cpml_3d_terms(jnp.float32)
+    cpml3d_sigma_e_terms = _empty_cpml_3d_terms(jnp.float32)
+    cpml3d_kappa_e_terms = _empty_cpml_3d_terms(jnp.float32)
+    cpml3d_alpha_e_terms = _empty_cpml_3d_terms(jnp.float32)
     cpml3d_metallic_edges = frozenset()
+    use_primitive_cpml_3d_terms = False
     if bool(run_cfg.is_3d):
         cpml3d_metallic_edges = frozenset(
             resolve_metallic_edges(boundaries, is_3d=True)
@@ -3291,14 +2781,24 @@ def compile_simulation(
             getattr(fields, "has_cpml", False) and getattr(fields, "pml_data", None)
         )
         if use_cpml_3d:
-            terms = build_cpml_3d_terms(fields.pml_data, dt=run_cfg.dt)
-            if terms is not None:
-                cpml3d_a_h_terms = terms.a_h_terms
-                cpml3d_b_h_terms = terms.b_h_terms
-                cpml3d_inv_kappa_h_terms = terms.inv_kappa_h_terms
-                cpml3d_a_e_terms = terms.a_e_terms
-                cpml3d_b_e_terms = terms.b_e_terms
-                cpml3d_inv_kappa_e_terms = terms.inv_kappa_e_terms
+            primitive_terms = build_cpml_3d_primitive_terms(fields.pml_data)
+            if primitive_terms is not None:
+                use_primitive_cpml_3d_terms = True
+                cpml3d_sigma_h_terms = primitive_terms.sigma_h_terms
+                cpml3d_kappa_h_terms = primitive_terms.kappa_h_terms
+                cpml3d_alpha_h_terms = primitive_terms.alpha_h_terms
+                cpml3d_sigma_e_terms = primitive_terms.sigma_e_terms
+                cpml3d_kappa_e_terms = primitive_terms.kappa_e_terms
+                cpml3d_alpha_e_terms = primitive_terms.alpha_e_terms
+            else:
+                terms = build_cpml_3d_terms(fields.pml_data, dt=run_cfg.dt)
+                if terms is not None:
+                    cpml3d_a_h_terms = terms.a_h_terms
+                    cpml3d_b_h_terms = terms.b_h_terms
+                    cpml3d_inv_kappa_h_terms = terms.inv_kappa_h_terms
+                    cpml3d_a_e_terms = terms.a_e_terms
+                    cpml3d_b_e_terms = terms.b_e_terms
+                    cpml3d_inv_kappa_e_terms = terms.inv_kappa_e_terms
     if not bool(run_cfg.is_3d) and run_cfg.plane_2d == "xy":
         tm_ez_shape = tuple(int(v) for v in fields.Ez.shape)
         # The physical full-state TMz lattice is the only supported xy-TM update
@@ -3386,15 +2886,21 @@ def compile_simulation(
             )
         )
         if fp_has_loss:
-            (fp_h_decay_x, fp_h_decay_y, fp_h_decay_z), (
-                fp_h_source_x,
-                fp_h_source_y,
-                fp_h_source_z,
+            (
+                (fp_h_decay_x, fp_h_decay_y, fp_h_decay_z),
+                (
+                    fp_h_source_x,
+                    fp_h_source_y,
+                    fp_h_source_z,
+                ),
             ) = full_pec_h_update_coefficients_3d(fp_state, dt)
-            (fp_e_decay_x, fp_e_decay_y, fp_e_decay_z), (
-                fp_e_source_x,
-                fp_e_source_y,
-                fp_e_source_z,
+            (
+                (fp_e_decay_x, fp_e_decay_y, fp_e_decay_z),
+                (
+                    fp_e_source_x,
+                    fp_e_source_y,
+                    fp_e_source_z,
+                ),
             ) = full_pec_e_update_coefficients_3d(fp_state, dt)
         else:
             fp_h_decay_x = jnp.zeros((0, 0, 0), dtype=jnp.float32)
@@ -3455,20 +2961,23 @@ def compile_simulation(
         is_3d=bool(run_cfg.is_3d),
         plane_2d=run_cfg.plane_2d,
     )
+    if bool(run_cfg.is_3d):
+        empty_mask3 = jnp.zeros((0, 0, 0), dtype=bool)
+        metallic_masks = {
+            "Ex": empty_mask3,
+            "Ey": empty_mask3,
+            "Ez": empty_mask3,
+            "Hx": empty_mask3,
+            "Hy": empty_mask3,
+            "Hz": empty_mask3,
+        }
 
-    if (not use_sparse_3d_h_coefficients) and (not h_use_lossy_shell_x):
-        h_source_lossless_x = _empty_like_rank(h_source_lossless_x)
-    if (not use_sparse_3d_h_coefficients) and (not h_use_lossy_shell_y):
-        h_source_lossless_y = _empty_like_rank(h_source_lossless_y)
-    if (not use_sparse_3d_h_coefficients) and (not h_use_lossy_shell_z):
-        h_source_lossless_z = _empty_like_rank(h_source_lossless_z)
-
-    if (not use_sparse_3d_e_coefficients) and (not e_use_lossy_shell_x):
-        e_source_lossless_x = _empty_like_rank(e_source_lossless_x)
-    if (not use_sparse_3d_e_coefficients) and (not e_use_lossy_shell_y):
-        e_source_lossless_y = _empty_like_rank(e_source_lossless_y)
-    if (not use_sparse_3d_e_coefficients) and (not e_use_lossy_shell_z):
-        e_source_lossless_z = _empty_like_rank(e_source_lossless_z)
+    h_source_lossless_x = _empty_like_rank(h_source_lossless_x)
+    h_source_lossless_y = _empty_like_rank(h_source_lossless_y)
+    h_source_lossless_z = _empty_like_rank(h_source_lossless_z)
+    e_source_lossless_x = _empty_like_rank(e_source_lossless_x)
+    e_source_lossless_y = _empty_like_rank(e_source_lossless_y)
+    e_source_lossless_z = _empty_like_rank(e_source_lossless_z)
 
     return CompiledSimulation(
         config=config,
@@ -3476,45 +2985,45 @@ def compile_simulation(
         source_specs=source_specs,
         monitor_specs=monitor_specs,
         monitor_devices=monitor_devices,
+        field_shape_ex=tuple(int(v) for v in fields.Ex.shape),
+        field_shape_ey=tuple(int(v) for v in fields.Ey.shape),
+        field_shape_ez=tuple(int(v) for v in fields.Ez.shape),
+        field_shape_hx=tuple(int(v) for v in fields.Hx.shape),
+        field_shape_hy=tuple(int(v) for v in fields.Hy.shape),
+        field_shape_hz=tuple(int(v) for v in fields.Hz.shape),
         h_decay_x=h_decay_x,
         h_source_x=h_source_x,
         h_source_lossless_x=h_source_lossless_x,
+        h_sigma_m_x=h_sigma_m_x,
         h_decay_y=h_decay_y,
         h_source_y=h_source_y,
         h_source_lossless_y=h_source_lossless_y,
+        h_sigma_m_y=h_sigma_m_y,
         h_decay_z=h_decay_z,
         h_source_z=h_source_z,
         h_source_lossless_z=h_source_lossless_z,
+        h_sigma_m_z=h_sigma_m_z,
         e_decay_x=e_decay_x,
         e_source_x=e_source_x,
         e_source_lossless_x=e_source_lossless_x,
-        e_permittivity_x=e_permittivity_x,
+        e_conductivity_x=e_conductivity_x,
+        e_inv_permittivity_x=e_inv_permittivity_x,
         e_decay_y=e_decay_y,
         e_source_y=e_source_y,
         e_source_lossless_y=e_source_lossless_y,
-        e_permittivity_y=e_permittivity_y,
+        e_conductivity_y=e_conductivity_y,
+        e_inv_permittivity_y=e_inv_permittivity_y,
         e_decay_z=e_decay_z,
         e_source_z=e_source_z,
         e_source_lossless_z=e_source_lossless_z,
-        e_permittivity_z=e_permittivity_z,
+        e_conductivity_z=e_conductivity_z,
+        e_inv_permittivity_z=e_inv_permittivity_z,
         tm_h_decay_x=tm_h_decay_x,
         tm_h_source_x=tm_h_source_x,
         tm_h_decay_y=tm_h_decay_y,
         tm_h_source_y=tm_h_source_y,
         tm_e_decay_z=tm_e_decay_z,
         tm_e_source_z=tm_e_source_z,
-        h_shell_decay_x=h_shell_decay_x,
-        h_shell_source_x=h_shell_source_x,
-        h_shell_decay_y=h_shell_decay_y,
-        h_shell_source_y=h_shell_source_y,
-        h_shell_decay_z=h_shell_decay_z,
-        h_shell_source_z=h_shell_source_z,
-        e_shell_decay_x=e_shell_decay_x,
-        e_shell_source_x=e_shell_source_x,
-        e_shell_decay_y=e_shell_decay_y,
-        e_shell_source_y=e_shell_source_y,
-        e_shell_decay_z=e_shell_decay_z,
-        e_shell_source_z=e_shell_source_z,
         tm_ez_mask=tm_ez_mask,
         tm_hx_mask=tm_hx_mask,
         tm_hy_mask=tm_hy_mask,
@@ -3535,7 +3044,14 @@ def compile_simulation(
         cpml3d_a_e_terms=cpml3d_a_e_terms,
         cpml3d_b_e_terms=cpml3d_b_e_terms,
         cpml3d_inv_kappa_e_terms=cpml3d_inv_kappa_e_terms,
+        cpml3d_sigma_h_terms=cpml3d_sigma_h_terms,
+        cpml3d_kappa_h_terms=cpml3d_kappa_h_terms,
+        cpml3d_alpha_h_terms=cpml3d_alpha_h_terms,
+        cpml3d_sigma_e_terms=cpml3d_sigma_e_terms,
+        cpml3d_kappa_e_terms=cpml3d_kappa_e_terms,
+        cpml3d_alpha_e_terms=cpml3d_alpha_e_terms,
         cpml3d_metallic_edges=cpml3d_metallic_edges,
+        use_primitive_cpml_3d_terms=use_primitive_cpml_3d_terms,
         full_pec_3d=full_pec_3d,
         fp_h_decay_x=fp_h_decay_x,
         fp_h_source_x=fp_h_source_x,
@@ -3555,20 +3071,6 @@ def compile_simulation(
         fp_hx_mask=fp_hx_mask,
         fp_hy_mask=fp_hy_mask,
         fp_hz_mask=fp_hz_mask,
-        e_use_lossy_shell_x=e_use_lossy_shell_x,
-        e_lossy_shell_x=e_lossy_shell_x,
-        e_use_lossy_shell_y=e_use_lossy_shell_y,
-        e_lossy_shell_y=e_lossy_shell_y,
-        e_use_lossy_shell_z=e_use_lossy_shell_z,
-        e_lossy_shell_z=e_lossy_shell_z,
-        h_use_lossy_shell_x=h_use_lossy_shell_x,
-        h_lossy_shell_x=h_lossy_shell_x,
-        h_use_lossy_shell_y=h_use_lossy_shell_y,
-        h_lossy_shell_y=h_lossy_shell_y,
-        h_use_lossy_shell_z=h_use_lossy_shell_z,
-        h_lossy_shell_z=h_lossy_shell_z,
-        use_sparse_3d_h_coefficients=use_sparse_3d_h_coefficients,
-        use_sparse_3d_e_coefficients=use_sparse_3d_e_coefficients,
         ex_metal_mask=metallic_masks["Ex"],
         ey_metal_mask=metallic_masks["Ey"],
         ez_metal_mask=metallic_masks["Ez"],
