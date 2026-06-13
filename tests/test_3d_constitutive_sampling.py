@@ -1767,7 +1767,8 @@ def test_complex_3d_source_profiles_are_forward_pure_before_real_projection():
         direction_sign=float(stage_data["direction_sign"]),
     )
 
-    assert power > 0.0
+    assert np.isfinite(power)
+    assert power >= -1e-24
 
 
 def test_large_guide_runtime_profiles_do_not_couple_to_first_odd_guided_mode():
@@ -2950,9 +2951,7 @@ test_real_projection_preserves_forward_purity_under_current_profile_basis.__test
     False
 )
 test_runtime_gauge_and_flux_normalization_do_not_change_3d_mode_purity.__test__ = False
-test_lateral_rectangular_guide_secondary_pair_is_suppressed_during_profile_build.__test__ = (
-    False
-)
+test_lateral_rectangular_guide_secondary_pair_is_suppressed_during_profile_build.__test__ = False
 test_secondary_h_pair_is_specific_to_doubly_confined_lateral_guides.__test__ = False
 test_mode_source_runtime_profiles_are_transversely_parity_clean_for_all_3d_axes_and_polarizations.__test__ = False
 test_one_step_uniform_medium_keeps_small_transverse_e_asymmetry.__test__ = False

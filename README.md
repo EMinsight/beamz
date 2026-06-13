@@ -9,13 +9,12 @@ pip install beamz
 ```
 
 ![License](https://img.shields.io/github/license/QuentinWach/beamz)
-![Last Update](https://img.shields.io/github/last-commit/QuentinWach/beamz)
 [![Tests](https://github.com/QuentinWach/beamz/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/QuentinWach/beamz/actions/workflows/tests.yml)
-[![Coverage](https://raw.githubusercontent.com/QuentinWach/beamz/main/.github/badges/coverage.svg)](https://github.com/QuentinWach/beamz/actions/workflows/full-tests.yml)
+[![Coverage](https://raw.githubusercontent.com/QuentinWach/beamz/main/.github/badges/coverage.svg)](https://github.com/QuentinWach/beamz/actions/workflows/tests.yml)
 
 
 ## Core Features
-- **100% Python**, free (MIT license) & open-source.
+- **100% Python**, free (Apache-2.0 license) & open-source.
 - Modular architecture with a high-level API.
 - **GPU-accelerated** (but CPU-capable).
 - Built-in layout flow (GDSII import/export).
@@ -39,3 +38,7 @@ BEAMZ's goal is to become the **pragmatic** FDTD engine of choice for **photonic
 It focuses on **streamlined workflows** to produce **useful results** without tedious setup or configuration files. While currently still experimental, this is _not_ a research project with the goal to demo a novel framework we can publish, nor a costly, closed API that hides how it works and gives you no ownership. A **modular architecture** is chosen over a purely object-oriented architecture to **make the code readable and development easy** so that, if there is something that isn't working or missing, you can quickly add it yourself.
 
 If any of this excites you or if have any questions, please open an issue on GitHub. Feel free to fork this project, to suggest or contribute new features, or simply support the project by **giving this repo a star.** Thank you!
+
+---
+
+Copyright © 2026 Quentin Wach — [Apache-2.0](https://github.com/beamzorg/beamz/blob/HEAD/LICENSE)
