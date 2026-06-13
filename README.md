@@ -29,7 +29,7 @@ pip install beamz
 
 
 ## Examples
-Read and try out our **[example notebooks](https://beamzorg.github.io/beamz-notebooks/)** or download and run [`examples/` from this repository](https://github.com/beamzorg/beamz/tree/main/examples).
+Read and try out our **[example notebooks](https://beamzorg.github.io/beamz-notebooks/)** (recommended) or download and run [`examples/` from this repository](https://github.com/beamzorg/beamz/tree/main/examples) (experimental).
 
 
 ## About
