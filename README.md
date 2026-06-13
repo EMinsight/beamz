@@ -8,9 +8,9 @@ BEAMZ is an **[electromagnetic](https://en.wikipedia.org/wiki/Electromagnetism) 
 pip install beamz
 ```
 
-![License](https://img.shields.io/github/license/QuentinWach/beamz)
-[![Tests](https://github.com/QuentinWach/beamz/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/QuentinWach/beamz/actions/workflows/tests.yml)
-[![Coverage](https://raw.githubusercontent.com/QuentinWach/beamz/main/.github/badges/coverage.svg)](https://github.com/QuentinWach/beamz/actions/workflows/tests.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](https://github.com/beamzorg/beamz/blob/main/LICENSE)
+[![Tests](https://github.com/beamzorg/beamz/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/beamzorg/beamz/actions/workflows/tests.yml)
+[![Coverage](https://raw.githubusercontent.com/beamzorg/beamz/main/.github/badges/coverage.svg)](https://github.com/beamzorg/beamz/actions/workflows/tests.yml)
 
 
 ## Core Features
