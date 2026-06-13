@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.3.2 - 2026-06-13
+
+### Changed
+- Reduced compiled-engine memory use and simulation compile overhead for larger 3D runs.
+- Simplified boundary and compiled simulation internals while preserving the public API.
+- Streamlined examples, benchmark scripts, and development tooling to reduce repository size.
+- Updated project licensing metadata to Apache-2.0.
+
+### Fixed
+- Improved 3D permittivity handling and memory estimation in simulation setup.
+- Fixed mode profile data handling for visualization workflows.
+- Adjusted tests and CI coverage around compiled-engine, boundary, and 3D constitutive behavior.
+
 ## v0.3.1 - 2026-05-31
 
 ### Added
