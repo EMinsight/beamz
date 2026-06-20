@@ -57,10 +57,10 @@ from beamz.shared_kernels import (
 from beamz.simulation import ops
 from beamz.simulation.boundaries import (
     build_h_boundary_views_for_e_3d,
-    cpml_update_e_from_h_3d_packed_psi,
     cpml_update_e_from_h_3d,
-    cpml_update_h_from_e_3d_packed_psi,
+    cpml_update_e_from_h_3d_packed_psi,
     cpml_update_h_from_e_3d,
+    cpml_update_h_from_e_3d_packed_psi,
     create_metallic_boundary_masks,
     full_pec_curl_e_to_h_2d_xy,
     full_pec_curl_h_to_e_2d_xy,

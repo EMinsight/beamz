@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.4.0 - 2026-06-20
+
+### Added
+- Added TFSF support for mode sources.
+- Added CPML waveguide benchmarking documentation and scripts.
+- Added expanded tests for mode sources, PML/CPML behavior, animation, visualization, and curl kernels.
+
+### Changed
+- Improved CPML behavior to reduce waveguide reflections.
+- Updated examples and notebooks for modal source and monitor workflows.
+- Refined license labeling and documentation around recommended and experimental examples.
+
 ## v0.3.2 - 2026-06-13
 
 ### Changed
