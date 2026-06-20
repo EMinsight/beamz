@@ -34,6 +34,11 @@ from beamz.devices.sources.mode import (
     _analytic_signal_quadrature,
     _ModeSource3DResidual,
 )
+from beamz.shared_kernels import (
+    CPML_3D_E_DERIVATIVES,
+    CPML_3D_H_DERIVATIVES,
+    build_cpml_3d_primitive_terms,
+)
 from beamz.simulation import ops
 from beamz.simulation.boundaries import (
     build_h_boundary_views_for_e_3d,
@@ -45,11 +50,6 @@ from beamz.simulation.compiled import (
     CompiledSimulation,
     EngineState,
     MonitorState,
-)
-from beamz.shared_kernels import (
-    CPML_3D_E_DERIVATIVES,
-    CPML_3D_H_DERIVATIVES,
-    build_cpml_3d_primitive_terms,
 )
 
 pytestmark = [pytest.mark.compiled, pytest.mark.component]
@@ -882,7 +882,9 @@ def test_compiled_uses_material_coefficients_for_3d_loss():
     sim.run_compiled(num_steps=1, progress=False)
 
 
-def test_compiled_3d_cpml_profiles_match_expected_x_boundary_embedding():
+def test_compiled_3d_cpml_profiles_match_expected_x_boundary_embedding(monkeypatch):
+    monkeypatch.setenv("BEAMZ_CPML_PACKED_PSI", "1")
+
     wl = 1.55 * um
     dx, dt = calc_optimal_fdtd_params(
         wl, 1.0, dims=3, safety_factor=0.95, points_per_wavelength=8
@@ -915,7 +917,7 @@ def test_compiled_3d_cpml_profiles_match_expected_x_boundary_embedding():
     nx = int(sim.fields.permittivity.shape[2])
     pml_cells = int(round(thickness / dx))
 
-    def expected_profile(count: int, *, sample_kind: str):
+    def expected_profile(count: int, *, sample_kind: str, domain_cells: int):
         sigma = np.zeros((count,), dtype=np.float32)
         kappa = np.ones((count,), dtype=np.float32)
         alpha = np.zeros((count,), dtype=np.float32)
@@ -935,34 +937,89 @@ def test_compiled_3d_cpml_profiles_match_expected_x_boundary_embedding():
                 np.arange(pml_cells - 1.5, -0.5, -1.0, dtype=np.float32),
                 0.0,
             )[: min(count, pml_cells)]
-            high_d = np.arange(0.0, pml_cells, 1.0, dtype=np.float32)[
-                : min(count, pml_cells)
-            ]
 
-        for side, d in (("low", low_d), ("high", high_d)):
-            u = np.clip(d / max(float(pml_cells), 1e-30), 0.0, 1.0)
-            side_sigma = sigma_max * np.power(u, 3.0)
-            side_kappa = 1.0 + (4.0 - 1.0) * np.power(u, 3.0)
-            side_alpha = 300.0 * np.power(1.0 - u, 1.0)
-            if side == "low":
-                sigma[: len(d)] = np.maximum(sigma[: len(d)], side_sigma)
-                kappa[: len(d)] = np.maximum(kappa[: len(d)], side_kappa)
-                alpha[: len(d)] = np.maximum(alpha[: len(d)], side_alpha)
-            else:
-                sigma[-len(d) :] = np.maximum(sigma[-len(d) :], side_sigma)
-                kappa[-len(d) :] = np.maximum(kappa[-len(d) :], side_kappa)
-                alpha[-len(d) :] = np.maximum(alpha[-len(d) :], side_alpha)
+        u = np.clip(low_d / max(float(pml_cells), 1e-30), 0.0, 1.0)
+        side_sigma = sigma_max * np.power(u, 3.0)
+        side_kappa = 1.0 + (4.0 - 1.0) * np.power(u, 3.0)
+        side_alpha = 300.0 * np.power(1.0 - u, 1.0)
+        sigma[: len(low_d)] = np.maximum(sigma[: len(low_d)], side_sigma)
+        kappa[: len(low_d)] = np.maximum(kappa[: len(low_d)], side_kappa)
+        alpha[: len(low_d)] = np.maximum(alpha[: len(low_d)], side_alpha)
+
+        if sample_kind == "E":
+            offset = 0.0
+        else:
+            offset = 0.5
+        coords = np.arange(count, dtype=np.float32) + np.float32(offset)
+        d = np.clip(coords - (float(domain_cells) - float(pml_cells)), 0.0, pml_cells)
+        mask = d > 0.0
+        u = np.clip(d / max(float(pml_cells), 1e-30), 0.0, 1.0)
+        side_sigma = sigma_max * np.power(u, 3.0)
+        side_kappa = 1.0 + (4.0 - 1.0) * np.power(u, 3.0)
+        side_alpha = 300.0 * np.power(1.0 - u, 1.0)
+        sigma = np.where(mask, np.maximum(sigma, side_sigma), sigma)
+        kappa = np.where(mask, np.maximum(kappa, side_kappa), kappa)
+        alpha = np.where(mask, np.maximum(alpha, side_alpha), alpha)
         return sigma, kappa, alpha
 
-    sigma_e_x, kappa_e_x, alpha_e_x = expected_profile(nx, sample_kind="E")
-    sigma_h_x, kappa_h_x, alpha_h_x = expected_profile(max(nx - 1, 0), sample_kind="H")
+    sigma_e_x, kappa_e_x, alpha_e_x = expected_profile(
+        nx, sample_kind="E", domain_cells=nx
+    )
+    sigma_h_x, kappa_h_x, alpha_h_x = expected_profile(
+        max(nx - 1, 0), sample_kind="H", domain_cells=nx
+    )
 
     assert program.use_primitive_cpml_3d_terms
-    assert program.cpml3d_a_e_terms[4].shape == (0, 0, 0)
-    assert program.cpml3d_b_e_terms[4].shape == (0, 0, 0)
-    assert program.cpml3d_inv_kappa_e_terms[4].shape == (0, 0, 0)
+    assert program.use_cpml_3d_packed_psi
+    assert program.cpml3d_a_e_terms[4].shape == (1, 1, nx)
+    assert program.cpml3d_b_e_terms[4].shape == (1, 1, nx)
+    assert program.cpml3d_inv_kappa_e_terms[4].shape == (1, 1, nx)
     assert program.cpml3d_sigma_e_terms[4].shape == (1, 1, nx)
     assert program.cpml3d_sigma_h_terms[3].shape == (1, 1, max(nx - 1, 0))
+    assert program.cpml3d_e_psi_shapes[4] == program.cpml3d_e_slab_specs[4].shape
+    assert program.cpml3d_h_psi_shapes[3] == program.cpml3d_h_slab_specs[3].shape
+    assert program.cpml3d_e_psi_shapes[4][2] < sim.fields.Ez.shape[2]
+    assert program.cpml3d_h_psi_shapes[3][2] < sim.fields.Hy.shape[2]
+
+    h_full_shapes = (
+        sim.fields.Hx.shape,
+        sim.fields.Hx.shape,
+        sim.fields.Hy.shape,
+        sim.fields.Hy.shape,
+        sim.fields.Hz.shape,
+        sim.fields.Hz.shape,
+    )
+    e_full_shapes = (
+        sim.fields.Ex.shape,
+        sim.fields.Ex.shape,
+        sim.fields.Ey.shape,
+        sim.fields.Ey.shape,
+        sim.fields.Ez.shape,
+        sim.fields.Ez.shape,
+    )
+    full_psi_cells = 0
+    packed_psi_cells = 0
+    for slab_spec, psi_shape, full_shape in zip(
+        (*program.cpml3d_h_slab_specs, *program.cpml3d_e_slab_specs),
+        (*program.cpml3d_h_psi_shapes, *program.cpml3d_e_psi_shapes),
+        (*h_full_shapes, *e_full_shapes),
+        strict=True,
+    ):
+        assert isinstance(slab_spec.axis, int)
+        assert isinstance(slab_spec.low, int)
+        assert isinstance(slab_spec.high, int)
+        assert isinstance(slab_spec.shape, tuple)
+        assert slab_spec.shape == psi_shape
+        assert slab_spec.low >= 0
+        assert slab_spec.high >= 0
+        assert slab_spec.low + slab_spec.high == psi_shape[slab_spec.axis]
+        assert slab_spec.low + slab_spec.high <= full_shape[slab_spec.axis]
+        for dim, (packed_size, full_size) in enumerate(zip(psi_shape, full_shape)):
+            if dim != slab_spec.axis:
+                assert packed_size == full_size
+        full_psi_cells += int(np.prod(full_shape))
+        packed_psi_cells += int(np.prod(psi_shape))
+    assert packed_psi_cells < full_psi_cells
 
     np.testing.assert_allclose(
         np.asarray(program.cpml3d_sigma_e_terms[4][0, 0, :]),
@@ -979,6 +1036,12 @@ def test_compiled_3d_cpml_profiles_match_expected_x_boundary_embedding():
     np.testing.assert_allclose(
         np.asarray(program.cpml3d_alpha_e_terms[4][0, 0, :]),
         alpha_e_x,
+        rtol=1e-6,
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        np.asarray(program.cpml3d_inv_kappa_e_terms[4][0, 0, :]),
+        1.0 / kappa_e_x,
         rtol=1e-6,
         atol=1e-6,
     )
@@ -1843,7 +1906,7 @@ def test_compile_3d_mode_source_derives_chebyshev_profile_frequencies(monkeypatc
     np.testing.assert_allclose(seen_freqs, expected, rtol=1e-15, atol=0.0)
 
 
-def test_compile_3d_broadband_mode_source_reuses_finite_plane_context(monkeypatch):
+def test_compile_3d_broadband_mode_source_defers_profile_solves(monkeypatch):
     dt = 1e-15
     freq0 = 200e12
     fwidth = 20e12
@@ -1868,23 +1931,10 @@ def test_compile_3d_broadband_mode_source_reuses_finite_plane_context(monkeypatc
         mode_num_modes=2,
     )
     fields = SimpleNamespace(permittivity=jnp.ones((3, 6, 7), dtype=jnp.float32))
-    seen_solves = []
     seen_profile_sources = []
 
-    def fake_solve_modes(**kwargs):
-        eps = np.asarray(kwargs["eps"])
-        seen_solves.append(
-            {
-                "eps_shape": eps.shape,
-                "direction": kwargs["direction"],
-                "target_neff": kwargs["target_neff"],
-                "m": kwargs["m"],
-            }
-        )
-        fields_out = np.zeros((2, 3, *eps.shape), dtype=np.complex128)
-        fields_out[0] = 1.0
-        fields_out[1] = 2.0
-        return np.asarray([2.1, 1.9], dtype=np.complex128), fields_out, fields_out, 0
+    def fail_solve_modes(**_kwargs):
+        raise AssertionError("broadband compilation should defer profile solves.")
 
     def fake_initialize(self, permittivity, resolution, dt=None):
         del dt
@@ -1897,9 +1947,9 @@ def test_compile_3d_broadband_mode_source_reuses_finite_plane_context(monkeypatc
         seen_profile_sources.append(profile_src)
         return ()
 
-    monkeypatch.setattr(source_compiler, "solve_modes", fake_solve_modes)
     monkeypatch.setattr(ModeSource, "initialize", fake_initialize)
     monkeypatch.setattr(source_compiler, "_compile_mode_source_3d", fake_compile)
+    monkeypatch.setattr(source_compiler, "solve_modes", fail_solve_modes, raising=False)
 
     source_compiler._compile_mode_source(
         source,
@@ -1911,20 +1961,16 @@ def test_compile_3d_broadband_mode_source_reuses_finite_plane_context(monkeypatc
         total_steps=64,
     )
 
-    assert len(seen_solves) == 3
-    assert all(item == seen_solves[0] for item in seen_solves)
-    assert seen_solves[0] == {
-        "eps_shape": (3, 4),
-        "direction": "+x",
-        "target_neff": 2.3,
-        "m": 2,
-    }
     assert len(seen_profile_sources) == 3
     for profile_src in seen_profile_sources:
-        assert profile_src.mode_neff == 1.9 + 0.0j
-        assert profile_src.mode_e_field.shape == (3, 6, 7)
-        assert np.count_nonzero(profile_src.mode_e_field[0] == 2.0) == 12
-        assert np.count_nonzero(profile_src.mode_e_field[0]) == 12
+        assert profile_src.mode_neff is None
+        assert profile_src.mode_e_field is None
+        assert profile_src.mode_h_field is None
+        assert profile_src.mode_eps_profile_full is eps_full
+        assert profile_src.mode_crop_slices == crop_slices
+        assert profile_src.mode_index == 1
+        assert profile_src.mode_target_neff == 2.3
+        assert profile_src.mode_num_modes == 2
 
 
 def test_compile_3d_mode_source_reinitializes_missing_launch_dt(monkeypatch):

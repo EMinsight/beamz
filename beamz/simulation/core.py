@@ -31,7 +31,7 @@ from beamz.devices.sources.mode import (
     _select_core_confined_mode_index,  # noqa: F401 - compatibility monkeypatch hook
     _solve_numeric_k_axis,
 )
-from beamz.devices.sources.solve import solve_modes
+from beamz.devices.sources.solve import solve_beamz_mode_plane, solve_modes
 from beamz.simulation.boundaries import (
     PML,
     Boundary,
@@ -54,7 +54,11 @@ from beamz.simulation.compiled import (
 )
 from beamz.simulation.fields import Fields
 from beamz.simulation.step_sequence import run_step_sequence
-from beamz.simulation.yee import component_coordinates_3d_um
+from beamz.simulation.yee import (
+    component_coordinates_3d_um,
+    sample_voxel_grid_at_component_3d,
+    sample_voxel_grid_at_e_component_3d_centered,
+)
 from beamz.visual.helpers import _finish_inline_progress, _print_inline_progress
 
 
@@ -325,13 +329,96 @@ class PortSpec:
     scattered_wave: Literal["plus", "minus", "auto"] = "minus"
 
 
-def _source_spectrum_normalization(sources, freqs) -> np.ndarray | None:
-    """Return a unit-center source spectrum for source-normalized DFT outputs."""
+def _sampled_source_spectrum_normalization(source, freqs, *, time, monitor=None):
+    """Return the source waveform in BeamZ's native DFT normalization."""
+    freq_arr = np.asarray(freqs, dtype=float).reshape(-1)
+    time_arr = np.asarray(time, dtype=float).reshape(-1)
+    if freq_arr.size == 0 or time_arr.size == 0:
+        return None
+
+    dft_normalization = str(getattr(monitor, "dft_normalization", "native")).lower()
+    if dft_normalization != "native":
+        return None
+
+    dt = float(np.median(np.diff(time_arr))) if time_arr.size > 1 else 0.0
+    signal = getattr(source, "signal", None)
+    if isinstance(signal, (np.ndarray, list, tuple, jnp.ndarray)):
+        signal_arr = np.asarray(signal, dtype=float).reshape(-1)
+        n = min(signal_arr.size, time_arr.size)
+        if n <= 0:
+            return None
+        signal_arr = signal_arr[:n]
+        sample_times = time_arr[:n]
+    elif hasattr(source, "_get_signal_value") and dt > 0.0:
+        sample_times = time_arr
+        signal_arr = np.asarray(
+            [float(source._get_signal_value(t, dt)) for t in sample_times],
+            dtype=float,
+        )
+    else:
+        return None
+
+    dft_t_start = float(getattr(monitor, "dft_t_start", 0.0))
+    dft_t_end = getattr(monitor, "dft_t_end", None)
+    dft_t_end = np.inf if dft_t_end is None else float(dft_t_end)
+    record_interval = max(1, int(getattr(monitor, "dft_record_interval", 1)))
+    steps = np.arange(sample_times.size, dtype=int)
+    mask = (
+        (sample_times >= dft_t_start)
+        & (sample_times <= dft_t_end)
+        & ((steps % record_interval) == 0)
+    )
+    if not np.any(mask):
+        return None
+
+    sample_times = sample_times[mask]
+    signal_arr = signal_arr[mask]
+    if str(getattr(monitor, "dft_window", "rect")).lower() == "hann" and np.isfinite(
+        dft_t_end
+    ):
+        span = max(dft_t_end - dft_t_start, 1e-30)
+        tau = np.clip((sample_times - dft_t_start) / span, 0.0, 1.0)
+        weights = 0.5 * (1.0 - np.cos(2.0 * np.pi * tau))
+    else:
+        weights = np.ones_like(sample_times, dtype=float)
+
+    weight_sum = float(np.sum(weights))
+    if weight_sum <= 1e-30:
+        return None
+
+    phase = np.exp(1j * 2.0 * np.pi * sample_times[:, None] * freq_arr[None, :])
+    spectrum = (2.0 / weight_sum) * np.sum(
+        (weights * signal_arr)[:, None] * phase,
+        axis=0,
+    )
+    if np.any(np.abs(spectrum) > 1e-12):
+        return np.asarray(spectrum, dtype=np.complex128)
+    return None
+
+
+def _source_spectrum_normalization(
+    sources,
+    freqs,
+    *,
+    time=None,
+    monitor=None,
+) -> np.ndarray | None:
+    """Return a source spectrum for source-normalized DFT outputs."""
     freq_arr = np.asarray(freqs, dtype=float).reshape(-1)
     if freq_arr.size == 0:
         return None
     spectra = []
     for source in sources or ():
+        if time is not None:
+            spectrum = _sampled_source_spectrum_normalization(
+                source,
+                freq_arr,
+                time=time,
+                monitor=monitor,
+            )
+            if spectrum is not None:
+                spectra.append(spectrum)
+                continue
         spectrum = None
         if hasattr(source, "source_spectrum"):
             spectrum = source.source_spectrum(freq_arr, normalize=True)
@@ -674,12 +761,19 @@ class SimulationResults(Mapping[str, Any]):
         return show_snapshots(self.snapshots, **kwargs)
 
     def save_video(self, filename, **kwargs):
-        """Save stored simulation snapshots as a video with the matplotlib backend."""
-        if not self.snapshots:
-            raise RuntimeError("No snapshots available. Run with snapshot_field first.")
-        from beamz.visual.mpl import save_snapshot_video
+        """Save stored snapshots or saved field frames as a video."""
+        if self.snapshots:
+            from beamz.visual.mpl import save_snapshot_video
 
-        return save_snapshot_video(self.snapshots, filename=filename, **kwargs)
+            return save_snapshot_video(self.snapshots, filename=filename, **kwargs)
+        if self.fields is not None:
+            from beamz.visual.mpl import save_field_video
+
+            return save_field_video(self, filename=filename, **kwargs)
+        raise RuntimeError(
+            "No snapshots or saved fields available. Run with snapshot_field or "
+            "save_fields first."
+        )
 
     def to_xarray(self):
         """Return stored simulation fields as an xarray Dataset."""
@@ -711,6 +805,8 @@ class SimulationResults(Mapping[str, Any]):
                     source_norm = _source_spectrum_normalization(
                         simulation.sources,
                         monitor.get_dft_frequencies(),
+                        time=getattr(simulation, "time", None),
+                        monitor=monitor,
                     )
                 except Exception:
                     source_norm = None
@@ -1511,14 +1607,20 @@ class Simulation:
                 else jnp.zeros((2, 0, 0), dtype=self.fields.Ez.dtype)
             ),
             cpml3d_psi_h_terms=(
-                tuple(jnp.zeros_like(term) for term in program.cpml3d_b_h_terms)
+                tuple(
+                    jnp.zeros(shape, dtype=self.fields.Hx.dtype)
+                    for shape in program.cpml3d_h_psi_shapes
+                )
                 if program.use_cpml_3d
                 else tuple(
                     jnp.zeros((0, 0, 0), dtype=self.fields.Hx.dtype) for _ in range(6)
                 )
             ),
             cpml3d_psi_e_terms=(
-                tuple(jnp.zeros_like(term) for term in program.cpml3d_b_e_terms)
+                tuple(
+                    jnp.zeros(shape, dtype=self.fields.Ex.dtype)
+                    for shape in program.cpml3d_e_psi_shapes
+                )
                 if program.use_cpml_3d
                 else tuple(
                     jnp.zeros((0, 0, 0), dtype=self.fields.Ez.dtype) for _ in range(6)
@@ -1752,14 +1854,20 @@ class Simulation:
                     else jnp.zeros((2, 0, 0), dtype=compiled_dtype)
                 ),
                 cpml3d_psi_h_terms=(
-                    tuple(jnp.zeros_like(term) for term in program.cpml3d_b_h_terms)
+                    tuple(
+                        jnp.zeros(shape, dtype=compiled_dtype)
+                        for shape in program.cpml3d_h_psi_shapes
+                    )
                     if program.use_cpml_3d
                     else tuple(
                         jnp.zeros((0, 0, 0), dtype=compiled_dtype) for _ in range(6)
                     )
                 ),
                 cpml3d_psi_e_terms=(
-                    tuple(jnp.zeros_like(term) for term in program.cpml3d_b_e_terms)
+                    tuple(
+                        jnp.zeros(shape, dtype=compiled_dtype)
+                        for shape in program.cpml3d_e_psi_shapes
+                    )
                     if program.use_cpml_3d
                     else tuple(
                         jnp.zeros((0, 0, 0), dtype=compiled_dtype) for _ in range(6)
@@ -3039,6 +3147,329 @@ class Simulation:
         dl = max(dl, float(self.resolution) * 1e-9)
         return np.asarray(eps_profile_full[lo:hi], dtype=np.complex128), local_idx, dl
 
+    def _component_index_plane_coords_3d(self, component, index, axis):
+        coords_um = component_coordinates_3d_um(
+            component,
+            tuple(int(v) for v in np.asarray(self.fields.permittivity).shape),
+            float(self.resolution / µm),
+        )
+        axis0, axis1 = self._plane_axes_for_port_axis(axis)
+        axis_indices = {"z": index[0], "y": index[1], "x": index[2]}
+        coord0 = np.asarray(coords_um[axis0][axis_indices[axis0]], dtype=np.float64)
+        coord1 = np.asarray(coords_um[axis1][axis_indices[axis1]], dtype=np.float64)
+        return coord0.reshape(-1) * float(µm), coord1.reshape(-1) * float(µm)
+
+    def _discrete_mode_projection_grids_3d(
+        self,
+        discrete_mode,
+        profiles,
+        *,
+        monitor,
+        axis,
+        components,
+        analysis_coords0,
+        analysis_coords1,
+    ):
+        del monitor
+        grids = {}
+        samples = {}
+        for name in components:
+            if name not in profiles:
+                continue
+            arr = np.asarray(profiles[name], dtype=np.complex128)
+            if arr.ndim == 1:
+                arr = arr[:, None]
+            index = discrete_mode.component_indices.get(name)
+            if index is None:
+                continue
+            src0, src1 = self._component_index_plane_coords_3d(name, index, axis)
+            rows = min(int(arr.shape[0]), int(src0.size))
+            cols = min(int(arr.shape[1]), int(src1.size))
+            if rows <= 0 or cols <= 0:
+                continue
+            grid = self._interpolate_plane_matrix_2d(
+                arr[:rows, :cols],
+                src0[:rows],
+                src1[:cols],
+                np.asarray(analysis_coords0, dtype=np.float64),
+                np.asarray(analysis_coords1, dtype=np.float64),
+            )
+            grids[name] = grid
+            samples[name] = grid.reshape(-1)
+        return grids, samples
+
+    def _build_discrete_port_projection_3d(
+        self,
+        *,
+        spec,
+        monitor,
+        frequency,
+        parts,
+        direction_sign,
+        target_neff,
+        mode_candidates,
+        analysis_coords0,
+        analysis_coords1,
+    ):
+        if type(monitor).__name__ != "ModeMonitor":
+            return None
+        if not hasattr(monitor, "center") or not hasattr(monitor, "size_spec"):
+            return None
+        perm = np.asarray(self.fields.permittivity)
+        if perm.ndim != 3:
+            return None
+
+        axis = parts["axis"]
+        axis_index = {"z": 0, "y": 1, "x": 2}[axis]
+        try:
+            z_idx, y_idx, x_idx = monitor.get_grid_slice_3d(
+                self.resolution,
+                self.resolution,
+                self.resolution,
+                perm.shape,
+            )
+        except Exception:
+            return None
+
+        normal_index = {"z": z_idx, "y": y_idx, "x": x_idx}[axis]
+        if isinstance(normal_index, slice):
+            start = 0 if normal_index.start is None else int(normal_index.start)
+            stop = (
+                perm.shape[axis_index]
+                if normal_index.stop is None
+                else int(normal_index.stop)
+            )
+            plane_index = int(
+                np.clip(
+                    (start + max(start + 1, stop) - 1) // 2,
+                    0,
+                    perm.shape[axis_index] - 1,
+                )
+            )
+        else:
+            plane_index = int(np.clip(int(normal_index), 0, perm.shape[axis_index] - 1))
+        if direction_sign > 0.0:
+            offset_index = max(0, plane_index - 1)
+        else:
+            offset_index = min(max(perm.shape[axis_index] - 2, 0), plane_index + 1)
+
+        mode_spec = getattr(monitor, "mode_spec", None)
+        num_modes = int(
+            max(
+                int(mode_candidates),
+                int(getattr(mode_spec, "num_modes", 0) or 0),
+                int(spec.mode_index) + 1,
+            )
+        )
+        target = getattr(mode_spec, "target_neff", None)
+        if target is None:
+            target = target_neff
+
+        center = tuple(float(value) for value in monitor.center)
+        size = tuple(float(value) for value in monitor.size_spec)
+        if axis == "x":
+            width, height = size[1], size[2]
+        elif axis == "y":
+            width, height = size[0], size[2]
+        else:
+            width, height = size[0], size[1]
+
+        eps_profile_full = np.take(perm, plane_index, axis=axis_index)
+        transverse_axes = self._plane_axes_for_port_axis(axis)
+        component_shapes = {
+            name: tuple(int(v) for v in np.asarray(getattr(self.fields, name)).shape)
+            for name in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
+        }
+        permittivity_arr = np.asarray(perm)
+        permeability_arr = np.ones_like(permittivity_arr, dtype=np.float64)
+        component_permittivity = {
+            component: np.asarray(
+                sample_voxel_grid_at_e_component_3d_centered(
+                    permittivity_arr,
+                    component,
+                    stored_shape=component_shapes[component],
+                )
+            )
+            for component in ("Ex", "Ey", "Ez")
+        }
+        component_permeability = {
+            component: np.asarray(
+                sample_voxel_grid_at_component_3d(
+                    permeability_arr,
+                    component,
+                    stored_shape=component_shapes[component],
+                )
+            )
+            for component in ("Hx", "Hy", "Hz")
+        }
+        try:
+            discrete_mode = solve_beamz_mode_plane(
+                scalar_permittivity=np.asarray(eps_profile_full, dtype=np.complex128),
+                frequency=float(frequency),
+                resolution=float(self.resolution),
+                dt=None if getattr(self, "dt", None) is None else float(self.dt),
+                axis=axis,
+                direction=str(spec.direction),
+                solver_direction=str(spec.direction),
+                transverse_axes=transverse_axes,
+                grid_shape=tuple(int(v) for v in perm.shape),
+                component_shapes=component_shapes,
+                component_permittivity=component_permittivity,
+                component_permeability=component_permeability,
+                center=center,
+                width=float(width),
+                height=float(height),
+                plane_index=int(plane_index),
+                offset_index=int(offset_index),
+                mode_index=int(spec.mode_index),
+                polarization=str(spec.polarization).lower(),
+                target_neff=target,
+                num_modes=num_modes,
+                aperture_pad_cells=0,
+                aperture_window_alpha=0.0,
+            )
+        except Exception:
+            return None
+        if discrete_mode is None:
+            return None
+
+        proj_components = tuple(parts.get("projection_components_3d", ()))
+        if not proj_components:
+            return None
+        d_area = self._analysis_plane_sample_area(
+            analysis_coords0,
+            analysis_coords1,
+            float(self.resolution),
+        )
+        plus_grids, plus_components = self._discrete_mode_projection_grids_3d(
+            discrete_mode,
+            discrete_mode.backward_profiles,
+            monitor=monitor,
+            axis=axis,
+            components=proj_components,
+            analysis_coords0=analysis_coords0,
+            analysis_coords1=analysis_coords1,
+        )
+        minus_grids, minus_components = self._discrete_mode_projection_grids_3d(
+            discrete_mode,
+            discrete_mode.profiles,
+            monitor=monitor,
+            axis=axis,
+            components=proj_components,
+            analysis_coords0=analysis_coords0,
+            analysis_coords1=analysis_coords1,
+        )
+        if any(
+            name not in plus_components or name not in minus_components
+            for name in proj_components
+        ):
+            return None
+
+        plus_components = _normalize_3d_profiles_by_flux(
+            {
+                name: np.asarray(plus_components[name], dtype=np.complex128)
+                for name in proj_components
+            },
+            axis=axis,
+            d_area=float(d_area),
+            direction_sign=float(direction_sign),
+        )
+        minus_components = _normalize_3d_profiles_by_flux(
+            {
+                name: np.asarray(minus_components[name], dtype=np.complex128)
+                for name in proj_components
+            },
+            axis=axis,
+            d_area=float(d_area),
+            direction_sign=float(direction_sign),
+        )
+        mode_matrix = np.column_stack(
+            [
+                np.concatenate([plus_components[name] for name in proj_components]),
+                np.concatenate([minus_components[name] for name in proj_components]),
+            ]
+        )
+        overlap_matrix = np.asarray(
+            [
+                [
+                    _safe_modal_overlap_3d(
+                        plus_components,
+                        plus_components,
+                        axis,
+                        float(d_area),
+                        direction_sign=direction_sign,
+                    ),
+                    _safe_modal_overlap_3d(
+                        plus_components,
+                        minus_components,
+                        axis,
+                        float(d_area),
+                        direction_sign=direction_sign,
+                    ),
+                ],
+                [
+                    _safe_modal_overlap_3d(
+                        minus_components,
+                        plus_components,
+                        axis,
+                        float(d_area),
+                        direction_sign=direction_sign,
+                    ),
+                    _safe_modal_overlap_3d(
+                        minus_components,
+                        minus_components,
+                        axis,
+                        float(d_area),
+                        direction_sign=direction_sign,
+                    ),
+                ],
+            ],
+            dtype=np.complex128,
+        )
+        projection = {
+            "e_component": parts["e_component"],
+            "h_component": parts["h_component"],
+            "components": tuple(proj_components),
+            "mode_matrix": mode_matrix,
+            "condition_number": float(np.linalg.cond(overlap_matrix)),
+            "pinv": np.linalg.pinv(mode_matrix),
+            "mode_neff": float(np.real(np.asarray(discrete_mode.neff))),
+            "mode_neff_bwd": float(np.real(np.asarray(discrete_mode.neff))),
+            "mode_components": {
+                name: np.asarray(plus_components[name], dtype=np.complex128)
+                for name in proj_components
+            },
+            "mode_components_bwd": {
+                name: np.asarray(minus_components[name], dtype=np.complex128)
+                for name in proj_components
+            },
+            "overlap_matrix": overlap_matrix,
+            "axis": axis,
+            "direction_sign": float(direction_sign),
+            "d_area": float(d_area),
+            "power_norm": 1.0,
+            "mode_parity": self._mode_parity_signature(
+                plus_grids,
+                parts["e_component"],
+            ),
+            "mode_parity_bwd": self._mode_parity_signature(
+                minus_grids,
+                parts["e_component"],
+            ),
+            "mode_component_grids": plus_grids,
+            "mode_component_grids_bwd": minus_grids,
+            "pair_score": np.nan,
+            "discrete_contract": "micromode.beamz.DiscreteMode/v1",
+            "analysis_coords0": np.asarray(analysis_coords0, dtype=np.float64),
+            "analysis_coords1": np.asarray(analysis_coords1, dtype=np.float64),
+        }
+        projection["modal_plane_delay_s"] = self._modal_projection_plane_delay_s(
+            spec,
+            frequency,
+            projection["mode_neff"],
+        )
+        return projection
+
     def _build_port_projection(
         self,
         spec,
@@ -3082,6 +3513,22 @@ class Simulation:
         )
         target_neff = 0.98 * n_local_max
         mode_candidates = max(int(spec.mode_index) + 1, 3 if self.is_3d else 1)
+
+        if self.is_3d and analysis_coords0 is not None and analysis_coords1 is not None:
+            projection = self._build_discrete_port_projection_3d(
+                spec=spec,
+                monitor=monitor,
+                frequency=frequency,
+                parts=parts,
+                direction_sign=direction_sign,
+                target_neff=target_neff,
+                mode_candidates=mode_candidates,
+                analysis_coords0=analysis_coords0,
+                analysis_coords1=analysis_coords1,
+            )
+            if projection is not None:
+                cache[key] = projection
+                return projection
 
         def _solve_candidate_set(direction):
             try:
@@ -5518,6 +5965,13 @@ class Simulation:
 
     def save_video(self, filename, *, field="Ez", **kwargs):
         """Run the simulation and save a snapshot video."""
+        if self.current_step >= self.num_steps:
+            raise RuntimeError(
+                "Simulation has already completed, so no video frames can be "
+                "streamed from Simulation.save_video(...). Use results.save_video(...) "
+                "from a run that stored save_fields or snapshot_field, or call "
+                "Simulation.save_video(...) before running the simulation."
+            )
         kwargs.setdefault("save_video", filename)
         kwargs.setdefault("video_field", field)
         return self.run(**kwargs)

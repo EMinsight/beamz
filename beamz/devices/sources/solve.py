@@ -1,4 +1,3 @@
-# Adapted from FDTDx by Yannik Mahlau
 from collections import namedtuple
 from typing import Literal, Tuple, Union
 
@@ -23,6 +22,20 @@ def _ensure_micromode():
                 "micromode is required for mode solving. "
                 "Install it with: pip install micromode"
             )
+
+
+def solve_beamz_mode_plane(**spec_kwargs):
+    """Solve a BEAMZ ModePlaneSpec when the installed micromode exposes it.
+
+    Returns ``None`` for older micromode releases so callers can preserve the
+    legacy scalar-array path without version checks.
+    """
+    _ensure_micromode()
+    mode_plane_spec = getattr(micromode, "ModePlaneSpec", None)
+    solve_beamz_mode = getattr(micromode, "solve_beamz_mode", None)
+    if mode_plane_spec is None or solve_beamz_mode is None:
+        return None
+    return solve_beamz_mode(mode_plane_spec(**spec_kwargs))
 
 
 ModeTupleType = namedtuple("Mode", ["neff", "Ex", "Ey", "Ez", "Hx", "Hy", "Hz"])

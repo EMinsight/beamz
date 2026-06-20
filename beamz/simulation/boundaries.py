@@ -68,8 +68,8 @@ class PML(Boundary):
     convolutional PML in the solver update equations.
     """
 
-    _DEFAULT_CPML_ALPHA_NORMALIZED = 0.225
-    _DEFAULT_CPML_SIGMA_SCALE = 0.375
+    _DEFAULT_CPML_ALPHA_NORMALIZED = 0.1
+    _DEFAULT_3D_CPML_ALPHA_NORMALIZED = 0.05
 
     def __init__(
         self,
@@ -115,19 +115,17 @@ class PML(Boundary):
                 * np.log(max(self.target_reflection, 1e-16))
                 / (2.0 * eta * thickness)
             )
-            if self.formulation == "cpml":
-                # The CPML curl correction plus collocated material loss is
-                # sensitive to over-damping at the absorber entrance. A softer
-                # ramp reduces impedance mismatch on BeamZ's native Yee grid.
-                self.sigma_max *= self._DEFAULT_CPML_SIGMA_SCALE
         if self.formulation == "cpml" and self.alpha_max is None:
             # Convert a conservative normalized CFS alpha into the solver's
             # conductivity-like units so the default CPML keeps a nonzero
             # complex-frequency shift instead of silently falling back to alpha=0.
+            alpha_normalized = self._DEFAULT_CPML_ALPHA_NORMALIZED
+            if getattr(fields.permittivity, "ndim", 0) == 3:
+                alpha_normalized = self._DEFAULT_3D_CPML_ALPHA_NORMALIZED
             self.alpha_max = (
                 2.0
                 * EPS_0
-                * self._DEFAULT_CPML_ALPHA_NORMALIZED
+                * alpha_normalized
                 / max(float(dt), 1e-30)
             )
 
@@ -136,7 +134,7 @@ class PML(Boundary):
                 out = self._create_cpml_profiles_3d(fields, design)
             else:
                 out = self._create_cpml_profiles_2d(fields, design, plane_2d)
-            self._raise_if_cpml_material_not_extruded(fields, out, plane_2d)
+            self._extend_cpml_materials_to_absorber(fields, out, plane_2d)
             return out
 
         if fields.permittivity.ndim == 3:
@@ -151,6 +149,19 @@ class PML(Boundary):
         material = np.asarray(fields.permittivity)
         if material.size == 0:
             return []
+        bad_edges = []
+        for edge, axis, side, count in self._pml_material_edge_counts(
+            material, pml_data, plane_2d
+        ):
+            if count <= 0 or count >= material.shape[axis]:
+                continue
+            if self._pml_edge_material_varies(material, axis, side, count):
+                bad_edges.append(edge)
+        return bad_edges
+
+    def _pml_material_edge_counts(self, material, pml_data, plane_2d="xy"):
+        """Return active absorber-cell counts for material extrusion checks."""
+        mat = np.asarray(material)
         axis_map_3d = {"z": 0, "y": 1, "x": 2}
         axis_map_2d = {
             "xy": {"y": 0, "x": 1},
@@ -165,9 +176,9 @@ class PML(Boundary):
             "front": ("z", "low"),
             "back": ("z", "high"),
         }
-        is_3d = material.ndim == 3
+        is_3d = mat.ndim == 3
         axis_map = axis_map_3d if is_3d else axis_map_2d
-        bad_edges = []
+        edge_counts = []
         for edge in self._get_edges_for_dimensionality(is_3d):
             axis_name, side = edge_axes.get(edge, (None, None))
             if axis_name not in axis_map:
@@ -185,11 +196,8 @@ class PML(Boundary):
             else:
                 rev = active_1d[::-1]
                 count = int(np.argmax(~rev)) if np.any(~rev) else 0
-            if count <= 0 or count >= material.shape[axis]:
-                continue
-            if self._pml_edge_material_varies(material, axis, side, count):
-                bad_edges.append(edge)
-        return bad_edges
+            edge_counts.append((edge, axis, side, count))
+        return edge_counts
 
     def _warn_if_material_not_extruded(self, fields, pml_data, plane_2d="xy"):
         """Warn when material changes along the PML normal inside the absorber."""
@@ -203,15 +211,31 @@ class PML(Boundary):
                 stacklevel=3,
             )
 
-    def _raise_if_cpml_material_not_extruded(self, fields, pml_data, plane_2d="xy"):
-        """Reject CPML when geometry varies through the absorber."""
-        bad_edges = self._pml_material_variation_edges(fields, pml_data, plane_2d)
-        if bad_edges:
-            raise ValueError(
-                "CPML material varies along the absorber normal on edges "
-                f"{bad_edges}. Extrude the boundary material profile through the "
-                "CPML or keep geometry clear of the absorber."
-            )
+    def _extend_cpml_materials_to_absorber(self, fields, pml_data, plane_2d="xy"):
+        """Copy first-interior material values through active CPML slabs."""
+
+        for attr in ("permittivity", "conductivity", "permeability"):
+            source = getattr(fields, attr)
+            material = np.array(source, copy=True)
+            for _edge, axis, side, count in self._pml_material_edge_counts(
+                material, pml_data, plane_2d
+            ):
+                if count <= 0 or count >= material.shape[axis]:
+                    continue
+                if side == "low":
+                    dst_sel = [slice(None)] * material.ndim
+                    dst_sel[axis] = slice(0, count)
+                    ref_sel = [slice(None)] * material.ndim
+                    ref_sel[axis] = count
+                else:
+                    dst_sel = [slice(None)] * material.ndim
+                    dst_sel[axis] = slice(material.shape[axis] - count, None)
+                    ref_sel = [slice(None)] * material.ndim
+                    ref_sel[axis] = material.shape[axis] - count - 1
+                material[tuple(dst_sel)] = np.expand_dims(
+                    material[tuple(ref_sel)], axis=axis
+                )
+            setattr(fields, attr, jnp.asarray(material, dtype=source.dtype))
 
     @staticmethod
     def _pml_edge_material_varies(material, axis: int, side: str, count: int) -> bool:
@@ -325,6 +349,7 @@ class PML(Boundary):
         high_active,
         *,
         sample_kind,
+        domain_cells=None,
         sigma_order=None,
         kappa_order=None,
         alpha_order=None,
@@ -362,6 +387,28 @@ class PML(Boundary):
             )
             return side_sigma, side_kappa, side_alpha
 
+        if sample_kind == "E":
+            offset = 0.0
+            inferred_domain_cells = int(total_samples) - 1
+        elif sample_kind == "H":
+            offset = 0.5
+            inferred_domain_cells = int(total_samples)
+        else:
+            raise ValueError(f"Unsupported CPML sample kind {sample_kind!r}")
+        domain_cells = (
+            inferred_domain_cells if domain_cells is None else int(domain_cells)
+        )
+        coords = jnp.arange(int(total_samples), dtype=jnp.float32) + jnp.asarray(
+            offset, dtype=jnp.float32
+        )
+
+        def side_values(dist):
+            mask = dist > 0.0
+            side_sigma, side_kappa, side_alpha = apply_u(
+                dist / max(float(pml_cells), 1e-30)
+            )
+            return mask, side_sigma, side_kappa, side_alpha
+
         def low_distances(count):
             if sample_kind == "E":
                 return jnp.arange(count - 1, -1, -1, dtype=jnp.float32)
@@ -391,14 +438,24 @@ class PML(Boundary):
             alpha = alpha.at[:count].set(side_alpha)
 
         if high_active:
-            count = min(int(total_samples), pml_cells)
-            d = high_distances(count)
-            side_sigma, side_kappa, side_alpha = apply_u(
-                d / max(float(pml_cells), 1e-30)
-            )
-            sigma = sigma.at[-count:].set(jnp.maximum(sigma[-count:], side_sigma))
-            kappa = kappa.at[-count:].set(jnp.maximum(kappa[-count:], side_kappa))
-            alpha = alpha.at[-count:].set(jnp.maximum(alpha[-count:], side_alpha))
+            if domain_cells == inferred_domain_cells:
+                count = min(int(total_samples), pml_cells)
+                d = high_distances(count)
+                side_sigma, side_kappa, side_alpha = apply_u(
+                    d / max(float(pml_cells), 1e-30)
+                )
+                sigma = sigma.at[-count:].set(jnp.maximum(sigma[-count:], side_sigma))
+                kappa = kappa.at[-count:].set(jnp.maximum(kappa[-count:], side_kappa))
+                alpha = alpha.at[-count:].set(jnp.maximum(alpha[-count:], side_alpha))
+            else:
+                # Compact 3D Yee arrays omit the high-side boundary sample, so
+                # the profile length alone cannot locate the absorber interface.
+                start = float(domain_cells) - float(pml_cells)
+                d = jnp.clip(coords - start, 0.0, float(pml_cells))
+                mask, side_sigma, side_kappa, side_alpha = side_values(d)
+                sigma = jnp.where(mask, jnp.maximum(sigma, side_sigma), sigma)
+                kappa = jnp.where(mask, jnp.maximum(kappa, side_kappa), kappa)
+                alpha = jnp.where(mask, jnp.maximum(alpha, side_alpha), alpha)
 
         return sigma, kappa, alpha
 
@@ -543,6 +600,7 @@ class PML(Boundary):
                     "bottom" in edges,
                     "top" in edges,
                     sample_kind="E",
+                    domain_cells=ny,
                 )
             )
             sigma_ez_x, kappa_ez_x, alpha_ez_x = (
@@ -552,6 +610,7 @@ class PML(Boundary):
                     "left" in edges,
                     "right" in edges,
                     sample_kind="E",
+                    domain_cells=nx,
                 )
             )
             sigma_hx_y, kappa_hx_y, alpha_hx_y = (
@@ -561,6 +620,7 @@ class PML(Boundary):
                     "bottom" in edges,
                     "top" in edges,
                     sample_kind="H",
+                    domain_cells=ny,
                 )
             )
             sigma_hy_x, kappa_hy_x, alpha_hy_x = (
@@ -570,6 +630,7 @@ class PML(Boundary):
                     "left" in edges,
                     "right" in edges,
                     sample_kind="H",
+                    domain_cells=nx,
                 )
             )
             out["tm_xy_cpml"] = {
@@ -646,10 +707,10 @@ class PML(Boundary):
             "x": ("left", "right"),
         }
 
-        def bcast_axis(profile, axis_name, target_shape):
+        def compact_axis(profile, axis_name):
             shape_1d = [1, 1, 1]
             shape_1d[axis_index[axis_name]] = profile.shape[0]
-            return jnp.broadcast_to(jnp.reshape(profile, tuple(shape_1d)), target_shape)
+            return jnp.reshape(profile, tuple(shape_1d))
 
         def profile_for_spec(spec):
             target = getattr(fields, spec.target_component)
@@ -664,21 +725,19 @@ class PML(Boundary):
                 low_edge in edges,
                 high_edge in edges,
                 sample_kind=sample_kind,
+                domain_cells=shape[axis_index[axis_name]],
             )
 
         for spec in (*CPML_3D_H_DERIVATIVES, *CPML_3D_E_DERIVATIVES):
-            target_shape = tuple(
-                int(v) for v in getattr(fields, spec.target_component).shape
-            )
             sigma_1d, kappa_1d, alpha_1d = profile_for_spec(spec)
-            out[f"cpml3d_{spec.name}_sigma"] = bcast_axis(
-                sigma_1d, spec.derivative_axis, target_shape
+            out[f"cpml3d_{spec.name}_sigma"] = compact_axis(
+                sigma_1d, spec.derivative_axis
             )
-            out[f"cpml3d_{spec.name}_kappa"] = bcast_axis(
-                kappa_1d, spec.derivative_axis, target_shape
+            out[f"cpml3d_{spec.name}_kappa"] = compact_axis(
+                kappa_1d, spec.derivative_axis
             )
-            out[f"cpml3d_{spec.name}_alpha"] = bcast_axis(
-                alpha_1d, spec.derivative_axis, target_shape
+            out[f"cpml3d_{spec.name}_alpha"] = compact_axis(
+                alpha_1d, spec.derivative_axis
             )
         return out
 
@@ -1282,6 +1341,70 @@ def _cpml_correct_term(
     )
 
 
+def _axis_region(ndim, axis, start, stop):
+    region = [slice(None)] * ndim
+    region[axis] = slice(start, stop)
+    return tuple(region)
+
+
+def _cpml_pack_slab(arr, slab_spec):
+    """Pack low/high CPML slabs for one derivative term into one static array."""
+
+    axis = int(slab_spec.axis)
+    low = int(slab_spec.low)
+    high = int(slab_spec.high)
+    if low <= 0 and high <= 0:
+        return jnp.zeros(slab_spec.shape, dtype=arr.dtype)
+
+    parts = []
+    if low > 0:
+        parts.append(arr[_axis_region(arr.ndim, axis, 0, low)])
+    if high > 0:
+        parts.append(arr[_axis_region(arr.ndim, axis, arr.shape[axis] - high, None)])
+    if len(parts) == 1:
+        return parts[0]
+    return jnp.concatenate(parts, axis=axis)
+
+
+def _cpml_unpack_slab(base, slab, slab_spec):
+    """Scatter one packed low/high CPML slab array back into a full derivative."""
+
+    axis = int(slab_spec.axis)
+    low = int(slab_spec.low)
+    high = int(slab_spec.high)
+    out = base
+    offset = 0
+    if low > 0:
+        slab_low = slab[_axis_region(slab.ndim, axis, 0, low)]
+        out = out.at[_axis_region(out.ndim, axis, 0, low)].set(slab_low)
+        offset = low
+    if high > 0:
+        slab_high = slab[_axis_region(slab.ndim, axis, offset, offset + high)]
+        out = out.at[
+            _axis_region(out.ndim, axis, out.shape[axis] - high, None)
+        ].set(slab_high)
+    return out
+
+
+def _cpml_correct_packed_slab_term(
+    derivative, psi, a_term, b_term, inv_kappa_term, slab_spec
+):
+    """Update CPML psi only in packed CPML slabs for one derivative term."""
+
+    if int(slab_spec.low) <= 0 and int(slab_spec.high) <= 0:
+        return derivative, psi
+    dtype = psi.dtype
+    derivative_slab = _cpml_pack_slab(jnp.asarray(derivative, dtype=dtype), slab_spec)
+    a_slab = _cpml_pack_slab(jnp.asarray(a_term, dtype=dtype), slab_spec)
+    b_slab = _cpml_pack_slab(jnp.asarray(b_term, dtype=dtype), slab_spec)
+    inv_kappa_slab = _cpml_pack_slab(
+        jnp.asarray(inv_kappa_term, dtype=dtype), slab_spec
+    )
+    psi_updated = b_slab * psi + a_slab * derivative_slab
+    corrected_slab = derivative_slab * inv_kappa_slab + psi_updated
+    return _cpml_unpack_slab(derivative, corrected_slab, slab_spec), psi_updated
+
+
 def build_h_boundary_views_for_e_3d(hx, hy, hz, boundaries):
     """Return H-field views for the 3D E update with boundaries applied outside ops.
 
@@ -1680,6 +1803,56 @@ def cpml_update_h_from_e_3d(
     return hx, hy, hz, (psi0, psi1, psi2, psi3, psi4, psi5)
 
 
+def cpml_update_h_from_e_3d_packed_psi(
+    ex,
+    ey,
+    ez,
+    hx,
+    hy,
+    hz,
+    h_decay_x,
+    h_source_x,
+    h_decay_y,
+    h_source_y,
+    h_decay_z,
+    h_source_z,
+    resolution,
+    *,
+    a_h_terms,
+    b_h_terms,
+    inv_kappa_h_terms,
+    psi_h_terms,
+    slab_specs,
+):
+    """CPML-corrected H update with psi stored only in packed CPML slabs."""
+
+    resolution = _scalar_like(resolution, ex.dtype)
+
+    def correct(idx, derivative):
+        return _cpml_correct_packed_slab_term(
+            derivative,
+            psi_h_terms[idx],
+            a_h_terms[idx],
+            b_h_terms[idx],
+            inv_kappa_h_terms[idx],
+            slab_specs[idx],
+        )
+
+    term0, psi0 = correct(0, (ez[:, 1:, :] - ez[:, :-1, :]) / resolution)
+    term1, psi1 = correct(1, (ey[1:, :, :] - ey[:-1, :, :]) / resolution)
+    hx = h_decay_x * hx - h_source_x * (term0 - term1)
+
+    term2, psi2 = correct(2, (ex[1:, :, :] - ex[:-1, :, :]) / resolution)
+    term3, psi3 = correct(3, (ez[:, :, 1:] - ez[:, :, :-1]) / resolution)
+    hy = h_decay_y * hy - h_source_y * (term2 - term3)
+
+    term4, psi4 = correct(4, (ey[:, :, 1:] - ey[:, :, :-1]) / resolution)
+    term5, psi5 = correct(5, (ex[:, 1:, :] - ex[:, :-1, :]) / resolution)
+    hz = h_decay_z * hz - h_source_z * (term4 - term5)
+
+    return hx, hy, hz, (psi0, psi1, psi2, psi3, psi4, psi5)
+
+
 def cpml_curl_h_to_e_3d(
     hx,
     hy,
@@ -1791,6 +1964,84 @@ def cpml_update_e_from_h_3d(
             None if kappa_e_terms is None else kappa_e_terms[idx],
             None if alpha_e_terms is None else alpha_e_terms[idx],
             dt,
+        )
+
+    term0, psi0 = correct(
+        0,
+        _adjacent_difference(pad(hz, axis=1), axis=1, resolution=resolution),
+    )
+    term1, psi1 = correct(
+        1,
+        _adjacent_difference(pad(hy, axis=0), axis=0, resolution=resolution),
+    )
+    ex = e_decay_x * ex + e_source_x * (term0 - term1)
+
+    term2, psi2 = correct(
+        2,
+        _adjacent_difference(pad(hx, axis=0), axis=0, resolution=resolution),
+    )
+    term3, psi3 = correct(
+        3,
+        _adjacent_difference(pad(hz, axis=2), axis=2, resolution=resolution),
+    )
+    ey = e_decay_y * ey + e_source_y * (term2 - term3)
+
+    term4, psi4 = correct(
+        4,
+        _adjacent_difference(pad(hy, axis=2), axis=2, resolution=resolution),
+    )
+    term5, psi5 = correct(
+        5,
+        _adjacent_difference(pad(hx, axis=1), axis=1, resolution=resolution),
+    )
+    ez = e_decay_z * ez + e_source_z * (term4 - term5)
+
+    return ex, ey, ez, (psi0, psi1, psi2, psi3, psi4, psi5)
+
+
+def cpml_update_e_from_h_3d_packed_psi(
+    hx,
+    hy,
+    hz,
+    ex,
+    ey,
+    ez,
+    e_decay_x,
+    e_source_x,
+    e_decay_y,
+    e_source_y,
+    e_decay_z,
+    e_source_z,
+    resolution,
+    *,
+    a_e_terms,
+    b_e_terms,
+    inv_kappa_e_terms,
+    psi_e_terms,
+    slab_specs,
+    metallic_edges=frozenset(),
+):
+    """CPML-corrected E update with psi stored only in packed CPML slabs."""
+
+    metallic_edges = frozenset(metallic_edges or ())
+
+    def pad(arr, axis):
+        low_edge, high_edge = _edge_pair_for_axis(axis)
+        return _pad_with_boundary_ghosts(
+            arr,
+            axis,
+            low_metallic=low_edge in metallic_edges,
+            high_metallic=high_edge in metallic_edges,
+        )
+
+    def correct(idx, derivative):
+        return _cpml_correct_packed_slab_term(
+            derivative,
+            psi_e_terms[idx],
+            a_e_terms[idx],
+            b_e_terms[idx],
+            inv_kappa_e_terms[idx],
+            slab_specs[idx],
         )
 
     term0, psi0 = correct(

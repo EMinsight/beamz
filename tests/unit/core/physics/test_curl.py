@@ -2,6 +2,14 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from beamz import PML
+from beamz.shared_kernels import (
+    CPML_3D_E_DERIVATIVES,
+    CPML_3D_H_DERIVATIVES,
+    build_cpml_3d_primitive_terms,
+    build_cpml_3d_terms,
+    build_tm_xy_cpml_terms,
+)
 from beamz.simulation.boundaries import (
     _cpml_ab_from_profiles,
     build_h_boundary_views_for_e_3d,
@@ -12,6 +20,7 @@ from beamz.simulation.boundaries import (
     full_pec_update_e_from_h_3d,
     full_pec_update_h_from_e_3d,
 )
+from beamz.simulation.fields import Fields
 from beamz.simulation.ops import curl_e_to_h_3d, curl_h_to_e_3d
 
 pytestmark = pytest.mark.unit
@@ -239,6 +248,135 @@ def _cpml_compact_profiles(shapes, axes, *, dt=0.05):
     )
 
 
+def _fill_field_components(fields, components):
+    for component in components:
+        current = getattr(fields, component)
+        values = jnp.arange(current.size, dtype=current.dtype).reshape(current.shape)
+        setattr(fields, component, values / jnp.asarray(100.0, dtype=current.dtype))
+
+
+def test_3d_field_update_h_does_not_initialize_cpml_state_without_cpml():
+    material = np.ones((4, 5, 6), dtype=np.float32)
+    fields = Fields(
+        permittivity=material,
+        conductivity=np.zeros_like(material),
+        permeability=np.ones_like(material),
+        resolution=0.2,
+    )
+    fields.boundaries = [PML(formulation="sponge")]
+    _fill_field_components(fields, ("Ex", "Ey", "Ez"))
+
+    assert fields.cpml_3d_state is None
+
+    fields.update_h(1e-15)
+
+    assert fields.cpml_3d_state is None
+
+
+def test_3d_field_update_e_does_not_initialize_cpml_state_without_cpml():
+    material = np.ones((4, 5, 6), dtype=np.float32)
+    fields = Fields(
+        permittivity=material,
+        conductivity=np.zeros_like(material),
+        permeability=np.ones_like(material),
+        resolution=0.2,
+    )
+    fields.boundaries = [PML(formulation="sponge")]
+    _fill_field_components(fields, ("Hx", "Hy", "Hz"))
+
+    assert fields.cpml_3d_state is None
+
+    fields.update_e(1e-15)
+
+    assert fields.cpml_3d_state is None
+
+
+def test_tm_xy_field_update_h_does_not_initialize_cpml_state_without_cpml():
+    material = np.ones((5, 6), dtype=np.float32)
+    fields = Fields(
+        permittivity=material,
+        conductivity=np.zeros_like(material),
+        permeability=np.ones_like(material),
+        resolution=0.2,
+        plane_2d="xy",
+    )
+    fields.boundaries = [PML(formulation="sponge")]
+    _fill_field_components(fields, ("Ez",))
+
+    assert fields.cpml_tm_xy_state is None
+
+    fields.update_h(1e-15)
+
+    assert fields.cpml_tm_xy_state is None
+
+
+def test_tm_xy_field_update_e_does_not_initialize_cpml_state_without_cpml():
+    material = np.ones((5, 6), dtype=np.float32)
+    fields = Fields(
+        permittivity=material,
+        conductivity=np.zeros_like(material),
+        permeability=np.ones_like(material),
+        resolution=0.2,
+        plane_2d="xy",
+    )
+    fields.boundaries = [PML(formulation="sponge")]
+    _fill_field_components(fields, ("Hx", "Hy"))
+
+    assert fields.cpml_tm_xy_state is None
+
+    fields.update_e(1e-15)
+
+    assert fields.cpml_tm_xy_state is None
+
+
+def test_cpml_term_builders_preserve_float64_when_x64_enabled():
+    import jax
+
+    previous_x64 = bool(jax.config.jax_enable_x64)
+    try:
+        jax.config.update("jax_enable_x64", True)
+        dtype = jnp.float64
+        shape = (2, 3, 4)
+        pml_data = {}
+        for spec in (*CPML_3D_H_DERIVATIVES, *CPML_3D_E_DERIVATIVES):
+            pml_data[f"cpml3d_{spec.name}_sigma"] = jnp.full(shape, 0.2, dtype=dtype)
+            pml_data[f"cpml3d_{spec.name}_kappa"] = jnp.full(shape, 1.4, dtype=dtype)
+            pml_data[f"cpml3d_{spec.name}_alpha"] = jnp.full(shape, 0.03, dtype=dtype)
+
+        terms = build_cpml_3d_terms(pml_data, dt=np.float64(0.05))
+        assert all(term.dtype == dtype for term in terms.a_h_terms)
+        assert all(term.dtype == dtype for term in terms.b_h_terms)
+        assert all(term.dtype == dtype for term in terms.inv_kappa_h_terms)
+        assert all(term.dtype == dtype for term in terms.a_e_terms)
+        assert all(term.dtype == dtype for term in terms.b_e_terms)
+        assert all(term.dtype == dtype for term in terms.inv_kappa_e_terms)
+
+        primitive = build_cpml_3d_primitive_terms(pml_data)
+        assert all(term.dtype == dtype for term in primitive.sigma_h_terms)
+        assert all(term.dtype == dtype for term in primitive.kappa_e_terms)
+
+        ez_shape = (3, 4)
+        tm_xy = {
+            "Hx_y_sigma": jnp.full((2, 4), 0.2, dtype=dtype),
+            "Hx_y_kappa": jnp.full((2, 4), 1.4, dtype=dtype),
+            "Hx_y_alpha": jnp.full((2, 4), 0.03, dtype=dtype),
+            "Hy_x_sigma": jnp.full((3, 3), 0.2, dtype=dtype),
+            "Hy_x_kappa": jnp.full((3, 3), 1.4, dtype=dtype),
+            "Hy_x_alpha": jnp.full((3, 3), 0.03, dtype=dtype),
+            "Ez_x_sigma": jnp.full(ez_shape, 0.2, dtype=dtype),
+            "Ez_x_kappa": jnp.full(ez_shape, 1.4, dtype=dtype),
+            "Ez_x_alpha": jnp.full(ez_shape, 0.03, dtype=dtype),
+            "Ez_y_sigma": jnp.full(ez_shape, 0.2, dtype=dtype),
+            "Ez_y_kappa": jnp.full(ez_shape, 1.4, dtype=dtype),
+            "Ez_y_alpha": jnp.full(ez_shape, 0.03, dtype=dtype),
+        }
+        tm_terms = build_tm_xy_cpml_terms(tm_xy, ez_shape=ez_shape)
+        assert tm_terms.sigma_h_terms.dtype == dtype
+        assert tm_terms.kappa_e_terms.dtype == dtype
+    finally:
+        jax.config.update("jax_enable_x64", previous_x64)
+
+
 def test_cpml_curl_e_to_h_3d_updates_psi_terms():
     ex = jnp.arange(3 * 4 * 4, dtype=jnp.float32).reshape(3, 4, 4)
     ey = jnp.arange(3 * 3 * 5, dtype=jnp.float32).reshape(3, 3, 5)
@@ -270,6 +408,10 @@ def test_cpml_curl_e_to_h_3d_updates_psi_terms():
     assert curl_hy.shape == term_shapes[2]
     assert curl_hz.shape == term_shapes[4]
     assert any(not jnp.allclose(term, 0.0) for term in psi_updated)
+    for got, shape in zip(psi_updated, term_shapes, strict=True):
+        assert got.shape == shape
+        assert got.dtype == jnp.float32
+        assert bool(jnp.all(jnp.isfinite(got)))
 
 
 def test_cpml_curl_h_to_e_3d_updates_psi_terms():
@@ -303,6 +445,10 @@ def test_cpml_curl_h_to_e_3d_updates_psi_terms():
     assert curl_ey.shape == term_shapes[2]
     assert curl_ez.shape == term_shapes[4]
     assert any(not jnp.allclose(term, 0.0) for term in psi_updated)
+    for got, shape in zip(psi_updated, term_shapes, strict=True):
+        assert got.shape == shape
+        assert got.dtype == jnp.float32
+        assert bool(jnp.all(jnp.isfinite(got)))
 
 
 def test_cpml_curl_h_to_e_3d_uses_open_ghosts_on_nonmetal_edges():
