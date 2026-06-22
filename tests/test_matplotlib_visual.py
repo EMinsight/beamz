@@ -446,6 +446,74 @@ def test_simulation_results_plot_field_selects_physical_coordinate():
     assert "z=" in ax.get_title()
 
 
+def test_simulation_results_plot_field_darkens_permittivity_overlay():
+    design = Design(width=2 * um, height=1 * um, material=Material(1.0))
+    design += Rectangle(
+        position=(1 * um, 0.5 * um),
+        width=0.5 * um,
+        height=0.25 * um,
+        material=Material(12.0),
+    )
+    sim = Simulation(
+        design=design,
+        sources=[],
+        monitors=[],
+        time=np.array([0.0, 1e-15]),
+        resolution=0.25 * um,
+    )
+    fields = {"Ez": np.ones((2, 4, 8))}
+    results = SimulationResults(simulation=sim, fields=fields)
+
+    fig, ax = _close(
+        results.plot_field(
+            field="Ez",
+            time_index=-1,
+            eps_alpha=0.3,
+            overlay=False,
+            show=False,
+        )
+    )
+
+    overlay = np.asarray(ax.images[1].get_array())
+    assert overlay[..., 3].max() == pytest.approx(0.3)
+    np.testing.assert_allclose(overlay[overlay[..., 3] > 0, :3], 0.0)
+
+
+def test_simulation_results_plot_field_lightens_permittivity_overlay_for_power():
+    design = Design(width=2 * um, height=1 * um, material=Material(1.0))
+    design += Rectangle(
+        position=(1 * um, 0.5 * um),
+        width=0.5 * um,
+        height=0.25 * um,
+        material=Material(12.0),
+    )
+    sim = Simulation(
+        design=design,
+        sources=[],
+        monitors=[],
+        time=np.array([0.0, 1e-15]),
+        resolution=0.25 * um,
+    )
+    fields = {"Ez": np.ones((2, 4, 8))}
+    results = SimulationResults(simulation=sim, fields=fields)
+
+    fig, ax = _close(
+        results.plot_field(
+            field="Ez",
+            val="abs^2",
+            cmap="magma",
+            time_index=-1,
+            eps_alpha=0.3,
+            overlay=False,
+            show=False,
+        )
+    )
+
+    overlay = np.asarray(ax.images[1].get_array())
+    assert overlay[..., 3].max() == pytest.approx(0.3)
+    np.testing.assert_allclose(overlay[overlay[..., 3] > 0, :3], 1.0)
+
+
 def test_tidy3d_dft_field_plot_source_normalizes_and_uses_micron_units():
     class Source:
         def source_spectrum(self, freqs, *, normalize=True):
@@ -559,6 +627,96 @@ def test_simulation_results_plot_field_accepts_field_aliases_and_abs_squared():
     np.testing.assert_allclose(image.get_array(), np.full((2, 2), 4.0))
     assert image.get_clim() == pytest.approx((0.0, 10.0))
     assert fig.axes[-1].get_ylabel() == r"|E|$^2$ ((V/um)^2)"
+
+
+def test_tidy3d_dft_field_darkens_structure_overlay_for_real_fields():
+    class DftPlaneMonitor:
+        is_3d = True
+        plane_normal = "z"
+        plane_position = 0.0
+        _compiled_dft_shape_3d = (2, 2)
+
+        def get_dft_frequencies(self):
+            return np.asarray([1.0])
+
+        def get_dft_component(self, component):
+            assert component == "Ey"
+            return np.ones((1, 4), dtype=np.complex128)
+
+        def get_analysis_plane_coords_3d(self, **_kwargs):
+            return (
+                np.asarray([0.125 * um, 0.375 * um]),
+                np.asarray([0.125 * um, 0.375 * um]),
+            )
+
+    simulation = SimpleNamespace(
+        resolution=0.25 * um,
+        fields=SimpleNamespace(permittivity=np.asarray([[[1.0, 12.0], [12.0, 1.0]]])),
+        sources=[],
+        design=SimpleNamespace(width=0.5 * um, height=0.5 * um, depth=0.0),
+    )
+
+    fig, ax = _close(
+        plot_tidy3d_dft_field(
+            simulation,
+            DftPlaneMonitor(),
+            field="Ey",
+            val="real",
+            eps_alpha=0.3,
+            show=False,
+        )
+    )
+
+    overlay = np.asarray(ax.images[1].get_array())
+    np.testing.assert_allclose(overlay[0, 1, :3], 0.0)
+    assert overlay[0, 1, 3] == pytest.approx(0.3)
+    assert overlay[0, 0, 3] == pytest.approx(0.0)
+    assert fig is ax.figure
+
+
+def test_tidy3d_dft_field_lightens_structure_overlay_for_power_fields():
+    class DftPlaneMonitor:
+        is_3d = True
+        plane_normal = "z"
+        plane_position = 0.0
+        _compiled_dft_shape_3d = (2, 2)
+
+        def get_dft_frequencies(self):
+            return np.asarray([1.0])
+
+        def get_dft_component(self, component):
+            assert component == "Ey"
+            return np.ones((1, 4), dtype=np.complex128)
+
+        def get_analysis_plane_coords_3d(self, **_kwargs):
+            return (
+                np.asarray([0.125 * um, 0.375 * um]),
+                np.asarray([0.125 * um, 0.375 * um]),
+            )
+
+    simulation = SimpleNamespace(
+        resolution=0.25 * um,
+        fields=SimpleNamespace(permittivity=np.asarray([[[1.0, 12.0], [12.0, 1.0]]])),
+        sources=[],
+        design=SimpleNamespace(width=0.5 * um, height=0.5 * um, depth=0.0),
+    )
+
+    fig, ax = _close(
+        plot_tidy3d_dft_field(
+            simulation,
+            DftPlaneMonitor(),
+            field="Ey",
+            val="abs^2",
+            eps_alpha=0.3,
+            show=False,
+        )
+    )
+
+    overlay = np.asarray(ax.images[1].get_array())
+    np.testing.assert_allclose(overlay[0, 1, :3], 1.0)
+    assert overlay[0, 1, 3] == pytest.approx(0.3)
+    assert overlay[0, 0, 3] == pytest.approx(0.0)
+    assert fig is ax.figure
 
 
 def _mode_source_raw_plot_fixture():
