@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.1 - 2026-06-22
+
+### Changed
+- Improved matplotlib field plotting aliases, marker orientation handling, and DFT field component extraction.
+- Clarified README terminology around sub-pixel averaging.
+
+### Fixed
+- Preserved `SimulationResults.plot_field` behavior while forwarding monitor and field aliases through keyword arguments.
+- Added clearer errors for missing DFT field components and expanded visualization coverage.
+
 ## v0.4.0 - 2026-06-20
 
 ### Added
