@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "beamz"
-version = "0.4.1"
+version = "0.4.2"
 dynamic = []
 authors = [
     { name = "Quentin Wach", email = "quentin.wach+beamz@gmail.com" },

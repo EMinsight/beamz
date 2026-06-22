@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.4.2 - 2026-06-22
+
+### Changed
+- Improved matplotlib field plotting with permittivity overlays for field-frame and DFT field views.
+- Refined material overlay styling so real fields use darker structure overlays and power fields use lighter overlays.
+
+### Fixed
+- Expanded visualization coverage for real-field and power-field overlay behavior.
+
 ## v0.4.1 - 2026-06-22
 
 ### Changed
