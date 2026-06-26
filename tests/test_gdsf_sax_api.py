@@ -671,6 +671,51 @@ def test_monitor_get_dft_flux_phase_aligns_leapfrog_h_phasor():
     np.testing.assert_allclose(mon.get_dft_flux(), [-0.5], rtol=1e-12, atol=1e-12)
 
 
+def test_monitor_get_dft_flux_3d_uses_analysis_plane_sample_area():
+    dx = 0.03569482288828337e-6
+    mon = Monitor(
+        start=(1.0e-6, 0.0, 0.0),
+        end=(1.0e-6, 1.4e-6, 0.644e-6),
+        record_fields=False,
+        dft_enabled=True,
+        dft_frequencies=np.array([1.0], dtype=float),
+        dft_components=("Ex", "Ey", "Ez", "Hx", "Hy", "Hz"),
+        dft_normalization="physical",
+        name="flux3d",
+    )
+    mon._resolution = dx
+    target0, target1 = mon.get_analysis_plane_coords_3d(
+        dx=dx,
+        dy=dx,
+        dz=dx,
+        field_shape=(56, 384, 384),
+    )
+    npts = int(target0.size * target1.size)
+    area = mon._dft_sample_area_3d
+    center_area = float(np.median(np.diff(target0)) * np.median(np.diff(target1)))
+    expected_area = center_area
+    expected_area *= float(target0.size) / float(target0.size - 1)
+    expected_area *= float(target1.size) / float(target1.size - 1)
+    np.testing.assert_allclose(area, expected_area, rtol=1e-12, atol=1e-18)
+
+    zeros = np.zeros((1, npts), dtype=np.complex128)
+    mon._dft_accum["Ex"] = zeros.copy()
+    mon._dft_accum["Ey"] = np.full((1, npts), 2.0 + 0.0j, dtype=np.complex128)
+    mon._dft_accum["Ez"] = zeros.copy()
+    mon._dft_accum["Hx"] = zeros.copy()
+    mon._dft_accum["Hy"] = zeros.copy()
+    mon._dft_accum["Hz"] = np.full((1, npts), 3.0 + 0.0j, dtype=np.complex128)
+    mon._dft_weight_sum = np.ones((1,), dtype=float)
+
+    expected = 0.5 * 2.0 * 3.0 * npts * area
+    wrong_dx_squared = expected * (dx * dx / area)
+    wrong_center_area = expected * (center_area / area)
+
+    np.testing.assert_allclose(mon.get_dft_flux(), [expected], rtol=1e-12, atol=1e-12)
+    assert abs(float(mon.get_dft_flux()[0]) - wrong_dx_squared) / expected > 0.005
+    assert abs(float(mon.get_dft_flux()[0]) - wrong_center_area) / expected > 0.05
+
+
 def test_monitor_frequency_points_aliases_are_deprecated():
     with pytest.warns(DeprecationWarning, match="frequency_points"):
         mon = Monitor(

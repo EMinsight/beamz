@@ -370,9 +370,7 @@ class TestModeSourceDiscreteHelpers:
         np.testing.assert_allclose(runtime_profiles["Hz"], 2.0 * profiles["Hz"])
         assert runtime_indices["Ex"] == indices["Ex"]
 
-    def test_injection_support_bounds_union_discrete_residual_cells(
-        self, monkeypatch
-    ):
+    def test_injection_support_bounds_union_discrete_residual_cells(self, monkeypatch):
         source = ModeSource(
             grid=SimpleNamespace(),
             center=(0.0, 0.0, 0.0),
@@ -584,6 +582,103 @@ class TestModeSourceDiscreteHelpers:
             e_scaled, h_scaled, signed_flux_sign=1.0, dl=0.25
         )
         assert p == pytest.approx(9.0)
+
+    @pytest.mark.parametrize(
+        ("axis", "pol", "first_name", "second_name", "signed_flux_sign"),
+        [
+            ("x", "tm", "_jz_profile", "_my_profile", -1.0),
+            ("y", "tm", "_jz_profile", "_my_profile", 1.0),
+            ("x", "te", "_jy_profile", "_mz_profile", 1.0),
+            ("y", "te", "_jx_profile", "_mz_profile", -1.0),
+        ],
+    )
+    def test_2d_launch_power_normalization_uses_profile_power(
+        self, axis, pol, first_name, second_name, signed_flux_sign
+    ):
+        source = ModeSource(
+            grid=SimpleNamespace(),
+            center=(0.0, 0.0),
+            width=1.0,
+            wavelength=TEST_WAVELENGTH,
+            pol=pol,
+            signal=np.ones(8),
+            direction=f"+{axis}",
+            power=4.0,
+        )
+        source._initialized = True
+        source._is_3d = False
+        source._axis = axis
+        source._resolution = 0.25
+        setattr(
+            source,
+            first_name,
+            signed_flux_sign * np.ones(8, dtype=np.complex128),
+        )
+        setattr(source, second_name, 5.0 * np.ones(8, dtype=np.complex128))
+
+        power = source._launch_power_normalization_spectrum([1.0, 2.0])
+
+        np.testing.assert_allclose(power, [1.25, 1.25])
+
+    def test_launch_power_normalization_initializes_before_dimension_branch(
+        self, monkeypatch
+    ):
+        source = ModeSource(
+            grid=SimpleNamespace(),
+            center=(0.0, 0.0, 0.0),
+            width=1.0,
+            height=1.0,
+            wavelength=TEST_WAVELENGTH,
+            pol="te",
+            signal=np.ones(8),
+            direction="+x",
+            power=1.0,
+        )
+        source._initialized = False
+        source._is_3d = False
+        fields = SimpleNamespace(
+            resolution=0.25,
+            permittivity=np.ones((3, 4, 5), dtype=np.float64),
+        )
+        captured = {}
+
+        def fake_initialize(permittivity, resolution, dt=None):
+            captured["shape"] = np.asarray(permittivity).shape
+            captured["resolution"] = resolution
+            captured["dt"] = dt
+            source._initialized = True
+            source._is_3d = True
+
+        def fake_launch_power_normalization(call_fields, *, dt):
+            assert call_fields is fields
+            assert dt == pytest.approx(2.0e-16)
+            return 1.5
+
+        def unexpected_2d_launch_power_normalization(*, fields=None):
+            raise AssertionError("3D launch calibration must not take the 2D branch")
+
+        monkeypatch.setattr(source, "initialize", fake_initialize)
+        monkeypatch.setattr(
+            source, "_launch_power_normalization", fake_launch_power_normalization
+        )
+        monkeypatch.setattr(
+            source,
+            "_launch_power_normalization_2d",
+            unexpected_2d_launch_power_normalization,
+        )
+
+        power = source._launch_power_normalization_spectrum(
+            [1.0, 2.0],
+            fields=fields,
+            dt=2.0e-16,
+        )
+
+        assert captured == {
+            "shape": (3, 4, 5),
+            "resolution": 0.25,
+            "dt": 2.0e-16,
+        }
+        np.testing.assert_allclose(power, [1.5, 1.5])
 
     def test_2d_tm_y_launch_is_transpose_of_x_launch(self):
         wavelength = TEST_WAVELENGTH
