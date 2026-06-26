@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.3 - 2026-06-26
+
+### Changed
+- Updated cosine crossing and modal source example notebooks.
+
+### Fixed
+- Fixed mode-source flux calculation and expanded related mode-source and tidy API coverage.
+
 ## v0.4.2 - 2026-06-22
 
 ### Changed
