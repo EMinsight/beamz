@@ -1,11 +1,14 @@
 from __future__ import annotations
+
 import time
+
 import numpy as np
+
 from beamz import (
+    PML,
     Design,
     Material,
     ModeSource,
-    PML,
     Rectangle,
     Simulation,
     ramped_cosine,
@@ -22,6 +25,7 @@ DOMAIN_HEIGHT = 6.5 * µm
 DOMAIN_DEPTH = 4.0 * µm
 PML_THICKNESS = 0.75 * WL
 NUM_STEPS = 600
+
 
 def build_design() -> Design:
     design = Design(

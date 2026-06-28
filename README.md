@@ -1,10 +1,10 @@
 <div align="center">
-  <picture style="padding-right: 23px; padding-bottom: 7px;">
-    <source media="(prefers-color-scheme: light)" srcset="docs/assets/BEAMZ%20Dark.png">
-    <img alt="BEAMZ logo" src="docs/assets/BEAMZ%20Light.png" width="380">
+  <picture style="padding-right: 0px; padding-bottom: 7px;">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/beamz_logo_black.png">
+    <img alt="BEAMZ logo" src="docs/assets/beamz_logo_white.png" width="130">
   </picture>
 
-  <strong>BEAMZ</strong> is a <strong>GPU-accelerated</strong> <strong><a href="https://en.wikipedia.org/wiki/Electromagnetism">electromagnetic</a> simulation</strong> framework for photonic chip designers using the <strong><a href="https://en.wikipedia.org/wiki/Finite-difference_time-domain_method">FDTD</a> method</strong>. It features a highly optimized engine enabling fast large-scale simulations with a <strong>familiar high-level API</strong> for fast prototyping with just a few lines of code and an <strong>inverse design module</strong> for gradient-based optimization using the proven <strong>adjoint method</strong> with <strong><a href="https://en.wikipedia.org/wiki/Automatic_differentiation">autodiff</a></strong>.
+  <strong>BEAMZ</strong> is a <strong>GPU-accelerated</strong> <strong><a href="https://en.wikipedia.org/wiki/Electromagnetism">electromagnetic</a> simulation</strong> framework for photonic chip designers using the <strong><a href="https://en.wikipedia.org/wiki/Finite-difference_time-domain_method">FDTD</a> method</strong>. It enables fast, large-scale simulations and offers a <strong>familiar, high-level API</strong> for fast prototyping with just a few lines of code as well as an <strong>inverse design module</strong> for gradient-based optimization using the <strong>adjoint method</strong> with <strong><a href="https://en.wikipedia.org/wiki/Automatic_differentiation">autodiff</a></strong>.
 
   <h3>
 
@@ -39,7 +39,7 @@
 
 
 ## Examples
-Try out notebooks from our growing **[example library](https://beamzorg.github.io/beamz-notebooks/)**. 
+Try out notebooks from our growing **[example library](https://beamz.tech/examples/)**. 
 
 
 ## Installation
