@@ -5,7 +5,11 @@ import jax.numpy as jnp
 import numpy as np
 
 from beamz.const import EPS_0, MU_0, µm
-from beamz.shared_kernels import CPML_3D_E_DERIVATIVES, CPML_3D_H_DERIVATIVES
+from beamz.shared_kernels import (
+    CPML_3D_E_DERIVATIVES,
+    CPML_3D_H_DERIVATIVES,
+    fit_array_to_shape,
+)
 from beamz.simulation.yee import (
     component_axis_offsets_3d,
     sample_voxel_grid_at_component_3d,
@@ -211,7 +215,10 @@ class PML(Boundary):
 
         for attr in ("permittivity", "conductivity", "permeability"):
             source = getattr(fields, attr)
-            material = np.array(source, copy=True)
+            source_arr = np.asarray(source)
+            if source_arr.ndim == 0:
+                continue
+            material = np.array(source_arr, copy=True)
             for _edge, axis, side, count in self._pml_material_edge_counts(
                 material, pml_data, plane_2d
             ):
@@ -230,7 +237,7 @@ class PML(Boundary):
                 material[tuple(dst_sel)] = np.expand_dims(
                     material[tuple(ref_sel)], axis=axis
                 )
-            setattr(fields, attr, jnp.asarray(material, dtype=source.dtype))
+            setattr(fields, attr, jnp.asarray(material, dtype=source_arr.dtype))
 
     @staticmethod
     def _pml_edge_material_varies(material, axis: int, side: str, count: int) -> bool:
@@ -665,29 +672,17 @@ class PML(Boundary):
             coords_z, depth, "front" in edges, "back" in edges
         )
 
-        sigma_x = jnp.broadcast_to(sigma_x_1d[None, None, :], shape)
-        sigma_y = jnp.broadcast_to(sigma_y_1d[None, :, None], shape)
-        sigma_z = jnp.broadcast_to(sigma_z_1d[:, None, None], shape)
-        kappa_x = jnp.broadcast_to(kappa_x_1d[None, None, :], shape)
-        kappa_y = jnp.broadcast_to(kappa_y_1d[None, :, None], shape)
-        kappa_z = jnp.broadcast_to(kappa_z_1d[:, None, None], shape)
-        alpha_x = jnp.broadcast_to(alpha_x_1d[None, None, :], shape)
-        alpha_y = jnp.broadcast_to(alpha_y_1d[None, :, None], shape)
-        alpha_z = jnp.broadcast_to(alpha_z_1d[:, None, None], shape)
-
-        pml_mask = (sigma_x > 0) | (sigma_y > 0) | (sigma_z > 0)
         out = {
             "formulation": "cpml",
-            "mask": pml_mask,
-            "sigma_x": sigma_x,
-            "sigma_y": sigma_y,
-            "sigma_z": sigma_z,
-            "kappa_x": kappa_x,
-            "kappa_y": kappa_y,
-            "kappa_z": kappa_z,
-            "alpha_x": alpha_x,
-            "alpha_y": alpha_y,
-            "alpha_z": alpha_z,
+            "sigma_x": jnp.reshape(sigma_x_1d, (1, 1, nx)),
+            "sigma_y": jnp.reshape(sigma_y_1d, (1, ny, 1)),
+            "sigma_z": jnp.reshape(sigma_z_1d, (nz, 1, 1)),
+            "kappa_x": jnp.reshape(kappa_x_1d, (1, 1, nx)),
+            "kappa_y": jnp.reshape(kappa_y_1d, (1, ny, 1)),
+            "kappa_z": jnp.reshape(kappa_z_1d, (nz, 1, 1)),
+            "alpha_x": jnp.reshape(alpha_x_1d, (1, 1, nx)),
+            "alpha_y": jnp.reshape(alpha_y_1d, (1, ny, 1)),
+            "alpha_z": jnp.reshape(alpha_z_1d, (nz, 1, 1)),
         }
 
         dz = float(depth) / max(nz, 1)
@@ -927,6 +922,24 @@ def initialize_full_pec_3d_state(fields) -> FullPec3DState:
         getattr(fields, "total_conductivity", fields.conductivity)
     )
     sigma_base = total_sigma * jnp.asarray(fields.permeability) * MU_0 / EPS_0
+    if getattr(sigma_base, "ndim", None) == 0:
+        sigma_m_hx = sigma_m_hy = sigma_m_hz = sigma_base
+    else:
+        sigma_m_hx = sample_voxel_grid_at_component_3d(
+            sigma_base,
+            "Hx",
+            stored_shape=full_shapes["Hx"],
+        )
+        sigma_m_hy = sample_voxel_grid_at_component_3d(
+            sigma_base,
+            "Hy",
+            stored_shape=full_shapes["Hy"],
+        )
+        sigma_m_hz = sample_voxel_grid_at_component_3d(
+            sigma_base,
+            "Hz",
+            stored_shape=full_shapes["Hz"],
+        )
 
     state = FullPec3DState(
         Ex=_full("Ex"),
@@ -971,21 +984,9 @@ def initialize_full_pec_3d_state(fields) -> FullPec3DState:
             stored_shape=full_shapes["Ez"],
             region=region_z,
         ),
-        sigma_m_hx=sample_voxel_grid_at_component_3d(
-            sigma_base,
-            "Hx",
-            stored_shape=full_shapes["Hx"],
-        ),
-        sigma_m_hy=sample_voxel_grid_at_component_3d(
-            sigma_base,
-            "Hy",
-            stored_shape=full_shapes["Hy"],
-        ),
-        sigma_m_hz=sample_voxel_grid_at_component_3d(
-            sigma_base,
-            "Hz",
-            stored_shape=full_shapes["Hz"],
-        ),
+        sigma_m_hx=sigma_m_hx,
+        sigma_m_hy=sigma_m_hy,
+        sigma_m_hz=sigma_m_hz,
         masks=full_masks,
     )
 
@@ -1059,7 +1060,19 @@ def initialize_tm_2d_xy_state(fields) -> Tm2DXYState:
     total_sigma = jnp.asarray(
         getattr(fields, "total_conductivity", fields.conductivity)
     )
-    sigma_base = total_sigma * jnp.asarray(fields.permeability) * MU_0 / EPS_0
+    total_sigma_arr = np.asarray(total_sigma)
+    if total_sigma_arr.shape == () and float(total_sigma_arr) == 0.0:
+        sig_z_region = total_sigma
+        sigma_m_hx = total_sigma
+        sigma_m_hy = total_sigma
+    else:
+        sigma_base = total_sigma * jnp.asarray(fields.permeability) * MU_0 / EPS_0
+        sig_z_region = sample_voxel_grid_at_tm_xy_full_component_2d(
+            total_sigma,
+            "Ez",
+        )
+        sigma_m_hx = sample_voxel_grid_at_tm_xy_full_component_2d(sigma_base, "Hx")
+        sigma_m_hy = sample_voxel_grid_at_tm_xy_full_component_2d(sigma_base, "Hy")
     metallic_edges = frozenset(
         resolve_metallic_edges(getattr(fields, "boundaries", None), is_3d=False)
     )
@@ -1077,12 +1090,9 @@ def initialize_tm_2d_xy_state(fields) -> Tm2DXYState:
             fields.permittivity,
             "Ez",
         ),
-        sig_z_region=sample_voxel_grid_at_tm_xy_full_component_2d(
-            total_sigma,
-            "Ez",
-        ),
-        sigma_m_hx=sample_voxel_grid_at_tm_xy_full_component_2d(sigma_base, "Hx"),
-        sigma_m_hy=sample_voxel_grid_at_tm_xy_full_component_2d(sigma_base, "Hy"),
+        sig_z_region=sig_z_region,
+        sigma_m_hx=sigma_m_hx,
+        sigma_m_hy=sigma_m_hy,
         metallic_edges=metallic_edges,
         ez_mask=masks["Ez"],
         hx_mask=masks["Hx"],
@@ -1742,6 +1752,53 @@ def cpml_curl_e_to_h_3d(
     return curl_hx, curl_hy, curl_hz, (psi0, psi1, psi2, psi3, psi4, psi5)
 
 
+def _advance_cpml_h_component(field, curl, decay, source, sigma_m, dt):
+    if sigma_m is None:
+        return decay * field - source * curl
+    if dt is None:
+        raise ValueError("dt is required when CPML H update uses material grids.")
+    one = jnp.asarray(1.0, dtype=field.dtype)
+    half = jnp.asarray(0.5, dtype=field.dtype)
+    dt_over_mu0 = jnp.asarray(dt, dtype=field.dtype) / jnp.asarray(
+        MU_0, dtype=field.dtype
+    )
+    alpha = jnp.asarray(sigma_m, dtype=field.dtype) * (half * dt_over_mu0)
+    denom = one + alpha
+    return ((one - alpha) / denom) * field - (dt_over_mu0 / denom) * curl
+
+
+def _advance_cpml_e_component(
+    field,
+    curl,
+    decay,
+    source,
+    conductivity,
+    inv_permittivity,
+    dt,
+):
+    if conductivity is None and inv_permittivity is None:
+        return decay * field + source * curl
+    if conductivity is None or inv_permittivity is None:
+        raise ValueError(
+            "conductivity and inverse permittivity must be provided together."
+        )
+    if dt is None:
+        raise ValueError("dt is required when CPML E update uses material grids.")
+    one = jnp.asarray(1.0, dtype=field.dtype)
+    half = jnp.asarray(0.5, dtype=field.dtype)
+    dt_over_eps0 = jnp.asarray(dt, dtype=field.dtype) / jnp.asarray(
+        EPS_0, dtype=field.dtype
+    )
+    inv_eps = jnp.asarray(inv_permittivity, dtype=field.dtype)
+    beta = (
+        jnp.asarray(conductivity, dtype=field.dtype)
+        * (half * dt_over_eps0)
+        * inv_eps
+    )
+    denom = one + beta
+    return ((one - beta) / denom) * field + (dt_over_eps0 * inv_eps / denom) * curl
+
+
 def cpml_update_h_from_e_3d(
     ex,
     ey,
@@ -1765,6 +1822,9 @@ def cpml_update_h_from_e_3d(
     alpha_h_terms=None,
     dt=None,
     psi_h_terms,
+    h_sigma_m_x=None,
+    h_sigma_m_y=None,
+    h_sigma_m_z=None,
 ):
     """CPML-corrected H update from E without returning full curl arrays."""
 
@@ -1783,17 +1843,50 @@ def cpml_update_h_from_e_3d(
             dt,
         )
 
-    term0, psi0 = correct(0, (ez[:, 1:, :] - ez[:, :-1, :]) / resolution)
-    term1, psi1 = correct(1, (ey[1:, :, :] - ey[:-1, :, :]) / resolution)
-    hx = h_decay_x * hx - h_source_x * (term0 - term1)
+    term0, psi0 = correct(
+        0, fit_array_to_shape((ez[:, 1:, :] - ez[:, :-1, :]) / resolution, hx.shape)
+    )
+    term1, psi1 = correct(
+        1, fit_array_to_shape((ey[1:, :, :] - ey[:-1, :, :]) / resolution, hx.shape)
+    )
+    hx = _advance_cpml_h_component(
+        hx,
+        term0 - term1,
+        h_decay_x,
+        h_source_x,
+        h_sigma_m_x,
+        dt,
+    )
 
-    term2, psi2 = correct(2, (ex[1:, :, :] - ex[:-1, :, :]) / resolution)
-    term3, psi3 = correct(3, (ez[:, :, 1:] - ez[:, :, :-1]) / resolution)
-    hy = h_decay_y * hy - h_source_y * (term2 - term3)
+    term2, psi2 = correct(
+        2, fit_array_to_shape((ex[1:, :, :] - ex[:-1, :, :]) / resolution, hy.shape)
+    )
+    term3, psi3 = correct(
+        3, fit_array_to_shape((ez[:, :, 1:] - ez[:, :, :-1]) / resolution, hy.shape)
+    )
+    hy = _advance_cpml_h_component(
+        hy,
+        term2 - term3,
+        h_decay_y,
+        h_source_y,
+        h_sigma_m_y,
+        dt,
+    )
 
-    term4, psi4 = correct(4, (ey[:, :, 1:] - ey[:, :, :-1]) / resolution)
-    term5, psi5 = correct(5, (ex[:, 1:, :] - ex[:, :-1, :]) / resolution)
-    hz = h_decay_z * hz - h_source_z * (term4 - term5)
+    term4, psi4 = correct(
+        4, fit_array_to_shape((ey[:, :, 1:] - ey[:, :, :-1]) / resolution, hz.shape)
+    )
+    term5, psi5 = correct(
+        5, fit_array_to_shape((ex[:, 1:, :] - ex[:, :-1, :]) / resolution, hz.shape)
+    )
+    hz = _advance_cpml_h_component(
+        hz,
+        term4 - term5,
+        h_decay_z,
+        h_source_z,
+        h_sigma_m_z,
+        dt,
+    )
 
     return hx, hy, hz, (psi0, psi1, psi2, psi3, psi4, psi5)
 
@@ -1818,6 +1911,10 @@ def cpml_update_h_from_e_3d_packed_psi(
     inv_kappa_h_terms,
     psi_h_terms,
     slab_specs,
+    dt=None,
+    h_sigma_m_x=None,
+    h_sigma_m_y=None,
+    h_sigma_m_z=None,
 ):
     """CPML-corrected H update with psi stored only in packed CPML slabs."""
 
@@ -1833,17 +1930,50 @@ def cpml_update_h_from_e_3d_packed_psi(
             slab_specs[idx],
         )
 
-    term0, psi0 = correct(0, (ez[:, 1:, :] - ez[:, :-1, :]) / resolution)
-    term1, psi1 = correct(1, (ey[1:, :, :] - ey[:-1, :, :]) / resolution)
-    hx = h_decay_x * hx - h_source_x * (term0 - term1)
+    term0, psi0 = correct(
+        0, fit_array_to_shape((ez[:, 1:, :] - ez[:, :-1, :]) / resolution, hx.shape)
+    )
+    term1, psi1 = correct(
+        1, fit_array_to_shape((ey[1:, :, :] - ey[:-1, :, :]) / resolution, hx.shape)
+    )
+    hx = _advance_cpml_h_component(
+        hx,
+        term0 - term1,
+        h_decay_x,
+        h_source_x,
+        h_sigma_m_x,
+        dt,
+    )
 
-    term2, psi2 = correct(2, (ex[1:, :, :] - ex[:-1, :, :]) / resolution)
-    term3, psi3 = correct(3, (ez[:, :, 1:] - ez[:, :, :-1]) / resolution)
-    hy = h_decay_y * hy - h_source_y * (term2 - term3)
+    term2, psi2 = correct(
+        2, fit_array_to_shape((ex[1:, :, :] - ex[:-1, :, :]) / resolution, hy.shape)
+    )
+    term3, psi3 = correct(
+        3, fit_array_to_shape((ez[:, :, 1:] - ez[:, :, :-1]) / resolution, hy.shape)
+    )
+    hy = _advance_cpml_h_component(
+        hy,
+        term2 - term3,
+        h_decay_y,
+        h_source_y,
+        h_sigma_m_y,
+        dt,
+    )
 
-    term4, psi4 = correct(4, (ey[:, :, 1:] - ey[:, :, :-1]) / resolution)
-    term5, psi5 = correct(5, (ex[:, 1:, :] - ex[:, :-1, :]) / resolution)
-    hz = h_decay_z * hz - h_source_z * (term4 - term5)
+    term4, psi4 = correct(
+        4, fit_array_to_shape((ey[:, :, 1:] - ey[:, :, :-1]) / resolution, hz.shape)
+    )
+    term5, psi5 = correct(
+        5, fit_array_to_shape((ex[:, 1:, :] - ex[:, :-1, :]) / resolution, hz.shape)
+    )
+    hz = _advance_cpml_h_component(
+        hz,
+        term4 - term5,
+        h_decay_z,
+        h_source_z,
+        h_sigma_m_z,
+        dt,
+    )
 
     return hx, hy, hz, (psi0, psi1, psi2, psi3, psi4, psi5)
 
@@ -1934,6 +2064,12 @@ def cpml_update_e_from_h_3d(
     dt=None,
     psi_e_terms,
     metallic_edges=frozenset(),
+    e_conductivity_x=None,
+    e_inv_permittivity_x=None,
+    e_conductivity_y=None,
+    e_inv_permittivity_y=None,
+    e_conductivity_z=None,
+    e_inv_permittivity_z=None,
 ):
     """CPML-corrected E update from H without returning full curl arrays."""
 
@@ -1963,33 +2099,75 @@ def cpml_update_e_from_h_3d(
 
     term0, psi0 = correct(
         0,
-        _adjacent_difference(pad(hz, axis=1), axis=1, resolution=resolution),
+        fit_array_to_shape(
+            _adjacent_difference(pad(hz, axis=1), axis=1, resolution=resolution),
+            ex.shape,
+        ),
     )
     term1, psi1 = correct(
         1,
-        _adjacent_difference(pad(hy, axis=0), axis=0, resolution=resolution),
+        fit_array_to_shape(
+            _adjacent_difference(pad(hy, axis=0), axis=0, resolution=resolution),
+            ex.shape,
+        ),
     )
-    ex = e_decay_x * ex + e_source_x * (term0 - term1)
+    ex = _advance_cpml_e_component(
+        ex,
+        term0 - term1,
+        e_decay_x,
+        e_source_x,
+        e_conductivity_x,
+        e_inv_permittivity_x,
+        dt,
+    )
 
     term2, psi2 = correct(
         2,
-        _adjacent_difference(pad(hx, axis=0), axis=0, resolution=resolution),
+        fit_array_to_shape(
+            _adjacent_difference(pad(hx, axis=0), axis=0, resolution=resolution),
+            ey.shape,
+        ),
     )
     term3, psi3 = correct(
         3,
-        _adjacent_difference(pad(hz, axis=2), axis=2, resolution=resolution),
+        fit_array_to_shape(
+            _adjacent_difference(pad(hz, axis=2), axis=2, resolution=resolution),
+            ey.shape,
+        ),
     )
-    ey = e_decay_y * ey + e_source_y * (term2 - term3)
+    ey = _advance_cpml_e_component(
+        ey,
+        term2 - term3,
+        e_decay_y,
+        e_source_y,
+        e_conductivity_y,
+        e_inv_permittivity_y,
+        dt,
+    )
 
     term4, psi4 = correct(
         4,
-        _adjacent_difference(pad(hy, axis=2), axis=2, resolution=resolution),
+        fit_array_to_shape(
+            _adjacent_difference(pad(hy, axis=2), axis=2, resolution=resolution),
+            ez.shape,
+        ),
     )
     term5, psi5 = correct(
         5,
-        _adjacent_difference(pad(hx, axis=1), axis=1, resolution=resolution),
+        fit_array_to_shape(
+            _adjacent_difference(pad(hx, axis=1), axis=1, resolution=resolution),
+            ez.shape,
+        ),
     )
-    ez = e_decay_z * ez + e_source_z * (term4 - term5)
+    ez = _advance_cpml_e_component(
+        ez,
+        term4 - term5,
+        e_decay_z,
+        e_source_z,
+        e_conductivity_z,
+        e_inv_permittivity_z,
+        dt,
+    )
 
     return ex, ey, ez, (psi0, psi1, psi2, psi3, psi4, psi5)
 
@@ -2015,6 +2193,13 @@ def cpml_update_e_from_h_3d_packed_psi(
     psi_e_terms,
     slab_specs,
     metallic_edges=frozenset(),
+    dt=None,
+    e_conductivity_x=None,
+    e_inv_permittivity_x=None,
+    e_conductivity_y=None,
+    e_inv_permittivity_y=None,
+    e_conductivity_z=None,
+    e_inv_permittivity_z=None,
 ):
     """CPML-corrected E update with psi stored only in packed CPML slabs."""
 
@@ -2041,33 +2226,75 @@ def cpml_update_e_from_h_3d_packed_psi(
 
     term0, psi0 = correct(
         0,
-        _adjacent_difference(pad(hz, axis=1), axis=1, resolution=resolution),
+        fit_array_to_shape(
+            _adjacent_difference(pad(hz, axis=1), axis=1, resolution=resolution),
+            ex.shape,
+        ),
     )
     term1, psi1 = correct(
         1,
-        _adjacent_difference(pad(hy, axis=0), axis=0, resolution=resolution),
+        fit_array_to_shape(
+            _adjacent_difference(pad(hy, axis=0), axis=0, resolution=resolution),
+            ex.shape,
+        ),
     )
-    ex = e_decay_x * ex + e_source_x * (term0 - term1)
+    ex = _advance_cpml_e_component(
+        ex,
+        term0 - term1,
+        e_decay_x,
+        e_source_x,
+        e_conductivity_x,
+        e_inv_permittivity_x,
+        dt,
+    )
 
     term2, psi2 = correct(
         2,
-        _adjacent_difference(pad(hx, axis=0), axis=0, resolution=resolution),
+        fit_array_to_shape(
+            _adjacent_difference(pad(hx, axis=0), axis=0, resolution=resolution),
+            ey.shape,
+        ),
     )
     term3, psi3 = correct(
         3,
-        _adjacent_difference(pad(hz, axis=2), axis=2, resolution=resolution),
+        fit_array_to_shape(
+            _adjacent_difference(pad(hz, axis=2), axis=2, resolution=resolution),
+            ey.shape,
+        ),
     )
-    ey = e_decay_y * ey + e_source_y * (term2 - term3)
+    ey = _advance_cpml_e_component(
+        ey,
+        term2 - term3,
+        e_decay_y,
+        e_source_y,
+        e_conductivity_y,
+        e_inv_permittivity_y,
+        dt,
+    )
 
     term4, psi4 = correct(
         4,
-        _adjacent_difference(pad(hy, axis=2), axis=2, resolution=resolution),
+        fit_array_to_shape(
+            _adjacent_difference(pad(hy, axis=2), axis=2, resolution=resolution),
+            ez.shape,
+        ),
     )
     term5, psi5 = correct(
         5,
-        _adjacent_difference(pad(hx, axis=1), axis=1, resolution=resolution),
+        fit_array_to_shape(
+            _adjacent_difference(pad(hx, axis=1), axis=1, resolution=resolution),
+            ez.shape,
+        ),
     )
-    ez = e_decay_z * ez + e_source_z * (term4 - term5)
+    ez = _advance_cpml_e_component(
+        ez,
+        term4 - term5,
+        e_decay_z,
+        e_source_z,
+        e_conductivity_z,
+        e_inv_permittivity_z,
+        dt,
+    )
 
     return ex, ey, ez, (psi0, psi1, psi2, psi3, psi4, psi5)
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import warnings
 from collections.abc import Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Literal
@@ -24,11 +25,13 @@ from beamz.devices.sources.compiler import (
 from beamz.devices.sources.mode import (
     _detect_transverse_symmetry_axes,
     _enforce_componentwise_parity,
+    _local_mode_plane_spec,
     _make_3d_mode_basis_profiles,
     _modal_overlap_3d_profiles,
     _normalize_3d_profiles_by_flux,
     _numeric_phase_delay,
     _select_core_confined_mode_index,  # noqa: F401 - compatibility monkeypatch hook
+    _shift_discrete_mode_to_global,
     _solve_numeric_k_axis,
 )
 from beamz.devices.sources.solve import solve_beamz_mode_plane, solve_modes
@@ -51,14 +54,11 @@ from beamz.simulation.compiled import (
     monitor_dft_point_size,
     monitor_frequency_size,
     monitor_state_size,
+    sharding_cache_token,
 )
 from beamz.simulation.fields import Fields
 from beamz.simulation.step_sequence import run_step_sequence
-from beamz.simulation.yee import (
-    component_coordinates_3d_um,
-    sample_voxel_grid_at_component_3d,
-    sample_voxel_grid_at_e_component_3d_centered,
-)
+from beamz.simulation.yee import component_coordinates_3d_um
 from beamz.visual.helpers import _finish_inline_progress, _print_inline_progress
 
 
@@ -463,6 +463,111 @@ def _source_spectrum_normalization(
     if not spectra:
         return None
     return spectra[0]
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return bool(default)
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _design_grid_shape_estimate(design, resolution) -> tuple[int, ...]:
+    size = _design_domain(design) if design is not None else None
+    if size is None:
+        return ()
+    res = float(resolution)
+    if (not np.isfinite(res)) or res <= 0.0:
+        return ()
+    dims = tuple(float(value) for value in size)
+    if len(dims) < 3 or dims[2] <= 0.0:
+        return tuple(max(1, int(round(float(dim) / res))) for dim in dims[:2])
+    # BeamZ stores 3D material arrays in z/y/x order.
+    return (
+        max(1, int(round(dims[2] / res))),
+        max(1, int(round(dims[1] / res))),
+        max(1, int(round(dims[0] / res))),
+    )
+
+
+def _setup_device_auto_threshold_bytes() -> int:
+    raw = os.getenv("BEAMZ_SETUP_CPU_MIN_GIB", "1.0").strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 1.0
+    return max(0, int(value * 1024**3))
+
+
+def _has_accelerator_backend() -> bool:
+    try:
+        import jax
+
+        return any(device.platform != "cpu" for device in jax.devices())
+    except Exception:
+        return False
+
+
+def _should_setup_on_cpu(policy, *, design, resolution) -> bool:
+    raw = os.getenv("BEAMZ_SETUP_DEVICE", "auto") if policy is None else policy
+    if raw is None:
+        raw = "auto"
+    if not isinstance(raw, str):
+        return False
+    normalized = raw.strip().lower()
+    if normalized in {"cpu", "host"}:
+        return True
+    if normalized in {"default", "device", "gpu", "accelerator"}:
+        return False
+    if normalized != "auto":
+        raise ValueError(
+            "setup_device must be one of 'auto', 'cpu', or 'default', "
+            f"got {raw!r}."
+        )
+    if _env_bool("BEAMZ_SETUP_CPU", False):
+        return True
+    if not _has_accelerator_backend():
+        return False
+    shape = _design_grid_shape_estimate(design, resolution)
+    if not shape:
+        return False
+    scalar_bytes = int(np.prod(shape, dtype=np.int64)) * np.dtype(np.float32).itemsize
+    return scalar_bytes >= _setup_device_auto_threshold_bytes()
+
+
+def _setup_device_context(policy, *, design, resolution):
+    resolved_policy = (
+        os.getenv("BEAMZ_SETUP_DEVICE", "auto") if policy is None else str(policy)
+    )
+    if not _should_setup_on_cpu(resolved_policy, design=design, resolution=resolution):
+        return nullcontext(None), "default"
+    try:
+        import jax
+
+        cpu_devices = jax.devices("cpu")
+        if not cpu_devices:
+            return nullcontext(None), "default"
+        return jax.default_device(cpu_devices[0]), "cpu"
+    except Exception:
+        return nullcontext(None), "default"
+
+
+def _resolved_setup_device_context(resolved_device):
+    if str(resolved_device).strip().lower() != "cpu":
+        return nullcontext(None)
+    try:
+        import jax
+
+        cpu_devices = jax.devices("cpu")
+        if not cpu_devices:
+            return nullcontext(None)
+        return jax.default_device(cpu_devices[0])
+    except Exception:
+        return nullcontext(None)
+
+
+def _setup_device_policy_label(policy) -> str:
+    return os.getenv("BEAMZ_SETUP_DEVICE", "auto") if policy is None else str(policy)
 
 
 def _apply_source_launch_power_normalization(
@@ -921,7 +1026,6 @@ class Simulation:
         sources: list = None,
         monitors: list[Monitor] = None,
         boundaries: list[Boundary] = None,
-        thermal=None,
         resolution: float = 0.02 * µm,
         time: np.ndarray = None,
         plane_2d: str = "xy",
@@ -935,6 +1039,7 @@ class Simulation:
         boundary_spec=None,
         grid_spec=None,
         run_time: float | None = None,
+        setup_device: Literal["auto", "cpu", "default"] | None = None,
     ):
         coordinate_offset = (0.0, 0.0, 0.0)
         if domain is not None and size is not None:
@@ -1073,6 +1178,7 @@ class Simulation:
         self.coordinate_offset = coordinate_offset
         self.grid_spec = grid_spec
         self.run_time = run_time
+        self.setup_device_policy = _setup_device_policy_label(setup_device)
         sources = sources or []
         monitors = monitors or []
         boundaries = normalize_boundaries(boundaries, is_3d=_design_is_3d(design))
@@ -1087,63 +1193,70 @@ class Simulation:
             monitors=monitors,
         )
 
-        # Get material grids from design (design owns the material grids, we reference them)
-        permittivity, conductivity, permeability = design.get_material_grids(resolution)
-
         # Initialize time stepping first
         if time is None or len(time) < 2:
             raise ValueError("FDTD requires a time array with at least two entries")
         self.time, self.dt, self.num_steps = time, float(time[1] - time[0]), len(time)
         self.t, self.current_step = float(time[0]), 0
 
-        # Check for PML boundaries before creating fields (to avoid double material init)
-        pml_boundaries = [b for b in boundaries if isinstance(b, PML)]
-
-        # Create field storage (fields owns the E/H field arrays, references material grids)
-        self.fields = Fields(
-            permittivity,
-            conductivity,
-            permeability,
-            resolution,
-            plane_2d=self.plane_2d,
-            _init_materials=not pml_boundaries,
+        setup_context, resolved_setup_device = _setup_device_context(
+            setup_device,
+            design=design,
+            resolution=resolution,
         )
-
-        # Initialize PML regions if present
-        if pml_boundaries:
-            # Create PML regions (do this once, not every timestep)
-            pml_data = {}
-            for pml in pml_boundaries:
-                new_data = pml.create_pml_regions(
-                    self.fields, design, resolution, self.dt, plane_2d=self.plane_2d
-                )
-                if not pml_data:
-                    pml_data = dict(new_data)
-                    continue
-                pml_data = _merge_pml_payload(pml_data, new_data)
-            self.pml_data = pml_data
-
-            # Set effective conductivity for PML
-            self.fields.set_pml_conductivity(pml_data)
-        else:
-            self.pml_data = None
-
-        # Store boundary references (no duplication)
-        self.boundaries = boundaries
-        self.fields.set_metallic_masks(
-            create_metallic_boundary_masks(
-                self.fields,
-                self.boundaries,
-                is_3d=self.is_3d,
-                plane_2d=self.plane_2d,
+        self.setup_device_resolved = resolved_setup_device
+        with setup_context:
+            # Get material grids from design (design owns the material grids, we reference them)
+            permittivity, conductivity, permeability = design.get_material_grids(
+                resolution
             )
-        )
-        self.fields.boundaries = self.boundaries
+            # Check for PML boundaries before creating fields (to avoid double material init)
+            pml_boundaries = [b for b in boundaries if isinstance(b, PML)]
 
-        # Optional thermal coupling
-        self.thermal = thermal
-        if self.thermal is not None and getattr(self.thermal, "enabled", True):
-            self.thermal.initialize(self)
+            # Create field storage (fields owns the E/H field arrays, references material grids)
+            self.fields = Fields(
+                permittivity,
+                conductivity,
+                permeability,
+                resolution,
+                plane_2d=self.plane_2d,
+                _init_materials=not pml_boundaries,
+            )
+
+            # Initialize PML regions if present
+            if pml_boundaries:
+                # Create PML regions (do this once, not every timestep)
+                pml_data = {}
+                for pml in pml_boundaries:
+                    new_data = pml.create_pml_regions(
+                        self.fields,
+                        design,
+                        resolution,
+                        self.dt,
+                        plane_2d=self.plane_2d,
+                    )
+                    if not pml_data:
+                        pml_data = dict(new_data)
+                        continue
+                    pml_data = _merge_pml_payload(pml_data, new_data)
+                self.pml_data = pml_data
+
+                # Set effective conductivity for PML
+                self.fields.set_pml_conductivity(pml_data)
+            else:
+                self.pml_data = None
+
+            # Store boundary references (no duplication)
+            self.boundaries = boundaries
+            self.fields.set_metallic_masks(
+                create_metallic_boundary_masks(
+                    self.fields,
+                    self.boundaries,
+                    is_3d=self.is_3d,
+                    plane_2d=self.plane_2d,
+                )
+            )
+        self.fields.boundaries = self.boundaries
 
         # Compiled program cache for v0.3 packed-source/monitor execution.
         self._compiled_program = None
@@ -1249,8 +1362,6 @@ class Simulation:
 
         def _finalize(sim):
             sim._record_monitors()
-            if sim.thermal is not None and getattr(sim.thermal, "enabled", True):
-                sim.thermal.step(sim)
             sim.t += sim.dt
             sim.current_step += 1
             return sim
@@ -1466,7 +1577,13 @@ class Simulation:
             "`run_compiled()` engines."
         )
 
-    def compile(self, num_steps=None, snapshot_field=None, snapshot_interval=None):
+    def compile(
+        self,
+        num_steps=None,
+        snapshot_field=None,
+        snapshot_interval=None,
+        sharding=None,
+    ):
         """Compile the v0.3 packed-data simulation program."""
         if num_steps is None:
             num_steps = self.num_steps - self.current_step
@@ -1498,6 +1615,7 @@ class Simulation:
             source_single_slab_dense,
             snapshot_field,
             snapshot_interval,
+            sharding_cache_token(sharding),
             _compiled_cache_sequence_token(self.sources),
             _compiled_cache_sequence_token(self.monitors),
             _compiled_cache_sequence_token(self.boundaries),
@@ -1522,14 +1640,16 @@ class Simulation:
             source_single_slab_dense=source_single_slab_dense,
             snapshot_field=snapshot_field,
             snapshot_interval=snapshot_interval,
+            sharding=sharding,
         )
-        program = compile_simulation(
-            design=self.design,
-            sources=self.sources,
-            monitors=self.monitors,
-            boundaries=self.boundaries,
-            run_cfg=run_cfg,
-        )
+        with _resolved_setup_device_context(self.setup_device_resolved):
+            program = compile_simulation(
+                design=self.design,
+                sources=self.sources,
+                monitors=self.monitors,
+                boundaries=self.boundaries,
+                run_cfg=run_cfg,
+            )
         self._compiled_program_cache[signature] = program
         self._compiled_program = program
         self._compiled_program_signature = signature
@@ -1540,6 +1660,7 @@ class Simulation:
         *,
         include_compiled: bool = True,
         num_steps: int | None = None,
+        sharding=None,
     ) -> dict:
         """Return a JSON-friendly estimate of simulation and compiled memory."""
         entries: list[dict] = []
@@ -1618,7 +1739,8 @@ class Simulation:
         report["is_3d"] = bool(self.is_3d)
         if include_compiled:
             program = self.compile(
-                num_steps=num_steps if num_steps is not None else None
+                num_steps=num_steps if num_steps is not None else None,
+                sharding=sharding,
             )
             compiled_report = program.memory_estimate(include_runtime=True)
             report["compiled"] = compiled_report
@@ -1631,37 +1753,54 @@ class Simulation:
         return report
 
     def _compiled_runtime_inputs(self, program):
+        def zeros(shape, dtype):
+            shape = tuple(int(v) for v in shape)
+            if getattr(program.storage_layout, "enabled", False):
+                return np.zeros(shape, dtype=np.dtype(dtype))
+            return jnp.zeros(shape, dtype=dtype)
+
+        def zeros_like(value):
+            if getattr(program.storage_layout, "enabled", False):
+                return np.zeros(
+                    tuple(int(v) for v in value.shape),
+                    dtype=np.dtype(value.dtype),
+                )
+            return jnp.zeros_like(value)
+
         if (not self.is_3d) and self.plane_2d == "xy" and program.use_physical_tm_xy:
             tm_ez = self.fields.Ez
             tm_hx = self.fields.Hx
             tm_hy = self.fields.Hy
         else:
-            tm_ez = jnp.zeros((0, 0), dtype=self.fields.Ez.dtype)
-            tm_hx = jnp.zeros((0, 0), dtype=self.fields.Hx.dtype)
-            tm_hy = jnp.zeros((0, 0), dtype=self.fields.Hy.dtype)
+            tm_ez = zeros((0, 0), self.fields.Ez.dtype)
+            tm_hx = zeros((0, 0), self.fields.Hx.dtype)
+            tm_hy = zeros((0, 0), self.fields.Hy.dtype)
         if self.is_3d and program.full_pec_3d:
             if self.fields.full_pec_3d_state is None:
                 self.fields.full_pec_3d_state = initialize_full_pec_3d_state(
                     self.fields
                 )
             fp_state = self.fields.full_pec_3d_state
-            fp_ex, fp_ey, fp_ez = fp_state.Ex, fp_state.Ey, fp_state.Ez
-            fp_hx, fp_hy, fp_hz = fp_state.Hx, fp_state.Hy, fp_state.Hz
+            ex, ey, ez = fp_state.Ex, fp_state.Ey, fp_state.Ez
+            hx, hy, hz = fp_state.Hx, fp_state.Hy, fp_state.Hz
         else:
-            fp_ex = jnp.zeros((0, 0, 0), dtype=self.fields.Ex.dtype)
-            fp_ey = jnp.zeros((0, 0, 0), dtype=self.fields.Ey.dtype)
-            fp_ez = jnp.zeros((0, 0, 0), dtype=self.fields.Ez.dtype)
-            fp_hx = jnp.zeros((0, 0, 0), dtype=self.fields.Hx.dtype)
-            fp_hy = jnp.zeros((0, 0, 0), dtype=self.fields.Hy.dtype)
-            fp_hz = jnp.zeros((0, 0, 0), dtype=self.fields.Hz.dtype)
+            ex, ey, ez = self.fields.Ex, self.fields.Ey, self.fields.Ez
+            hx, hy, hz = self.fields.Hx, self.fields.Hy, self.fields.Hz
+
+        fp_ex = zeros((0, 0, 0), self.fields.Ex.dtype)
+        fp_ey = zeros((0, 0, 0), self.fields.Ey.dtype)
+        fp_ez = zeros((0, 0, 0), self.fields.Ez.dtype)
+        fp_hx = zeros((0, 0, 0), self.fields.Hx.dtype)
+        fp_hy = zeros((0, 0, 0), self.fields.Hy.dtype)
+        fp_hz = zeros((0, 0, 0), self.fields.Hz.dtype)
 
         engine_state = EngineState(
-            ex=self.fields.Ex,
-            ey=self.fields.Ey,
-            ez=self.fields.Ez,
-            hx=self.fields.Hx,
-            hy=self.fields.Hy,
-            hz=self.fields.Hz,
+            ex=ex,
+            ey=ey,
+            ez=ez,
+            hx=hx,
+            hy=hy,
+            hz=hz,
             tm_ez=tm_ez,
             tm_hx=tm_hx,
             tm_hy=tm_hy,
@@ -1672,33 +1811,33 @@ class Simulation:
             fp_hy=fp_hy,
             fp_hz=fp_hz,
             cpml_psi_h_terms=(
-                jnp.zeros_like(program.cpml_sigma_h_terms)
+                zeros_like(program.cpml_sigma_h_terms)
                 if program.use_cpml_tm_xy
-                else jnp.zeros((2, 0, 0), dtype=self.fields.Hx.dtype)
+                else zeros((2, 0, 0), self.fields.Hx.dtype)
             ),
             cpml_psi_e_terms=(
-                jnp.zeros_like(program.cpml_sigma_e_terms)
+                zeros_like(program.cpml_sigma_e_terms)
                 if program.use_cpml_tm_xy
-                else jnp.zeros((2, 0, 0), dtype=self.fields.Ez.dtype)
+                else zeros((2, 0, 0), self.fields.Ez.dtype)
             ),
             cpml3d_psi_h_terms=(
                 tuple(
-                    jnp.zeros(shape, dtype=self.fields.Hx.dtype)
+                    zeros(shape, self.fields.Hx.dtype)
                     for shape in program.cpml3d_h_psi_shapes
                 )
                 if program.use_cpml_3d
                 else tuple(
-                    jnp.zeros((0, 0, 0), dtype=self.fields.Hx.dtype) for _ in range(6)
+                    zeros((0, 0, 0), self.fields.Hx.dtype) for _ in range(6)
                 )
             ),
             cpml3d_psi_e_terms=(
                 tuple(
-                    jnp.zeros(shape, dtype=self.fields.Ex.dtype)
+                    zeros(shape, self.fields.Ex.dtype)
                     for shape in program.cpml3d_e_psi_shapes
                 )
                 if program.use_cpml_3d
                 else tuple(
-                    jnp.zeros((0, 0, 0), dtype=self.fields.Ez.dtype) for _ in range(6)
+                    zeros((0, 0, 0), self.fields.Ez.dtype) for _ in range(6)
                 )
             ),
             t=jnp.asarray(self.t, dtype=jnp.float32),
@@ -1760,16 +1899,23 @@ class Simulation:
             )
         return engine_state, monitor_state
 
-    def compiled_xla_memory_analysis(self, *, num_steps: int | None = None) -> dict:
+    def compiled_xla_memory_analysis(
+        self, *, num_steps: int | None = None, sharding=None
+    ) -> dict:
         """Compile the packed loop and return JAX/XLA memory analysis if available."""
-        program = self.compile(num_steps=num_steps)
+        program = self.compile(num_steps=num_steps, sharding=sharding)
         engine_state, monitor_state = self._compiled_runtime_inputs(program)
+        engine_state = program.prepare_engine_state(engine_state)
+        monitor_state = program._place_pytree(monitor_state, shard_arrays=False)
+        coeffs = program._place_update_coefficients(program._update_coefficients())
         if program._compiled_scan is None:
             program._build_scan()
         snapshot_state = program._empty_snapshot_state()
-        args = (engine_state, monitor_state, program._update_coefficients())
         if snapshot_state is not None:
-            args = (*args, snapshot_state)
+            snapshot_state = program._place_pytree(snapshot_state, shard_arrays=False)
+            args = (engine_state, monitor_state, coeffs, snapshot_state)
+        else:
+            args = (engine_state, monitor_state, coeffs)
         compiled = program._compiled_scan.lower(*args).compile()
         analysis = getattr(compiled, "memory_analysis", lambda: None)()
         if analysis is None:
@@ -1793,6 +1939,7 @@ class Simulation:
         snapshot_interval=10,
         snapshot_callback=None,
         store_snapshots=True,
+        sharding=None,
     ):
         """Run simulation using the v0.3 single-program compiled scan engine.
 
@@ -1803,11 +1950,6 @@ class Simulation:
         - Snapshot extraction stays inside the compiled loop and is materialized
           on the host after each compiled chunk completes.
         """
-        if self.thermal is not None and getattr(self.thermal, "enabled", True):
-            raise NotImplementedError(
-                "run_compiled currently does not support thermal coupling."
-            )
-
         if num_steps is None:
             num_steps = self.num_steps - self.current_step
         num_steps = int(num_steps)
@@ -1849,6 +1991,7 @@ class Simulation:
                 num_steps=this_chunk,
                 snapshot_field=snapshot_field,
                 snapshot_interval=snapshot_interval,
+                sharding=sharding,
             )
 
             if progress and steps_done == 0 and program.compile_count == 0:
@@ -1858,100 +2001,7 @@ class Simulation:
                     flush=True,
                 )
 
-            compiled_dtype = (
-                jnp.float32
-                if str(program.config.precision).lower() == "float32"
-                else jnp.float64
-            )
-            ex = jnp.asarray(self.fields.Ex, dtype=compiled_dtype)
-            ey = jnp.asarray(self.fields.Ey, dtype=compiled_dtype)
-            ez = jnp.asarray(self.fields.Ez, dtype=compiled_dtype)
-            hx = jnp.asarray(self.fields.Hx, dtype=compiled_dtype)
-            hy = jnp.asarray(self.fields.Hy, dtype=compiled_dtype)
-            hz = jnp.asarray(self.fields.Hz, dtype=compiled_dtype)
-
-            if (
-                (not self.is_3d)
-                and self.plane_2d == "xy"
-                and program.use_physical_tm_xy
-            ):
-                tm_ez = ez
-                tm_hx = hx
-                tm_hy = hy
-            else:
-                tm_ez = jnp.zeros((0, 0), dtype=compiled_dtype)
-                tm_hx = jnp.zeros((0, 0), dtype=compiled_dtype)
-                tm_hy = jnp.zeros((0, 0), dtype=compiled_dtype)
-            if self.is_3d and program.full_pec_3d:
-                if self.fields.full_pec_3d_state is None:
-                    self.fields.full_pec_3d_state = initialize_full_pec_3d_state(
-                        self.fields
-                    )
-                fp_state = self.fields.full_pec_3d_state
-                fp_ex = jnp.asarray(fp_state.Ex, dtype=compiled_dtype)
-                fp_ey = jnp.asarray(fp_state.Ey, dtype=compiled_dtype)
-                fp_ez = jnp.asarray(fp_state.Ez, dtype=compiled_dtype)
-                fp_hx = jnp.asarray(fp_state.Hx, dtype=compiled_dtype)
-                fp_hy = jnp.asarray(fp_state.Hy, dtype=compiled_dtype)
-                fp_hz = jnp.asarray(fp_state.Hz, dtype=compiled_dtype)
-            else:
-                fp_ex = jnp.zeros((0, 0, 0), dtype=compiled_dtype)
-                fp_ey = jnp.zeros((0, 0, 0), dtype=compiled_dtype)
-                fp_ez = jnp.zeros((0, 0, 0), dtype=compiled_dtype)
-                fp_hx = jnp.zeros((0, 0, 0), dtype=compiled_dtype)
-                fp_hy = jnp.zeros((0, 0, 0), dtype=compiled_dtype)
-                fp_hz = jnp.zeros((0, 0, 0), dtype=compiled_dtype)
-
-            engine_state = EngineState(
-                ex=ex,
-                ey=ey,
-                ez=ez,
-                hx=hx,
-                hy=hy,
-                hz=hz,
-                tm_ez=tm_ez,
-                tm_hx=tm_hx,
-                tm_hy=tm_hy,
-                fp_ex=fp_ex,
-                fp_ey=fp_ey,
-                fp_ez=fp_ez,
-                fp_hx=fp_hx,
-                fp_hy=fp_hy,
-                fp_hz=fp_hz,
-                cpml_psi_h_terms=(
-                    jnp.zeros_like(program.cpml_sigma_h_terms)
-                    if program.use_cpml_tm_xy
-                    else jnp.zeros((2, 0, 0), dtype=compiled_dtype)
-                ),
-                cpml_psi_e_terms=(
-                    jnp.zeros_like(program.cpml_sigma_e_terms)
-                    if program.use_cpml_tm_xy
-                    else jnp.zeros((2, 0, 0), dtype=compiled_dtype)
-                ),
-                cpml3d_psi_h_terms=(
-                    tuple(
-                        jnp.zeros(shape, dtype=compiled_dtype)
-                        for shape in program.cpml3d_h_psi_shapes
-                    )
-                    if program.use_cpml_3d
-                    else tuple(
-                        jnp.zeros((0, 0, 0), dtype=compiled_dtype) for _ in range(6)
-                    )
-                ),
-                cpml3d_psi_e_terms=(
-                    tuple(
-                        jnp.zeros(shape, dtype=compiled_dtype)
-                        for shape in program.cpml3d_e_psi_shapes
-                    )
-                    if program.use_cpml_3d
-                    else tuple(
-                        jnp.zeros((0, 0, 0), dtype=compiled_dtype) for _ in range(6)
-                    )
-                ),
-                t=jnp.asarray(self.t, dtype=jnp.float32),
-                current_step=jnp.asarray(self.current_step, dtype=jnp.int32),
-            )
-
+            engine_state, default_monitor_state = self._compiled_runtime_inputs(program)
             if monitor_state is None:
                 if (
                     self._compiled_monitor_state is not None
@@ -1960,62 +2010,8 @@ class Simulation:
                     == len(program.monitor_specs)
                 ):
                     monitor_state = self._compiled_monitor_state
-                elif program.monitor_specs:
-                    records_horizon = max(1, int(self.num_steps - self.current_step))
-                    max_records = max(
-                        1, monitor_state_size(program.monitor_specs, records_horizon)
-                    )
-                    max_freq = monitor_frequency_size(program.monitor_specs)
-                    max_points = monitor_dft_point_size(program.monitor_specs)
-                    dft_dtype = monitor_dft_accumulator_dtype()
-                    monitor_state = MonitorState(
-                        powers=jnp.zeros(
-                            (len(program.monitor_specs), max_records), dtype=jnp.float32
-                        ),
-                        timestamps=jnp.zeros(
-                            (len(program.monitor_specs), max_records), dtype=jnp.float32
-                        ),
-                        counts=jnp.zeros(
-                            (len(program.monitor_specs),), dtype=jnp.int32
-                        ),
-                        freq_flux_re=jnp.zeros(
-                            (len(program.monitor_specs), max_freq), dtype=jnp.float32
-                        ),
-                        freq_flux_im=jnp.zeros(
-                            (len(program.monitor_specs), max_freq), dtype=jnp.float32
-                        ),
-                        freq_phase_re=jnp.ones(
-                            (len(program.monitor_specs), max_freq), dtype=jnp.float32
-                        ),
-                        freq_phase_im=jnp.zeros(
-                            (len(program.monitor_specs), max_freq), dtype=jnp.float32
-                        ),
-                        dft_vec_re=jnp.zeros(
-                            (len(program.monitor_specs), 6, max_freq, max_points),
-                            dtype=dft_dtype,
-                        ),
-                        dft_vec_im=jnp.zeros(
-                            (len(program.monitor_specs), 6, max_freq, max_points),
-                            dtype=dft_dtype,
-                        ),
-                        dft_weight_sum=jnp.zeros(
-                            (len(program.monitor_specs), max_freq), dtype=dft_dtype
-                        ),
-                    )
                 else:
-                    dft_dtype = monitor_dft_accumulator_dtype()
-                    monitor_state = MonitorState(
-                        powers=jnp.zeros((0, 0), dtype=jnp.float32),
-                        timestamps=jnp.zeros((0, 0), dtype=jnp.float32),
-                        counts=jnp.zeros((0,), dtype=jnp.int32),
-                        freq_flux_re=jnp.zeros((0, 0), dtype=jnp.float32),
-                        freq_flux_im=jnp.zeros((0, 0), dtype=jnp.float32),
-                        freq_phase_re=jnp.zeros((0, 0), dtype=jnp.float32),
-                        freq_phase_im=jnp.zeros((0, 0), dtype=jnp.float32),
-                        dft_vec_re=jnp.zeros((0, 0, 0, 0), dtype=dft_dtype),
-                        dft_vec_im=jnp.zeros((0, 0, 0, 0), dtype=dft_dtype),
-                        dft_weight_sum=jnp.zeros((0, 0), dtype=dft_dtype),
-                    )
+                    monitor_state = default_monitor_state
             self._compiled_monitor_state = monitor_state
 
             engine_state, monitor_state, _, snapshot_data = program.run(
@@ -2024,6 +2020,8 @@ class Simulation:
             )
             engine_state.ez.block_until_ready()
             self._compiled_monitor_state = monitor_state
+            storage_engine_state = engine_state
+            engine_state = program.crop_engine_state(storage_engine_state)
 
             if progress and steps_done == 0:
                 print("done!")
@@ -2039,12 +2037,24 @@ class Simulation:
                     self.fields.full_pec_3d_state = initialize_full_pec_3d_state(
                         self.fields
                     )
-                self.fields.full_pec_3d_state.Ex = engine_state.fp_ex
-                self.fields.full_pec_3d_state.Ey = engine_state.fp_ey
-                self.fields.full_pec_3d_state.Ez = engine_state.fp_ez
-                self.fields.full_pec_3d_state.Hx = engine_state.fp_hx
-                self.fields.full_pec_3d_state.Hy = engine_state.fp_hy
-                self.fields.full_pec_3d_state.Hz = engine_state.fp_hz
+                self.fields.full_pec_3d_state.Ex = program._crop_active_component(
+                    "Ex", storage_engine_state.ex
+                )
+                self.fields.full_pec_3d_state.Ey = program._crop_active_component(
+                    "Ey", storage_engine_state.ey
+                )
+                self.fields.full_pec_3d_state.Ez = program._crop_active_component(
+                    "Ez", storage_engine_state.ez
+                )
+                self.fields.full_pec_3d_state.Hx = program._crop_active_component(
+                    "Hx", storage_engine_state.hx
+                )
+                self.fields.full_pec_3d_state.Hy = program._crop_active_component(
+                    "Hy", storage_engine_state.hy
+                )
+                self.fields.full_pec_3d_state.Hz = program._crop_active_component(
+                    "Hz", storage_engine_state.hz
+                )
             if (
                 (not self.is_3d)
                 and self.plane_2d == "xy"
@@ -3349,37 +3359,38 @@ class Simulation:
         else:
             width, height = size[0], size[1]
 
-        eps_profile_full = np.take(perm, plane_index, axis=axis_index)
         transverse_axes = self._plane_axes_for_port_axis(axis)
-        component_shapes = {
-            name: tuple(int(v) for v in np.asarray(getattr(self.fields, name)).shape)
-            for name in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
-        }
-        permittivity_arr = np.asarray(perm)
-        permeability_arr = np.ones_like(permittivity_arr, dtype=np.float64)
-        component_permittivity = {
-            component: np.asarray(
-                sample_voxel_grid_at_e_component_3d_centered(
-                    permittivity_arr,
-                    component,
-                    stored_shape=component_shapes[component],
+        eps_profile_full = np.take(perm, plane_index, axis=axis_index)
+        snapped_region = None
+        if hasattr(monitor, "get_snapped_region"):
+            try:
+                snapped_region = monitor.get_snapped_region(
+                    dx=float(self.resolution),
+                    dy=float(self.resolution),
+                    dz=float(self.resolution),
+                    field_shape=tuple(int(v) for v in perm.shape),
                 )
-            )
-            for component in ("Ex", "Ey", "Ez")
-        }
-        component_permeability = {
-            component: np.asarray(
-                sample_voxel_grid_at_component_3d(
-                    permeability_arr,
-                    component,
-                    stored_shape=component_shapes[component],
-                )
-            )
-            for component in ("Hx", "Hy", "Hz")
-        }
+            except Exception:
+                snapped_region = None
+        local_plane = _local_mode_plane_spec(
+            eps_profile_full,
+            axis=axis,
+            grid_shape=tuple(int(v) for v in perm.shape),
+            center=center,
+            width=float(width),
+            height=float(height),
+            plane_index=int(plane_index),
+            offset_index=int(offset_index),
+            resolution=float(self.resolution),
+            snapped_region=snapped_region,
+            aperture_pad_cells=0,
+        )
         try:
             discrete_mode = solve_beamz_mode_plane(
-                scalar_permittivity=np.asarray(eps_profile_full, dtype=np.complex128),
+                scalar_permittivity=np.asarray(
+                    local_plane["scalar_permittivity"],
+                    dtype=np.complex128,
+                ),
                 frequency=float(frequency),
                 resolution=float(self.resolution),
                 dt=None if getattr(self, "dt", None) is None else float(self.dt),
@@ -3387,15 +3398,13 @@ class Simulation:
                 direction=str(spec.direction),
                 solver_direction=str(spec.direction),
                 transverse_axes=transverse_axes,
-                grid_shape=tuple(int(v) for v in perm.shape),
-                component_shapes=component_shapes,
-                component_permittivity=component_permittivity,
-                component_permeability=component_permeability,
-                center=center,
+                grid_shape=local_plane["grid_shape"],
+                component_shapes=local_plane["component_shapes"],
+                center=local_plane["center"],
                 width=float(width),
                 height=float(height),
-                plane_index=int(plane_index),
-                offset_index=int(offset_index),
+                plane_index=int(local_plane["plane_index"]),
+                offset_index=int(local_plane["offset_index"]),
                 mode_index=int(spec.mode_index),
                 polarization=str(spec.polarization).lower(),
                 target_neff=target,
@@ -3407,6 +3416,12 @@ class Simulation:
             return None
         if discrete_mode is None:
             return None
+        discrete_mode = _shift_discrete_mode_to_global(
+            discrete_mode,
+            origin_zyx=local_plane["origin_zyx"],
+            axis=axis,
+            resolution=float(self.resolution),
+        )
 
         proj_components = tuple(parts.get("projection_components_3d", ()))
         if not proj_components:

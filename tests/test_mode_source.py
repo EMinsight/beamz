@@ -335,10 +335,10 @@ class TestModeSourceDiscreteHelpers:
             fake_solve_beamz_mode_plane,
         )
 
-        permittivity = np.ones((4, 5, 6), dtype=np.float64)
+        permittivity = np.ones((12, 13, 14), dtype=np.float64)
         source = ModeSource(
             grid=SimpleNamespace(),
-            center=(2.5, 2.5, 2.0),
+            center=(7.0, 6.0, 6.0),
             width=3.0,
             height=3.0,
             wavelength=TEST_WAVELENGTH,
@@ -354,21 +354,24 @@ class TestModeSourceDiscreteHelpers:
         assert captured["direction"] == "+y"
         assert captured["solver_direction"] == "+y"
         assert captured["transverse_axes"] == ("z", "x")
-        assert captured["scalar_permittivity"].shape == (4, 6)
-        assert captured["component_shapes"]["Ex"] == (4, 5, 5)
+        assert captured["scalar_permittivity"].shape == (8, 8)
+        assert captured["grid_shape"] == (8, 3, 8)
+        assert captured["component_shapes"]["Ex"] == (8, 3, 7)
+        assert "component_permittivity" not in captured
+        assert "component_permeability" not in captured
         assert source._initialized
         assert source._discrete_mode is not None
         assert source._profiles_are_runtime_oriented is True
         assert source._k_num_axis == 7.0
-        assert source._phase_ref_coord == 0.25
-        assert source._phase_plane_coord == 0.5
+        assert source._phase_ref_coord == 5.25
+        assert source._phase_plane_coord == 5.5
         assert source._discrete_launch_max_shift == 12
         np.testing.assert_allclose(source._Ex_profile, 2.0 * profiles["Ex"])
 
         runtime_profiles, runtime_indices = source._get_3d_profiles_and_indices()
         np.testing.assert_allclose(runtime_profiles["Ex"], 2.0 * profiles["Ex"])
         np.testing.assert_allclose(runtime_profiles["Hz"], 2.0 * profiles["Hz"])
-        assert runtime_indices["Ex"] == indices["Ex"]
+        assert runtime_indices["Ex"] == (slice(2, 4), 7, slice(3, 6))
 
     def test_injection_support_bounds_union_discrete_residual_cells(self, monkeypatch):
         source = ModeSource(
@@ -419,6 +422,71 @@ class TestModeSourceDiscreteHelpers:
         np.testing.assert_allclose(bounds["x"], (0.25, 1.50))
         np.testing.assert_allclose(bounds["y"], (0.25, 1.75))
         np.testing.assert_allclose(bounds["z"], (0.00, 1.25))
+
+    def test_local_3d_residual_context_expands_scalar_material_channels(self):
+        source = ModeSource(
+            grid=SimpleNamespace(),
+            center=(0.0, 0.0, 0.0),
+            width=1.0,
+            height=1.0,
+            wavelength=TEST_WAVELENGTH,
+            pol="te",
+            signal=np.ones(8),
+            direction="+x",
+        )
+        source._is_3d = True
+        source._axis = "x"
+        source._direction_sign = 1
+        source._resolution = 1.0
+        source._phase_ref_coord = 4.0
+        source._phase_plane_coord = 5.0
+        source._discrete_launch_max_shift = 1
+        source._profiles_are_runtime_oriented = True
+        source._Ex_profile = np.ones((2, 2), dtype=np.complex128)
+        source._Ey_profile = None
+        source._Ez_profile = None
+        source._Hx_profile = None
+        source._Hy_profile = None
+        source._Hz_profile = None
+        source._Ex_indices = (slice(3, 5), slice(4, 6), 5)
+        source._Ey_indices = None
+        source._Ez_indices = None
+        source._Hx_indices = None
+        source._Hy_indices = None
+        source._Hz_indices = None
+
+        fields = SimpleNamespace(
+            boundaries=[PML(thickness=1.0)],
+            permittivity=np.ones((10, 11, 12), dtype=np.float32),
+            Ex=np.zeros((10, 11, 11), dtype=np.float32),
+            Ey=np.zeros((10, 10, 12), dtype=np.float32),
+            Ez=np.zeros((9, 11, 12), dtype=np.float32),
+            Hx=np.zeros((9, 10, 12), dtype=np.float32),
+            Hy=np.zeros((9, 11, 11), dtype=np.float32),
+            Hz=np.zeros((10, 10, 11), dtype=np.float32),
+            eps_x=np.asarray(2.25, dtype=np.float32),
+            eps_y=np.asarray(2.25, dtype=np.float32),
+            eps_z=np.asarray(2.25, dtype=np.float32),
+            sig_x=np.asarray(0.0, dtype=np.float32),
+            sig_y=np.asarray(0.0, dtype=np.float32),
+            sig_z=np.asarray(0.0, dtype=np.float32),
+            sigma_m_hx=np.asarray(0.0, dtype=np.float32),
+            sigma_m_hy=np.asarray(0.0, dtype=np.float32),
+            sigma_m_hz=np.asarray(0.0, dtype=np.float32),
+        )
+
+        context = source._local_3d_phasor_context(fields)
+
+        assert context is not None
+        _local_source, local_fields, component_slices = context
+        assert local_fields.eps_x.shape == local_fields.Ex.shape
+        assert local_fields.eps_y.shape == local_fields.Ey.shape
+        assert local_fields.eps_z.shape == local_fields.Ez.shape
+        assert local_fields.sigma_m_hx.shape == local_fields.Hx.shape
+        assert local_fields.eps_x.shape != fields.Ex.shape
+        np.testing.assert_array_equal(local_fields.eps_x, 2.25)
+        np.testing.assert_array_equal(local_fields.sig_x, 0.0)
+        assert component_slices["Ex"] == (slice(0, 9), slice(0, 10), slice(0, 11))
 
     def test_numeric_k_satisfies_dispersion_identity(self):
         wavelength = TEST_WAVELENGTH

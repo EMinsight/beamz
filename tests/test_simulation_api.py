@@ -1,6 +1,9 @@
+from contextlib import contextmanager
+
 import numpy as np
 import pytest
 
+import beamz.simulation.core as simulation_core
 from beamz import (
     Design,
     GaussianSource,
@@ -68,6 +71,75 @@ def test_simulation_rejects_duplicate_named_monitors():
             monitors=[m1, m2],
             time=_time_axis(),
             resolution=0.2 * um,
+        )
+
+
+def test_simulation_setup_device_cpu_runs_compiled():
+    design = Design(width=2 * um, height=2 * um, material=Material(permittivity=1.0))
+    source = GaussianSource(
+        position=(1 * um, 1 * um), width=0.2 * um, signal=[1.0, 0.0, 0.0]
+    )
+    sim = Simulation(
+        design=design,
+        sources=[source],
+        monitors=[],
+        time=np.array([0.0, 1e-16, 2e-16, 3e-16], dtype=float),
+        resolution=0.5 * um,
+        setup_device="cpu",
+    )
+
+    assert sim.setup_device_policy == "cpu"
+    assert sim.setup_device_resolved in {"cpu", "default"}
+    sim.run_compiled(num_steps=1, progress=False)
+
+
+def test_simulation_compile_uses_resolved_setup_device_context(monkeypatch):
+    design = Design(width=2 * um, height=2 * um, material=Material(permittivity=1.0))
+    sim = Simulation(
+        design=design,
+        sources=[],
+        monitors=[],
+        time=np.array([0.0, 1e-16, 2e-16], dtype=float),
+        resolution=0.5 * um,
+    )
+    sim.setup_device_resolved = "cpu"
+    active = {"value": False}
+    program = object()
+
+    @contextmanager
+    def fake_setup_context(resolved_device):
+        assert resolved_device == "cpu"
+        active["value"] = True
+        try:
+            yield
+        finally:
+            active["value"] = False
+
+    def fake_compile_simulation(**_kwargs):
+        assert active["value"]
+        return program
+
+    monkeypatch.setattr(
+        simulation_core,
+        "_resolved_setup_device_context",
+        fake_setup_context,
+    )
+    monkeypatch.setattr(simulation_core, "compile_simulation", fake_compile_simulation)
+
+    assert sim.compile(num_steps=1) is program
+
+
+def test_simulation_rejects_invalid_setup_device():
+    design = Design(width=2 * um, height=2 * um, material=Material(permittivity=1.0))
+
+    with pytest.raises(ValueError, match="setup_device"):
+        Simulation(
+            design=design,
+            sources=[],
+            monitors=[],
+            time=_time_axis(),
+            resolution=0.5 * um,
+            setup_device="quantum",
         )
 
 

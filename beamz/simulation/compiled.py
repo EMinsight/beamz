@@ -14,7 +14,7 @@ import sys
 import warnings
 from dataclasses import dataclass
 from dataclasses import fields as dataclass_fields
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -43,6 +43,7 @@ from beamz.shared_kernels import (
     build_cpml_3d_terms,
     build_tm_xy_cpml_terms,
     cpml_precompute_native_terms,
+    fit_array_to_shape,
     full_tm_xy_component_to_centered_grid,
     monitor_dft_sample_scale,
     monitor_dft_should_accumulate,
@@ -431,17 +432,17 @@ class UpdateCoefficients(NamedTuple):
     e_source_x: jnp.ndarray
     e_source_lossless_x: jnp.ndarray
     e_conductivity_x: jnp.ndarray
-    e_inv_permittivity_x: jnp.ndarray
+    e_permittivity_x: jnp.ndarray
     e_decay_y: jnp.ndarray
     e_source_y: jnp.ndarray
     e_source_lossless_y: jnp.ndarray
     e_conductivity_y: jnp.ndarray
-    e_inv_permittivity_y: jnp.ndarray
+    e_permittivity_y: jnp.ndarray
     e_decay_z: jnp.ndarray
     e_source_z: jnp.ndarray
     e_source_lossless_z: jnp.ndarray
     e_conductivity_z: jnp.ndarray
-    e_inv_permittivity_z: jnp.ndarray
+    e_permittivity_z: jnp.ndarray
     tm_h_decay_x: jnp.ndarray
     tm_h_source_x: jnp.ndarray
     tm_h_decay_y: jnp.ndarray
@@ -466,6 +467,395 @@ class CpmlPackedSlabSpec(NamedTuple):
 
 
 @dataclass(frozen=True)
+class ShardingConfig:
+    """Optional single-host JAX sharding configuration for compiled 3D runs."""
+
+    enabled: bool = False
+    axis: Literal["auto", "z", "y", "x"] = "auto"
+    num_devices: int | None = None
+    backend: Literal["cpu", "gpu"] | None = None
+
+
+@dataclass(frozen=True)
+class StorageLayout:
+    """Logical-to-storage layout for padded compiled component arrays."""
+
+    enabled: bool
+    pec_full_storage: bool
+    logical_base_shape: tuple[int, int, int]
+    axis_name: str
+    axis: int
+    num_devices: int
+    backend: str | None
+    logical_shapes: dict[str, tuple[int, ...]]
+    active_shapes: dict[str, tuple[int, ...]]
+    storage_shapes: dict[str, tuple[int, ...]]
+    padding: dict[str, tuple[tuple[int, int], ...]]
+    valid_masks: dict[str, jnp.ndarray | None]
+
+
+_COMPONENT_NAMES = ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
+_AXIS_TO_INDEX = {"z": 0, "y": 1, "x": 2}
+_INDEX_TO_AXIS = ("z", "y", "x")
+_MESH_AXIS = "fdtd"
+
+
+def _disabled_sharding_config() -> ShardingConfig:
+    return ShardingConfig(enabled=False)
+
+
+def normalize_sharding_config(value) -> ShardingConfig:
+    """Normalize public sharding input into a stable config object."""
+
+    if value is None or value is False:
+        return _disabled_sharding_config()
+    if isinstance(value, ShardingConfig):
+        return value
+    if value is True:
+        return ShardingConfig(enabled=True)
+    if isinstance(value, dict):
+        raw = dict(value)
+        enabled = bool(raw.pop("enabled", True))
+        return ShardingConfig(enabled=enabled, **raw)
+    raise TypeError(
+        "sharding must be None, bool, dict, or beamz.simulation.ShardingConfig"
+    )
+
+
+def sharding_cache_token(value) -> tuple:
+    cfg = normalize_sharding_config(value)
+    return (bool(cfg.enabled), cfg.axis, cfg.num_devices, cfg.backend)
+
+
+def _select_sharding_axis(axis: str, grid_shape: tuple[int, int, int]) -> str:
+    axis = str(axis).lower()
+    if axis != "auto":
+        if axis not in _AXIS_TO_INDEX:
+            raise ValueError("sharding axis must be one of: 'auto', 'z', 'y', 'x'")
+        return axis
+    lengths = tuple(int(v) for v in grid_shape)
+    best = max(range(3), key=lambda idx: (lengths[idx], -idx))
+    return _INDEX_TO_AXIS[best]
+
+
+def _jax_devices_for_config(cfg: ShardingConfig) -> tuple[jax.Device, ...]:
+    if not cfg.enabled:
+        return ()
+    try:
+        devices = (
+            tuple(jax.devices(cfg.backend)) if cfg.backend else tuple(jax.devices())
+        )
+    except Exception as exc:
+        backend = cfg.backend or "default"
+        raise ValueError(
+            f"No JAX devices are available for backend {backend!r}"
+        ) from exc
+    if not devices:
+        backend = cfg.backend or "default"
+        raise ValueError(f"No JAX devices are available for backend {backend!r}")
+    num_devices = len(devices) if cfg.num_devices is None else int(cfg.num_devices)
+    if num_devices <= 1:
+        return ()
+    if num_devices > len(devices):
+        raise ValueError(
+            f"Requested {num_devices} sharding devices, but only {len(devices)} "
+            f"are available for backend {cfg.backend or 'default'}"
+        )
+    return devices[:num_devices]
+
+
+def _pad_shape_for_devices(
+    shape: tuple[int, ...], axis: int, num_devices: int
+) -> tuple[int, ...]:
+    out = list(int(v) for v in shape)
+    size = out[int(axis)]
+    remainder = size % int(num_devices)
+    if remainder:
+        out[int(axis)] = size + (int(num_devices) - remainder)
+    return tuple(out)
+
+
+def _pad_width(
+    base_shape: tuple[int, ...], storage_shape: tuple[int, ...]
+) -> tuple[tuple[int, int], ...]:
+    return tuple(
+        (0, max(0, int(storage_shape[i]) - int(base_shape[i])))
+        for i in range(len(base_shape))
+    )
+
+
+def _zero_high_padding(
+    arr: jnp.ndarray,
+    padding: tuple[tuple[int, int], ...],
+) -> jnp.ndarray:
+    out = arr
+    for axis, (_low, high) in enumerate(padding):
+        high = int(high)
+        if high <= 0:
+            continue
+        index = [slice(None)] * out.ndim
+        index[axis] = slice(int(out.shape[axis]) - high, None)
+        out = out.at[tuple(index)].set(jnp.asarray(0.0, dtype=out.dtype))
+    return out
+
+
+def _build_storage_layout(
+    fields,
+    cfg: ShardingConfig,
+    *,
+    is_3d: bool,
+    full_pec_3d: bool = False,
+) -> tuple[StorageLayout, tuple[jax.Device, ...]]:
+    logical_base_shape = tuple(int(v) for v in getattr(fields, "permittivity").shape)
+    if not cfg.enabled:
+        logical_shapes = {
+            name: tuple(int(v) for v in getattr(fields, name).shape)
+            for name in _COMPONENT_NAMES
+        }
+        active_shapes = {
+            name: tuple(int(v) + 1 for v in shape) if full_pec_3d else shape
+            for name, shape in logical_shapes.items()
+        }
+        masks = {name: None for name in _COMPONENT_NAMES}
+        padding = {
+            name: tuple((0, 0) for _ in active_shapes[name])
+            for name in _COMPONENT_NAMES
+        }
+        return (
+            StorageLayout(
+                enabled=False,
+                pec_full_storage=bool(full_pec_3d),
+                logical_base_shape=logical_base_shape,
+                axis_name="z",
+                axis=0,
+                num_devices=1,
+                backend=cfg.backend,
+                logical_shapes=logical_shapes,
+                active_shapes=active_shapes,
+                storage_shapes=dict(active_shapes),
+                padding=padding,
+                valid_masks=masks,
+            ),
+            (),
+        )
+    if not is_3d:
+        raise NotImplementedError("compiled sharding currently supports 3D runs only")
+    if len(logical_base_shape) != 3:
+        raise ValueError(
+            f"3D sharding requires a 3-axis grid, got {logical_base_shape}"
+        )
+
+    devices = _jax_devices_for_config(cfg)
+    if not devices:
+        return _build_storage_layout(
+            fields,
+            ShardingConfig(enabled=False, backend=cfg.backend),
+            is_3d=is_3d,
+            full_pec_3d=full_pec_3d,
+        )
+    axis_name = _select_sharding_axis(cfg.axis, logical_base_shape)
+    axis = _AXIS_TO_INDEX[axis_name]
+    num_devices = len(devices)
+    logical_shapes = {
+        name: tuple(int(v) for v in getattr(fields, name).shape)
+        for name in _COMPONENT_NAMES
+    }
+    active_shapes = {
+        name: tuple(int(v) + 1 for v in shape) if full_pec_3d else shape
+        for name, shape in logical_shapes.items()
+    }
+    storage_shapes = {
+        name: _pad_shape_for_devices(shape, axis, num_devices)
+        for name, shape in active_shapes.items()
+    }
+    padding = {
+        name: _pad_width(active_shapes[name], storage_shapes[name])
+        for name in _COMPONENT_NAMES
+    }
+    masks = {name: None for name in _COMPONENT_NAMES}
+    return (
+        StorageLayout(
+            enabled=True,
+            pec_full_storage=bool(full_pec_3d),
+            logical_base_shape=logical_base_shape,
+            axis_name=axis_name,
+            axis=axis,
+            num_devices=num_devices,
+            backend=cfg.backend,
+            logical_shapes=logical_shapes,
+            active_shapes=active_shapes,
+            storage_shapes=storage_shapes,
+            padding=padding,
+            valid_masks=masks,
+        ),
+        devices,
+    )
+
+
+def _array_shape(arr) -> tuple[int, ...]:
+    return tuple(int(v) for v in getattr(arr, "shape", np.shape(arr)))
+
+
+def _array_ndim(arr) -> int:
+    ndim = getattr(arr, "ndim", None)
+    if ndim is not None:
+        return int(ndim)
+    return len(_array_shape(arr))
+
+
+def _pad_high_to_shape(arr, shape: tuple[int, ...], *, pad_value=0.0):
+    target_shape = tuple(int(v) for v in shape)
+    if isinstance(arr, np.ndarray):
+        if tuple(arr.shape) == target_shape:
+            return arr
+        if arr.ndim != len(target_shape):
+            raise ValueError(
+                f"Cannot fit rank-{arr.ndim} array to rank-{len(target_shape)} shape"
+            )
+        slices = tuple(
+            slice(0, min(int(arr.shape[i]), target_shape[i]))
+            for i in range(arr.ndim)
+        )
+        out = arr[slices]
+        pad_width = tuple(
+            (0, max(0, target_shape[i] - int(out.shape[i])))
+            for i in range(out.ndim)
+        )
+        if any(high > 0 for _low, high in pad_width):
+            out = np.pad(out, pad_width, mode="constant", constant_values=pad_value)
+        return out
+    return fit_array_to_shape(jnp.asarray(arr), target_shape, pad_value=pad_value)
+
+
+def _crop_high_to_shape(arr, shape: tuple[int, ...]) -> jnp.ndarray:
+    slices = tuple(slice(0, int(v)) for v in shape)
+    return jnp.asarray(arr)[slices]
+
+
+def _pad_all_high_planes_3d(arr: jnp.ndarray) -> jnp.ndarray:
+    if isinstance(arr, np.ndarray):
+        out = arr
+        for axis in range(3):
+            tail = np.take(out, indices=[out.shape[axis] - 1], axis=axis)
+            out = np.concatenate([out, tail], axis=axis)
+        return out
+    out = jnp.asarray(arr)
+    for axis in range(3):
+        tail = jnp.take(out, indices=jnp.array([out.shape[axis] - 1]), axis=axis)
+        out = jnp.concatenate([out, tail], axis=axis)
+    return out
+
+
+class _StorageFieldsProxy:
+    """Shallow fields proxy with padded component storage arrays."""
+
+    def __init__(
+        self,
+        base,
+        overrides: dict[str, object],
+        layout: StorageLayout,
+    ) -> None:
+        self._base = base
+        self._overrides = dict(overrides)
+        self._logical_component_shapes = dict(layout.logical_shapes)
+        self._storage_component_shapes = dict(layout.storage_shapes)
+        self._logical_base_shape_3d = tuple(layout.logical_base_shape)
+        self._storage_layout = layout
+
+    def __getattr__(self, name):
+        if name in self._overrides:
+            return self._overrides[name]
+        return getattr(self._base, name)
+
+
+class _ArrayShapeProxy:
+    """Array-like metadata holder for compile-time shape/dtype queries."""
+
+    def __init__(self, base, shape: tuple[int, ...]) -> None:
+        self.shape = tuple(int(v) for v in shape)
+        self.dtype = np.dtype(getattr(base, "dtype", np.float32))
+        self.ndim = len(self.shape)
+        self.size = int(np.prod(self.shape, dtype=np.int64))
+
+
+def _pad_pml_data_for_storage(fields, layout: StorageLayout):
+    pml_data = getattr(fields, "pml_data", None)
+    if (not layout.enabled and not layout.pec_full_storage) or not isinstance(
+        pml_data, dict
+    ):
+        return pml_data
+    out = dict(pml_data)
+    axis_index = {"z": 0, "y": 1, "x": 2}
+
+    def _pad_cpml_profile(key: str, spec, *, neutral: float):
+        if key not in out:
+            return
+        arr = out[key]
+        storage_shape = layout.storage_shapes[spec.target_component]
+        axis = axis_index[spec.derivative_axis]
+        arr_shape = _array_shape(arr)
+        if len(arr_shape) == 3 and all(
+            int(arr_shape[i]) == 1 for i in range(3) if i != axis
+        ):
+            compact_shape = tuple(
+                int(storage_shape[i]) if i == axis else 1 for i in range(3)
+            )
+            out[key] = _pad_high_to_shape(arr, compact_shape, pad_value=neutral)
+        else:
+            out[key] = _pad_high_to_shape(arr, storage_shape, pad_value=neutral)
+
+    for spec in CPML_3D_H_DERIVATIVES:
+        for suffix, neutral in (("sigma", 0.0), ("kappa", 1.0), ("alpha", 0.0)):
+            key = f"cpml3d_{spec.name}_{suffix}"
+            _pad_cpml_profile(key, spec, neutral=neutral)
+    for spec in CPML_3D_E_DERIVATIVES:
+        for suffix, neutral in (("sigma", 0.0), ("kappa", 1.0), ("alpha", 0.0)):
+            key = f"cpml3d_{spec.name}_{suffix}"
+            _pad_cpml_profile(key, spec, neutral=neutral)
+    return out
+
+
+def _make_storage_fields_proxy(fields, layout: StorageLayout):
+    if not layout.enabled and not layout.pec_full_storage:
+        return fields
+    overrides: dict[str, object] = {}
+    for name in _COMPONENT_NAMES:
+        if layout.pec_full_storage:
+            overrides[name] = _pad_high_to_shape(
+                getattr(fields, name), layout.storage_shapes[name], pad_value=0.0
+            )
+        else:
+            overrides[name] = _ArrayShapeProxy(
+                getattr(fields, name),
+                layout.storage_shapes[name],
+            )
+    neutral_component_arrays = {
+        "eps_x": ("Ex", 1.0),
+        "eps_y": ("Ey", 1.0),
+        "eps_z": ("Ez", 1.0),
+        "sig_x": ("Ex", 0.0),
+        "sig_y": ("Ey", 0.0),
+        "sig_z": ("Ez", 0.0),
+        "sigma_m_hx": ("Hx", 0.0),
+        "sigma_m_hy": ("Hy", 0.0),
+        "sigma_m_hz": ("Hz", 0.0),
+    }
+    for name, (component, neutral) in neutral_component_arrays.items():
+        if hasattr(fields, name):
+            value = getattr(fields, name)
+            if _array_ndim(value) == 0:
+                overrides[name] = value
+            else:
+                overrides[name] = _pad_high_to_shape(
+                    value,
+                    layout.storage_shapes[component],
+                    pad_value=neutral,
+                )
+    overrides["pml_data"] = _pad_pml_data_for_storage(fields, layout)
+    return _StorageFieldsProxy(fields, overrides, layout)
+
+
+@dataclass(frozen=True)
 class CompiledRunConfig:
     """Static compiled run configuration."""
 
@@ -479,6 +869,7 @@ class CompiledRunConfig:
     source_single_slab_dense: bool = False
     snapshot_field: str | None = None
     snapshot_interval: int = 0
+    sharding: ShardingConfig = ShardingConfig()
 
 
 @dataclass
@@ -496,6 +887,14 @@ class CompiledSimulation:
     field_shape_hx: tuple[int, ...]
     field_shape_hy: tuple[int, ...]
     field_shape_hz: tuple[int, ...]
+    storage_layout: StorageLayout
+    sharding_devices: tuple[jax.Device, ...]
+    storage_shape_ex: tuple[int, ...]
+    storage_shape_ey: tuple[int, ...]
+    storage_shape_ez: tuple[int, ...]
+    storage_shape_hx: tuple[int, ...]
+    storage_shape_hy: tuple[int, ...]
+    storage_shape_hz: tuple[int, ...]
 
     # Static update coefficients (full-grid, dense updates; no per-step scatters)
     h_decay_x: jnp.ndarray
@@ -514,17 +913,17 @@ class CompiledSimulation:
     e_source_x: jnp.ndarray
     e_source_lossless_x: jnp.ndarray
     e_conductivity_x: jnp.ndarray
-    e_inv_permittivity_x: jnp.ndarray
+    e_permittivity_x: jnp.ndarray
     e_decay_y: jnp.ndarray
     e_source_y: jnp.ndarray
     e_source_lossless_y: jnp.ndarray
     e_conductivity_y: jnp.ndarray
-    e_inv_permittivity_y: jnp.ndarray
+    e_permittivity_y: jnp.ndarray
     e_decay_z: jnp.ndarray
     e_source_z: jnp.ndarray
     e_source_lossless_z: jnp.ndarray
     e_conductivity_z: jnp.ndarray
-    e_inv_permittivity_z: jnp.ndarray
+    e_permittivity_z: jnp.ndarray
     tm_h_decay_x: jnp.ndarray
     tm_h_source_x: jnp.ndarray
     tm_h_decay_y: jnp.ndarray
@@ -591,15 +990,163 @@ class CompiledSimulation:
     hx_metal_mask: jnp.ndarray
     hy_metal_mask: jnp.ndarray
     hz_metal_mask: jnp.ndarray
+    ex_storage_mask: jnp.ndarray | None
+    ey_storage_mask: jnp.ndarray | None
+    ez_storage_mask: jnp.ndarray | None
+    hx_storage_mask: jnp.ndarray | None
+    hy_storage_mask: jnp.ndarray | None
+    hz_storage_mask: jnp.ndarray | None
 
     _compiled_scan: callable | None = None
     _compile_count: int = 0
+    _sharding_mesh: object | None = None
 
     def _update_coefficients(self) -> UpdateCoefficients:
         """Build runtime coefficient container for jitted scan entrypoint."""
         return UpdateCoefficients(
             **{name: getattr(self, name) for name in UpdateCoefficients._fields}
         )
+
+    def _component_logical_shape(self, component: str) -> tuple[int, ...]:
+        return self.storage_layout.logical_shapes[component]
+
+    def _component_active_shape(self, component: str) -> tuple[int, ...]:
+        return self.storage_layout.active_shapes[component]
+
+    def _component_storage_shape(self, component: str) -> tuple[int, ...]:
+        return self.storage_layout.storage_shapes[component]
+
+    def _component_pec_mask(self, component: str) -> jnp.ndarray:
+        return {
+            "Ex": self.fp_ex_mask,
+            "Ey": self.fp_ey_mask,
+            "Ez": self.fp_ez_mask,
+            "Hx": self.fp_hx_mask,
+            "Hy": self.fp_hy_mask,
+            "Hz": self.fp_hz_mask,
+        }[component]
+
+    def _pad_component(self, component: str, arr: jnp.ndarray) -> jnp.ndarray:
+        if self.storage_layout.pec_full_storage:
+            if _array_shape(arr) == self._component_logical_shape(component):
+                arr = _pad_all_high_planes_3d(arr)
+            arr = _pad_high_to_shape(
+                arr, self._component_storage_shape(component), pad_value=0.0
+            )
+            return apply_zero_mask(arr, self._component_pec_mask(component))
+        return _pad_high_to_shape(
+            arr, self._component_storage_shape(component), pad_value=0.0
+        )
+
+    def _crop_active_component(self, component: str, arr: jnp.ndarray) -> jnp.ndarray:
+        return _crop_high_to_shape(arr, self._component_active_shape(component))
+
+    def _pad_active_component(self, component: str, arr: jnp.ndarray) -> jnp.ndarray:
+        out = _pad_high_to_shape(
+            arr, self._component_storage_shape(component), pad_value=0.0
+        )
+        if self.storage_layout.pec_full_storage:
+            return apply_zero_mask(out, self._component_pec_mask(component))
+        return out
+
+    def _zero_component_storage_padding(
+        self,
+        component: str,
+        arr: jnp.ndarray,
+    ) -> jnp.ndarray:
+        if not self.storage_layout.enabled:
+            return arr
+        return _zero_high_padding(arr, self.storage_layout.padding[component])
+
+    def _crop_component(self, component: str, arr: jnp.ndarray) -> jnp.ndarray:
+        return _crop_high_to_shape(arr, self._component_logical_shape(component))
+
+    def _device_mesh(self):
+        if not self.storage_layout.enabled:
+            return None
+        if self._sharding_mesh is None:
+            devices = np.asarray(self.sharding_devices, dtype=object)
+            self._sharding_mesh = jax.sharding.Mesh(devices, (_MESH_AXIS,))
+        return self._sharding_mesh
+
+    def _replicated_sharding(self):
+        mesh = self._device_mesh()
+        if mesh is None:
+            return None
+        return jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
+
+    def _single_device(self):
+        try:
+            backend = jax.default_backend()
+            devices = jax.devices(backend)
+        except Exception:
+            devices = jax.devices()
+        return devices[0] if devices else None
+
+    def _axis_sharding(self, arr: jnp.ndarray):
+        mesh = self._device_mesh()
+        if mesh is None:
+            return None
+        shape = _array_shape(arr)
+        ndim = len(shape)
+        axis = int(self.storage_layout.axis)
+        if (
+            ndim > axis
+            and int(shape[axis]) > 0
+            and int(shape[axis]) % int(self.storage_layout.num_devices) == 0
+        ):
+            spec = [None] * ndim
+            spec[axis] = _MESH_AXIS
+            return jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec(*spec))
+        return self._replicated_sharding()
+
+    def _place_array(self, arr, *, shard_arrays: bool = True):
+        if not self.storage_layout.enabled:
+            arr = jnp.asarray(arr)
+            device = self._single_device()
+            return jax.device_put(arr, device) if device is not None else arr
+        sharding = (
+            self._axis_sharding(arr) if shard_arrays else self._replicated_sharding()
+        )
+        return jax.device_put(arr, sharding)
+
+    def _place_pytree(self, tree, *, shard_arrays: bool = True):
+        return jax.tree_util.tree_map(
+            lambda arr: self._place_array(arr, shard_arrays=shard_arrays),
+            tree,
+        )
+
+    def prepare_engine_state(self, engine_state: EngineState) -> EngineState:
+        """Pad logical component fields and place runtime state for execution."""
+
+        engine_state = engine_state._replace(
+            ex=self._pad_component("Ex", engine_state.ex),
+            ey=self._pad_component("Ey", engine_state.ey),
+            ez=self._pad_component("Ez", engine_state.ez),
+            hx=self._pad_component("Hx", engine_state.hx),
+            hy=self._pad_component("Hy", engine_state.hy),
+            hz=self._pad_component("Hz", engine_state.hz),
+        )
+        return self._place_pytree(engine_state, shard_arrays=True)
+
+    def crop_engine_state(self, engine_state: EngineState) -> EngineState:
+        """Return an EngineState with public component fields cropped to logical shape."""
+
+        if not self.storage_layout.enabled and not self.storage_layout.pec_full_storage:
+            return engine_state
+        return engine_state._replace(
+            ex=self._crop_component("Ex", engine_state.ex),
+            ey=self._crop_component("Ey", engine_state.ey),
+            ez=self._crop_component("Ez", engine_state.ez),
+            hx=self._crop_component("Hx", engine_state.hx),
+            hy=self._crop_component("Hy", engine_state.hy),
+            hz=self._crop_component("Hz", engine_state.hz),
+        )
+
+    def _place_update_coefficients(
+        self, coeffs: UpdateCoefficients
+    ) -> UpdateCoefficients:
+        return self._place_pytree(coeffs, shard_arrays=True)
 
     def _sources_for(
         self, timing: str, component: str
@@ -1488,12 +2035,12 @@ class CompiledSimulation:
                 if s.is_3d and not bool(getattr(s, "dft_enabled", False))
             )
             field_shapes = {
-                "Ex": self.field_shape_ex,
-                "Ey": self.field_shape_ey,
-                "Ez": self.field_shape_ez,
-                "Hx": self.field_shape_hx,
-                "Hy": self.field_shape_hy,
-                "Hz": self.field_shape_hz,
+                "Ex": self.storage_shape_ex,
+                "Ey": self.storage_shape_ey,
+                "Ez": self.storage_shape_ez,
+                "Hx": self.storage_shape_hx,
+                "Hy": self.storage_shape_hy,
+                "Hz": self.storage_shape_hz,
             }
             batched_mon = compile_batched_monitor_data(batchable_3d, field_shapes)
             # Keep DFT monitors unbatched for deterministic per-component modal
@@ -1519,17 +2066,17 @@ class CompiledSimulation:
             tm_hy: jnp.ndarray | None = None,
         ) -> jnp.ndarray:
             if snapshot_field == "Ex":
-                return ex
+                return self._crop_component("Ex", ex)
             if snapshot_field == "Ey":
-                return ey
+                return self._crop_component("Ey", ey)
             if snapshot_field == "Ez":
-                return ez if tm_ez is None else tm_ez
+                return self._crop_component("Ez", ez) if tm_ez is None else tm_ez
             if snapshot_field == "Hx":
-                return hx if tm_hx is None else tm_hx
+                return self._crop_component("Hx", hx) if tm_hx is None else tm_hx
             if snapshot_field == "Hy":
-                return hy if tm_hy is None else tm_hy
+                return self._crop_component("Hy", hy) if tm_hy is None else tm_hy
             if snapshot_field == "Hz":
-                return hz
+                return self._crop_component("Hz", hz)
             raise ValueError(f"Unsupported snapshot field: {snapshot_field}")
 
         def run_scan(
@@ -1546,13 +2093,13 @@ class CompiledSimulation:
             h_sigma_m_z = coeffs.h_sigma_m_z
             e_decay_x, e_source_x = coeffs.e_decay_x, coeffs.e_source_x
             e_conductivity_x = coeffs.e_conductivity_x
-            e_inv_permittivity_x = coeffs.e_inv_permittivity_x
+            e_inv_permittivity_x = jnp.reciprocal(coeffs.e_permittivity_x)
             e_decay_y, e_source_y = coeffs.e_decay_y, coeffs.e_source_y
             e_conductivity_y = coeffs.e_conductivity_y
-            e_inv_permittivity_y = coeffs.e_inv_permittivity_y
+            e_inv_permittivity_y = jnp.reciprocal(coeffs.e_permittivity_y)
             e_decay_z, e_source_z = coeffs.e_decay_z, coeffs.e_source_z
             e_conductivity_z = coeffs.e_conductivity_z
-            e_inv_permittivity_z = coeffs.e_inv_permittivity_z
+            e_inv_permittivity_z = jnp.reciprocal(coeffs.e_permittivity_z)
             tm_h_decay_x, tm_h_source_x = coeffs.tm_h_decay_x, coeffs.tm_h_source_x
             tm_h_decay_y, tm_h_source_y = coeffs.tm_h_decay_y, coeffs.tm_h_source_y
             tm_e_decay_z, tm_e_source_z = coeffs.tm_e_decay_z, coeffs.tm_e_source_z
@@ -1645,18 +2192,10 @@ class CompiledSimulation:
                     ez = self._apply_source_group(
                         eng.ez, abs_step, pre_e_ez_batch, pre_e_ez_rest
                     )
-                    fp_ex, fp_ey, fp_ez = eng.fp_ex, eng.fp_ey, eng.fp_ez
-                    if is_3d and full_pec_3d:
-                        fp_ex = fp_ex.at[:-1, :-1, :-1].set(ex)
-                        fp_ey = fp_ey.at[:-1, :-1, :-1].set(ey)
-                        fp_ez = fp_ez.at[:-1, :-1, :-1].set(ez)
                     eng = eng._replace(
                         ex=ex.astype(eng.ex.dtype),
                         ey=ey.astype(eng.ey.dtype),
                         ez=ez.astype(eng.ez.dtype),
-                        fp_ex=fp_ex.astype(eng.fp_ex.dtype),
-                        fp_ey=fp_ey.astype(eng.fp_ey.dtype),
-                        fp_ez=fp_ez.astype(eng.fp_ez.dtype),
                     )
                     return _merge_carry(
                         eng, mon, mat, snap_fields, snap_steps, snap_times, snap_count
@@ -1694,29 +2233,33 @@ class CompiledSimulation:
                             )
 
                     if is_3d and full_pec_3d:
-                        fp_hx, fp_hy, fp_hz = full_pec_update_h_from_e_3d(
-                            eng.fp_ex,
-                            eng.fp_ey,
-                            eng.fp_ez,
-                            fp_hx,
-                            fp_hy,
-                            fp_hz,
+                        hx_active, hy_active, hz_active = full_pec_update_h_from_e_3d(
+                            self._crop_active_component("Ex", ex),
+                            self._crop_active_component("Ey", ey),
+                            self._crop_active_component("Ez", ez),
+                            self._crop_active_component("Hx", hx),
+                            self._crop_active_component("Hy", hy),
+                            self._crop_active_component("Hz", hz),
                             resolution,
                             h_decay=(
-                                self.fp_h_decay_x,
-                                self.fp_h_decay_y,
-                                self.fp_h_decay_z,
+                                h_decay_x,
+                                h_decay_y,
+                                h_decay_z,
                             ),
                             h_source=(
-                                self.fp_h_source_x,
-                                self.fp_h_source_y,
-                                self.fp_h_source_z,
+                                h_source_x,
+                                h_source_y,
+                                h_source_z,
                             ),
-                            h_mask=(self.fp_hx_mask, self.fp_hy_mask, self.fp_hz_mask),
+                            h_mask=(
+                                self._crop_active_component("Hx", self.fp_hx_mask),
+                                self._crop_active_component("Hy", self.fp_hy_mask),
+                                self._crop_active_component("Hz", self.fp_hz_mask),
+                            ),
                         )
-                        hx = fp_hx[:-1, :-1, :-1]
-                        hy = fp_hy[:-1, :-1, :-1]
-                        hz = fp_hz[:-1, :-1, :-1]
+                        hx = self._pad_active_component("Hx", hx_active)
+                        hy = self._pad_active_component("Hy", hy_active)
+                        hz = self._pad_active_component("Hz", hz_active)
                     elif is_3d:
                         if self.use_cpml_3d:
                             if self.use_cpml_3d_packed_psi:
@@ -1740,6 +2283,10 @@ class CompiledSimulation:
                                         inv_kappa_h_terms=self.cpml3d_inv_kappa_h_terms,
                                         psi_h_terms=cpml3d_psi_h_terms,
                                         slab_specs=self.cpml3d_h_slab_specs,
+                                        dt=dt_scalar,
+                                        h_sigma_m_x=h_sigma_m_x,
+                                        h_sigma_m_y=h_sigma_m_y,
+                                        h_sigma_m_z=h_sigma_m_z,
                                     )
                                 )
                             else:
@@ -1763,6 +2310,9 @@ class CompiledSimulation:
                                         inv_kappa_h_terms=self.cpml3d_inv_kappa_h_terms,
                                         dt=dt_scalar,
                                         psi_h_terms=cpml3d_psi_h_terms,
+                                        h_sigma_m_x=h_sigma_m_x,
+                                        h_sigma_m_y=h_sigma_m_y,
+                                        h_sigma_m_z=h_sigma_m_z,
                                     )
                                 )
                         else:
@@ -1881,18 +2431,22 @@ class CompiledSimulation:
                     )
                     hz = self._apply_source_group(eng.hz, abs_step, h_batch_z, h_rest_z)
                     fp_hx, fp_hy, fp_hz = eng.fp_hx, eng.fp_hy, eng.fp_hz
-                    if is_3d and full_pec_3d:
-                        fp_hx = fp_hx.at[:-1, :-1, :-1].set(hx_post)
-                        fp_hy = fp_hy.at[:-1, :-1, :-1].set(hy_post)
-                        fp_hz = fp_hz.at[:-1, :-1, :-1].set(hz)
                     if is_3d:
-                        hx = self._apply_metal_edges_3d(
-                            hx_post, "Hx", metallic_edges_3d
-                        )
-                        hy = self._apply_metal_edges_3d(
-                            hy_post, "Hy", metallic_edges_3d
-                        )
-                        hz = self._apply_metal_edges_3d(hz, "Hz", metallic_edges_3d)
+                        if full_pec_3d:
+                            hx = apply_zero_mask(hx_post, self.fp_hx_mask)
+                            hy = apply_zero_mask(hy_post, self.fp_hy_mask)
+                            hz = apply_zero_mask(hz, self.fp_hz_mask)
+                        else:
+                            hx = self._apply_metal_edges_3d(
+                                hx_post, "Hx", metallic_edges_3d
+                            )
+                            hy = self._apply_metal_edges_3d(
+                                hy_post, "Hy", metallic_edges_3d
+                            )
+                            hz = self._apply_metal_edges_3d(hz, "Hz", metallic_edges_3d)
+                            hx = self._zero_component_storage_padding("Hx", hx)
+                            hy = self._zero_component_storage_padding("Hy", hy)
+                            hz = self._zero_component_storage_padding("Hz", hz)
                     else:
                         hx = self._apply_metal_mask(hx_post, hx_metal_mask)
                         hy = self._apply_metal_mask(hy_post, hy_metal_mask)
@@ -1920,29 +2474,33 @@ class CompiledSimulation:
                     cpml3d_psi_e_terms = eng.cpml3d_psi_e_terms
 
                     if is_3d and full_pec_3d:
-                        fp_ex, fp_ey, fp_ez = full_pec_update_e_from_h_3d(
-                            eng.fp_hx,
-                            eng.fp_hy,
-                            eng.fp_hz,
-                            fp_ex,
-                            fp_ey,
-                            fp_ez,
+                        ex_active, ey_active, ez_active = full_pec_update_e_from_h_3d(
+                            self._crop_active_component("Hx", hx),
+                            self._crop_active_component("Hy", hy),
+                            self._crop_active_component("Hz", hz),
+                            self._crop_active_component("Ex", ex),
+                            self._crop_active_component("Ey", ey),
+                            self._crop_active_component("Ez", ez),
                             resolution,
                             e_decay=(
-                                self.fp_e_decay_x,
-                                self.fp_e_decay_y,
-                                self.fp_e_decay_z,
+                                e_decay_x,
+                                e_decay_y,
+                                e_decay_z,
                             ),
                             e_source=(
-                                self.fp_e_source_x,
-                                self.fp_e_source_y,
-                                self.fp_e_source_z,
+                                e_source_x,
+                                e_source_y,
+                                e_source_z,
                             ),
-                            e_mask=(self.fp_ex_mask, self.fp_ey_mask, self.fp_ez_mask),
+                            e_mask=(
+                                self._crop_active_component("Ex", self.fp_ex_mask),
+                                self._crop_active_component("Ey", self.fp_ey_mask),
+                                self._crop_active_component("Ez", self.fp_ez_mask),
+                            ),
                         )
-                        ex = fp_ex[:-1, :-1, :-1]
-                        ey = fp_ey[:-1, :-1, :-1]
-                        ez = fp_ez[:-1, :-1, :-1]
+                        ex = self._pad_active_component("Ex", ex_active)
+                        ey = self._pad_active_component("Ey", ey_active)
+                        ez = self._pad_active_component("Ez", ez_active)
                     elif is_3d:
                         if self.use_cpml_3d:
                             if self.use_cpml_3d_packed_psi:
@@ -1967,6 +2525,13 @@ class CompiledSimulation:
                                         psi_e_terms=cpml3d_psi_e_terms,
                                         slab_specs=self.cpml3d_e_slab_specs,
                                         metallic_edges=self.cpml3d_metallic_edges,
+                                        dt=dt_scalar,
+                                        e_conductivity_x=e_conductivity_x,
+                                        e_inv_permittivity_x=e_inv_permittivity_x,
+                                        e_conductivity_y=e_conductivity_y,
+                                        e_inv_permittivity_y=e_inv_permittivity_y,
+                                        e_conductivity_z=e_conductivity_z,
+                                        e_inv_permittivity_z=e_inv_permittivity_z,
                                     )
                                 )
                             else:
@@ -1991,6 +2556,12 @@ class CompiledSimulation:
                                         dt=dt_scalar,
                                         psi_e_terms=cpml3d_psi_e_terms,
                                         metallic_edges=self.cpml3d_metallic_edges,
+                                        e_conductivity_x=e_conductivity_x,
+                                        e_inv_permittivity_x=e_inv_permittivity_x,
+                                        e_conductivity_y=e_conductivity_y,
+                                        e_inv_permittivity_y=e_inv_permittivity_y,
+                                        e_conductivity_z=e_conductivity_z,
+                                        e_inv_permittivity_z=e_inv_permittivity_z,
                                     )
                                 )
                         else:
@@ -2098,14 +2669,18 @@ class CompiledSimulation:
                     ey = self._apply_source_group(eng.ey, abs_step, e_batch_y, e_rest_y)
                     ez = self._apply_source_group(eng.ez, abs_step, e_batch_z, e_rest_z)
                     fp_ex, fp_ey, fp_ez = eng.fp_ex, eng.fp_ey, eng.fp_ez
-                    if is_3d and full_pec_3d:
-                        fp_ex = fp_ex.at[:-1, :-1, :-1].set(ex)
-                        fp_ey = fp_ey.at[:-1, :-1, :-1].set(ey)
-                        fp_ez = fp_ez.at[:-1, :-1, :-1].set(ez)
                     if is_3d:
-                        ex = self._apply_metal_edges_3d(ex, "Ex", metallic_edges_3d)
-                        ey = self._apply_metal_edges_3d(ey, "Ey", metallic_edges_3d)
-                        ez = self._apply_metal_edges_3d(ez, "Ez", metallic_edges_3d)
+                        if full_pec_3d:
+                            ex = apply_zero_mask(ex, self.fp_ex_mask)
+                            ey = apply_zero_mask(ey, self.fp_ey_mask)
+                            ez = apply_zero_mask(ez, self.fp_ez_mask)
+                        else:
+                            ex = self._apply_metal_edges_3d(ex, "Ex", metallic_edges_3d)
+                            ey = self._apply_metal_edges_3d(ey, "Ey", metallic_edges_3d)
+                            ez = self._apply_metal_edges_3d(ez, "Ez", metallic_edges_3d)
+                            ex = self._zero_component_storage_padding("Ex", ex)
+                            ey = self._zero_component_storage_padding("Ey", ey)
+                            ez = self._zero_component_storage_padding("Ez", ez)
                     else:
                         ex = self._apply_metal_mask(ex, ex_metal_mask)
                         ey = self._apply_metal_mask(ey, ey_metal_mask)
@@ -2311,6 +2886,9 @@ class CompiledSimulation:
             "e_conductivity_x",
             "e_conductivity_y",
             "e_conductivity_z",
+            "e_permittivity_x",
+            "e_permittivity_y",
+            "e_permittivity_z",
         }
         for name in referenced_update_names:
             _add_array_entries(
@@ -2378,6 +2956,12 @@ class CompiledSimulation:
             "hx_metal_mask",
             "hy_metal_mask",
             "hz_metal_mask",
+            "ex_storage_mask",
+            "ey_storage_mask",
+            "ez_storage_mask",
+            "hx_storage_mask",
+            "hy_storage_mask",
+            "hz_storage_mask",
         ):
             _add_array_entries(
                 entries,
@@ -2484,7 +3068,27 @@ class CompiledSimulation:
             "loop_kind": self.config.loop_kind,
             "use_cpml_3d": bool(self.use_cpml_3d),
             "use_primitive_cpml_3d_terms": bool(self.use_primitive_cpml_3d_terms),
+            "use_cpml_3d_packed_psi": bool(self.use_cpml_3d_packed_psi),
+            "sharding": {
+                "enabled": bool(self.storage_layout.enabled),
+                "axis": self.storage_layout.axis_name,
+                "num_devices": int(self.storage_layout.num_devices),
+                "backend": self.storage_layout.backend,
+                "logical_shapes": {
+                    name: [int(v) for v in shape]
+                    for name, shape in self.storage_layout.logical_shapes.items()
+                },
+                "storage_shapes": {
+                    name: [int(v) for v in shape]
+                    for name, shape in self.storage_layout.storage_shapes.items()
+                },
+            },
         }
+        if self.storage_layout.enabled:
+            report["per_device_total_bytes"] = int(
+                np.ceil(report["total_bytes"] / self.storage_layout.num_devices)
+            )
+            report["per_device_total_gib"] = report["per_device_total_bytes"] / 1024**3
         return report
 
     def run(
@@ -2553,21 +3157,27 @@ class CompiledSimulation:
                     dft_weight_sum=jnp.zeros((0, 0), dtype=dft_dtype),
                 )
 
+        engine_state = self.prepare_engine_state(engine_state)
+        monitor_state = self._place_pytree(monitor_state, shard_arrays=False)
+        coeffs = self._place_update_coefficients(self._update_coefficients())
+
         if self._compiled_scan is None:
             self._build_scan()
 
         snapshot_state = self._empty_snapshot_state()
+        if snapshot_state is not None:
+            snapshot_state = self._place_pytree(snapshot_state, shard_arrays=False)
         if snapshot_state is None:
             eng, mon, mat, snapshots = self._compiled_scan(
                 engine_state,
                 monitor_state,
-                self._update_coefficients(),
+                coeffs,
             )
         else:
             eng, mon, mat, snapshots = self._compiled_scan(
                 engine_state,
                 monitor_state,
-                self._update_coefficients(),
+                coeffs,
                 snapshot_state,
             )
         return eng, mon, mat, snapshots
@@ -2690,6 +3300,15 @@ def _has_positive_conductivity(conductivity_region: jnp.ndarray) -> bool:
     )
 
 
+def _elide_zero_conductivity_grid(value):
+    """Return a scalar zero when a conductivity-like grid is identically zero."""
+
+    arr_np = np.asarray(value)
+    if arr_np.size and not bool(np.any(arr_np != 0.0)):
+        return jnp.asarray(0.0, dtype=getattr(value, "dtype", jnp.float32))
+    return value
+
+
 def _precompute_e_lossless_source_coefficient(
     *,
     shape: tuple[int, int, int],
@@ -2720,16 +3339,40 @@ def compile_simulation(
     """
     del design
 
-    fields = run_cfg.fields
+    logical_fields = run_cfg.fields
     resolution = float(run_cfg.resolution)
     dt = float(run_cfg.dt)
     num_steps = int(run_cfg.num_steps)
     total_steps = int(getattr(run_cfg, "total_steps", num_steps))
     t0 = float(getattr(run_cfg, "t0", 0.0))
+    sharding_cfg = normalize_sharding_config(getattr(run_cfg, "sharding", None))
+    full_pec_3d_static = bool(run_cfg.is_3d and has_full_pec_3d(boundaries))
+    storage_layout, sharding_devices = _build_storage_layout(
+        logical_fields,
+        sharding_cfg,
+        is_3d=bool(run_cfg.is_3d),
+        full_pec_3d=full_pec_3d_static,
+    )
+    fields = _make_storage_fields_proxy(logical_fields, storage_layout)
+    effective_sharding = (
+        ShardingConfig(
+            enabled=True,
+            axis=storage_layout.axis_name,
+            num_devices=storage_layout.num_devices,
+            backend=sharding_cfg.backend,
+        )
+        if storage_layout.enabled
+        else ShardingConfig(
+            enabled=False,
+            axis=sharding_cfg.axis,
+            num_devices=sharding_cfg.num_devices,
+            backend=sharding_cfg.backend,
+        )
+    )
 
     source_specs = compile_source_specs(
         sources=sources,
-        fields=fields,
+        fields=logical_fields,
         dt=dt,
         resolution=resolution,
         num_steps=num_steps,
@@ -2780,6 +3423,7 @@ def compile_simulation(
         source_single_slab_dense=source_single_slab_dense,
         snapshot_field=getattr(run_cfg, "snapshot_field", None),
         snapshot_interval=int(getattr(run_cfg, "snapshot_interval", 0) or 0),
+        sharding=effective_sharding,
     )
 
     has_cpml_3d = bool(
@@ -2787,19 +3431,16 @@ def compile_simulation(
         and getattr(fields, "has_cpml", False)
         and getattr(fields, "pml_data", None)
     )
-    full_pec_3d_static = bool(run_cfg.is_3d and has_full_pec_3d(boundaries))
-    use_3d_material_coefficients = bool(
-        run_cfg.is_3d and (not has_cpml_3d) and (not full_pec_3d_static)
-    )
+    use_3d_material_coefficients = bool(run_cfg.is_3d and (not full_pec_3d_static))
 
     empty3 = jnp.zeros((0, 0, 0), dtype=jnp.float32)
     if use_3d_material_coefficients:
         h_decay_x = h_source_x = h_decay_y = h_source_y = empty3
         h_decay_z = h_source_z = empty3
         h_source_lossless_x = h_source_lossless_y = h_source_lossless_z = empty3
-        h_sigma_m_x = fields.sigma_m_hx
-        h_sigma_m_y = fields.sigma_m_hy
-        h_sigma_m_z = fields.sigma_m_hz
+        h_sigma_m_x = _elide_zero_conductivity_grid(fields.sigma_m_hx)
+        h_sigma_m_y = _elide_zero_conductivity_grid(fields.sigma_m_hy)
+        h_sigma_m_z = _elide_zero_conductivity_grid(fields.sigma_m_hz)
     else:
         (
             (h_decay_x, h_source_x, h_source_lossless_x),
@@ -2820,12 +3461,12 @@ def compile_simulation(
         e_decay_x = e_source_x = e_decay_y = e_source_y = empty3
         e_decay_z = e_source_z = empty3
         e_source_lossless_x = e_source_lossless_y = e_source_lossless_z = empty3
-        e_conductivity_x = fields.sig_x
-        e_conductivity_y = fields.sig_y
-        e_conductivity_z = fields.sig_z
-        e_inv_permittivity_x = 1.0 / fields.eps_x
-        e_inv_permittivity_y = 1.0 / fields.eps_y
-        e_inv_permittivity_z = 1.0 / fields.eps_z
+        e_conductivity_x = _elide_zero_conductivity_grid(fields.sig_x)
+        e_conductivity_y = _elide_zero_conductivity_grid(fields.sig_y)
+        e_conductivity_z = _elide_zero_conductivity_grid(fields.sig_z)
+        e_permittivity_x = fields.eps_x
+        e_permittivity_y = fields.eps_y
+        e_permittivity_z = fields.eps_z
     else:
         (
             (e_decay_x, e_source_x, e_source_lossless_x),
@@ -2863,7 +3504,7 @@ def compile_simulation(
             ),
         )
         e_conductivity_x = e_conductivity_y = e_conductivity_z = empty3
-        e_inv_permittivity_x = e_inv_permittivity_y = e_inv_permittivity_z = empty3
+        e_permittivity_x = e_permittivity_y = e_permittivity_z = empty3
     use_physical_tm_xy = False
     use_cpml_tm_xy = False
     use_cpml_3d = False
@@ -3006,15 +3647,25 @@ def compile_simulation(
         total_sigma = jnp.asarray(
             getattr(fields, "total_conductivity", fields.conductivity)
         )
-        sigma_base = (
-            total_sigma * jnp.asarray(fields.permeability) * ops.MU_0 / ops.EPS_0
-        )
-        tm_sigma_m_hx = sample_voxel_grid_at_tm_xy_full_component_2d(sigma_base, "Hx")
-        tm_sigma_m_hy = sample_voxel_grid_at_tm_xy_full_component_2d(sigma_base, "Hy")
+        total_sigma_arr = np.asarray(total_sigma)
+        if total_sigma_arr.shape == () and float(total_sigma_arr) == 0.0:
+            tm_sigma_m_hx = total_sigma
+            tm_sigma_m_hy = total_sigma
+            tm_sig_z = total_sigma
+        else:
+            sigma_base = (
+                total_sigma * jnp.asarray(fields.permeability) * ops.MU_0 / ops.EPS_0
+            )
+            tm_sigma_m_hx = sample_voxel_grid_at_tm_xy_full_component_2d(
+                sigma_base, "Hx"
+            )
+            tm_sigma_m_hy = sample_voxel_grid_at_tm_xy_full_component_2d(
+                sigma_base, "Hy"
+            )
+            tm_sig_z = sample_voxel_grid_at_tm_xy_full_component_2d(total_sigma, "Ez")
         tm_eps_z = sample_voxel_grid_at_tm_xy_full_component_2d(
             fields.permittivity, "Ez"
         )
-        tm_sig_z = sample_voxel_grid_at_tm_xy_full_component_2d(total_sigma, "Ez")
         tm_h_decay_x, tm_h_source_x, _ = ops.precompute_h_update_coefficients(
             tm_sigma_m_hx, dt
         )
@@ -3048,7 +3699,7 @@ def compile_simulation(
         metallic_edges_2d = frozenset()
     full_pec_3d = bool(has_full_pec_3d(boundaries))
     if bool(run_cfg.is_3d) and full_pec_3d:
-        fp_state = initialize_full_pec_3d_state(fields)
+        fp_state = initialize_full_pec_3d_state(logical_fields)
         fp_has_loss = any(
             _has_positive_conductivity(arr)
             for arr in (
@@ -3059,6 +3710,24 @@ def compile_simulation(
                 fp_state.sig_y_region,
                 fp_state.sig_z_region,
             )
+        )
+        fp_ex_mask = _pad_high_to_shape(
+            fp_state.masks["Ex"], storage_layout.storage_shapes["Ex"], pad_value=True
+        )
+        fp_ey_mask = _pad_high_to_shape(
+            fp_state.masks["Ey"], storage_layout.storage_shapes["Ey"], pad_value=True
+        )
+        fp_ez_mask = _pad_high_to_shape(
+            fp_state.masks["Ez"], storage_layout.storage_shapes["Ez"], pad_value=True
+        )
+        fp_hx_mask = _pad_high_to_shape(
+            fp_state.masks["Hx"], storage_layout.storage_shapes["Hx"], pad_value=True
+        )
+        fp_hy_mask = _pad_high_to_shape(
+            fp_state.masks["Hy"], storage_layout.storage_shapes["Hy"], pad_value=True
+        )
+        fp_hz_mask = _pad_high_to_shape(
+            fp_state.masks["Hz"], storage_layout.storage_shapes["Hz"], pad_value=True
         )
         if fp_has_loss:
             (
@@ -3105,12 +3774,18 @@ def compile_simulation(
                 dt=dt,
                 region=(slice(None), slice(1, -1), slice(1, -1)),
             )
-        fp_ex_mask = fp_state.masks["Ex"]
-        fp_ey_mask = fp_state.masks["Ey"]
-        fp_ez_mask = fp_state.masks["Ez"]
-        fp_hx_mask = fp_state.masks["Hx"]
-        fp_hy_mask = fp_state.masks["Hy"]
-        fp_hz_mask = fp_state.masks["Hz"]
+        h_decay_x = fp_h_decay_x
+        h_source_x = fp_h_source_x
+        h_decay_y = fp_h_decay_y
+        h_source_y = fp_h_source_y
+        h_decay_z = fp_h_decay_z
+        h_source_z = fp_h_source_z
+        e_decay_x = fp_e_decay_x
+        e_source_x = fp_e_source_x
+        e_decay_y = fp_e_decay_y
+        e_source_y = fp_e_source_y
+        e_decay_z = fp_e_decay_z
+        e_source_z = fp_e_source_z
     else:
         fp_h_decay_x = jnp.zeros((0, 0, 0), dtype=jnp.float32)
         fp_h_source_x = jnp.zeros((0, 0, 0), dtype=jnp.float32)
@@ -3160,12 +3835,20 @@ def compile_simulation(
         source_specs=source_specs,
         monitor_specs=monitor_specs,
         monitor_devices=monitor_devices,
-        field_shape_ex=tuple(int(v) for v in fields.Ex.shape),
-        field_shape_ey=tuple(int(v) for v in fields.Ey.shape),
-        field_shape_ez=tuple(int(v) for v in fields.Ez.shape),
-        field_shape_hx=tuple(int(v) for v in fields.Hx.shape),
-        field_shape_hy=tuple(int(v) for v in fields.Hy.shape),
-        field_shape_hz=tuple(int(v) for v in fields.Hz.shape),
+        field_shape_ex=tuple(int(v) for v in logical_fields.Ex.shape),
+        field_shape_ey=tuple(int(v) for v in logical_fields.Ey.shape),
+        field_shape_ez=tuple(int(v) for v in logical_fields.Ez.shape),
+        field_shape_hx=tuple(int(v) for v in logical_fields.Hx.shape),
+        field_shape_hy=tuple(int(v) for v in logical_fields.Hy.shape),
+        field_shape_hz=tuple(int(v) for v in logical_fields.Hz.shape),
+        storage_layout=storage_layout,
+        sharding_devices=sharding_devices,
+        storage_shape_ex=storage_layout.storage_shapes["Ex"],
+        storage_shape_ey=storage_layout.storage_shapes["Ey"],
+        storage_shape_ez=storage_layout.storage_shapes["Ez"],
+        storage_shape_hx=storage_layout.storage_shapes["Hx"],
+        storage_shape_hy=storage_layout.storage_shapes["Hy"],
+        storage_shape_hz=storage_layout.storage_shapes["Hz"],
         h_decay_x=h_decay_x,
         h_source_x=h_source_x,
         h_source_lossless_x=h_source_lossless_x,
@@ -3182,17 +3865,17 @@ def compile_simulation(
         e_source_x=e_source_x,
         e_source_lossless_x=e_source_lossless_x,
         e_conductivity_x=e_conductivity_x,
-        e_inv_permittivity_x=e_inv_permittivity_x,
+        e_permittivity_x=e_permittivity_x,
         e_decay_y=e_decay_y,
         e_source_y=e_source_y,
         e_source_lossless_y=e_source_lossless_y,
         e_conductivity_y=e_conductivity_y,
-        e_inv_permittivity_y=e_inv_permittivity_y,
+        e_permittivity_y=e_permittivity_y,
         e_decay_z=e_decay_z,
         e_source_z=e_source_z,
         e_source_lossless_z=e_source_lossless_z,
         e_conductivity_z=e_conductivity_z,
-        e_inv_permittivity_z=e_inv_permittivity_z,
+        e_permittivity_z=e_permittivity_z,
         tm_h_decay_x=tm_h_decay_x,
         tm_h_source_x=tm_h_source_x,
         tm_h_decay_y=tm_h_decay_y,
@@ -3257,4 +3940,10 @@ def compile_simulation(
         hx_metal_mask=metallic_masks["Hx"],
         hy_metal_mask=metallic_masks["Hy"],
         hz_metal_mask=metallic_masks["Hz"],
+        ex_storage_mask=storage_layout.valid_masks["Ex"],
+        ey_storage_mask=storage_layout.valid_masks["Ey"],
+        ez_storage_mask=storage_layout.valid_masks["Ez"],
+        hx_storage_mask=storage_layout.valid_masks["Hx"],
+        hy_storage_mask=storage_layout.valid_masks["Hy"],
+        hz_storage_mask=storage_layout.valid_masks["Hz"],
     )

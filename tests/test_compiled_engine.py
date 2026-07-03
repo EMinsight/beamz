@@ -408,17 +408,16 @@ def test_split_3d_cpml_boundaries_preserve_identity_kappa_in_compiled_terms():
 
     assert program.use_primitive_cpml_3d_terms
 
-    cz = sim.fields.permittivity.shape[0] // 2
     cy = sim.fields.permittivity.shape[1] // 2
     cx = sim.fields.permittivity.shape[2] // 2
     cx_e = program.cpml3d_kappa_e_terms[4].shape[2] // 2
     cx_h = program.cpml3d_kappa_h_terms[3].shape[2] // 2
 
     assert np.asarray(sim.pml_data["kappa_x"], dtype=np.float64)[
-        cz, cy, cx
+        0, 0, cx
     ] == pytest.approx(1.0)
     assert np.asarray(sim.pml_data["kappa_y"], dtype=np.float64)[
-        cz, cy, cx
+        0, cy, 0
     ] == pytest.approx(1.0)
     assert np.asarray(program.cpml3d_kappa_e_terms[4], dtype=np.float64)[
         0, 0, cx_e
@@ -473,7 +472,7 @@ def test_compiled_3d_metallic_edge_zeroing_matches_masks():
         np.testing.assert_array_equal(np.asarray(actual), np.asarray(expected))
 
 
-def test_compiled_3d_cpml_uses_dense_update_coefficients():
+def test_compiled_3d_cpml_uses_material_coefficients():
     wl = 1.55 * um
     dx, dt = calc_optimal_fdtd_params(
         wl, 1.0, dims=3, safety_factor=0.95, points_per_wavelength=8
@@ -495,25 +494,36 @@ def test_compiled_3d_cpml_uses_dense_update_coefficients():
     program = sim.compile(num_steps=1)
 
     assert program.use_cpml_3d
-    assert program.e_decay_x.shape == sim.fields.Ex.shape
-    assert program.e_source_x.shape == sim.fields.Ex.shape
-    assert program.h_decay_x.shape == sim.fields.Hx.shape
-    assert program.h_source_x.shape == sim.fields.Hx.shape
+    assert program.e_decay_x.shape == (0, 0, 0)
+    assert program.e_source_x.shape == (0, 0, 0)
+    assert program.h_decay_x.shape == (0, 0, 0)
+    assert program.h_source_x.shape == (0, 0, 0)
     assert program.e_source_lossless_x.shape == (0, 0, 0)
     assert program.e_source_lossless_y.shape == (0, 0, 0)
     assert program.e_source_lossless_z.shape == (0, 0, 0)
-    assert program.e_inv_permittivity_x.shape == (0, 0, 0)
-    assert program.e_inv_permittivity_y.shape == (0, 0, 0)
-    assert program.e_inv_permittivity_z.shape == (0, 0, 0)
+    assert program.e_conductivity_x.shape == ()
+    assert program.e_conductivity_y.shape == ()
+    assert program.e_conductivity_z.shape == ()
+    assert float(program.e_conductivity_x) == 0.0
+    assert float(program.e_conductivity_y) == 0.0
+    assert float(program.e_conductivity_z) == 0.0
+    assert program.e_permittivity_x is sim.fields.eps_x
+    assert program.e_permittivity_y is sim.fields.eps_y
+    assert program.e_permittivity_z is sim.fields.eps_z
     assert program.ex_metal_mask.shape == (0, 0, 0)
     assert program.hx_metal_mask.shape == (0, 0, 0)
     assert program.field_shape_ex == tuple(sim.fields.Ex.shape)
     assert program.field_shape_hx == tuple(sim.fields.Hx.shape)
-    assert program.e_conductivity_x.shape == (0, 0, 0)
-    assert program.h_sigma_m_x.shape == (0, 0, 0)
+    assert program.h_sigma_m_x.shape == ()
+    assert program.h_sigma_m_y.shape == ()
+    assert program.h_sigma_m_z.shape == ()
+    assert float(program.h_sigma_m_x) == 0.0
+    assert float(program.h_sigma_m_y) == 0.0
+    assert float(program.h_sigma_m_z) == 0.0
     assert program.h_source_lossless_x.shape == (0, 0, 0)
     assert program.h_source_lossless_y.shape == (0, 0, 0)
     assert program.h_source_lossless_z.shape == (0, 0, 0)
+    sim.run_compiled(num_steps=1, progress=False)
 
 
 def test_compiled_3d_snapshot_shape_uses_field_reference():
@@ -539,7 +549,8 @@ def test_compiled_3d_snapshot_shape_uses_field_reference():
     snapshot_state = program._empty_snapshot_state()
 
     assert program.e_source_lossless_z.shape == (0, 0, 0)
-    assert program.e_source_z.shape == sim.fields.Ez.shape
+    assert program.e_source_z.shape == (0, 0, 0)
+    assert program.field_shape_ez == tuple(sim.fields.Ez.shape)
     assert program._snapshot_field_shape() == tuple(sim.fields.Ez.shape)
     assert snapshot_state is not None
     assert snapshot_state[0].shape == (2, *sim.fields.Ez.shape)
@@ -573,11 +584,8 @@ def test_compiled_3d_sponge_pml_uses_material_coefficients():
     assert program.e_source_lossless_x.shape == (0, 0, 0)
     assert program.h_source_lossless_x.shape == (0, 0, 0)
     assert program.e_conductivity_x is sim.fields.sig_x
+    assert program.e_permittivity_x is sim.fields.eps_x
     assert program.h_sigma_m_x is sim.fields.sigma_m_hx
-    np.testing.assert_allclose(
-        np.asarray(program.e_inv_permittivity_x),
-        np.asarray(1.0 / sim.fields.eps_x),
-    )
 
     sim.run_compiled(num_steps=1, progress=False)
 
@@ -825,7 +833,6 @@ def test_simulation_memory_estimate_reports_fields_and_compiled_coefficients():
         for name in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
     )
     assert report["totals_by_category"]["yee_fields"] == field_bytes
-    assert report["compiled"]["totals_by_category"]["compiled_update_coefficients"] > 0
     compiled_names = {entry["name"] for entry in report["compiled"]["entries"]}
     referenced_names = {
         entry["name"] for entry in report["compiled"]["referenced_inputs"]["entries"]
@@ -834,8 +841,9 @@ def test_simulation_memory_estimate_reports_fields_and_compiled_coefficients():
         key.startswith("use_") and key.endswith("_3d_e_coefficients")
         for key in report["compiled"]["config"]
     )
-    assert "e_inv_permittivity_x" in compiled_names
-    assert "e_inv_permittivity_x" not in referenced_names
+    assert "e_permittivity_x" not in compiled_names
+    assert "e_permittivity_x" in referenced_names
+    assert report["compiled"]["referenced_inputs"]["total_bytes"] > 0
     assert (
         report["total_with_compiled_bytes"]
         == report["total_bytes"] + report["compiled"]["total_bytes"]
@@ -873,10 +881,7 @@ def test_compiled_uses_material_coefficients_for_3d_loss():
     assert program.h_decay_x.shape == (0, 0, 0)
     assert program.h_source_x.shape == (0, 0, 0)
     assert program.e_conductivity_x is sim.fields.sig_x
-    np.testing.assert_allclose(
-        np.asarray(program.e_inv_permittivity_x),
-        np.asarray(1.0 / sim.fields.eps_x),
-    )
+    assert program.e_permittivity_x is sim.fields.eps_x
     assert program.h_sigma_m_x is sim.fields.sigma_m_hx
 
     sim.run_compiled(num_steps=1, progress=False)

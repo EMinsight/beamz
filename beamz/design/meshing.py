@@ -22,49 +22,112 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 class MaterialGrids:
-    """Bundles the 8 material property arrays with bulk operations."""
+    """Bundles electromagnetic material grids with compact default-valued channels."""
 
     NAMES = (
         "permittivity",
         "permeability",
         "conductivity",
-        "k",
-        "rho",
-        "cp",
-        "dn_dT",
-        "T0",
     )
-    DEFAULTS = (1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 300.0)
+    DEFAULTS = (1.0, 1.0, 0.0)
+    DENSE_NAMES = frozenset(("permittivity",))
+    DTYPE = np.float32
 
     def __init__(self, shape):
+        self.shape = tuple(int(v) for v in shape)
+        self._values = {}
         for name, default in zip(self.NAMES, self.DEFAULTS):
-            setattr(self, name, np.full(shape, default))
+            self._values[name] = (
+                np.full(self.shape, default, dtype=self.DTYPE)
+                if name in self.DENSE_NAMES
+                else self.DTYPE(default)
+            )
+
+    def __getattr__(self, name):
+        if name in self.NAMES:
+            return self._values[name]
+        raise AttributeError(name)
+
+    @staticmethod
+    def _same_scalar(left, right):
+        left_arr = np.asarray(left)
+        right_arr = np.asarray(right)
+        if left_arr.shape != () or right_arr.shape != ():
+            return False
+        return bool(np.isclose(float(left_arr), float(right_arr), rtol=0.0, atol=0.0))
+
+    def _materialize(self, name):
+        value = self._values[name]
+        if np.asarray(value).shape == ():
+            value = np.full(self.shape, float(value), dtype=self.DTYPE)
+            self._values[name] = value
+        return value
 
     def fill_all(self, props):
         """Fill all grids with material property tuple."""
         for name, val in zip(self.NAMES, props):
-            getattr(self, name).fill(val)
+            if name in self.DENSE_NAMES:
+                self._materialize(name).fill(val)
+            else:
+                self._values[name] = self.DTYPE(val)
 
     def set_at(self, idx, props):
         """Set all properties at index (i,j) or (k,i,j)."""
         for name, val in zip(self.NAMES, props):
-            getattr(self, name)[idx] = val
+            self.set_channel_at(name, idx, val)
+
+    def set_channel_at(self, name, idx, val):
+        current = self._values[name]
+        if self._same_scalar(current, val):
+            return
+        self._materialize(name)[idx] = val
 
     def blend_at(self, idx, props, factor):
         """Blend properties at index with given factor."""
         for name, val in zip(self.NAMES, props):
-            arr = getattr(self, name)
-            arr[idx] = arr[idx] * (1 - factor) + val * factor
+            self.blend_channel_at(name, idx, val, factor)
+
+    def blend_channel_at(self, name, idx, val, factor):
+        current = self._values[name]
+        if self._same_scalar(current, val):
+            return
+        arr = self._materialize(name)
+        arr[idx] = arr[idx] * (1 - factor) + val * factor
 
     def set_region(self, slices, props):
         """Set all properties for a slice/index-array region."""
         for name, val in zip(self.NAMES, props):
-            getattr(self, name)[slices] = val
+            self.set_channel_region(name, slices, val)
+
+    def set_channel_region(self, name, slices, val):
+        current = self._values[name]
+        if self._same_scalar(current, val):
+            return
+        self._materialize(name)[slices] = val
+
+    def set_masked_region(self, name, region, mask, val):
+        if not np.any(mask):
+            return
+        current = self._values[name]
+        if self._same_scalar(current, val):
+            return
+        view = self._materialize(name)[region]
+        view[mask] = val
+
+    def blend_masked_region(self, name, region, mask, val, factors):
+        if not np.any(mask):
+            return
+        current = self._values[name]
+        if self._same_scalar(current, val):
+            return
+        view = self._materialize(name)[region]
+        f = np.asarray(factors)
+        view[mask] = view[mask] * (1.0 - f) + val * f
 
     def assign_to(self, target):
         """Copy all grids as attributes onto target object."""
         for name in self.NAMES:
-            setattr(target, name, getattr(self, name))
+            setattr(target, name, self._values[name])
 
 
 class BaseMeshGrid:
@@ -269,28 +332,9 @@ class BaseMeshGrid:
             )
             return 1.0, 1.0, 0.0
 
-    def _get_thermal_properties_safe(self, material, x=0, y=0, z=0):
-        """Safely get thermal properties from material objects."""
-        if material is None:
-            return 0.0, 0.0, 0.0, 0.0, 300.0
-
-        # CustomMaterial or Material: thermal params are constants
-        k = getattr(material, "k", 0.0)
-        rho = getattr(material, "rho", 0.0)
-        cp = getattr(material, "cp", 0.0)
-        dn_dT = getattr(material, "dn_dT", 0.0)
-        T0 = getattr(material, "T0", 300.0)
-        return k, rho, cp, dn_dT, T0
-
-    def _get_all_material_props(self, material, x=0, y=0, z=0):
-        """Get all 8 material properties as a single tuple matching MaterialGrids.NAMES order."""
-        perm, permb, cond = self._get_material_properties_safe(material, x, y, z)
-        k, rho, cp, dn_dT, T0 = self._get_thermal_properties_safe(material, x, y, z)
-        return (perm, permb, cond, k, rho, cp, dn_dT, T0)
-
-    def get_thermal_grids(self):
-        """Get thermal property grids."""
-        return self.k, self.rho, self.cp, self.dn_dT, self.T0
+    def _get_material_props(self, material, x=0, y=0, z=0):
+        """Get material properties as a tuple matching MaterialGrids.NAMES order."""
+        return self._get_material_properties_safe(material, x, y, z)
 
     def get_material_grids(self, resolution=None):
         """Get the material property grids."""
@@ -333,7 +377,7 @@ class RegularGrid(BaseMeshGrid):
         # Determine is_3d property for compatibility with Simulation class
         self.is_3d = design.is_3d and design.depth > 0
 
-        # Rasterize the design (assigns all 8 material grids via MaterialGrids)
+        # Rasterize the design (assigns electromagnetic material grids)
         self.__rasterize__()
 
         # Set grid properties
@@ -373,7 +417,7 @@ class RegularGrid(BaseMeshGrid):
         if len(self.design.structures) > 0:
             background = self.design.structures[0]
             if hasattr(background, "material") and background.material is not None:
-                grids.fill_all(self._get_all_material_props(background.material))
+                grids.fill_all(self._get_material_props(background.material))
 
         # Process remaining structures
         with create_plain_progress() as progress:
@@ -396,7 +440,7 @@ class RegularGrid(BaseMeshGrid):
                 props = (
                     None
                     if is_custom_material
-                    else self._get_all_material_props(structure.material)
+                    else self._get_material_props(structure.material)
                 )
 
                 try:
@@ -601,7 +645,7 @@ class RegularGrid(BaseMeshGrid):
             j = local_j[idx] + rect_min_j
             rect_props = props
             if is_custom_material:
-                rect_props = self._get_all_material_props(
+                rect_props = self._get_material_props(
                     structure.material, x_centers[j], y_centers[i]
                 )
             grids.set_at((i, j), rect_props)
@@ -612,7 +656,7 @@ class RegularGrid(BaseMeshGrid):
             j = boundary_j[idx] + rect_min_j
             rect_props = props
             if is_custom_material:
-                rect_props = self._get_all_material_props(
+                rect_props = self._get_material_props(
                     structure.material, x_centers[j], y_centers[i]
                 )
             grids.blend_at(
@@ -770,7 +814,7 @@ class RegularGrid(BaseMeshGrid):
                     if prepared_polygon.contains(cell):
                         cell_props = props
                         if is_custom_material:
-                            cell_props = self._get_all_material_props(
+                            cell_props = self._get_material_props(
                                 structure.material, cx, cy
                             )
                         grids.set_at((i, j), cell_props)
@@ -783,7 +827,7 @@ class RegularGrid(BaseMeshGrid):
                         continue
                     cell_props = props
                     if is_custom_material:
-                        cell_props = self._get_all_material_props(
+                        cell_props = self._get_material_props(
                             structure.material, cx, cy
                         )
                     grids.blend_at((i, j), cell_props, float(blend_factor))
@@ -942,7 +986,7 @@ class RegularGrid3D(BaseMeshGrid):
         self.resolution_xy = resolution_xy
         self.resolution_z = resolution_z
 
-        # Rasterize the design (assigns all 8 material grids via MaterialGrids)
+        # Rasterize the design (assigns electromagnetic material grids)
         self.__rasterize_3d__()
 
         # Calculate grid dimensions for status message
@@ -999,7 +1043,7 @@ class RegularGrid3D(BaseMeshGrid):
         if len(self.design.structures) > 0:
             background = self.design.structures[0]
             if hasattr(background, "material") and background.material is not None:
-                grids.fill_all(self._get_all_material_props(background.material))
+                grids.fill_all(self._get_material_props(background.material))
 
         timing_enabled = _env_bool("BEAMZ_RASTER_TIMING", True)
         voxel_count = int(grid_width) * int(grid_height) * int(grid_depth)
@@ -1032,7 +1076,7 @@ class RegularGrid3D(BaseMeshGrid):
                     progress.update(task, advance=1)
                     continue
 
-                props = self._get_all_material_props(structure.material)
+                props = self._get_material_props(structure.material)
 
                 try:
                     bbox = self._get_bbox_indices_3d(
@@ -1123,9 +1167,7 @@ class RegularGrid3D(BaseMeshGrid):
         # Process 3D PML boundaries
         t_pml_start = time.perf_counter()
         self._process_3d_pml(
-            grids.permittivity,
-            grids.permeability,
-            grids.conductivity,
+            grids,
             x_centers,
             y_centers,
             z_centers,
@@ -1160,9 +1202,7 @@ class RegularGrid3D(BaseMeshGrid):
 
     def _process_3d_pml(
         self,
-        permittivity,
-        permeability,
-        conductivity,
+        grids,
         x_centers,
         y_centers,
         z_centers,
@@ -1189,12 +1229,13 @@ class RegularGrid3D(BaseMeshGrid):
                                 z,
                                 dx=self.resolution_xy,
                                 dt=dt_estimate,
-                                eps_avg=permittivity[k, i, j],
+                                eps_avg=grids.permittivity[k, i, j],
                                 width=self.design.width,
                                 height=self.design.height,
                                 depth=self.design.depth,
                             )
                             if pml_conductivity > 0:
+                                conductivity = grids._materialize("conductivity")
                                 conductivity[k, i, j] += pml_conductivity
 
                 progress.update(task, advance=1)
@@ -1280,6 +1321,18 @@ class RegularGrid3D(BaseMeshGrid):
         if i0 >= i1 or j0 >= j1 or k0 >= k1:
             return
 
+        aligned_tol = 1e-12
+        if (
+            abs(x0 - j0 * cell_size_xy) <= aligned_tol
+            and abs(y0 - i0 * cell_size_xy) <= aligned_tol
+            and abs(z0 - k0 * cell_size_z) <= aligned_tol
+            and abs(x1 - j1 * cell_size_xy) <= aligned_tol
+            and abs(y1 - i1 * cell_size_xy) <= aligned_tol
+            and abs(z1 - k1 * cell_size_z) <= aligned_tol
+        ):
+            grids.set_region((slice(k0, k1), slice(i0, i1), slice(j0, j1)), props)
+            return
+
         # Compute exact axis-aligned overlap fractions per voxel to preserve
         # anti-aliased boundaries without expensive per-sample point checks.
         x_edges0 = np.arange(j0, j1, dtype=float) * cell_size_xy
@@ -1316,15 +1369,14 @@ class RegularGrid3D(BaseMeshGrid):
         blend_mask = (frac > 0.0) & ~full_mask
 
         if np.any(full_mask):
+            region = (slice(k0, k1), slice(i0, i1), slice(j0, j1))
             for name, val in zip(MaterialGrids.NAMES, props):
-                arr = getattr(grids, name)[k0:k1, i0:i1, j0:j1]
-                arr[full_mask] = val
+                grids.set_masked_region(name, region, full_mask, val)
 
         if np.any(blend_mask):
+            region = (slice(k0, k1), slice(i0, i1), slice(j0, j1))
             for name, val in zip(MaterialGrids.NAMES, props):
-                arr = getattr(grids, name)[k0:k1, i0:i1, j0:j1]
-                f = frac[blend_mask]
-                arr[blend_mask] = arr[blend_mask] * (1.0 - f) + val * f
+                grids.blend_masked_region(name, region, blend_mask, val, frac[blend_mask])
 
     def _rasterize_polygon_3d_fast(
         self,
@@ -1483,20 +1535,26 @@ class RegularGrid3D(BaseMeshGrid):
             blend_mask = (frac > 0.0) & ~full_mask
 
             if np.any(full_mask):
+                region = (slice(min_k, max_k), slice(min_i, max_i), slice(min_j, max_j))
                 for name, val in zip(MaterialGrids.NAMES, props):
-                    arr = getattr(grids, name)[min_k:max_k, min_i:max_i, min_j:max_j]
-                    arr[full_mask] = val
+                    grids.set_masked_region(name, region, full_mask, val)
 
             if np.any(blend_mask):
+                region = (slice(min_k, max_k), slice(min_i, max_i), slice(min_j, max_j))
                 for name, val in zip(MaterialGrids.NAMES, props):
-                    arr = getattr(grids, name)[min_k:max_k, min_i:max_i, min_j:max_j]
-                    f = frac[blend_mask]
-                    arr[blend_mask] = arr[blend_mask] * (1.0 - f) + val * f
+                    grids.blend_masked_region(
+                        name,
+                        region,
+                        blend_mask,
+                        val,
+                        frac[blend_mask],
+                    )
             return True
 
         sample_dx, sample_dy = self._build_supersample_offsets_xy(cell_size_xy)
         n_samples_xy = float(sample_dx.size)
         inside_count = np.zeros(xx.shape, dtype=float)
+        polygon_for_contains = polygon.buffer(1e-15)
 
         shift_x_map = None
         shift_y_map = None
@@ -1542,7 +1600,7 @@ class RegularGrid3D(BaseMeshGrid):
                     ((xx + sample_dx[sidx]).ravel(), (yy + sample_dy[sidx]).ravel())
                 )
             inside = contains_xy(
-                polygon.buffer(1e-15), points[:, 0], points[:, 1]
+                polygon_for_contains, points[:, 0], points[:, 1]
             ).reshape(xx.shape)
             inside_count += inside.astype(float)
         frac_xy = inside_count / n_samples_xy
@@ -1564,15 +1622,14 @@ class RegularGrid3D(BaseMeshGrid):
         blend_mask = (frac > 0.0) & ~full_mask
 
         if np.any(full_mask):
+            region = (slice(min_k, max_k), slice(min_i, max_i), slice(min_j, max_j))
             for name, val in zip(MaterialGrids.NAMES, props):
-                arr = getattr(grids, name)[min_k:max_k, min_i:max_i, min_j:max_j]
-                arr[full_mask] = val
+                grids.set_masked_region(name, region, full_mask, val)
 
         if np.any(blend_mask):
+            region = (slice(min_k, max_k), slice(min_i, max_i), slice(min_j, max_j))
             for name, val in zip(MaterialGrids.NAMES, props):
-                arr = getattr(grids, name)[min_k:max_k, min_i:max_i, min_j:max_j]
-                f = frac[blend_mask]
-                arr[blend_mask] = arr[blend_mask] * (1.0 - f) + val * f
+                grids.blend_masked_region(name, region, blend_mask, val, frac[blend_mask])
 
         return True
 
@@ -1662,10 +1719,16 @@ class RegularGrid3D(BaseMeshGrid):
             z_index = int(z_position / self.resolution_z)
             z_index = max(0, min(self.shape[0] - 1, z_index))
 
+        def slice_channel(value):
+            arr = np.asarray(value)
+            if arr.shape == ():
+                return arr
+            return arr[z_index, :, :]
+
         return {
-            "permittivity": self.permittivity[z_index, :, :],
-            "permeability": self.permeability[z_index, :, :],
-            "conductivity": self.conductivity[z_index, :, :],
+            "permittivity": slice_channel(self.permittivity),
+            "permeability": slice_channel(self.permeability),
+            "conductivity": slice_channel(self.conductivity),
         }
 
     def to_plot_data(self, field="permittivity", z_index=None, z_position=None):

@@ -196,7 +196,7 @@ def _rebuild_structure_list(
     return rebuilt
 
 
-RASTER_CACHE_VERSION = "v4"
+RASTER_CACHE_VERSION = "v6"
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -240,11 +240,6 @@ def _material_signature(material):
         "permittivity",
         "permeability",
         "conductivity",
-        "k",
-        "rho",
-        "cp",
-        "dn_dT",
-        "T0",
     )
     return {k: _to_jsonable(getattr(material, k, None)) for k in keys}
 
@@ -380,11 +375,6 @@ def _save_grid_to_cache(grid, cache_path: Path):
         permittivity=np.asarray(grid.permittivity),
         permeability=np.asarray(grid.permeability),
         conductivity=np.asarray(grid.conductivity),
-        k=np.asarray(grid.k),
-        rho=np.asarray(grid.rho),
-        cp=np.asarray(grid.cp),
-        dn_dT=np.asarray(grid.dn_dT),
-        T0=np.asarray(grid.T0),
     )
 
 
@@ -425,11 +415,6 @@ def _build_grid_from_cached_arrays(
         "permittivity",
         "permeability",
         "conductivity",
-        "k",
-        "rho",
-        "cp",
-        "dn_dT",
-        "T0",
     ):
         setattr(grid, name, np.asarray(arrays[name]))
     grid.shape = grid.permittivity.shape
@@ -571,7 +556,7 @@ class Design:
         from beamz.visual.helpers import display_status
 
         timing_enabled = _env_bool("BEAMZ_RASTER_TIMING", True)
-        disk_cache_enabled = _env_bool("BEAMZ_RASTER_CACHE", True)
+        disk_cache_enabled = _env_bool("BEAMZ_RASTER_CACHE", False)
         t_total_start = time.perf_counter()
         grid_kind = _grid_kind_for_request(self, grid_type, kwargs)
         requested_resolution_z_raw = kwargs.get("resolution_z", resolution)
