@@ -1,5 +1,7 @@
 """Shared fixtures and utilities for BeamZ FDTD physics validation tests."""
 
+from pathlib import Path
+
 import pytest
 
 from beamz import (
@@ -10,6 +12,50 @@ from beamz import (
     calc_optimal_fdtd_params,
     um,
 )
+from tests.evidence import PRIMARY_EVIDENCE_MARKERS, evidence_markers_for_path
+
+TESTS_ROOT = Path(__file__).parent
+pytest_plugins = ("tests.validation.plugin",)
+
+
+def pytest_collection_modifyitems(items):
+    """Classify every test by the kind of evidence it provides.
+
+    Directory placement supplies the default primary class. An explicitly
+    marked test may repeat that class, but may not claim a conflicting one.
+    """
+    for item in items:
+        markers = evidence_markers_for_path(Path(item.path), tests_root=TESTS_ROOT)
+        expected_primary = markers[0]
+        explicit_primary = {
+            marker.name
+            for marker in item.iter_markers()
+            if marker.name in PRIMARY_EVIDENCE_MARKERS
+        }
+        if explicit_primary and explicit_primary != {expected_primary}:
+            raise pytest.UsageError(
+                f"{item.nodeid} is stored as {expected_primary!r} evidence but "
+                f"explicitly claims {sorted(explicit_primary)!r}"
+            )
+        for marker in markers:
+            item.add_marker(marker)
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_makereport(item, call):
+    """Turn silent skips in numerical-evidence suites into explicit failures."""
+    outcome = yield
+    report = outcome.get_result()
+    relative = Path(item.path).resolve().relative_to(TESTS_ROOT.resolve())
+    is_numerical_evidence = relative.parts[0] in {"validation", "differential"}
+    is_plain_skip = report.skipped and not hasattr(report, "wasxfail")
+    if is_numerical_evidence and is_plain_skip:
+        report.outcome = "failed"
+        report.longrepr = (
+            f"{item.nodeid} skipped during {report.when}; numerical evidence must "
+            "either satisfy its test premise or fail explicitly"
+        )
+
 
 # =============================================================================
 # Constants (exposed via fixtures)
@@ -121,7 +167,7 @@ def dielectric_interface_domain():
     # Add dielectric in right half
     interface_x = domain_width / 2
     design += Rectangle(
-        position=(interface_x + domain_width / 4, domain_height / 2),
+        position=(interface_x, 0.0),
         width=domain_width / 2,
         height=domain_height,
         material=Material(permittivity=n2**2),
@@ -168,7 +214,7 @@ def waveguide_domain():
 
     # Add waveguide core (horizontal stripe in center)
     design += Rectangle(
-        position=(domain_width / 2, domain_height / 2),
+        position=(0.0, (domain_height - core_width) / 2),
         width=domain_width,
         height=core_width,
         material=Material(permittivity=n_core**2),

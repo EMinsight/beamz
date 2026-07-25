@@ -30,8 +30,11 @@ ENV/
 
 # Test, coverage, and type-checker artifacts
 .coverage
+coverage.json
 coverage.xml
 htmlcov/
+site/
+validation-results.json
 .hypothesis/
 .benchmarks/
 .mypy_cache/
@@ -70,6 +73,7 @@ htmlcov/
 /tmp/
 /wip/
 /benchmarks/results/
+/validation-results/
 
 # Local scratch files
 NOTES.md
