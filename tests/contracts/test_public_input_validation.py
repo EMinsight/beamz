@@ -60,6 +60,7 @@ def _port(**changes):
         ({"center": (0.0, 0.0)}, "three values"),
         ({"center": (np.inf, 0.0, 0.0)}, "finite"),
         ({"size": (0.0, -1.0, 1.0)}, "non-negative"),
+        ({"size": (0.0, np.inf, 1.0)}, "finite"),
         ({"size": (0.0, 0.0, 1.0)}, "exactly one zero"),
         ({"name": ""}, "name cannot be empty"),
         ({"direction": "forward"}, "direction must"),
@@ -81,6 +82,7 @@ def test_port_derivations_translation_and_device_factories_are_consistent():
     assert port.num_modes == 3
     assert port.mode_index == 1
     assert port.polarization == "te"
+    assert port.mode_spec.polarization == "te"
 
     shifted = port.shifted((1.0, 2.0, 3.0))
     assert shifted.center == (1.0, 2.0, 3.0)
@@ -91,6 +93,10 @@ def test_port_derivations_translation_and_device_factories_are_consistent():
     assert monitor.center == port.center
     assert monitor.name == port.monitor_name
     assert monitor.mode_spec is port.mode_spec
+
+    default_source = port.to_source(2e14, 2e13)
+    assert default_source.mode_spec.mode_index == port.mode_index
+    assert default_source.mode_spec.polarization == port.polarization
 
     generated = port.to_source(2e14, 2e13, mode_index=2, num_freqs=0)
     assert isinstance(generated.source_time, bz.GaussianPulse)
@@ -118,6 +124,9 @@ def _field_monitor(**changes):
         ({"center": (0.0,)}, "2D or 3D"),
         ({"center": (np.nan, 0.0, 0.0)}, "finite"),
         ({"size": (0.0, -1.0, 1.0)}, "non-negative"),
+        ({"size": (0.0, np.inf, 1.0)}, "finite"),
+        ({"size": (1.0, 2.0, 3.0)}, "at least one zero"),
+        ({"center": (0.0, 0.0), "size": (1.0, 2.0)}, "at least one zero"),
         ({"freqs": [0.0]}, "positive"),
         ({"freqs": [np.inf]}, "finite"),
         ({"freqs": []}, "at least one"),
@@ -200,6 +209,35 @@ def test_monitor_unsnapped_geometry_fallbacks_cover_every_orientation():
         assert tuple(type(item) for item in region) == expected_kinds[axis]
 
 
+def test_monitor_2d_normalization_and_snapped_line_coordinates():
+    compact = bz.FieldMonitor(
+        center=(1.0, 2.0),
+        size=(2.0, 0.0),
+        freqs=[2e14],
+    )
+    assert compact.center == (1.0, 2.0, 0.0)
+    assert compact.size == (2.0, 0.0, 0.0)
+
+    horizontal = bz.FluxMonitor(
+        center=(2.0, 1.0, 0.0),
+        size=(4.0, 0.0, 1.0),
+        freqs=[2e14],
+    )
+    vertical = bz.FluxMonitor(
+        center=(2.0, 1.0, 0.0),
+        size=(0.0, 2.0, 1.0),
+        freqs=[2e14],
+    )
+    np.testing.assert_allclose(
+        horizontal._line_sample_coords_2d(1.0, 1.0, (5, 5)),
+        ([0.5, 1.5, 2.5, 3.5], [1.0] * 4),
+    )
+    np.testing.assert_allclose(
+        vertical._line_sample_coords_2d(1.0, 1.0, (5, 5)),
+        ([2.0] * 2, [0.5, 1.5]),
+    )
+
+
 def test_field_recorder_domain_and_slice_copy_translation_contracts():
     with pytest.raises(ValueError, match="Unsupported"):
         bz.FieldRecorder(components=())
@@ -228,6 +266,7 @@ def test_field_recorder_domain_and_slice_copy_translation_contracts():
         ({"center": (0.0, 0.0)}, "three values"),
         ({"center": (np.inf, 0.0, 0.0)}, "finite"),
         ({"size": (0.0, -1.0, 1.0)}, "non-negative"),
+        ({"size": (0.0, np.inf, 1.0)}, "finite"),
         ({"size": (0.0, 0.0, 1.0)}, "exactly one zero"),
         ({"direction": "x+"}, "direction must"),
         ({"power": -1.0}, "non-negative"),
@@ -279,6 +318,12 @@ def test_mode_and_legacy_source_edge_contracts():
         bz.GaussianSource(position=(0.0, 0.0), width=0.0, signal=[1.0])
     legacy = bz.GaussianSource(position=(1.0, 2.0), width=0.5, signal=[1.0])
     assert legacy.shifted((3.0, 4.0)).position == (4.0, 6.0)
+    with pytest.raises(ValueError, match="dimensionality"):
+        legacy.shifted((3.0, 4.0, 5.0))
+
+    volume = bz.GaussianSource(position=(1.0, 2.0, 3.0), width=0.5, signal=[1.0])
+    with pytest.raises(ValueError, match="dimensionality"):
+        volume.shifted((3.0, 4.0))
 
 
 def test_mode_data_selects_nearest_frequency_and_owns_full_profile():

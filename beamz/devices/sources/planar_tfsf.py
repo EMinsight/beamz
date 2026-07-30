@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from beamz.devices._immutable import readonly_array
+from beamz.devices.modes.fields import _axis_coordinate, _axis_index, _phase_delay
 from beamz.lattice import (
     advance_e_field,
     advance_h_field,
@@ -19,12 +20,6 @@ from beamz.lattice import (
     curl_h_to_e_3d,
 )
 
-from .mode_profiles import (
-    _axis_index_from_component_indices,
-    _component_axis_coord,
-    _numeric_phase_delay,
-    _shift_component_indices_along_axis,
-)
 from .specs import FieldProfile3D
 
 _FIELD_COMPONENTS_3D = ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
@@ -36,6 +31,22 @@ _STAGGERED_ALONG_AXIS = {
     "y": {"Ey", "Hx", "Hz"},
     "z": {"Ez", "Hx", "Hy"},
 }
+
+
+def _shift_component_indices_along_axis(indices, axis, shift, field_shape):
+    """Shift component support by integer cells along the propagation axis."""
+    if indices is None:
+        return None
+    axis_pos = _AXIS_POS_3D[axis]
+    out = list(indices)
+    plane_idx = out[axis_pos]
+    if isinstance(plane_idx, slice):
+        return None
+    plane_new = int(plane_idx) + int(shift)
+    if plane_new < 0 or plane_new >= int(field_shape[axis_pos]):
+        return None
+    out[axis_pos] = plane_new
+    return tuple(out)
 
 
 def _shape3(shape) -> tuple[int, int, int]:
@@ -84,13 +95,12 @@ def build_incident_3d_phasor_state(
     max_shift: int,
 ) -> dict[str, np.ndarray]:
     """Construct a complex carrier phasor for a local 3D incident field."""
-    dx = dy = dz = float(resolution)
     axis = field_profile.axis
     k_num = _require_k_axis(field_profile)
     omega = float(field_profile.omega)
     plane_coord = float(field_profile.phase_plane_coord)
     ref_coord = float(field_profile.phase_ref_coord)
-    d_axis = {"x": dx, "y": dy, "z": dz}[axis]
+    d_axis = float(resolution)
     direction_sign = float(field_profile.direction_sign)
     max_shift = int(max(1, max_shift))
 
@@ -102,8 +112,8 @@ def build_incident_3d_phasor_state(
         if idx is None:
             continue
 
-        base_axis_idx = _axis_index_from_component_indices(idx, axis)
-        base_coord = _component_axis_coord(comp_name, base_axis_idx, axis, dx, dy, dz)
+        base_axis_idx = _axis_index(idx, axis)
+        base_coord = _axis_coordinate(comp_name, base_axis_idx, axis, resolution)
         profile_arr = np.asarray(profile, dtype=np.complex128)
         base_time = float(t_e if comp_name.startswith("E") else t_h)
 
@@ -124,7 +134,7 @@ def build_incident_3d_phasor_state(
                 if direction_sign * (coord - mask_coord) < -1e-12:
                     continue
 
-            delay = _numeric_phase_delay(omega, k_num, coord - ref_coord)
+            delay = _phase_delay(omega, k_num, coord - ref_coord)
             phase = omega * (base_time - delay)
             field_arrays[comp_name][shifted_idx] = field_arrays[comp_name][
                 shifted_idx
@@ -142,7 +152,6 @@ def deembed_3d_phasor_profiles(
     t_h,
 ) -> dict[str, np.ndarray]:
     """Return local source-plane phasors in the source profile gauge."""
-    dx = dy = dz = float(resolution)
     axis = field_profile.axis
     k_num = _require_k_axis(field_profile)
     omega = float(field_profile.omega)
@@ -153,10 +162,10 @@ def deembed_3d_phasor_profiles(
         if idx is None or component not in state:
             continue
         values = np.asarray(state[component], dtype=np.complex128)
-        axis_idx = _axis_index_from_component_indices(idx, axis)
-        coord = _component_axis_coord(component, axis_idx, axis, dx, dy, dz)
+        axis_idx = _axis_index(idx, axis)
+        coord = _axis_coordinate(component, axis_idx, axis, resolution)
         base_time = float(t_e if component.startswith("E") else t_h)
-        delay = _numeric_phase_delay(omega, k_num, coord - ref_coord)
+        delay = _phase_delay(omega, k_num, coord - ref_coord)
         phase = omega * (base_time - delay)
         out[component] = values[idx] * np.exp(-1j * phase)
     return out

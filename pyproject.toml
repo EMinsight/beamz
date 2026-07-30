@@ -33,7 +33,6 @@ dependencies = [
     "shapely>=2.0.6",
     "jax>=0.4.0",
     "optax>=0.1.0",
-    "micromode>=0.1.0a6",
     "matplotlib>=3.8.0",
     "scikit-image>=0.21.0",
     "xarray>=2024.0.0",
@@ -50,6 +49,8 @@ gds = [
     "gdsfactory>=9.0; python_version >= '3.14'",
 ]
 dev = [
+    "ipykernel>=6.29.0",
+    "nbconvert>=7.16.0",
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "myst-parser>=2.0.0",

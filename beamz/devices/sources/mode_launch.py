@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
 
@@ -10,28 +11,61 @@ import numpy as np
 from beamz.const import EPS_0, LIGHT_SPEED, MU_0
 from beamz.devices._immutable import readonly_array
 from beamz.devices._placement import snap_mode_source_region, snap_plane_region
-from beamz.devices.sources.mode_profiles import (
-    _MODE_PLANE_APERTURE_PAD_CELLS,
-    _MODE_PLANE_APERTURE_WINDOW_ALPHA,
-    _local_component_materials,
-    _local_mode_plane_spec,
-    _mode_plane_outer_pad_cells,
-    _scale_pair_for_power,
-    _scale_profiles_for_power,
-    _shift_discrete_mode_to_global,
-    _solve_numeric_k_axis,
-    _to_real_profile,
-)
+from beamz.devices.modes.discrete import solve_beamz_mode
+from beamz.devices.modes.fields import _numeric_wave_number
+from beamz.devices.modes.plane import solve_mode_plane_3d, solve_modes
 from beamz.lattice import (
     common_grid_shape_3d,
     compile_yee_plane_quadrature_3d,
-    component_shape_3d,
     yee_flux,
 )
 
 from . import planar_tfsf
-from .solve import solve_discrete_mode_plane, solve_modes
 from .specs import FieldProfile3D, ModeSource
+
+logger = logging.getLogger(__name__)
+
+
+def _to_real_profile(profile, imag_ratio_warn=1e-2, eps=1e-30):
+    """Project a launch profile to real-valued injection coefficients."""
+    arr = np.asarray(profile, dtype=np.complex128)
+    real = np.real(arr)
+    real_peak = float(np.max(np.abs(real))) if arr.size else 0.0
+    imag_peak = float(np.max(np.abs(np.imag(arr)))) if arr.size else 0.0
+    if real_peak > eps and imag_peak / real_peak > imag_ratio_warn:
+        logger.debug(
+            "Mode profile has non-negligible imaginary content before real projection: "
+            "imag/real peak ratio=%.3e",
+            imag_peak / real_peak,
+        )
+    return real
+
+
+def _power_scale(power) -> float:
+    value = float(power)
+    if not np.isfinite(value) or value < 0.0:
+        raise ValueError(
+            f"ModeSource power must be a non-negative finite value, got {power!r}."
+        )
+    return float(np.sqrt(value))
+
+
+def _scale_profiles_for_power(profiles, power):
+    """Scale unit-power modal profiles to the requested launched power."""
+    scale = _power_scale(power)
+    if scale == 1.0:
+        return profiles
+    for key, value in profiles.items():
+        if value is not None:
+            profiles[key] = np.asarray(value) * scale
+    return profiles
+
+
+def _scale_pair_for_power(first, second, power):
+    scale = _power_scale(power)
+    if scale == 1.0:
+        return first, second
+    return np.asarray(first) * scale, np.asarray(second) * scale
 
 
 @dataclass(frozen=True)
@@ -347,90 +381,33 @@ def _plan_3d_mode_source(
     if snapped.companion_index is None:
         raise ValueError("A mode source launch needs a companion Yee plane.")
     offset_idx = int(snapped.companion_index)
-    if axis == "x":
-        eps_profile = permittivity[:, :, center_idx]
-    elif axis == "y":
-        eps_profile = permittivity[:, center_idx, :]
-    else:
-        eps_profile = permittivity[center_idx, :, :]
-
     omega = 2.0 * np.pi * source.frequency
-    eps_profile_arr = np.asarray(eps_profile)
-    n_local_max = float(np.sqrt(max(float(np.max(np.real(eps_profile_arr))), 1e-12)))
-    target_neff = (
-        source.mode_spec.target_neff
-        if source.mode_spec.target_neff is not None
-        else 0.98 * n_local_max
-    )
     solver_direction = "+y" if axis == "y" else source.signed_direction
-    solver_pad_cells = _mode_plane_outer_pad_cells(
-        width,
-        height,
-        resolution,
-    )
-    local_plane = _local_mode_plane_spec(
-        eps_profile,
+    discrete_mode = solve_mode_plane_3d(
+        permittivity,
+        np.asarray(fields.permeability),
+        frequency=source.frequency,
+        resolution=resolution,
+        dt=dt,
         axis=axis,
         grid_shape=(nz, ny, nx),
         center=source.center,
-        width=float(width),
-        height=float(height),
+        width=width,
+        height=height,
         plane_index=center_idx,
         offset_index=offset_idx,
-        resolution=float(resolution),
-        snapped_region=snapped,
-        aperture_pad_cells=solver_pad_cells,
-    )
-    local_grid_shape = tuple(int(value) for value in local_plane["grid_shape"])
-    component_shapes = {
-        component: component_shape_3d(component, local_grid_shape)
-        for component in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
-    }
-    component_permittivity, component_permeability = _local_component_materials(
-        permittivity,
-        np.asarray(fields.permeability),
-        local_plane,
-    )
-    transverse_axes = {"x": ("z", "y"), "y": ("z", "x"), "z": ("y", "x")}[axis]
-    discrete_mode = solve_discrete_mode_plane(
-        scalar_permittivity=np.asarray(local_plane["scalar_permittivity"]),
-        frequency=float(omega) / (2.0 * np.pi),
-        resolution=float(resolution),
-        dt=None if dt is None else float(dt),
-        axis=axis,
         direction=source.signed_direction,
         solver_direction=solver_direction,
-        transverse_axes=transverse_axes,
-        grid_shape=local_grid_shape,
-        component_shapes=component_shapes,
-        component_permittivity=component_permittivity,
-        component_permeability=component_permeability,
-        center=local_plane["center"],
-        width=float(width),
-        height=float(height),
-        plane_index=int(local_plane["plane_index"]),
-        offset_index=int(local_plane["offset_index"]),
-        mode_index=int(source.mode_spec.mode_index),
+        mode_index=source.mode_spec.mode_index,
         polarization=source.mode_spec.polarization,
-        target_neff=target_neff,
+        target_neff=source.mode_spec.target_neff,
         num_modes=max(
             int(source.mode_spec.num_modes),
             int(source.mode_spec.mode_index) + 1,
         ),
-        aperture_pad_cells=_MODE_PLANE_APERTURE_PAD_CELLS,
-        aperture_window_alpha=_MODE_PLANE_APERTURE_WINDOW_ALPHA,
+        snapped_region=snapped,
+        solver=solve_beamz_mode,
     )
-    discrete_mode = _shift_discrete_mode_to_global(
-        discrete_mode,
-        origin_zyx=local_plane["origin_zyx"],
-        axis=axis,
-        resolution=resolution,
-    )
-    if discrete_mode is None:
-        raise RuntimeError(
-            "micromode returned a DiscreteMode that could not be shifted into "
-            "the BEAMZ global Yee grid."
-        )
     profiles = {
         name: np.asarray(value, dtype=np.complex128)
         for name, value in discrete_mode.profiles.items()
@@ -450,7 +427,7 @@ def _plan_3d_mode_source(
     if dt is None:
         k_axis = float(np.real(discrete_mode.neff)) * float(omega) / LIGHT_SPEED
     elif not np.isfinite(k_axis):
-        k_axis = _solve_numeric_k_axis(omega, dt, resolution, discrete_mode.neff)
+        k_axis = _numeric_wave_number(omega, dt, resolution, discrete_mode.neff)
     field_profile = FieldProfile3D(
         components=profiles,
         indices=indices,  # type: ignore[arg-type]

@@ -12,20 +12,11 @@ from beamz.analysis.modal_projection.geometry import (
     _modal_projection_plane_delay_s,
     _mode_components_for_port,
     _monitor_analysis_plane_3d,
-    _plane_axes_for_port_axis,
 )
+from beamz.devices.modes.discrete import DISCRETE_MODE_CONTRACT, solve_beamz_mode
+from beamz.devices.modes.fields import _modal_overlap, _normalize_profiles
+from beamz.devices.modes.plane import solve_mode_plane_3d, solve_modes
 from beamz.devices.monitors.monitors import ModeMonitor
-from beamz.devices.sources.mode_profiles import (
-    _MODE_PLANE_APERTURE_PAD_CELLS,
-    _MODE_PLANE_APERTURE_WINDOW_ALPHA,
-    _local_component_materials,
-    _local_mode_plane_spec,
-    _modal_overlap_3d_profiles,
-    _mode_plane_outer_pad_cells,
-    _normalize_3d_profiles_by_flux,
-    _shift_discrete_mode_to_global,
-)
-from beamz.devices.sources.solve import solve_discrete_mode_plane, solve_modes
 
 
 def _material_arrays(sim):
@@ -184,8 +175,6 @@ def _build_discrete_port_projection_3d(
             int(spec.mode_index) + 1,
         )
     )
-    target = mode_spec.target_neff
-
     center = tuple(float(value) for value in monitor.center)
     size = tuple(float(value) for value in monitor.size_spec)
     if axis == "x":
@@ -195,85 +184,34 @@ def _build_discrete_port_projection_3d(
     else:
         width, height = size[0], size[1]
 
-    transverse_axes = _plane_axes_for_port_axis(axis)
-    eps_profile_full = np.take(perm, plane_index - origin[axis_index], axis=axis_index)
     snapped_region = monitor.get_snapped_region(
         dx=float(sim.resolution),
         dy=float(sim.resolution),
         dz=float(sim.resolution),
         field_shape=full_shape,
     )
-    local_plane = _local_mode_plane_spec(
-        eps_profile_full,
+    discrete_mode = solve_mode_plane_3d(
+        perm,
+        permeability,
+        frequency=frequency,
+        resolution=sim.resolution,
+        dt=sim.dt,
         axis=axis,
         grid_shape=full_shape,
         center=center,
-        width=float(width),
-        height=float(height),
-        plane_index=int(plane_index),
-        offset_index=int(offset_index),
-        resolution=float(sim.resolution),
-        snapped_region=snapped_region,
-        aperture_pad_cells=_mode_plane_outer_pad_cells(
-            width,
-            height,
-            sim.resolution,
-        ),
-    )
-    if target is None:
-        target = 0.98 * np.sqrt(
-            max(
-                float(np.max(np.real(local_plane["scalar_permittivity"]))),
-                1e-12,
-            )
-        )
-    sampling_plane = dict(local_plane)
-    sampling_plane["origin_zyx"] = tuple(
-        int(global_offset) - int(region_offset)
-        for global_offset, region_offset in zip(
-            local_plane["origin_zyx"], origin, strict=True
-        )
-    )
-    component_permittivity, component_permeability = _local_component_materials(
-        perm, permeability, sampling_plane
-    )
-    discrete_mode = solve_discrete_mode_plane(
-        scalar_permittivity=np.asarray(
-            local_plane["scalar_permittivity"],
-            dtype=np.complex128,
-        ),
-        frequency=float(frequency),
-        resolution=float(sim.resolution),
-        dt=float(sim.dt),
-        axis=axis,
+        width=width,
+        height=height,
+        plane_index=plane_index,
+        offset_index=offset_index,
         direction=spec.projection_direction,
-        solver_direction=spec.projection_direction,
-        transverse_axes=transverse_axes,
-        grid_shape=local_plane["grid_shape"],
-        component_shapes=local_plane["component_shapes"],
-        component_permittivity=component_permittivity,
-        component_permeability=component_permeability,
-        center=local_plane["center"],
-        width=float(width),
-        height=float(height),
-        plane_index=int(local_plane["plane_index"]),
-        offset_index=int(local_plane["offset_index"]),
-        mode_index=int(spec.mode_index),
+        mode_index=spec.mode_index,
         polarization=str(spec.polarization).lower(),
-        target_neff=target,
+        target_neff=mode_spec.target_neff,
         num_modes=num_modes,
-        aperture_pad_cells=_MODE_PLANE_APERTURE_PAD_CELLS,
-        aperture_window_alpha=_MODE_PLANE_APERTURE_WINDOW_ALPHA,
+        snapped_region=snapped_region,
+        material_origin_zyx=origin,
+        solver=solve_beamz_mode,
     )
-    discrete_mode = _shift_discrete_mode_to_global(
-        discrete_mode,
-        origin_zyx=local_plane["origin_zyx"],
-        axis=axis,
-        resolution=float(sim.resolution),
-    )
-    if discrete_mode is None:
-        raise RuntimeError("Unable to place the discrete mode on the monitor grid.")
-
     proj_components = tuple(parts.get("projection_components_3d", ()))
     if not proj_components:
         raise ValueError(f"Port axis {axis!r} has no 3D projection components.")
@@ -316,35 +254,39 @@ def _build_discrete_port_projection_3d(
             + ", ".join(missing_components)
         )
 
-    plus_components = _normalize_3d_profiles_by_flux(
-        {
-            name: np.asarray(plus_components[name], dtype=np.complex128)
-            for name in proj_components
-        },
+    plus_components = {
+        name: np.asarray(plus_components[name], dtype=np.complex128)
+        for name in proj_components
+    }
+    minus_components = {
+        name: np.asarray(minus_components[name], dtype=np.complex128)
+        for name in proj_components
+    }
+    _normalize_profiles(
+        plus_components,
         axis=axis,
-        d_area=float(d_area),
+        measure=float(d_area),
         direction_sign=float(direction_sign),
+        max_scale=1e6,
     )
-    minus_components = _normalize_3d_profiles_by_flux(
-        {
-            name: np.asarray(minus_components[name], dtype=np.complex128)
-            for name in proj_components
-        },
+    _normalize_profiles(
+        minus_components,
         axis=axis,
-        d_area=float(d_area),
+        measure=float(d_area),
         direction_sign=float(direction_sign),
+        max_scale=1e6,
     )
     overlap_matrix = np.asarray(
         [
             [
-                _modal_overlap_3d_profiles(
+                _modal_overlap(
                     plus_components,
                     plus_components,
                     axis,
                     float(d_area),
                     direction_sign=direction_sign,
                 ),
-                _modal_overlap_3d_profiles(
+                _modal_overlap(
                     plus_components,
                     minus_components,
                     axis,
@@ -353,14 +295,14 @@ def _build_discrete_port_projection_3d(
                 ),
             ],
             [
-                _modal_overlap_3d_profiles(
+                _modal_overlap(
                     minus_components,
                     plus_components,
                     axis,
                     float(d_area),
                     direction_sign=direction_sign,
                 ),
-                _modal_overlap_3d_profiles(
+                _modal_overlap(
                     minus_components,
                     minus_components,
                     axis,
@@ -394,7 +336,7 @@ def _build_discrete_port_projection_3d(
         "axis": axis,
         "direction_sign": float(direction_sign),
         "d_area": float(d_area),
-        "discrete_contract": "micromode.beamz.DiscreteMode/v1",
+        "discrete_contract": DISCRETE_MODE_CONTRACT,
         "analysis_coords0": np.asarray(analysis_coords0, dtype=np.float64),
         "analysis_coords1": np.asarray(analysis_coords1, dtype=np.float64),
     }
@@ -567,7 +509,7 @@ def _project_modal_coefficients_3d_group(field_components, projections):
 
     rhs = np.asarray(
         [
-            _modal_overlap_3d_profiles(
+            _modal_overlap(
                 field_components,
                 mode,
                 axis,
@@ -581,7 +523,7 @@ def _project_modal_coefficients_3d_group(field_components, projections):
     overlap = np.asarray(
         [
             [
-                _modal_overlap_3d_profiles(
+                _modal_overlap(
                     basis_i,
                     basis_j,
                     axis,

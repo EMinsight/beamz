@@ -26,7 +26,7 @@
 - **Multi-GPU** runs, handling **large-scale simulations** with _billions of cells_.
 - CPU-capable for **fast prototyping**, even on your laptop.
 - Intuitive and **familiar API**.
-- **Native FDFD mode solver, _[micromode](https://github.com/beamzorg/micromode)_**.
+- Native **FDFD mode solver** with discrete Yee-grid refinement and validation.
 - **CPML**, absorbing layers and PEC boundaries.
 - Unidirectional **mode sources** (single freq. and broadband, Huygens fields + TFSF, TE/TM).
 - **Gaussian sources**, e.g. for grating coupler simulations.
@@ -65,12 +65,13 @@ Install BeamZ using pip:
 pip install beamz
 ```
 
-For development installation, clone the repository and install in editable mode:
+Development uses [uv](https://docs.astral.sh/uv/). Clone the repository and sync
+the package with its contributor dependencies:
 
 ```bash
 git clone https://github.com/beamzorg/beamz
 cd beamz
-pip install -e ".[dev]"
+uv sync --extra dev --extra test
 ```
 
 For a ready-to-use CUDA and Jupyter development environment, see the

@@ -35,9 +35,10 @@ from beamz.design.gds import (
     import_component,
     import_gds,
 )
-from beamz.devices.sources.mode_profiles import (
-    _MODE_PLANE_APERTURE_PAD_CELLS,
-    _MODE_PLANE_APERTURE_WINDOW_ALPHA,
+from beamz.devices.modes.discrete import DiscreteMode
+from beamz.devices.modes.plane import (
+    MODE_PLANE_APERTURE_PAD_CELLS,
+    MODE_PLANE_APERTURE_WINDOW_ALPHA,
 )
 from beamz.lattice import component_shape_3d
 from beamz.simulation.results import FieldMetadata, MaterialRegion, SimulationMetadata
@@ -316,8 +317,8 @@ def test_build_port_projection_3d_modemonitor_uses_discrete_contract(monkeypatch
 
     captured = {}
 
-    def fake_solve_discrete_mode_plane(**kwargs):
-        captured.update(kwargs)
+    def fake_solve_beamz_mode(spec):
+        captured.update(vars(spec))
         profile_shape = (2, 2)
         zeros = np.zeros(profile_shape, dtype=np.complex128)
         forward = {
@@ -340,21 +341,24 @@ def test_build_port_projection_3d_modemonitor_uses_discrete_contract(monkeypatch
             "Hy": (slice(1, 3), slice(1, 3), 1),
             "Hz": (slice(1, 3), slice(1, 3), 1),
         }
-        return SimpleNamespace(
+        return DiscreteMode(
             neff=2.25,
             profiles=forward,
             backward_profiles=backward,
             component_indices=indices,
+            axis=spec.axis,
+            direction=spec.direction,
+            transverse_axes=spec.transverse_axes,
+            phase_reference_component="Hz",
             phase_reference_coord=0.25,
             phase_plane_coord=0.5,
+            k_num_axis=1.0,
+            power_scale=1.0,
+            diagnostics={},
         )
 
     monkeypatch.setattr(mp, "solve_modes", fail_solve_modes)
-    monkeypatch.setattr(
-        mp,
-        "solve_discrete_mode_plane",
-        fake_solve_discrete_mode_plane,
-    )
+    monkeypatch.setattr(mp, "solve_beamz_mode", fake_solve_beamz_mode)
 
     monitor = ModeMonitor(
         center=(1.5, 1.5, 1.5),
@@ -385,14 +389,14 @@ def test_build_port_projection_3d_modemonitor_uses_discrete_contract(monkeypatch
     assert captured["offset_index"] == 0
     assert captured["num_modes"] == 4
     assert captured["target_neff"] == 2.25
-    assert captured["aperture_pad_cells"] == _MODE_PLANE_APERTURE_PAD_CELLS
-    assert captured["aperture_window_alpha"] == _MODE_PLANE_APERTURE_WINDOW_ALPHA
+    assert captured["aperture_pad_cells"] == MODE_PLANE_APERTURE_PAD_CELLS
+    assert captured["aperture_window_alpha"] == MODE_PLANE_APERTURE_WINDOW_ALPHA
     assert captured["scalar_permittivity"].shape == (4, 4)
     assert captured["grid_shape"] == (4, 4, 3)
-    assert captured["component_shapes"]["Ey"] == (5, 4, 4)
+    assert captured["component_permittivity"]["Ey"].shape == (5, 4, 4)
     assert "component_permittivity" in captured
     assert "component_permeability" in captured
-    assert projection["discrete_contract"] == "micromode.beamz.DiscreteMode/v1"
+    assert projection["discrete_contract"] == "beamz.devices.modes.DiscreteMode/v1"
     assert projection["components"] == ("Ey", "Ez", "Hy", "Hz")
     assert np.real(projection["mode_components"]["Hz"][0]) < 0.0
     assert np.real(projection["mode_components_bwd"]["Hz"][0]) > 0.0

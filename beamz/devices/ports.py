@@ -7,8 +7,12 @@ from typing import TYPE_CHECKING, Any, Iterable, Literal, Sequence
 
 import numpy as np
 
-from beamz.devices._immutable import immutable_snapshot
-from beamz.devices.sources.specs import ModeSpec
+from beamz.devices._immutable import (
+    finite_tuple,
+    immutable_snapshot,
+    nonnegative_finite_extents,
+)
+from beamz.devices.modes.specs import ModeSpec
 
 if TYPE_CHECKING:
     from beamz.devices.monitors import ModeMonitor
@@ -63,14 +67,10 @@ class Port:
     monitor_name: str | None = None
 
     def __post_init__(self) -> None:
-        center = tuple(float(value) for value in self.center)
-        size = tuple(float(value) for value in self.size)
+        center = finite_tuple(self.center, name="Port center")
+        size = nonnegative_finite_extents(self.size, name="Port size")
         if len(center) != 3 or len(size) != 3:
             raise ValueError("Port center and size must contain three values.")
-        if any(not np.isfinite(value) for value in center):
-            raise ValueError("Port center must be finite.")
-        if any(value < 0.0 or np.isnan(value) for value in size):
-            raise ValueError("Port size must contain non-negative extents.")
         zero_axes = np.flatnonzero(np.isclose(size, 0.0, rtol=0.0, atol=1e-15))
         if zero_axes.size != 1:
             raise ValueError("Port size must contain exactly one zero extent.")
@@ -91,6 +91,8 @@ class Port:
         mode_spec = immutable_snapshot(self.mode_spec)
         if not isinstance(mode_spec, ModeSpec):
             raise TypeError("Port mode_spec must be a ModeSpec.")
+        if mode_spec.polarization is None:
+            mode_spec = replace(mode_spec, polarization="te")
         object.__setattr__(self, "mode_spec", mode_spec)
 
     @property
@@ -244,7 +246,7 @@ class Port:
         self,
         freq0: float,
         fwidth: float,
-        mode_index: int = 0,
+        mode_index: int | None = None,
         num_freqs: int = 1,
         *,
         source_time: Any | None = None,
@@ -258,8 +260,9 @@ class Port:
             Carrier frequency in hertz.
         fwidth : float
             Gaussian frequency width in hertz when ``source_time`` is omitted.
-        mode_index : int, default=0
-            Zero-based mode to launch.
+        mode_index : int, optional
+            Zero-based mode to launch. Defaults to the mode selected by
+            :attr:`mode_spec`.
         num_freqs : int, default=1
             Frequency samples used for broadband modal reconstruction.
         source_time : source-time specification, optional
@@ -282,7 +285,9 @@ class Port:
             source_time = GaussianPulse(freq0=float(freq0), fwidth=float(fwidth))
         mode_spec = replace(
             self.mode_spec,
-            mode_index=int(mode_index),
+            mode_index=(
+                self.mode_spec.mode_index if mode_index is None else int(mode_index)
+            ),
             num_freqs=max(1, int(num_freqs)),
         )
         return ModeSource(
