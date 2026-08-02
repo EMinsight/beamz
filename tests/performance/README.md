@@ -24,7 +24,17 @@ python scripts/benchmark_h100.py --workload realistic_3d \
   --output benchmarks/realistic-h100.json
 ```
 
+Pass `--devices 4 --shard-axis auto` for a four-device JAX record. CUDA backends
+currently require `--devices 1`. The runner derives device identity, count, and peak
+memory only from devices that own the placed field state, so unrelated visible GPUs
+do not change the record.
+
+Use `compare_benchmarks()` for same-backend regression gates and
+`compare_backend_speedup()` to compare JAX, streamed CUDA, and Hopper records for the
+same physical workload and hardware.
+
 The default `(nz, ny, nx) = (128, 256, 384)` grid and 500 timesteps are part of
-the workload identity. Results with different features, backend, hardware, device
-count, shape, or timestep count are deliberately not comparable. See `H100.md` for
-measurement protocol and the pre-harness observations that motivate the CUDA work.
+the workload identity. Regression records with different features, backend,
+hardware, device count, shape, or timestep count are deliberately not comparable.
+See `H100.md` for measurement protocol and the pre-harness observations that
+motivate the CUDA work.

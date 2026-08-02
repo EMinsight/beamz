@@ -110,12 +110,9 @@ class BenchmarkRecord:
 
     @property
     def workload_identity(self) -> tuple[Any, ...]:
-        """Return every input that must match for a valid comparison."""
+        """Return the physical workload, independent of its implementation."""
         return (
             self.workload,
-            self.backend,
-            self.device,
-            self.device_count,
             self.precision,
             self.grid_dimensions,
             self.timesteps,
@@ -123,6 +120,15 @@ class BenchmarkRecord:
             self.sources,
             self.monitors,
         )
+
+    @property
+    def execution_identity(self) -> tuple[Any, ...]:
+        """Return implementation and hardware inputs for regression gating."""
+        return (self.backend, self.device, self.device_count)
+
+    @property
+    def comparison_identity(self) -> tuple[Any, ...]:
+        return (*self.workload_identity, *self.execution_identity)
 
     def as_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -153,6 +159,16 @@ class BenchmarkComparison:
     passed: bool | None
 
 
+@dataclass(frozen=True, slots=True)
+class BackendSpeedup:
+    """Relative performance of two backends on one physical workload and machine."""
+
+    kernel_speedup: float
+    end_to_end_speedup: float
+    compile_speedup: float
+    memory_ratio: float
+
+
 def _relative_change(current: float, baseline: float) -> float:
     if baseline <= 0.0:
         raise ValueError("baseline benchmark values must be positive")
@@ -169,7 +185,7 @@ def compare_benchmarks(
     compile_limit: float = 0.10,
 ) -> BenchmarkComparison:
     """Compare records; gate only when the machine is explicitly controlled."""
-    if baseline.workload_identity != current.workload_identity:
+    if baseline.comparison_identity != current.comparison_identity:
         raise ValueError("benchmark records do not describe the same workload")
     runtime_change = _relative_change(
         current.median_warm_runtime_s,
@@ -199,4 +215,26 @@ def compare_benchmarks(
         memory_change=memory_change,
         controlled_hardware=controlled_hardware,
         passed=passed,
+    )
+
+
+def compare_backend_speedup(
+    baseline: BenchmarkRecord,
+    candidate: BenchmarkRecord,
+) -> BackendSpeedup:
+    """Compare backend implementations while holding physics and hardware fixed."""
+    if baseline.workload_identity != candidate.workload_identity:
+        raise ValueError("benchmark records do not describe the same physical workload")
+    if (baseline.device, baseline.device_count) != (
+        candidate.device,
+        candidate.device_count,
+    ):
+        raise ValueError("backend speedup requires the same hardware and device count")
+    return BackendSpeedup(
+        kernel_speedup=baseline.median_warm_runtime_s
+        / candidate.median_warm_runtime_s,
+        end_to_end_speedup=baseline.median_warm_end_to_end_s
+        / candidate.median_warm_end_to_end_s,
+        compile_speedup=baseline.compile_s / candidate.compile_s,
+        memory_ratio=candidate.peak_memory_bytes / baseline.peak_memory_bytes,
     )

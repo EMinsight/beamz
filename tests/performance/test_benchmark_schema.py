@@ -7,6 +7,7 @@ import pytest
 from tests.performance.benchmark_schema import (
     SCHEMA_VERSION,
     BenchmarkRecord,
+    compare_backend_speedup,
     compare_benchmarks,
 )
 
@@ -119,3 +120,23 @@ def test_benchmark_comparison_rejects_feature_or_backend_mismatch(baseline_recor
             replace(baseline_record, monitors=()),
             controlled_hardware=True,
         )
+
+
+def test_backend_speedup_allows_implementation_change_on_same_hardware(
+    baseline_record,
+):
+    candidate = replace(
+        baseline_record,
+        backend="cuda_streamed",
+        warm_runtime_samples_s=(1.0, 1.0, 1.0),
+        warm_end_to_end_samples_s=(1.4, 1.4, 1.4),
+        compile_s=4.0,
+        peak_memory_bytes=3_000_000_000,
+    )
+
+    speedup = compare_backend_speedup(baseline_record, candidate)
+
+    assert speedup.kernel_speedup == pytest.approx(2.0)
+    assert speedup.end_to_end_speedup == pytest.approx(1.5)
+    assert speedup.compile_speedup == pytest.approx(2.0)
+    assert speedup.memory_ratio == pytest.approx(0.75)

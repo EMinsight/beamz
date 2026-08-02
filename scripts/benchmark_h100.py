@@ -17,6 +17,7 @@ import beamz
 from beamz.simulation import observe as monitor_runtime
 from beamz.simulation import sharding as sharding_runtime
 from beamz.simulation.execute import build_scan, initial_program_state
+from beamz.simulation.model import ShardingConfig
 from tests.performance.benchmark_schema import BenchmarkRecord
 from tests.performance.h100_workloads import H100_WORKLOADS
 
@@ -32,7 +33,14 @@ def _git_commit() -> str:
         capture_output=True,
         text=True,
     )
-    return result.stdout.strip()
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    suffix = "-dirty" if status.stdout.strip() else ""
+    return result.stdout.strip() + suffix
 
 
 def _peak_memory_bytes(devices, fallback: int) -> int:
@@ -51,6 +59,16 @@ def _peak_memory_bytes(devices, fallback: int) -> int:
     return total if found and total > 0 else int(fallback)
 
 
+def _array_devices(array) -> tuple[object, ...]:
+    devices = getattr(array, "devices", None)
+    if callable(devices):
+        return tuple(devices())
+    device = getattr(array, "device", None)
+    if callable(device):
+        device = device()
+    return () if device is None else (device,)
+
+
 def _time_call(callable_):
     started = time.perf_counter()
     value = callable_()
@@ -59,11 +77,22 @@ def _time_call(callable_):
 
 
 def run_benchmark(args: argparse.Namespace) -> BenchmarkRecord:
-    devices = jax.devices()
-    if not devices:
+    visible_devices = jax.devices()
+    if not visible_devices:
         raise RuntimeError("JAX reported no execution devices")
-    if not args.allow_cpu and not all(device.platform == "gpu" for device in devices):
+    if not args.allow_cpu and not all(
+        device.platform == "gpu" for device in visible_devices
+    ):
         raise RuntimeError("H100 benchmark requires GPU devices; use --allow-cpu for smoke tests")
+    sharding = (
+        None
+        if args.devices == 1
+        else ShardingConfig(
+            enabled=True,
+            axis=args.shard_axis,
+            num_devices=args.devices,
+        )
+    )
 
     workload = H100_WORKLOADS[args.workload].resized(
         shape_zyx=None if args.shape is None else tuple(args.shape),
@@ -73,7 +102,7 @@ def run_benchmark(args: argparse.Namespace) -> BenchmarkRecord:
     sim.clear_compiled_cache()
     program = sim.compile(
         num_steps=workload.timesteps,
-        sharding=args.sharding,
+        sharding=sharding,
         backend=args.backend,
     )
     state = initial_program_state(
@@ -88,6 +117,9 @@ def run_benchmark(args: argparse.Namespace) -> BenchmarkRecord:
         replicated_fields=(*monitor_runtime.MONITOR_FIELDS, "t", "current_step"),
     )
     coefficients = sharding_runtime.place_tree(program, program.coefficients)
+    execution_devices = _array_devices(state.ex)
+    if not execution_devices:
+        raise RuntimeError("could not determine devices used by the benchmark state")
     scan = build_scan(program, donate_state=False)
 
     started = time.perf_counter()
@@ -108,7 +140,7 @@ def run_benchmark(args: argparse.Namespace) -> BenchmarkRecord:
     # Public-path latency includes input placement, state allocation and result decode.
     warm_run = sim.advance(
         num_steps=workload.timesteps,
-        sharding=args.sharding,
+        sharding=sharding,
         backend=args.backend,
     )
     _block(warm_run.state)
@@ -116,7 +148,7 @@ def run_benchmark(args: argparse.Namespace) -> BenchmarkRecord:
         _time_call(
             lambda: sim.advance(
                 num_steps=workload.timesteps,
-                sharding=args.sharding,
+                sharding=sharding,
                 backend=args.backend,
             ).state
         )[1]
@@ -124,7 +156,7 @@ def run_benchmark(args: argparse.Namespace) -> BenchmarkRecord:
     )
     memory_fallback = sim.memory_estimate(
         num_steps=workload.timesteps,
-        sharding=args.sharding,
+        sharding=sharding,
     )["total_bytes"]
     features = workload.feature_labels
     return BenchmarkRecord(
@@ -135,8 +167,10 @@ def run_benchmark(args: argparse.Namespace) -> BenchmarkRecord:
         jaxlib_version=jaxlib.__version__,
         workload=workload.name,
         backend=program.config.backend,
-        device="; ".join(sorted({device.device_kind for device in devices})),
-        device_count=len(devices),
+        device="; ".join(
+            sorted({device.device_kind for device in execution_devices})
+        ),
+        device_count=len(execution_devices),
         precision="float32",
         grid_dimensions=workload.shape_zyx,
         timesteps=workload.timesteps,
@@ -147,7 +181,7 @@ def run_benchmark(args: argparse.Namespace) -> BenchmarkRecord:
         compile_s=compile_s,
         warm_runtime_samples_s=kernel_samples,
         warm_end_to_end_samples_s=end_to_end_samples,
-        peak_memory_bytes=_peak_memory_bytes(devices, memory_fallback),
+        peak_memory_bytes=_peak_memory_bytes(execution_devices, memory_fallback),
     )
 
 
@@ -162,7 +196,17 @@ def _parser() -> argparse.ArgumentParser:
         choices=("auto", "jax", "cuda", "cuda_streamed", "cuda_hopper"),
         default="auto",
     )
-    parser.add_argument("--sharding", default=None)
+    parser.add_argument(
+        "--devices",
+        type=int,
+        default=1,
+        help="number of JAX devices; values greater than one enable sharding",
+    )
+    parser.add_argument(
+        "--shard-axis",
+        choices=("auto", "z", "y", "x"),
+        default="auto",
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument(
         "--allow-cpu",
@@ -176,6 +220,8 @@ def main() -> None:
     args = _parser().parse_args()
     if args.samples < 3:
         raise SystemExit("--samples must be at least three")
+    if args.devices < 1:
+        raise SystemExit("--devices must be positive")
     if args.timesteps is None:
         args.timesteps = H100_WORKLOADS[args.workload].timesteps
     record = run_benchmark(args)
