@@ -116,3 +116,20 @@ def test_cuda_backend_selects_hybrid_jax_orchestration_kernel():
     assert selected.kind == "cuda_streamed"
     assert selected.update_h is cuda_runtime.update_h
     assert selected.update_e is cuda_runtime.update_e
+
+
+def test_hopper_backend_uses_sm90_tiled_target(monkeypatch):
+    program, state, context = _program_and_state(cpml=False)
+    context = replace(context, config=replace(context.config, backend="cuda_hopper"))
+    targets = []
+
+    def fake_ffi_call(target, result_metadata, **options):
+        del result_metadata, options
+        targets.append(target)
+        return lambda *arguments, **attributes: arguments[:3]
+
+    monkeypatch.setattr(cuda_runtime.jax.ffi, "ffi_call", fake_ffi_call)
+
+    cuda_runtime.update_h(state, context, program.coefficients)
+
+    assert targets == ["beamz_cuda_hopper"]

@@ -11,6 +11,8 @@ NB_MODULE(beamz_cuda, module) {
     nb::dict registrations;
     registrations["beamz_cuda_streamed"] =
         nb::capsule(reinterpret_cast<void*>(beamz_cuda_streamed));
+    registrations["beamz_cuda_hopper"] =
+        nb::capsule(reinterpret_cast<void*>(beamz_cuda_hopper));
     return registrations;
   });
 }

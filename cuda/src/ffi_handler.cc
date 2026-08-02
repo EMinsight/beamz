@@ -28,10 +28,12 @@ ffi::Error DecodeBuffer(const ffi::AnyBuffer& value, BeamzBuffer* output) {
   return ffi::Error::Success();
 }
 
-ffi::Error StreamedHandler(void* stream, ffi::RemainingArgs args,
-                           ffi::RemainingRets rets, int32_t abi_version,
-                           int32_t phase, int32_t nterms, float dt,
-                           float resolution, int32_t metallic_edges) {
+using Launcher = int (*)(void*, const BeamzLaunch&);
+
+ffi::Error Dispatch(Launcher launcher, void* stream, ffi::RemainingArgs args,
+                    ffi::RemainingRets rets, int32_t abi_version, int32_t phase,
+                    int32_t nterms, float dt, float resolution,
+                    int32_t metallic_edges) {
   if (abi_version != BEAMZ_CUDA_ABI_VERSION) {
     return ffi::Error::InvalidArgument("beamz_cuda ABI version mismatch");
   }
@@ -61,17 +63,46 @@ ffi::Error StreamedHandler(void* stream, ffi::RemainingArgs args,
       return error;
     }
   }
-  const int error = BeamzLaunchStreamed(stream, launch);
+  const int error = launcher(stream, launch);
   return error == 0
              ? ffi::Error::Success()
              : ffi::Error::Internal("BeamZ CUDA kernel launch failed: " +
                                     std::to_string(error));
 }
 
+ffi::Error StreamedHandler(void* stream, ffi::RemainingArgs args,
+                           ffi::RemainingRets rets, int32_t abi_version,
+                           int32_t phase, int32_t nterms, float dt,
+                           float resolution, int32_t metallic_edges) {
+  return Dispatch(BeamzLaunchStreamed, stream, args, rets, abi_version, phase,
+                  nterms, dt, resolution, metallic_edges);
+}
+
+ffi::Error HopperHandler(void* stream, ffi::RemainingArgs args,
+                         ffi::RemainingRets rets, int32_t abi_version,
+                         int32_t phase, int32_t nterms, float dt,
+                         float resolution, int32_t metallic_edges) {
+  return Dispatch(BeamzLaunchHopper, stream, args, rets, abi_version, phase,
+                  nterms, dt, resolution, metallic_edges);
+}
+
 }  // namespace
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     beamz_cuda_streamed, StreamedHandler,
+    ffi::Ffi::Bind()
+        .Ctx<ffi::PlatformStream<void*>>()
+        .RemainingArgs()
+        .RemainingRets()
+        .Attr<int32_t>("abi_version")
+        .Attr<int32_t>("phase")
+        .Attr<int32_t>("nterms")
+        .Attr<float>("dt")
+        .Attr<float>("resolution")
+        .Attr<int32_t>("metallic_edges"));
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    beamz_cuda_hopper, HopperHandler,
     ffi::Ffi::Bind()
         .Ctx<ffi::PlatformStream<void*>>()
         .RemainingArgs()

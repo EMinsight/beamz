@@ -22,5 +22,6 @@ struct BeamzLaunch {
 
 // Returns zero after enqueueing all work, otherwise a CUDA runtime error code.
 int BeamzLaunchStreamed(void* stream, const BeamzLaunch& launch);
+int BeamzLaunchHopper(void* stream, const BeamzLaunch& launch);
 
 #endif  // BEAMZ_CUDA_LAUNCH_H_

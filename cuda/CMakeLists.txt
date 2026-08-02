@@ -18,6 +18,7 @@ nanobind_add_module(
   src/extension.cc
   src/ffi_handler.cc
   src/streamed.cu
+  src/hopper.cu
 )
 target_compile_features(beamz_cuda PRIVATE cxx_std_17)
 target_include_directories(beamz_cuda PRIVATE "${JAX_FFI_INCLUDE}" src)
