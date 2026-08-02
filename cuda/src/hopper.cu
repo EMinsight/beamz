@@ -11,10 +11,10 @@ constexpr float kMu0 = 1.25663706212e-6f;
 constexpr int kTileX = 32;
 constexpr int kTileY = 4;
 constexpr int kTileZ = 2;
-constexpr int kSharedX = kTileX + 2;
-constexpr int kSharedY = kTileY + 2;
-constexpr int kSharedZ = kTileZ + 2;
-constexpr int kSharedElements = kSharedX * kSharedY * kSharedZ;
+constexpr int kAxis0Elements = (kTileZ + 2) * kTileY * kTileX;
+constexpr int kAxis1Elements = kTileZ * (kTileY + 2) * kTileX;
+constexpr int kAxis2Elements = kTileZ * kTileY * (kTileX + 2);
+constexpr int kMaxSharedElements = kAxis0Elements;
 
 __device__ __forceinline__ int64_t Offset(const BeamzBuffer& value, int z,
                                           int y, int x) {
@@ -39,8 +39,32 @@ __device__ __forceinline__ float ReadChecked(const BeamzBuffer& value, int z,
   return Read(value, z, y, x);
 }
 
-__device__ __forceinline__ int SharedOffset(int z, int y, int x) {
-  return (z * kSharedY + y) * kSharedX + x;
+__device__ __forceinline__ int DirectionalElements(int axis) {
+  return axis == 0 ? kAxis0Elements
+                   : (axis == 1 ? kAxis1Elements : kAxis2Elements);
+}
+
+__device__ __forceinline__ int DirectionalOffset(int axis, int z, int y,
+                                                 int x) {
+  if (axis == 0) return (z * kTileY + y) * kTileX + x;
+  if (axis == 1) return (z * (kTileY + 2) + y) * kTileX + x;
+  return (z * kTileY + y) * (kTileX + 2) + x;
+}
+
+__device__ __forceinline__ void StageDirectional(
+    float* tile, const BeamzBuffer& source, int axis, int index, int base_z,
+    int base_y, int base_x) {
+  int value = index;
+  const int width = axis == 2 ? kTileX + 2 : kTileX;
+  const int height = axis == 1 ? kTileY + 2 : kTileY;
+  const int local_x = value % width;
+  value /= width;
+  const int local_y = value % height;
+  const int local_z = value / height;
+  const int global_x = base_x + local_x - (axis == 2 ? 1 : 0);
+  const int global_y = base_y + local_y - (axis == 1 ? 1 : 0);
+  const int global_z = base_z + local_z - (axis == 0 ? 1 : 0);
+  tile[index] = ReadChecked(source, global_z, global_y, global_x);
 }
 
 __device__ __forceinline__ float BoundaryDifference(
@@ -131,31 +155,37 @@ __device__ __forceinline__ void DerivativePlan(int component, int* first_source,
 __device__ __forceinline__ float SharedForward(const float* tile, int axis,
                                                int lz, int ly, int lx,
                                                float inv_dx) {
-  int nz = lz, ny = ly, nx = lx;
+  int cz = lz + (axis == 0 ? 1 : 0);
+  int cy = ly + (axis == 1 ? 1 : 0);
+  int cx = lx + (axis == 2 ? 1 : 0);
+  int nz = cz, ny = cy, nx = cx;
   if (axis == 0) ++nz;
   if (axis == 1) ++ny;
   if (axis == 2) ++nx;
-  return (tile[SharedOffset(nz, ny, nx)] -
-          tile[SharedOffset(lz, ly, lx)]) *
+  return (tile[DirectionalOffset(axis, nz, ny, nx)] -
+          tile[DirectionalOffset(axis, cz, cy, cx)]) *
          inv_dx;
 }
 
 __device__ __forceinline__ float SharedBackward(const float* tile, int axis,
                                                 int lz, int ly, int lx,
                                                 float inv_dx) {
-  int pz = lz, py = ly, px = lx;
+  int cz = lz + (axis == 0 ? 1 : 0);
+  int cy = ly + (axis == 1 ? 1 : 0);
+  int cx = lx + (axis == 2 ? 1 : 0);
+  int pz = cz, py = cy, px = cx;
   if (axis == 0) --pz;
   if (axis == 1) --py;
   if (axis == 2) --px;
-  return (tile[SharedOffset(lz, ly, lx)] -
-          tile[SharedOffset(pz, py, px)]) *
+  return (tile[DirectionalOffset(axis, cz, cy, cx)] -
+          tile[DirectionalOffset(axis, pz, py, px)]) *
          inv_dx;
 }
 
 __global__ __launch_bounds__(256, 2) void UpdateTiled(BeamzLaunch launch,
                                                        int component) {
-  __shared__ float first_tile[kSharedElements];
-  __shared__ float second_tile[kSharedElements];
+  __shared__ float first_tile[kMaxSharedElements];
+  __shared__ float second_tile[kMaxSharedElements];
   int first_source, second_source, first_axis, second_axis;
   DerivativePlan(component, &first_source, &second_source, &first_axis,
                  &second_axis);
@@ -166,18 +196,20 @@ __global__ __launch_bounds__(256, 2) void UpdateTiled(BeamzLaunch launch,
   const int base_z = blockIdx.z * kTileZ;
   const int thread_linear =
       (threadIdx.z * blockDim.y + threadIdx.y) * blockDim.x + threadIdx.x;
-  for (int index = thread_linear; index < kSharedElements;
+  const int first_elements = DirectionalElements(first_axis);
+  const int second_elements = DirectionalElements(second_axis);
+  const int staged_elements =
+      first_elements > second_elements ? first_elements : second_elements;
+  for (int index = thread_linear; index < staged_elements;
        index += blockDim.x * blockDim.y * blockDim.z) {
-    int value = index;
-    const int local_x = value % kSharedX;
-    value /= kSharedX;
-    const int local_y = value % kSharedY;
-    const int local_z = value / kSharedY;
-    const int global_x = base_x + local_x - 1;
-    const int global_y = base_y + local_y - 1;
-    const int global_z = base_z + local_z - 1;
-    first_tile[index] = ReadChecked(first, global_z, global_y, global_x);
-    second_tile[index] = ReadChecked(second, global_z, global_y, global_x);
+    if (index < first_elements) {
+      StageDirectional(first_tile, first, first_axis, index, base_z, base_y,
+                       base_x);
+    }
+    if (index < second_elements) {
+      StageDirectional(second_tile, second, second_axis, index, base_z, base_y,
+                       base_x);
+    }
   }
   __syncthreads();
 
@@ -187,9 +219,9 @@ __global__ __launch_bounds__(256, 2) void UpdateTiled(BeamzLaunch launch,
   const int y = base_y + threadIdx.y;
   const int z = base_z + threadIdx.z;
   if (x >= output.dims[2] || y >= output.dims[1] || z >= output.dims[0]) return;
-  const int lx = threadIdx.x + 1;
-  const int ly = threadIdx.y + 1;
-  const int lz = threadIdx.z + 1;
+  const int lx = threadIdx.x;
+  const int ly = threadIdx.y;
+  const int lz = threadIdx.z;
   const float inv_dx = 1.0f / launch.resolution;
   float derivative0;
   float derivative1;

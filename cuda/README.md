@@ -9,11 +9,13 @@ PEC restoration, monitor accumulation, continuation state, and the timestep loop
 remain JAX transformations around those calls. This keeps the CUDA surface local
 while preserving BeamZ's public numerical semantics.
 
-On SM90, `beamz_cuda_hopper` uses the same ABI and arithmetic but maps each component
-to `32 × 4 × 2` spatial tiles. Each block stages two derivative inputs plus a
-one-cell halo in shared memory, reusing values across neighboring updates and keeping
-the x direction warp-contiguous. Backend selection only exposes this target on
-compute capability 9.0 or newer; all older NVIDIA GPUs use the streamed path.
+On SM90, the experimental `beamz_cuda_hopper` target uses the same ABI and arithmetic
+but maps each component to `32 × 4 × 2` spatial tiles. Each derivative input stages
+only its directional halo in shared memory, reusing values across neighboring
+updates while keeping the x direction warp-contiguous. Backend selection only
+exposes this target on compute capability 9.0 or newer. It remains explicit-only
+until hardware parity and throughput gates justify promotion; `auto` and generic
+`cuda` use the streamed path.
 
 Build in a CUDA 12 development environment:
 

@@ -30,7 +30,7 @@ def test_auto_preserves_jax_when_cuda_is_not_visible(monkeypatch):
         backend_runtime.resolve_backend("cuda")
 
 
-def test_cuda_prefers_hopper_target_on_sm90(monkeypatch):
+def test_cuda_defaults_to_validated_streamed_target_on_sm90(monkeypatch):
     extension = _extension("beamz_cuda_streamed", "beamz_cuda_hopper")
     monkeypatch.setattr(backend_runtime, "_gpu_devices", lambda: (_FakeDevice(),))
     monkeypatch.setattr(backend_runtime, "_load_extension", lambda: extension)
@@ -40,9 +40,10 @@ def test_cuda_prefers_hopper_target_on_sm90(monkeypatch):
         lambda module=None: tuple(sorted(extension.registrations())),
     )
 
-    assert backend_runtime.resolve_backend("cuda") == "cuda_hopper"
+    assert backend_runtime.resolve_backend("cuda") == "cuda_streamed"
     assert backend_runtime.resolve_backend("cuda_streamed") == "cuda_streamed"
-    assert backend_runtime.resolve_backend("auto") == "cuda_hopper"
+    assert backend_runtime.resolve_backend("cuda_hopper") == "cuda_hopper"
+    assert backend_runtime.resolve_backend("auto") == "cuda_streamed"
 
 
 def test_explicit_hopper_rejects_pre_sm90(monkeypatch):
@@ -60,6 +61,22 @@ def test_explicit_hopper_rejects_pre_sm90(monkeypatch):
     with pytest.raises(backend_runtime.CudaBackendUnavailable, match="SM90"):
         backend_runtime.resolve_backend("cuda_hopper")
     assert backend_runtime.resolve_backend("cuda") == "cuda_streamed"
+
+
+def test_hopper_only_extension_requires_explicit_opt_in(monkeypatch):
+    extension = _extension("beamz_cuda_hopper")
+    monkeypatch.setattr(backend_runtime, "_gpu_devices", lambda: (_FakeDevice(),))
+    monkeypatch.setattr(backend_runtime, "_load_extension", lambda: extension)
+    monkeypatch.setattr(
+        backend_runtime,
+        "register_cuda_ffi_targets",
+        lambda module=None: tuple(sorted(extension.registrations())),
+    )
+
+    assert backend_runtime.resolve_backend("auto") == "jax"
+    assert backend_runtime.resolve_backend("cuda_hopper") == "cuda_hopper"
+    with pytest.raises(backend_runtime.CudaBackendUnavailable, match="compatible"):
+        backend_runtime.resolve_backend("cuda")
 
 
 def test_typed_ffi_registrations_use_cuda_api_v1(monkeypatch):

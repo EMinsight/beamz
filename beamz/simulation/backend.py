@@ -182,11 +182,8 @@ def resolve_backend(backend: str | None) -> ResolvedBackend:
                 "cuda_streamed target is missing from the beamz_cuda extension"
             )
         return "cuda_streamed"
-    if has_hopper:
-        return "cuda_hopper"
     if has_streamed:
         return "cuda_streamed"
     if requested == "auto":
         return "jax"
     raise CudaBackendUnavailable("beamz_cuda has no compatible execution target")
-
