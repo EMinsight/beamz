@@ -14,15 +14,17 @@ STATUS = cuda_backend_status()
 pytestmark = pytest.mark.skipif(not STATUS.available, reason=STATUS.reason)
 
 
-def _simulation_and_seed():
+def _simulation_and_seed(*, cpml: bool):
     workload = H100Workload(
         name="cuda_hardware_parity",
         shape_zyx=(18, 20, 35),
-        timesteps=4,
+        # Cross the Gaussian source peak at step 24 and accumulate multiple DFT
+        # phases rather than validating only the near-zero leading envelope.
+        timesteps=32,
         resolution=80e-9,
         pml_cells=3,
         heterogeneous=True,
-        cpml=True,
+        cpml=cpml,
         source=True,
         monitor=True,
     )
@@ -60,13 +62,16 @@ def _assert_state_close(reference, actual):
             np.testing.assert_array_equal(observed, expected)
 
 
-def test_streamed_cuda_matches_jax_complete_state():
-    simulation, state = _simulation_and_seed()
+@pytest.mark.parametrize("cpml", [False, True], ids=["pec", "cpml"])
+def test_streamed_cuda_matches_jax_complete_state(cpml):
+    simulation, state = _simulation_and_seed(cpml=cpml)
     reference = simulation.advance(
-        state=_copy_state(state), num_steps=4, backend="jax"
+        state=_copy_state(state), num_steps=simulation.num_steps, backend="jax"
     ).state
     actual = simulation.advance(
-        state=_copy_state(state), num_steps=4, backend="cuda_streamed"
+        state=_copy_state(state),
+        num_steps=simulation.num_steps,
+        backend="cuda_streamed",
     ).state
 
     _assert_state_close(reference, actual)
@@ -77,13 +82,18 @@ def test_streamed_cuda_matches_jax_complete_state():
     or any(capability < 90 for capability in STATUS.compute_capabilities),
     reason="Hopper tiled target requires SM90+",
 )
-def test_hopper_cuda_matches_streamed_complete_state():
-    simulation, state = _simulation_and_seed()
+@pytest.mark.parametrize("cpml", [False, True], ids=["pec", "cpml"])
+def test_hopper_cuda_matches_streamed_complete_state(cpml):
+    simulation, state = _simulation_and_seed(cpml=cpml)
     reference = simulation.advance(
-        state=_copy_state(state), num_steps=4, backend="cuda_streamed"
+        state=_copy_state(state),
+        num_steps=simulation.num_steps,
+        backend="cuda_streamed",
     ).state
     actual = simulation.advance(
-        state=_copy_state(state), num_steps=4, backend="cuda_hopper"
+        state=_copy_state(state),
+        num_steps=simulation.num_steps,
+        backend="cuda_hopper",
     ).state
 
     _assert_state_close(reference, actual)

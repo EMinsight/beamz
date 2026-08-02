@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.24)
 project(beamz_cuda LANGUAGES CXX CUDA)
 
+option(
+  BEAMZ_CUDA_FAST_MATH
+  "Enable CUDA approximate math intrinsics after hardware parity validation"
+  OFF
+)
+
 find_package(Python 3.10 REQUIRED COMPONENTS Interpreter Development.Module)
 find_package(nanobind CONFIG REQUIRED)
 
@@ -34,6 +40,9 @@ set_target_properties(
 target_compile_options(
   beamz_cuda
   PRIVATE
-    $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math;--expt-relaxed-constexpr;--lineinfo>
+    $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr;--lineinfo>
 )
+if(BEAMZ_CUDA_FAST_MATH)
+  target_compile_options(beamz_cuda PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>)
+endif()
 install(TARGETS beamz_cuda LIBRARY DESTINATION .)

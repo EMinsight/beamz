@@ -1,0 +1,146 @@
+name: CUDA extension
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - ".github/workflows/cuda.yml"
+      - "beamz/simulation/backend.py"
+      - "beamz/simulation/cuda/**"
+      - "beamz/simulation/kernels.py"
+      - "cuda/**"
+      - "scripts/benchmark_h100.py"
+      - "tests/hardware/test_cuda_backends.py"
+      - "tests/performance/**"
+  pull_request:
+    paths:
+      - ".github/workflows/cuda.yml"
+      - "beamz/simulation/backend.py"
+      - "beamz/simulation/cuda/**"
+      - "beamz/simulation/kernels.py"
+      - "cuda/**"
+      - "scripts/benchmark_h100.py"
+      - "tests/hardware/test_cuda_backends.py"
+      - "tests/performance/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wheel:
+    name: Build CUDA 12 wheel
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container: nvidia/cuda:12.4.1-devel-ubuntu22.04
+    steps:
+      - name: Install host build tools
+        run: >-
+          apt-get update &&
+          DEBIAN_FRONTEND=noninteractive apt-get install -y
+          build-essential ca-certificates curl git
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+      - run: uv python install 3.11
+      - name: Build optional extension wheel
+        env:
+          UV_PYTHON: "3.11"
+        run: uv build --wheel cuda
+      - name: Import wheel and inspect FFI targets
+        run: |
+          uv venv /tmp/beamz-cuda-smoke --python 3.11
+          uv pip install --python /tmp/beamz-cuda-smoke/bin/python \
+            --no-deps cuda/dist/*.whl
+          /tmp/beamz-cuda-smoke/bin/python - <<'PY'
+          import beamz_cuda
+
+          assert set(beamz_cuda.registrations()) == {
+              "beamz_cuda_hopper",
+              "beamz_cuda_streamed",
+          }
+          print(beamz_cuda.__version__)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beamz-cuda-wheel
+          path: cuda/dist/*.whl
+
+  h100:
+    name: H100 parity and canonical benchmarks
+    if: >-
+      ${{ vars.BEAMZ_H100_RUNNER_ENABLED == 'true' &&
+          github.event_name != 'pull_request' }}
+    needs: wheel
+    runs-on: [self-hosted, linux, x64, h100]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+      - run: uv python install 3.11
+      - name: Install test environment with CUDA JAX
+        run: |
+          uv sync --python 3.11 --extra test --no-install-project
+          uv pip install --python .venv/bin/python "jax[cuda12]>=0.4.31"
+      - uses: actions/download-artifact@v4
+        with:
+          name: beamz-cuda-wheel
+          path: ${{ runner.temp }}/cuda-dist
+      - name: Install CUDA extension
+        run: >-
+          uv pip install --python .venv/bin/python --no-deps
+          "${RUNNER_TEMP}"/cuda-dist/*.whl
+      - name: Run complete-state numerical parity
+        run: >-
+          uv run --no-sync --no-active --python 3.11 python -m pytest
+          tests/hardware/test_cuda_backends.py
+          -v --tb=short --durations=20
+      - name: Capture canonical H100 records
+        run: |
+          mkdir -p "${RUNNER_TEMP}/benchmark-results"
+          for workload in bare_3d realistic_3d; do
+            for backend in jax cuda_streamed cuda_hopper; do
+              uv run --no-sync --no-active --python 3.11 python scripts/benchmark_h100.py \
+                --workload "$workload" --backend "$backend" --samples 5 \
+                --output "${RUNNER_TEMP}/benchmark-results/${workload}-${backend}.json"
+            done
+          done
+      - name: Enforce provisional CUDA promotion thresholds
+        env:
+          RESULT_DIR: ${{ runner.temp }}/benchmark-results
+        run: |
+          uv run --no-sync --no-active --python 3.11 python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          result_dir = Path(os.environ["RESULT_DIR"])
+          streamed = json.loads(
+              (result_dir / "realistic_3d-cuda_streamed.json").read_text()
+          )
+          hopper = json.loads(
+              (result_dir / "realistic_3d-cuda_hopper.json").read_text()
+          )
+          streamed_gcups = float(streamed["kernel_gcups"])
+          hopper_speedup = float(hopper["kernel_gcups"]) / streamed_gcups
+          print(f"streamed realistic throughput: {streamed_gcups:.3f} GCUPS")
+          print(f"Hopper/streamed realistic speedup: {hopper_speedup:.3f}x")
+          if streamed_gcups < 20.0:
+              raise SystemExit("streamed CUDA did not reach the 20 GCUPS promotion gate")
+          if hopper_speedup < 1.15:
+              raise SystemExit("Hopper CUDA did not reach the 1.15x promotion gate")
+          PY
+      - name: Upload H100 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: h100-cuda-evidence
+          path: ${{ runner.temp }}/benchmark-results/*.json
+          if-no-files-found: warn

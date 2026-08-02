@@ -24,6 +24,11 @@ python -m pip wheel ./cuda --no-deps
 python -m pip install beamz_cuda-*.whl
 ```
 
+Release builds use precise CUDA division and square-root behavior. Approximate CUDA
+intrinsics are available only for controlled experiments with
+`-DBEAMZ_CUDA_FAST_MATH=ON`; they must pass the same hardware parity suite before a
+result can be used for promotion.
+
 The wheel compiles SASS for SM80, SM89, and SM90. `backend="auto"` detects and
 registers it lazily; `backend="cuda_streamed"` requests it explicitly and
 `backend="cuda_hopper"` requests the tiled target. The first
@@ -37,6 +42,11 @@ No CUDA result is promoted without all of the following on real hardware:
   continuation state with JAX over bare, lossy, PEC, CPML, source, and DFT cases;
 - run Compute Sanitizer memcheck and racecheck;
 - capture Nsight Compute memory throughput and the canonical H100 GCUPS records.
+
+The CUDA workflow always compiles and imports the wheel in a CUDA development
+container. Repositories with an H100 self-hosted runner can set the Actions variable
+`BEAMZ_H100_RUNNER_ENABLED=true` and label that runner `h100` to additionally run the
+32-step PEC/CPML parity envelope and publish canonical benchmark JSON artifacts.
 
 The host FFI decoder deliberately has no CUDA-header dependency and can be checked
 on developer machines with the JAX headers alone:
