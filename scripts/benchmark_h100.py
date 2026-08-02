@@ -83,7 +83,9 @@ def run_benchmark(args: argparse.Namespace) -> BenchmarkRecord:
     if not args.allow_cpu and not all(
         device.platform == "gpu" for device in visible_devices
     ):
-        raise RuntimeError("H100 benchmark requires GPU devices; use --allow-cpu for smoke tests")
+        raise RuntimeError(
+            "H100 benchmark requires GPU devices; use --allow-cpu for smoke tests"
+        )
     sharding = (
         None
         if args.devices == 1
@@ -146,11 +148,13 @@ def run_benchmark(args: argparse.Namespace) -> BenchmarkRecord:
     _block(warm_run.state)
     end_to_end_samples = tuple(
         _time_call(
-            lambda: sim.advance(
-                num_steps=workload.timesteps,
-                sharding=sharding,
-                backend=args.backend,
-            ).state
+            lambda: (
+                sim.advance(
+                    num_steps=workload.timesteps,
+                    sharding=sharding,
+                    backend=args.backend,
+                ).state
+            )
         )[1]
         for _ in range(args.samples)
     )
@@ -167,9 +171,7 @@ def run_benchmark(args: argparse.Namespace) -> BenchmarkRecord:
         jaxlib_version=jaxlib.__version__,
         workload=workload.name,
         backend=program.config.backend,
-        device="; ".join(
-            sorted({device.device_kind for device in execution_devices})
-        ),
+        device="; ".join(sorted({device.device_kind for device in execution_devices})),
         device_count=len(execution_devices),
         precision="float32",
         grid_dimensions=workload.shape_zyx,

@@ -38,6 +38,17 @@ class CudaBackendStatus:
     compute_capabilities: tuple[int, ...]
     reason: str | None = None
 
+    def as_dict(self) -> dict[str, object]:
+        """Return stable diagnostics suitable for logs and bug reports."""
+        return {
+            "available": self.available,
+            "extension_version": self.extension_version,
+            "targets": self.targets,
+            "gpu_devices": self.gpu_devices,
+            "compute_capabilities": self.compute_capabilities,
+            "reason": self.reason,
+        }
+
 
 def normalize_backend(backend: str | None) -> ExecutionBackend:
     value = (
@@ -61,7 +72,9 @@ def normalize_backend(backend: str | None) -> ExecutionBackend:
         return aliases[value.strip().lower()]  # type: ignore[return-value]
     except KeyError as exc:
         choices = "auto, jax, cuda, cuda_streamed, cuda_hopper"
-        raise ValueError(f"Unknown execution backend {value!r}; use one of: {choices}.") from exc
+        raise ValueError(
+            f"Unknown execution backend {value!r}; use one of: {choices}."
+        ) from exc
 
 
 def _load_extension() -> ModuleType:
@@ -114,7 +127,9 @@ def register_cuda_ffi_targets(module: ModuleType | None = None) -> tuple[str, ..
 
 def cuda_backend_status(*, register: bool = True) -> CudaBackendStatus:
     devices = _gpu_devices()
-    device_names = tuple(str(getattr(device, "device_kind", device)) for device in devices)
+    device_names = tuple(
+        str(getattr(device, "device_kind", device)) for device in devices
+    )
     capabilities = tuple(_compute_capability(device) for device in devices)
     if not devices:
         return CudaBackendStatus(

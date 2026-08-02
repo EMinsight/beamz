@@ -231,8 +231,7 @@ def compare_backend_speedup(
     ):
         raise ValueError("backend speedup requires the same hardware and device count")
     return BackendSpeedup(
-        kernel_speedup=baseline.median_warm_runtime_s
-        / candidate.median_warm_runtime_s,
+        kernel_speedup=baseline.median_warm_runtime_s / candidate.median_warm_runtime_s,
         end_to_end_speedup=baseline.median_warm_end_to_end_s
         / candidate.median_warm_end_to_end_s,
         compile_speedup=baseline.compile_s / candidate.compile_s,

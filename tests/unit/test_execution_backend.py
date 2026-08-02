@@ -30,6 +30,25 @@ def test_auto_preserves_jax_when_cuda_is_not_visible(monkeypatch):
         backend_runtime.resolve_backend("cuda")
 
 
+def test_cuda_status_exposes_complete_diagnostics():
+    status = backend_runtime.CudaBackendStatus(
+        available=True,
+        extension_version="0.1.0",
+        targets=("beamz_cuda_streamed",),
+        gpu_devices=("NVIDIA H100 80GB HBM3",),
+        compute_capabilities=(90,),
+    )
+
+    assert status.as_dict() == {
+        "available": True,
+        "extension_version": "0.1.0",
+        "targets": ("beamz_cuda_streamed",),
+        "gpu_devices": ("NVIDIA H100 80GB HBM3",),
+        "compute_capabilities": (90,),
+        "reason": None,
+    }
+
+
 def test_cuda_defaults_to_validated_streamed_target_on_sm90(monkeypatch):
     extension = _extension("beamz_cuda_streamed", "beamz_cuda_hopper")
     monkeypatch.setattr(backend_runtime, "_gpu_devices", lambda: (_FakeDevice(),))
@@ -86,16 +105,17 @@ def test_typed_ffi_registrations_use_cuda_api_v1(monkeypatch):
     monkeypatch.setattr(
         backend_runtime.jax.ffi,
         "register_ffi_target",
-        lambda name, capsule, **kwargs: registrations.append(
-            (name, capsule, kwargs)
-        ),
+        lambda name, capsule, **kwargs: registrations.append((name, capsule, kwargs)),
     )
 
     targets = backend_runtime.register_cuda_ffi_targets(extension)
 
     assert targets == ("beamz_cuda_hopper", "beamz_cuda_streamed")
     assert {name for name, _, _ in registrations} == set(targets)
-    assert all(kwargs == {"platform": "CUDA", "api_version": 1} for _, _, kwargs in registrations)
+    assert all(
+        kwargs == {"platform": "CUDA", "api_version": 1}
+        for _, _, kwargs in registrations
+    )
 
 
 @pytest.mark.parametrize(

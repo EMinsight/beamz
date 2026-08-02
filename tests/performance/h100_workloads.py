@@ -93,7 +93,7 @@ class H100Workload:
         sources: list[object] = []
         if self.source:
             omega = 2.0 * np.pi * 193.414e12
-            envelope = np.exp(-((np.arange(time.size) - 24.0) / 8.0) ** 2)
+            envelope = np.exp(-(((np.arange(time.size) - 24.0) / 8.0) ** 2))
             sources.append(
                 bz.GaussianSource(
                     position=(0.25 * size_x, center[1], center[2]),
@@ -104,8 +104,12 @@ class H100Workload:
 
         monitors: list[object] = []
         if self.monitor:
-            clear_y = max(self.resolution, size_y - 2 * self.pml_cells * self.resolution)
-            clear_z = max(self.resolution, size_z - 2 * self.pml_cells * self.resolution)
+            clear_y = max(
+                self.resolution, size_y - 2 * self.pml_cells * self.resolution
+            )
+            clear_z = max(
+                self.resolution, size_z - 2 * self.pml_cells * self.resolution
+            )
             monitors.append(
                 bz.FieldMonitor(
                     center=(0.75 * size_x, center[1], center[2]),

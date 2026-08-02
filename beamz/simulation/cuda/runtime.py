@@ -12,9 +12,7 @@ CUDA_ABI_VERSION = 1
 _PHASE_H = 0
 _PHASE_E = 1
 _COMPONENT_CODE = {name: index for index, name in enumerate(("Hx", "Hy", "Hz"))}
-_COMPONENT_CODE.update(
-    {name: index for index, name in enumerate(("Ex", "Ey", "Ez"))}
-)
+_COMPONENT_CODE.update({name: index for index, name in enumerate(("Ex", "Ey", "Ez"))})
 _EMPTY = jnp.empty((0,), dtype=jnp.float32)
 
 
@@ -57,7 +55,9 @@ def _ffi_phase(
     metallic_edges,
 ):
     if len(terms) != len(psi_terms):
-        raise ValueError("CUDA CPML terms and recurrence buffers must have equal length")
+        raise ValueError(
+            "CUDA CPML terms and recurrence buffers must have equal length"
+        )
     if terms and len(terms) != 6:
         raise ValueError("3D CUDA CPML requires exactly six derivative terms per phase")
     metadata = _term_metadata(terms)
@@ -75,9 +75,7 @@ def _ffi_phase(
     result_metadata = tuple(_shape(value) for value in (*targets, *psi_terms))
     psi_start = 13 + 3 * len(terms)
     aliases = {0: 0, 1: 1, 2: 2}
-    aliases.update(
-        {psi_start + index: 3 + index for index in range(len(psi_terms))}
-    )
+    aliases.update({psi_start + index: 3 + index for index in range(len(psi_terms))})
     call = jax.ffi.ffi_call(
         target,
         result_metadata,
@@ -98,7 +96,11 @@ def _ffi_phase(
 
 def update_h(state, ctx, coeffs) -> SimulationState:
     """Advance the three magnetic fields and optional CPML memory on CUDA."""
-    target = "beamz_cuda_hopper" if ctx.config.backend == "cuda_hopper" else "beamz_cuda_streamed"
+    target = (
+        "beamz_cuda_hopper"
+        if ctx.config.backend == "cuda_hopper"
+        else "beamz_cuda_streamed"
+    )
     terms = ctx.boundary.cpml.h_terms
     outputs = _ffi_phase(
         target,
@@ -129,7 +131,11 @@ def update_h(state, ctx, coeffs) -> SimulationState:
 
 def update_e(state, ctx, coeffs) -> SimulationState:
     """Advance the three electric fields and optional CPML memory on CUDA."""
-    target = "beamz_cuda_hopper" if ctx.config.backend == "cuda_hopper" else "beamz_cuda_streamed"
+    target = (
+        "beamz_cuda_hopper"
+        if ctx.config.backend == "cuda_hopper"
+        else "beamz_cuda_streamed"
+    )
     terms = ctx.boundary.cpml.e_terms
     outputs = _ffi_phase(
         target,
@@ -156,4 +162,3 @@ def update_e(state, ctx, coeffs) -> SimulationState:
         ez=outputs[2],
         cpml_psi_e_terms=outputs[3:],
     )
-
