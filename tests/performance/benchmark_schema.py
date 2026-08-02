@@ -8,19 +8,28 @@ import statistics
 from dataclasses import asdict, dataclass
 from typing import Any
 
-SCHEMA_VERSION = "beamz.performance/v1"
+SCHEMA_VERSION = "beamz.performance/v2"
 
 
 @dataclass(frozen=True, slots=True)
 class BenchmarkRecord:
-    """One reproducible compile/warm-runtime/memory measurement."""
+    """One reproducible compile/warm-runtime/memory measurement.
+
+    ``warm_runtime_samples_s`` measures the already-compiled device executable.
+    ``warm_end_to_end_samples_s`` additionally includes BeamZ's placement and result
+    materialization.  Keeping both avoids presenting dispatch overhead as stencil
+    throughput while still tracking the latency users experience.
+    """
 
     beamz_commit: str
     beamz_version: str
     python_version: str
     jax_version: str
     jaxlib_version: str
+    workload: str
+    backend: str
     device: str
+    device_count: int
     precision: str
     grid_dimensions: tuple[int, ...]
     timesteps: int
@@ -30,6 +39,7 @@ class BenchmarkRecord:
     trace_lower_s: float
     compile_s: float
     warm_runtime_samples_s: tuple[float, ...]
+    warm_end_to_end_samples_s: tuple[float, ...]
     peak_memory_bytes: int
 
     def __post_init__(self) -> None:
@@ -39,6 +49,8 @@ class BenchmarkRecord:
             self.python_version,
             self.jax_version,
             self.jaxlib_version,
+            self.workload,
+            self.backend,
             self.device,
             self.precision,
         )
@@ -46,6 +58,10 @@ class BenchmarkRecord:
             raise ValueError("benchmark identity fields must be non-empty")
         if self.precision not in {"float32", "float64"}:
             raise ValueError("precision must be float32 or float64")
+        if self.backend not in {"jax", "cuda_streamed", "cuda_hopper"}:
+            raise ValueError("unknown benchmark backend")
+        if self.device_count <= 0:
+            raise ValueError("device_count must be positive")
         if len(self.grid_dimensions) not in {2, 3} or any(
             int(value) <= 0 for value in self.grid_dimensions
         ):
@@ -56,9 +72,12 @@ class BenchmarkRecord:
             self.trace_lower_s,
             self.compile_s,
             *self.warm_runtime_samples_s,
+            *self.warm_end_to_end_samples_s,
         )
         if len(self.warm_runtime_samples_s) < 3:
             raise ValueError("at least three warm runtime samples are required")
+        if len(self.warm_end_to_end_samples_s) < 3:
+            raise ValueError("at least three warm end-to-end samples are required")
         if any(not math.isfinite(value) or value <= 0.0 for value in durations):
             raise ValueError("benchmark durations must be positive and finite")
         if self.peak_memory_bytes <= 0:
@@ -72,13 +91,50 @@ class BenchmarkRecord:
     def median_warm_runtime_s(self) -> float:
         return float(statistics.median(self.warm_runtime_samples_s))
 
+    @property
+    def median_warm_end_to_end_s(self) -> float:
+        return float(statistics.median(self.warm_end_to_end_samples_s))
+
+    @property
+    def updated_cells(self) -> int:
+        """Return the conventional FDTD cell-update count for the run."""
+        return self.material_cells * self.timesteps
+
+    @property
+    def kernel_gcups(self) -> float:
+        return self.updated_cells / self.median_warm_runtime_s / 1e9
+
+    @property
+    def end_to_end_gcups(self) -> float:
+        return self.updated_cells / self.median_warm_end_to_end_s / 1e9
+
+    @property
+    def workload_identity(self) -> tuple[Any, ...]:
+        """Return every input that must match for a valid comparison."""
+        return (
+            self.workload,
+            self.backend,
+            self.device,
+            self.device_count,
+            self.precision,
+            self.grid_dimensions,
+            self.timesteps,
+            self.boundaries,
+            self.sources,
+            self.monitors,
+        )
+
     def as_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload.update(
             {
                 "schema_version": SCHEMA_VERSION,
                 "material_cells": self.material_cells,
+                "updated_cells": self.updated_cells,
                 "median_warm_runtime_s": self.median_warm_runtime_s,
+                "median_warm_end_to_end_s": self.median_warm_end_to_end_s,
+                "kernel_gcups": self.kernel_gcups,
+                "end_to_end_gcups": self.end_to_end_gcups,
             }
         )
         json.dumps(payload, allow_nan=False)
@@ -90,6 +146,7 @@ class BenchmarkComparison:
     """Relative changes and optional controlled-machine gate result."""
 
     warm_runtime_change: float
+    warm_end_to_end_change: float
     compile_change: float
     memory_change: float
     controlled_hardware: bool
@@ -112,24 +169,24 @@ def compare_benchmarks(
     compile_limit: float = 0.10,
 ) -> BenchmarkComparison:
     """Compare records; gate only when the machine is explicitly controlled."""
-    if (
-        baseline.device != current.device
-        or baseline.precision != current.precision
-        or baseline.grid_dimensions != current.grid_dimensions
-        or baseline.timesteps != current.timesteps
-    ):
+    if baseline.workload_identity != current.workload_identity:
         raise ValueError("benchmark records do not describe the same workload")
     runtime_change = _relative_change(
         current.median_warm_runtime_s,
         baseline.median_warm_runtime_s,
     )
     compile_change = _relative_change(current.compile_s, baseline.compile_s)
+    end_to_end_change = _relative_change(
+        current.median_warm_end_to_end_s,
+        baseline.median_warm_end_to_end_s,
+    )
     memory_change = _relative_change(
         float(current.peak_memory_bytes),
         float(baseline.peak_memory_bytes),
     )
     passed = (
         runtime_change <= runtime_limit
+        and end_to_end_change <= runtime_limit
         and memory_change <= memory_limit
         and compile_change <= compile_limit
         if controlled_hardware
@@ -137,6 +194,7 @@ def compare_benchmarks(
     )
     return BenchmarkComparison(
         warm_runtime_change=runtime_change,
+        warm_end_to_end_change=end_to_end_change,
         compile_change=compile_change,
         memory_change=memory_change,
         controlled_hardware=controlled_hardware,
