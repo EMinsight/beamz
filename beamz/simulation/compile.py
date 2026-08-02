@@ -64,6 +64,7 @@ class CompiledProgramKey:
     plane_2d: str
     loop_kind: str
     source_single_slab_dense: bool
+    backend: str
     sharding: ShardingToken
     materials: HashToken
     sources: tuple[HashToken, ...]
@@ -82,6 +83,7 @@ class CompiledProgramKey:
             request.domain.plane_2d,
             request.run.loop_kind,
             request.run.source_single_slab_dense,
+            request.run.backend,
             request.run.sharding,
             cache_token(request.materials),
             tuple(cache_token(source) for source in request.sources),
@@ -263,6 +265,7 @@ def _prepare_compilation(
         is_3d=bool(request.domain.is_3d),
         loop_kind=loop_kind,
         source_single_slab_dense=bool(request.run.source_single_slab_dense),
+        backend=str(request.run.backend),
         sharding=effective_sharding,
     )
     return _CompileSetup(
@@ -482,6 +485,7 @@ def compile_program(
     *,
     num_steps: int | None = None,
     sharding=None,
+    backend: str | None = "auto",
     progress: bool = False,
     setup_context_factory=None,
     compile_factory=None,
@@ -506,10 +510,14 @@ def compile_program(
         "yes",
         "on",
     }
+    from .backend import resolve_backend
+
+    resolved_backend = resolve_backend(backend)
     request = simulation.to_request(
         num_steps=steps,
         loop_kind=loop_kind,
         source_single_slab_dense=dense,
+        backend=resolved_backend,
         sharding=sharding_cache_token(sharding),
         compiler_sharding=sharding,
         progress=progress,

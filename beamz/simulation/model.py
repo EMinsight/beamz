@@ -30,6 +30,7 @@ class RunSpec:
     t0: float
     loop_kind: str
     source_single_slab_dense: bool
+    backend: str
     sharding: ShardingToken
 
 
@@ -332,6 +333,7 @@ class RunConfig:
     is_3d: bool
     loop_kind: str = "scan"
     source_single_slab_dense: bool = False
+    backend: str = "jax"
     sharding: ShardingConfig = ShardingConfig()
 
 

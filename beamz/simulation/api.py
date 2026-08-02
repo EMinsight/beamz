@@ -741,7 +741,9 @@ class Simulation:
         # Allocate disabled features as empty fixed-rank arrays to keep runtime state structurally stable.
         return SimulationState.initial(self.compile().grid, t=float(self.time[0]))
 
-    def step(self, state=None, *, donate_state=False) -> SimulationState:
+    def step(
+        self, state=None, *, donate_state=False, backend="auto"
+    ) -> SimulationState:
         """Advance runtime state by exactly one timestep.
 
         Parameters
@@ -751,6 +753,9 @@ class Simulation:
         donate_state : bool, default=False
             Allow JAX to recycle buffers owned by ``state``. After a donating call,
             the input state must not be read or reused.
+        backend : {"auto", "jax", "cuda", "cuda_streamed", "cuda_hopper"}, default="auto"
+            Execution policy. ``auto`` uses the optional CUDA extension when it is
+            compatible and otherwise retains the JAX implementation.
 
         Returns
         -------
@@ -776,7 +781,7 @@ class Simulation:
         if current_step >= self.num_steps:
             assert state is not None
             return state
-        program = self.compile(num_steps=1)
+        program = self.compile(num_steps=1, backend=backend)
         if state is None:
             state = SimulationState.initial(program.grid, t=float(self.time[0]))
         return execute_step(
@@ -792,6 +797,7 @@ class Simulation:
         num_steps: int | None = None,
         loop_kind: str = "scan",
         source_single_slab_dense: bool = False,
+        backend: str = "jax",
         sharding=(False, "auto", None, None),
         compiler_sharding=None,
         progress: bool = False,
@@ -808,6 +814,8 @@ class Simulation:
         source_single_slab_dense : bool, default=False
             Use dense lowering for a single slab source. This is an advanced
             compilation experiment and does not change source semantics.
+        backend : str, default="jax"
+            Resolved execution backend embedded in the compiler request.
         sharding : tuple, optional
             Stable sharding token used in request and compilation cache identity.
         compiler_sharding : object, optional
@@ -833,13 +841,14 @@ class Simulation:
         # attach normalized sources, monitors, boundaries, and sharding configuration.
         return SimulationRequest(
             RunSpec(
-                float(self.dt),
-                requested_steps,
-                int(self.num_steps),
-                float(np.ravel(np.asarray(self.time, dtype=float))[0]),
-                str(loop_kind),
-                bool(source_single_slab_dense),
-                sharding,
+                dt=float(self.dt),
+                num_steps=requested_steps,
+                total_steps=int(self.num_steps),
+                t0=float(np.ravel(np.asarray(self.time, dtype=float))[0]),
+                loop_kind=str(loop_kind),
+                source_single_slab_dense=bool(source_single_slab_dense),
+                backend=str(backend),
+                sharding=sharding,
             ),
             DomainSpec(
                 tuple(float(v) for v in self.size),  # type: ignore[arg-type]
@@ -858,6 +867,7 @@ class Simulation:
         self,
         num_steps=None,
         sharding=None,
+        backend="auto",
         progress: bool = False,
     ) -> CompiledProgram:
         """Prepare or retrieve a reusable compiled execution plan.
@@ -869,6 +879,9 @@ class Simulation:
             length is used when omitted.
         sharding : ShardingConfig or compatible value, optional
             Runtime device-sharding policy. ``None`` selects the default placement.
+        backend : {"auto", "jax", "cuda", "cuda_streamed", "cuda_hopper"}, default="auto"
+            Execution policy. Explicit CUDA variants fail if their required typed
+            FFI target or GPU architecture is unavailable.
         progress : bool, default=False
             Display setup progress while rasterizing and lowering the simulation.
 
@@ -894,6 +907,7 @@ class Simulation:
             self,
             num_steps=num_steps,
             sharding=sharding,
+            backend=backend,
             progress=progress,
             setup_context_factory=_resolved_setup_device_context,
             compile_factory=compile_simulation,
@@ -986,7 +1000,7 @@ class Simulation:
         and may therefore be expensive. It does not advance simulation state.
         """
         # Lower an immutable request and cache by every value that changes generated code or storage.
-        program = self.compile(num_steps=num_steps, sharding=sharding)
+        program = self.compile(num_steps=num_steps, sharding=sharding, backend="jax")
         state = SimulationState.initial(program.grid, t=float(self.time[0]))
         return analyze_compiled_xla_memory(
             program,
@@ -1003,6 +1017,7 @@ class Simulation:
         store_full_materials=False,
         sharding=None,
         donate_state=False,
+        backend="auto",
     ) -> SimulationRun:
         """Execute a fresh or continued segment and return results plus next state.
 
@@ -1024,6 +1039,9 @@ class Simulation:
         donate_state : bool, default=False
             Transfer ownership of the input state's device buffers to JAX. This can
             reduce peak memory, but the input state must never be used afterward.
+        backend : {"auto", "jax", "cuda", "cuda_streamed", "cuda_hopper"}, default="auto"
+            Execution policy. ``auto`` preserves JAX as the fallback when the
+            optional CUDA runtime is not installed.
 
         Returns
         -------
@@ -1074,7 +1092,12 @@ class Simulation:
         steps = remaining if num_steps is None else int(num_steps)
         if not 0 < steps <= remaining:
             raise ValueError(f"num_steps must be in [1, {remaining}], got {steps}.")
-        program = self.compile(num_steps=steps, sharding=sharding, progress=progress)
+        program = self.compile(
+            num_steps=steps,
+            sharding=sharding,
+            backend=backend,
+            progress=progress,
+        )
         if state is None:
             state = SimulationState.initial(program.grid, t=float(self.time[0]))
         return run_simulation_program(
@@ -1093,6 +1116,7 @@ class Simulation:
         progress=False,
         store_full_materials=False,
         sharding=None,
+        backend="auto",
     ) -> SimulationResults:
         """Execute the complete simulation and return immutable analysis results.
 
@@ -1105,6 +1129,8 @@ class Simulation:
             material regions needed by configured analysis monitors.
         sharding : ShardingConfig or compatible value, optional
             Runtime device-sharding policy.
+        backend : {"auto", "jax", "cuda", "cuda_streamed", "cuda_hopper"}, default="auto"
+            Execution policy. ``cuda`` chooses the best compatible CUDA target.
 
         Returns
         -------
@@ -1133,6 +1159,7 @@ class Simulation:
             progress=bool(progress),
             store_full_materials=bool(store_full_materials),
             sharding=sharding,
+            backend=backend,
             donate_state=True,
         ).results
 
