@@ -71,7 +71,11 @@ def run_benchmark(args: argparse.Namespace) -> BenchmarkRecord:
     )
     sim = workload.build()
     sim.clear_compiled_cache()
-    program = sim.compile(num_steps=workload.timesteps, sharding=args.sharding)
+    program = sim.compile(
+        num_steps=workload.timesteps,
+        sharding=args.sharding,
+        backend=args.backend,
+    )
     state = initial_program_state(
         program,
         t=float(sim.time[0]),
@@ -102,11 +106,19 @@ def run_benchmark(args: argparse.Namespace) -> BenchmarkRecord:
     )
 
     # Public-path latency includes input placement, state allocation and result decode.
-    warm_run = sim.advance(num_steps=workload.timesteps, sharding=args.sharding)
+    warm_run = sim.advance(
+        num_steps=workload.timesteps,
+        sharding=args.sharding,
+        backend=args.backend,
+    )
     _block(warm_run.state)
     end_to_end_samples = tuple(
         _time_call(
-            lambda: sim.advance(num_steps=workload.timesteps, sharding=args.sharding).state
+            lambda: sim.advance(
+                num_steps=workload.timesteps,
+                sharding=args.sharding,
+                backend=args.backend,
+            ).state
         )[1]
         for _ in range(args.samples)
     )
@@ -122,7 +134,7 @@ def run_benchmark(args: argparse.Namespace) -> BenchmarkRecord:
         jax_version=jax.__version__,
         jaxlib_version=jaxlib.__version__,
         workload=workload.name,
-        backend="jax",
+        backend=program.config.backend,
         device="; ".join(sorted({device.device_kind for device in devices})),
         device_count=len(devices),
         precision="float32",
@@ -145,6 +157,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--shape", nargs=3, type=int, metavar=("NZ", "NY", "NX"))
     parser.add_argument("--timesteps", type=int, default=None)
     parser.add_argument("--samples", type=int, default=5)
+    parser.add_argument(
+        "--backend",
+        choices=("auto", "jax", "cuda", "cuda_streamed", "cuda_hopper"),
+        default="auto",
+    )
     parser.add_argument("--sharding", default=None)
     parser.add_argument("--output", type=Path)
     parser.add_argument(
@@ -173,4 +190,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

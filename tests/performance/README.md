@@ -20,6 +20,7 @@ source injection, and a plane DFT monitor. Run either from the repository root:
 
 ```console
 python scripts/benchmark_h100.py --workload realistic_3d \
+  --backend jax \
   --output benchmarks/realistic-h100.json
 ```
 

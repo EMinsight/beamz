@@ -738,6 +738,18 @@ class StepUpdateKernel:
 def select_update_kernel(ctx: CompiledStepContext) -> StepUpdateKernel:
     """Select the static update-kernel variant before JAX tracing."""
 
+    if ctx.config.backend != "jax":
+        if not ctx.is_3d:
+            raise ValueError("CUDA execution currently requires a three-dimensional grid")
+        if ctx.config.sharding.enabled:
+            raise ValueError(
+                "CUDA execution currently supports one GPU; use backend='jax' "
+                "for sharded multi-GPU execution"
+            )
+        from beamz.simulation.cuda import update_e, update_h
+
+        return StepUpdateKernel(ctx.config.backend, update_h, update_e)
+
     # 1. Describe variants in priority order: stateful boundaries must precede generic
     # dimensional kernels or their auxiliary state would be ignored.
     boundary = ctx.boundary

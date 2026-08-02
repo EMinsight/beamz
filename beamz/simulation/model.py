@@ -30,8 +30,8 @@ class RunSpec:
     t0: float
     loop_kind: str
     source_single_slab_dense: bool
-    backend: str
     sharding: ShardingToken
+    backend: str = "jax"
 
 
 @dataclass(frozen=True, slots=True)

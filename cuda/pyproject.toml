@@ -1,0 +1,19 @@
+[build-system]
+requires = [
+  "scikit-build-core>=0.10",
+  "nanobind>=2.4",
+  "jax>=0.4.31",
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "beamz-cuda"
+version = "0.1.0"
+description = "Optional typed-FFI CUDA kernels for BeamZ"
+requires-python = ">=3.10"
+dependencies = ["beamz==0.4.3", "jax>=0.4.31"]
+
+[tool.scikit-build]
+cmake.version = ">=3.24"
+wheel.packages = []
+build-dir = "build/{wheel_tag}"
