@@ -128,6 +128,25 @@ def _elide_zero_conductivity_grid(value):
     return value
 
 
+def _inverse_permittivity_components(values):
+    """Invert a packed symmetric tensor field into six trailing components."""
+
+    packed = np.asarray(values)
+    xx, yy, zz, xy, xz, yz = packed
+    determinant = (
+        xx * yy * zz + 2.0 * xy * xz * yz - xx * yz * yz - yy * xz * xz - zz * xy * xy
+    )
+    cofactors = (
+        yy * zz - yz * yz,
+        xx * zz - xz * xz,
+        xx * yy - xy * xy,
+        xz * yz - xy * zz,
+        xy * yz - xz * yy,
+        xy * xz - xx * yz,
+    )
+    return jnp.asarray(np.stack(cofactors, axis=-1) / determinant[..., None])
+
+
 def _compile_cpml_plan(
     fields, *, dt, is_3d, metallic_edges, polarization_2d: str = "tm"
 ) -> CpmlPlan:
@@ -497,6 +516,40 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
         )
         e_conductivity_x = e_conductivity_y = e_conductivity_z = empty3
         e_permittivity_x = e_permittivity_y = e_permittivity_z = empty3
+    empty_inverse = jnp.zeros((0,), dtype=jnp.float32)
+    if request.materials.uses_full_permittivity:
+        if any(
+            np.any(np.asarray(value) != 0.0)
+            for value in (fields.sig_x, fields.sig_y, fields.sig_z)
+        ):
+            raise ValueError(
+                "Full-tensor permittivity requires lossless electric updates; "
+                "use CPML rather than conductive or sponge-PML materials."
+            )
+        support_tensors = request.materials.yee_tensors
+        e_inverse_diagonal_x = (
+            _inverse_permittivity_components(support_tensors["eps_x"])[..., 0]
+            if "eps_x" in support_tensors
+            else empty_inverse
+        )
+        e_inverse_diagonal_y = (
+            _inverse_permittivity_components(support_tensors["eps_y"])[..., 1]
+            if "eps_y" in support_tensors
+            else empty_inverse
+        )
+        e_inverse_diagonal_z = (
+            _inverse_permittivity_components(support_tensors["eps_z"])[..., 2]
+            if "eps_z" in support_tensors
+            else empty_inverse
+        )
+        e_inverse_offdiagonal = _inverse_permittivity_components(
+            support_tensors["eps_node"]
+        )[..., 3:]
+    else:
+        e_inverse_diagonal_x = e_inverse_diagonal_y = e_inverse_diagonal_z = (
+            empty_inverse
+        )
+        e_inverse_offdiagonal = empty_inverse
     # 5. Precompute the same packed recurrence record for every 2D or 3D derivative.
     cpml = _compile_cpml_plan(
         fields,
@@ -522,14 +575,18 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
         e_source_x=e_source_x,
         e_conductivity_x=e_conductivity_x,
         e_permittivity_x=e_permittivity_x,
+        e_inverse_diagonal_x=e_inverse_diagonal_x,
         e_decay_y=e_decay_y,
         e_source_y=e_source_y,
         e_conductivity_y=e_conductivity_y,
         e_permittivity_y=e_permittivity_y,
+        e_inverse_diagonal_y=e_inverse_diagonal_y,
         e_decay_z=e_decay_z,
         e_source_z=e_source_z,
         e_conductivity_z=e_conductivity_z,
         e_permittivity_z=e_permittivity_z,
+        e_inverse_diagonal_z=e_inverse_diagonal_z,
+        e_inverse_offdiagonal=e_inverse_offdiagonal,
     )
     boundary = _compile_boundary(
         fields,
@@ -645,6 +702,10 @@ _REFERENCED_COEFFICIENTS = {
     "e_permittivity_x",
     "e_permittivity_y",
     "e_permittivity_z",
+    "e_inverse_diagonal_x",
+    "e_inverse_diagonal_y",
+    "e_inverse_diagonal_z",
+    "e_inverse_offdiagonal",
 }
 
 

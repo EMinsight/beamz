@@ -28,13 +28,14 @@ def test_uniform_result_uses_solver_facing_yee_shapes():
         box_scene(), raster.Grid.uniform((0, 0, 0), (1, 1, 1), (2, 3, 4))
     )
 
-    assert result.tensors["epsilon"].shape == (1, 4, 3, 2)
-    assert result.yee_tensors["epsilon_ex"].shape == (1, 5, 4, 2)
-    assert result.yee_tensors["epsilon_ey"].shape == (1, 5, 3, 3)
-    assert result.yee_tensors["epsilon_ez"].shape == (1, 4, 4, 3)
-    assert result.yee_tensors["mu_hx"].shape == (1, 4, 3, 3)
-    assert result.yee_tensors["mu_hy"].shape == (1, 4, 4, 2)
-    assert result.yee_tensors["mu_hz"].shape == (1, 5, 3, 2)
+    assert result.tensors["epsilon"].shape == (3, 4, 3, 2)
+    assert result.yee_tensors["epsilon_ex"].shape == (3, 5, 4, 2)
+    assert result.yee_tensors["epsilon_ey"].shape[1:] == (5, 3, 3)
+    assert result.yee_tensors["epsilon_ez"].shape[1:] == (4, 4, 3)
+    assert result.yee_tensors["epsilon_node"].shape[1:] == (5, 4, 3)
+    assert result.yee_tensors["mu_hx"].shape[1:] == (4, 3, 3)
+    assert result.yee_tensors["mu_hy"].shape[1:] == (4, 4, 2)
+    assert result.yee_tensors["mu_hz"].shape[1:] == (5, 3, 2)
 
 
 def test_scene_has_design_like_rasterize_convenience():
@@ -60,7 +61,7 @@ def test_nonuniform_grid_is_supported_and_immutable():
 
     assert not grid.is_uniform
     assert not result.is_uniform
-    assert result.tensors["epsilon"].shape == (1, 1, 2, 2)
+    assert result.tensors["epsilon"].shape == (3, 1, 2, 2)
     with pytest.raises(ValueError):
         result.tensors["epsilon"][0, 0, 0, 0] = 9
     with pytest.raises(ValueError):
@@ -84,7 +85,7 @@ def test_two_dimensional_tm_omits_unused_components():
         "mu_hx",
         "mu_hy",
     }
-    assert result.tensors["epsilon"].shape == (1, 1, 2, 2)
+    assert result.tensors["epsilon"].shape == (3, 1, 2, 2)
 
 
 def test_two_dimensional_te_omits_unused_components():
@@ -97,11 +98,12 @@ def test_two_dimensional_te_omits_unused_components():
     assert set(result.yee_tensors) == {
         "epsilon_ex",
         "epsilon_ey",
+        "epsilon_node",
         "conductivity_ex",
         "conductivity_ey",
         "mu_hz",
     }
-    assert result.tensors["epsilon"].shape == (1, 1, 2, 2)
+    assert result.tensors["epsilon"].shape == (3, 1, 2, 2)
 
 
 def test_compiled_scene_reuse_and_cache_recovery(tmp_path):
@@ -167,6 +169,7 @@ def test_scene_hash_and_cache_include_materials_and_nonuniform_edges(tmp_path):
 
 
 def test_invalid_public_options_fail_early():
+    assert raster.RasterOptions().smoothing == "farjadpour_full"
     with pytest.raises(ValueError, match="quality"):
         raster.RasterOptions(quality="custom")
     with pytest.raises(ValueError, match="smoothing"):
@@ -228,7 +231,7 @@ def test_diagonal_material_uses_three_component_tensor_storage():
     np.testing.assert_array_equal(result.tensors["epsilon"][:, 0, 0, 0], (2, 3, 4))
 
 
-def test_intrinsic_full_tensors_are_retained_at_their_field_supports():
+def test_intrinsic_full_tensors_are_retained_at_their_constitutive_supports():
     epsilon = (3.0, 2.0, 1.5, 0.2, 0.0, 0.1)
     mu = (2.0, 1.5, 1.2, 0.1, 0.0, 0.0)
     conductivity = (1.0, 0.5, 0.2, 0.1, 0.0, 0.0)
@@ -237,7 +240,7 @@ def test_intrinsic_full_tensors_are_retained_at_their_field_supports():
         raster.Grid.uniform((0, 0, 0), (1, 1, 1), (2, 3, 4)),
     )
 
-    for name in ("epsilon_ex", "epsilon_ey", "epsilon_ez"):
+    for name in ("epsilon_ex", "epsilon_ey", "epsilon_ez", "epsilon_node"):
         values = result.yee_tensors[name]
         assert values.shape[0] == 6
         np.testing.assert_allclose(values[:, 0, 0, 0], epsilon)
