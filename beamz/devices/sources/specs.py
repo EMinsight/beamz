@@ -39,10 +39,15 @@ class FieldProfile3D:
     k_axis: float | None
     phase_ref_coord: float
     phase_plane_coord: float
+    grid: Any | None = None
+    power_weights: Mapping[str, np.ndarray] = field(default_factory=dict)
 
     def __post_init__(self):
         object.__setattr__(self, "components", immutable_snapshot(self.components))
         object.__setattr__(self, "indices", immutable_snapshot(self.indices))
+        object.__setattr__(
+            self, "power_weights", immutable_snapshot(self.power_weights)
+        )
 
 
 SourceDirection = Literal["+", "-"]
@@ -75,7 +80,7 @@ class ModeSource:
     """Inject a solved waveguide mode through a finite plane.
 
     The zero extent in ``size`` selects the injection axis. ``direction`` is
-    ``"+"`` or ``"-"`` along that axis, matching Tidy3D's modal source API.
+    ``"+"`` or ``"-"`` along that axis.
     Temporal behavior belongs exclusively to ``source_time``; sampled drives
     use :class:`~beamz.SampledSignal`.
     """

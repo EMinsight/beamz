@@ -2,11 +2,14 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from beamz import MU_0
+from beamz import MU_0, RectilinearGrid
 from beamz.lattice import (
+    adjacent_difference,
     build_h_boundary_views_for_e_3d,
     curl_e_to_h_3d,
+    curl_e_to_h_3d_metric,
     curl_h_to_e_3d,
+    curl_h_to_e_3d_metric,
     yee_flux,
 )
 from beamz.simulation.kernels import (
@@ -195,6 +198,92 @@ def test_curl_h_to_e_3d_linear_field_has_constant_y_component():
     np.testing.assert_allclose(np.asarray(curl_hx)[1:-1, 1:-1, :], 0.0, atol=1e-6)
     np.testing.assert_allclose(np.asarray(curl_hy)[1:-1, :, 1:-1], 2.0, atol=1e-6)
     np.testing.assert_allclose(np.asarray(curl_hz)[:, 1:-1, 1:-1], 0.0, atol=1e-6)
+
+
+def test_rectilinear_curl_h_to_e_infers_yee_shapes_and_rejects_mismatch():
+    nz = ny = nx = 4
+    hx = jnp.arange(nz * ny * (nx + 1), dtype=jnp.float32).reshape(nz, ny, nx + 1)
+    hy = jnp.zeros((nz, ny + 1, nx), dtype=jnp.float32)
+    hz = jnp.zeros((nz + 1, ny, nx), dtype=jnp.float32)
+    grid = RectilinearGrid(
+        np.asarray([0.0, 0.8, 1.9, 3.3, 5.0]),
+        np.asarray([0.0, 1.2, 2.1, 3.5, 5.4]),
+        np.asarray([0.0, 0.7, 1.8, 3.2, 5.1]),
+    )
+    boundary_views = build_h_boundary_views_for_e_3d(hx, hy, hz)
+
+    curls = curl_h_to_e_3d_metric(
+        hx,
+        hy,
+        hz,
+        grid,
+        boundary_views=boundary_views,
+    )
+
+    assert tuple(curl.shape for curl in curls) == (
+        (nz + 1, ny + 1, nx),
+        (nz + 1, ny, nx + 1),
+        (nz, ny + 1, nx + 1),
+    )
+    assert all(np.all(np.isfinite(np.asarray(curl))) for curl in curls)
+    with pytest.raises(ValueError, match=r"curl\(H\) shapes"):
+        curl_h_to_e_3d_metric(
+            hx,
+            hy,
+            hz,
+            grid,
+            ex_shape=(1, 1, 1),
+            ey_shape=(1, 1, 1),
+            ez_shape=(1, 1, 1),
+            boundary_views=boundary_views,
+        )
+
+
+def test_rectilinear_curls_apply_inverse_physical_distances():
+    grid = RectilinearGrid(
+        np.asarray([0.0, 0.5, 1.5, 3.0]),
+        np.asarray([0.0, 0.4, 1.1, 2.1]),
+        np.asarray([0.0, 0.3, 0.9, 2.0]),
+    )
+    z_nodes = grid.z_edges[:, None, None]
+    y_nodes = grid.y_edges[None, :, None]
+    x_nodes = grid.x_edges[None, None, :]
+    ex = np.broadcast_to(z_nodes, (4, 4, 3))
+    ey = np.broadcast_to(x_nodes, (4, 3, 4))
+    ez = np.broadcast_to(y_nodes, (3, 4, 4))
+
+    curl_h = curl_e_to_h_3d_metric(ex, ey, ez, grid)
+
+    for component in curl_h:
+        np.testing.assert_allclose(component, 1.0, rtol=2e-7)
+
+    z_centers = grid.centers("z")[:, None, None]
+    y_centers = grid.centers("y")[None, :, None]
+    x_centers = grid.centers("x")[None, None, :]
+    hx = np.broadcast_to(z_centers, (3, 3, 4)).astype(np.float32)
+    hy = np.broadcast_to(x_centers, (3, 4, 3)).astype(np.float32)
+    hz = np.broadcast_to(y_centers, (4, 3, 3)).astype(np.float32)
+    boundary_views = build_h_boundary_views_for_e_3d(hx, hy, hz)
+
+    curl_e = curl_h_to_e_3d_metric(
+        hx,
+        hy,
+        hz,
+        grid,
+        boundary_views=boundary_views,
+    )
+
+    np.testing.assert_allclose(curl_e[0][:, 1:-1, :], 1.0, rtol=2e-7)
+    np.testing.assert_allclose(curl_e[1][1:-1, :, :], 1.0, rtol=2e-7)
+    np.testing.assert_allclose(curl_e[2][:, :, 1:-1], 1.0, rtol=2e-7)
+
+
+def test_adjacent_difference_accepts_axis_specific_spacing():
+    values = jnp.asarray([[0.0, 0.0], [1.0, 2.0], [3.0, 6.0]])
+
+    difference = adjacent_difference(values, 0, jnp.asarray([1.0, 2.0]))
+
+    np.testing.assert_allclose(difference, [[1.0, 2.0], [1.0, 2.0]])
 
 
 def test_h_boundary_views_insert_high_ghost_before_storage_padding():

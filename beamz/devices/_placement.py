@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 
 import numpy as np
 
@@ -14,17 +16,43 @@ class SnappedInterval:
     stop: int
     step: float
     edges: tuple[float, ...] | None = None
+    physical_bounds: tuple[float, float] | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "start", int(self.start))
+        object.__setattr__(self, "stop", int(self.stop))
+        object.__setattr__(self, "step", float(self.step))
+        if self.edges is not None:
+            object.__setattr__(
+                self, "edges", tuple(float(value) for value in self.edges)
+            )
+        if self.physical_bounds is not None:
+            raw_bounds = tuple(float(value) for value in self.physical_bounds)
+            if len(raw_bounds) != 2 or not np.all(np.isfinite(raw_bounds)):
+                raise ValueError(
+                    "SnappedInterval physical_bounds must contain two finite values."
+                )
+            bounds = (raw_bounds[0], raw_bounds[1])
+            if bounds[1] < bounds[0]:
+                raise ValueError(
+                    "SnappedInterval physical_bounds must be nondecreasing."
+                )
+            object.__setattr__(self, "physical_bounds", bounds)
 
     @property
     def lower(self) -> float:
         if self.edges is not None:
             return float(self.edges[int(self.start)])
+        if self.physical_bounds is not None:
+            return self.physical_bounds[0]
         return float(self.start) * float(self.step)
 
     @property
     def upper(self) -> float:
         if self.edges is not None:
             return float(self.edges[int(self.stop)])
+        if self.physical_bounds is not None:
+            return self.physical_bounds[1]
         return float(self.stop) * float(self.step)
 
     @property
@@ -33,7 +61,7 @@ class SnappedInterval:
 
     @property
     def size(self) -> float:
-        return max(0, int(self.stop) - int(self.start)) * float(self.step)
+        return max(0.0, self.upper - self.lower)
 
     def as_slice(self) -> slice:
         return slice(int(self.start), int(self.stop))
@@ -45,9 +73,38 @@ class SnappedRegion:
     normal_axis: str
     plane_index: int
     plane_coord: float
-    intervals: dict[str, SnappedInterval] = field(default_factory=dict)
+    intervals: Mapping[str, SnappedInterval] = field(default_factory=dict)
     companion_index: int | None = None
     companion_coord: float | None = None
+
+    def __post_init__(self) -> None:
+        normal_axis = str(self.normal_axis).lower()
+        if normal_axis not in _AXES:
+            raise ValueError(
+                f"Snapped region normal axis must be one of {_AXES}; "
+                f"got {self.normal_axis!r}."
+            )
+        intervals = {}
+        for axis, interval in self.intervals.items():
+            normalized_axis = str(axis).lower()
+            if normalized_axis not in _AXES:
+                raise ValueError(
+                    f"Snapped interval axis must be one of {_AXES}; got {axis!r}."
+                )
+            if not isinstance(interval, SnappedInterval):
+                raise TypeError(
+                    "SnappedRegion intervals must be SnappedInterval values."
+                )
+            intervals[normalized_axis] = interval
+        object.__setattr__(self, "ndim", int(self.ndim))
+        object.__setattr__(self, "normal_axis", normal_axis)
+        object.__setattr__(self, "plane_index", int(self.plane_index))
+        object.__setattr__(self, "plane_coord", float(self.plane_coord))
+        object.__setattr__(self, "intervals", MappingProxyType(intervals))
+        if self.companion_index is not None:
+            object.__setattr__(self, "companion_index", int(self.companion_index))
+        if self.companion_coord is not None:
+            object.__setattr__(self, "companion_coord", float(self.companion_coord))
 
     def axis_interval(self, axis: str) -> SnappedInterval | None:
         return self.intervals.get(str(axis).lower())
@@ -311,6 +368,57 @@ def snap_mode_source_region(
         intervals=intervals,
         companion_index=int(companion_index),
         companion_coord=float(companion_coord),
+    )
+
+
+def snap_mode_source_region_grid(
+    *,
+    center: tuple[float, ...],
+    width: float,
+    height: float | None,
+    axis: str,
+    direction_sign: float,
+    grid,
+    is_3d: bool,
+) -> SnappedRegion:
+    """Snap a mode launch to the realized rectilinear Yee grid."""
+    axis = str(axis).lower()
+    edges = {name: np.asarray(grid.axis_edges(name)) for name in _AXES}
+    plane_index, plane_coord = snap_rectilinear_cell_center(
+        center[_axis_pos(axis)], edges[axis]
+    )
+    counts = {name: int(values.size - 1) for name, values in edges.items()}
+    companion_max = max(counts[axis] - 2, 0)
+    companion_index = (
+        max(0, plane_index - 1)
+        if direction_sign > 0.0
+        else min(companion_max, plane_index + 1)
+    )
+    companion_coord = float(edges[axis][companion_index + 1])
+
+    extents = {
+        "x": {"y": float(width), "z": float(height if height is not None else width)},
+        "y": {"x": float(width), "z": float(height if height is not None else width)},
+        "z": {"x": float(width), "y": float(height if height is not None else width)},
+    }[axis]
+    intervals = {}
+    for transverse, extent in extents.items():
+        if not is_3d and transverse == "z":
+            continue
+        coord = float(center[_axis_pos(transverse)])
+        intervals[transverse] = snap_rectilinear_edge_interval(
+            coord - 0.5 * extent,
+            coord + 0.5 * extent,
+            edges[transverse],
+        )
+    return SnappedRegion(
+        ndim=3 if is_3d else 2,
+        normal_axis=axis,
+        plane_index=plane_index,
+        plane_coord=plane_coord,
+        intervals=intervals,
+        companion_index=companion_index,
+        companion_coord=companion_coord,
     )
 
 

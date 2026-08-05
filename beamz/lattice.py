@@ -62,6 +62,106 @@ def component_coordinates_3d_um(
     }
 
 
+def component_coordinates_rectilinear(
+    component: str,
+    grid,
+    *,
+    plane: str | None = None,
+    polarization: str = "tm",
+) -> dict[str, np.ndarray]:
+    """Return exact physical Yee coordinates from rectilinear grid edges."""
+
+    def samples(axis: str, offset: float) -> np.ndarray:
+        edges = np.asarray(grid.axis_edges(axis), dtype=np.float64)
+        return edges if offset == 0.0 else 0.5 * (edges[:-1] + edges[1:])
+
+    if plane is None:
+        offsets = component_axis_offsets_3d(component)
+        return {axis: samples(axis, offsets[axis]) for axis in ("z", "y", "x")}
+
+    normalized_plane = str(plane).lower()
+    canonical = canonical_component_2d(component, normalized_plane, polarization)
+    if canonical is None:
+        return {}
+    row_offset, column_offset = {
+        "Ez": (0.0, 0.0),
+        "Hx": (0.5, 0.0),
+        "Hy": (0.0, 0.5),
+        "Ex": (0.0, 0.5),
+        "Ey": (0.5, 0.0),
+        "Hz": (0.5, 0.5),
+    }[canonical]
+    row_axis, column_axis = {
+        "xy": ("y", "x"),
+        "yz": ("z", "y"),
+        "xz": ("z", "x"),
+    }[normalized_plane]
+    return {
+        row_axis: samples("y", row_offset),
+        column_axis: samples("x", column_offset),
+    }
+
+
+def grid_axes_in_physical_frame_2d(plane: str) -> tuple[str, str, str]:
+    """Map stored rectilinear ``(x, y, z)`` axes to physical axes for a 2D plane."""
+    try:
+        return {
+            "xy": ("x", "y", "z"),
+            "xz": ("x", "z", "y"),
+            "yz": ("y", "z", "x"),
+        }[str(plane).lower()]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported 2D plane {plane!r}.") from exc
+
+
+def grid_vector_to_physical_2d(
+    values: tuple[float, float, float], plane: str
+) -> tuple[float, float, float]:
+    """Permute a stored-grid vector into public physical ``(x, y, z)`` order."""
+    stored = tuple(float(value) for value in values)
+    if len(stored) != 3:
+        raise ValueError("A stored-grid vector must contain three values.")
+    physical = dict.fromkeys("xyz", 0.0)
+    for axis, value in zip(grid_axes_in_physical_frame_2d(plane), stored, strict=True):
+        physical[axis] = value
+    return physical["x"], physical["y"], physical["z"]
+
+
+def physical_vector_to_grid_2d(
+    values: tuple[float, float, float], plane: str
+) -> tuple[float, float, float]:
+    """Permute a public physical vector into stored-grid ``(x, y, z)`` order."""
+    physical = dict(zip("xyz", map(float, values), strict=True))
+    grid_x, grid_y, grid_z = grid_axes_in_physical_frame_2d(plane)
+    return physical[grid_x], physical[grid_y], physical[grid_z]
+
+
+def in_plane_vector_2d(
+    values: tuple[float, float, float], plane: str
+) -> tuple[float, float]:
+    """Select the public offsets corresponding to stored grid ``(x, y)`` order."""
+    physical = dict(zip("xyz", map(float, values), strict=True))
+    grid_x, grid_y, _ = grid_axes_in_physical_frame_2d(plane)
+    return physical[grid_x], physical[grid_y]
+
+
+def coordinates_in_public_frame(
+    coordinates: Mapping[str, Any],
+    coordinate_offset: tuple[float, float, float],
+) -> dict[str, np.ndarray]:
+    """Translate solver-local axis coordinates into the public coordinate frame.
+
+    Simulation devices are lowered according to ``local = public + offset``.
+    Analysis therefore applies the inverse translation to exact Yee coordinates.
+    """
+
+    offsets = dict(zip("xyz", map(float, coordinate_offset), strict=True))
+    return {
+        axis: np.asarray(values, dtype=np.float64) - offsets.get(axis, 0.0)
+        for axis, values in coordinates.items()
+    }
+
+
 _FIELD_COMPONENTS = ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
 
 
@@ -373,10 +473,51 @@ def curl_e_to_h_3d(ex, ey, ez, resolution):
     )
 
 
+def _rectilinear_inverse_distances(grid, axis: str, *, backward: bool) -> np.ndarray:
+    widths = np.asarray(grid.cell_widths(axis), dtype=np.float64)
+    if not backward:
+        return 1.0 / widths
+    inverse = np.empty(widths.size + 1, dtype=np.float64)
+    inverse[0], inverse[-1] = 1.0 / widths[0], 1.0 / widths[-1]
+    if widths.size > 1:
+        inverse[1:-1] = 2.0 / (widths[:-1] + widths[1:])
+    return inverse
+
+
+def curl_e_to_h_3d_metric(ex, ey, ez, grid):
+    """Differentiate electric fields using exact rectilinear cell widths."""
+    ix = _rectilinear_inverse_distances(grid, "x", backward=False)
+    iy = _rectilinear_inverse_distances(grid, "y", backward=False)
+    iz = _rectilinear_inverse_distances(grid, "z", backward=False)
+    return (
+        metric_adjacent_difference(ez, 1, iy) - metric_adjacent_difference(ey, 0, iz),
+        metric_adjacent_difference(ex, 0, iz) - metric_adjacent_difference(ez, 2, ix),
+        metric_adjacent_difference(ey, 2, ix) - metric_adjacent_difference(ex, 1, iy),
+    )
+
+
 def adjacent_difference(array, axis, resolution):
     resolution = jnp.asarray(resolution, dtype=array.dtype)
     moved = jnp.moveaxis(array, axis, 0)
+    if resolution.ndim == 1:
+        resolution = resolution.reshape((resolution.size,) + (1,) * (moved.ndim - 1))
     return jnp.moveaxis((moved[1:] - moved[:-1]) / resolution, 0, axis)
+
+
+def metric_adjacent_difference(array, axis, inverse_distance):
+    """Apply an adjacent difference scaled by a precomputed inverse distance."""
+    values = jnp.asarray(array)
+    inverse_distance = jnp.asarray(inverse_distance, dtype=values.dtype)
+    moved = jnp.moveaxis(values, axis, 0)
+    if inverse_distance.ndim == 1:
+        inverse_distance = inverse_distance.reshape(
+            (inverse_distance.size,) + (1,) * (moved.ndim - 1)
+        )
+    return jnp.moveaxis(
+        (moved[1:] - moved[:-1]) * inverse_distance,
+        0,
+        axis,
+    )
 
 
 def _pad_with_boundary_ghosts(
@@ -459,6 +600,43 @@ def curl_h_to_e_3d(
         - adjacent_difference(boundary_views["hz_x"], 2, resolution),
         adjacent_difference(boundary_views["hy_x"], 2, resolution)
         - adjacent_difference(boundary_views["hx_y"], 1, resolution),
+    )
+    expected = (ex_shape, ey_shape, ez_shape)
+    if any(curl.shape != shape for curl, shape in zip(curls, expected, strict=True)):
+        raise ValueError(
+            f"curl(H) shapes {tuple(curl.shape for curl in curls)} do not match {expected}"
+        )
+    return curls
+
+
+def curl_h_to_e_3d_metric(
+    hx,
+    hy,
+    hz,
+    grid,
+    ex_shape=None,
+    ey_shape=None,
+    ez_shape=None,
+    *,
+    boundary_views,
+):
+    """Differentiate magnetic fields using exact dual-grid distances."""
+    if ex_shape is None:
+        ex_shape = (hz.shape[0], hz.shape[1] + 1, hz.shape[2])
+    if ey_shape is None:
+        ey_shape = (hx.shape[0] + 1, hx.shape[1], hx.shape[2])
+    if ez_shape is None:
+        ez_shape = (hy.shape[0], hy.shape[1], hy.shape[2] + 1)
+    ix = _rectilinear_inverse_distances(grid, "x", backward=True)
+    iy = _rectilinear_inverse_distances(grid, "y", backward=True)
+    iz = _rectilinear_inverse_distances(grid, "z", backward=True)
+    curls = (
+        metric_adjacent_difference(boundary_views["hz_y"], 1, iy)
+        - metric_adjacent_difference(boundary_views["hy_z"], 0, iz),
+        metric_adjacent_difference(boundary_views["hx_z"], 0, iz)
+        - metric_adjacent_difference(boundary_views["hz_x"], 2, ix),
+        metric_adjacent_difference(boundary_views["hy_x"], 2, ix)
+        - metric_adjacent_difference(boundary_views["hx_y"], 1, iy),
     )
     expected = (ex_shape, ey_shape, ez_shape)
     if any(curl.shape != shape for curl, shape in zip(curls, expected, strict=True)):

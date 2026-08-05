@@ -458,11 +458,6 @@ def _lower_mode_source(
     source: ModeSource,
     ctx: SourceLoweringContext,
 ) -> CompiledInjectionPlan:
-    if _source_requires_rectilinear_operator(ctx):
-        raise NotImplementedError(
-            "ModeSource on a rectilinear grid requires a nonuniform mode operator; "
-            "use a precomputed CustomSource or a uniform grid."
-        )
     if (
         np.asarray(ctx.fields.permittivity).ndim == 3
         and source.profile_frequencies().size > 1
@@ -474,6 +469,7 @@ def _lower_mode_source(
         ctx.fields,
         resolution=ctx.resolution,
         dt=ctx.dt,
+        **({"grid": ctx.grid} if ctx.grid is not None else {}),
     )
     is_3d = isinstance(launch_plan, Mode3DLaunchPlan) or hasattr(
         launch_plan, "residuals"
@@ -544,6 +540,7 @@ def _lower_broadband_mode_source(
             ctx.fields,
             resolution=ctx.resolution,
             dt=ctx.dt,
+            **({"grid": ctx.grid} if ctx.grid is not None else {}),
         )
         plans.append(plan)
 
@@ -592,13 +589,14 @@ def _mode_launch_injection_plan(
 ) -> CompiledInjectionPlan:
     if isinstance(plan, Mode2DLaunchPlan):
         entries = []
+        normal_spacing = float(plan.normal_spacing or ctx.resolution)
         for entry in plan.entries:
             component = entry.component
             material_scale = MU_0 if component.startswith("H") else EPS_0
             denominator = (
                 material_scale
                 * np.asarray(component_material_at(ctx.fields, component, entry.index))
-                * ctx.resolution
+                * normal_spacing
             )
             target = np.asarray(getattr(ctx.fields, component)[entry.index])
             values = (

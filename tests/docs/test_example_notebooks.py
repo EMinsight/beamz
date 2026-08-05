@@ -50,7 +50,7 @@ def test_cosine_crossing_notebook_uses_internal_launch_power_normalization():
     assert "source_power = sim_data.launched_power(source=0)" in source
     assert "T_through = safe_power_ratio(flux_through, source_power)" in source
     assert "T_cross = safe_power_ratio(flux_cross, source_power)" in source
-    assert "same Yee-grid Poynting convention" in source
+    assert "exact component-staggered transverse metric" in source
     assert "flux_input" not in source
     assert "sim_reference" not in source
     assert "flux_reference" not in source
@@ -107,6 +107,9 @@ def test_example_notebook_executes_in_reduced_mode(path):
         "BEAMZ_DOCS_TEST": "1",
         "JAX_PLATFORMS": "cpu",
         "MPLBACKEND": "Agg",
+        "PYTHONPATH": os.pathsep.join(
+            value for value in (str(ROOT), os.environ.get("PYTHONPATH", "")) if value
+        ),
     }
 
     subprocess.run(
@@ -190,6 +193,15 @@ def test_modal_notebook_projects_modes_from_results():
     assert "mode_source_request.mode_spec, num_freqs=1" in source
     assert "np.testing.assert_allclose(single_profile_freqs, [freq0])" in source
     assert "sim_jct_bb.num_steps" in source
+    assert "bz.GridSpec.auto(" in source
+    assert 'sim0.grid.metric_kind == "rectilinear"' in source
+    assert "raw_single = sim_data_single.renormalize(None)" in source
+    assert "flux_single_response * single_power_scale" in source
+    assert "flux_single_raw * pulse_power_scale" in source
+    assert "single_power_scale = scalar_power_scale(" in source
+    assert "bb_power_scale = spectral_power_scale(" in source
+    assert "np.testing.assert_allclose(flux_bb, mode_source_bb.power" in source
+    assert "source_time.spectrum(" not in source
     assert ".state.current_step" not in source
 
 

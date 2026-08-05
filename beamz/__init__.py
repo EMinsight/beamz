@@ -28,10 +28,10 @@ from beamz.const import (
 
 # Import design-related classes and functions
 from beamz.design.core import Design
-from beamz.design.grid import Grid, RectilinearGrid
+from beamz.design.grid import AxisGridQuality, Grid, GridQualityReport, RectilinearGrid
 
 # Import simulation-related classes and functions
-from beamz.design.grid_spec import GridSpec
+from beamz.design.grid_spec import GridSpec, MeshOverride
 from beamz.design.materials import Material
 from beamz.design.structures import (
     Box,
@@ -108,8 +108,11 @@ __all__ = [
     "ramped_cosine",
     "Simulation",
     "GridSpec",
+    "MeshOverride",
     "Grid",
     "RectilinearGrid",
+    "AxisGridQuality",
+    "GridQualityReport",
     "GaussianPulse",
     "SampledSignal",
     "ModeSpec",

@@ -180,6 +180,158 @@ def test_material_grid_preserves_nonuniform_raster_edges():
     assert material_grid.uses_direct_yee_materials
 
 
+def test_design_rasterize_accepts_realized_rectilinear_grid():
+    design = design_2d()
+    grid = Grid(
+        [0.0, 0.2e-6, 0.5e-6, 1.0e-6],
+        [0.0, 0.25e-6, 0.6e-6, 1.0e-6],
+        [0.0, 1.0],
+    )
+
+    material_grid = design.rasterize(grid)
+
+    assert material_grid.grid == grid
+    assert material_grid.metric_kind == "rectilinear"
+    assert material_grid.uses_direct_yee_materials
+
+
+def test_uniform_grid_spec_preview_matches_simulation_and_rasterization():
+    design = bz.Design(width=1.0e-6, height=0.8e-6)
+    spec = bz.GridSpec.uniform(0.3e-6)
+    preview = spec.realize(design)
+
+    simulation = bz.Simulation(
+        design=design,
+        grid_spec=spec,
+        time=np.asarray([0.0, 1e-16]),
+    )
+    direct = design.rasterize(preview)
+
+    assert preview == simulation.grid
+    assert preview == simulation._material_grid().grid
+    assert preview == direct.grid
+    assert preview.extent == pytest.approx((1.2e-6, 0.9e-6, 1.0))
+
+
+def test_automatic_grid_subpixel_ring_recovers_analytic_material_area():
+    n_clad, n_core = 1.44, 2.0
+    inner_radius, outer_radius = 0.75e-6, 1.05e-6
+    design = bz.Design(
+        width=3.0e-6,
+        height=3.0e-6,
+        background=bz.Material(permittivity=n_clad**2),
+        structures=(
+            bz.Ring(
+                position=(1.5e-6, 1.5e-6),
+                inner_radius=inner_radius,
+                outer_radius=outer_radius,
+                material=bz.Material(permittivity=n_core**2),
+            ),
+        ),
+    )
+    grid = bz.GridSpec.auto(
+        wavelength=1.55e-6,
+        min_steps_per_wvl=14,
+        min_feature_cells=6,
+        max_scale=1.15,
+    ).realize(design)
+
+    material_grid = design.rasterize(
+        grid,
+        quality="balanced",
+        smoothing="farjadpour_full",
+        polarization="tm",
+    )
+    epsilon = np.asarray(material_grid.permittivity)
+    fill_fraction = (epsilon - n_clad**2) / (n_core**2 - n_clad**2)
+    cell_areas = np.diff(grid.y_edges)[:, None] * np.diff(grid.x_edges)[None, :]
+    raster_area = float(np.sum(fill_fraction * cell_areas))
+    analytic_area = float(np.pi * (outer_radius**2 - inner_radius**2))
+    partial_cells = (fill_fraction > 1e-5) & (fill_fraction < 1.0 - 1e-5)
+
+    assert np.count_nonzero(partial_cells) > 100
+    assert raster_area == pytest.approx(analytic_area, rel=2e-3)
+    assert grid.quality_report().satisfies_max_scale(
+        1.15 * (1.0 + 1e-12), active_axes=("x", "y")
+    )
+
+
+def test_simulation_realizes_and_rasterizes_geometry_aware_grid_spec():
+    design = design_2d()
+    grid_spec = bz.GridSpec.auto(
+        wavelength=1.55e-6,
+        min_steps_per_wvl=10,
+        max_scale=1.2,
+    )
+    simulation = bz.Simulation(
+        design=design,
+        grid_spec=grid_spec,
+        run_time=2e-15,
+        sources=[
+            bz.GaussianSource(
+                position=(0.25e-6, 0.5e-6),
+                width=0.2e-6,
+                signal=np.ones(8),
+            )
+        ],
+        monitors=[bz.FieldRecorder(("Ez",), interval=2, name="fields")],
+    )
+
+    material_grid = simulation._material_grid()
+    program = simulation.compile()
+
+    assert isinstance(simulation.resolution, float)
+    assert material_grid.grid == simulation.grid
+    assert material_grid.metric_kind == "rectilinear"
+    assert program.config.metric_kind == "rectilinear"
+    expected_dt = grid_spec.resolve_time_step(simulation.grid, dims=2)
+    assert simulation.dt == pytest.approx(expected_dt)
+
+
+def test_automatic_grid_simulation_copy_and_result_metadata_keep_exact_grid():
+    simulation = bz.Simulation(
+        design=design_2d(),
+        grid_spec=bz.GridSpec.auto(wavelength=1.55e-6, max_scale=1.2),
+        run_time=2e-15,
+        sources=[],
+        monitors=[],
+    )
+
+    copied = simulation.updated_copy(monitors=())
+    program = copied.compile()
+    results = bz.SimulationResults.from_run(
+        copied,
+        runtime_fields=program.grid,
+        monitor_results={},
+    )
+
+    assert copied.grid == simulation.grid
+    assert copied.resolution == pytest.approx(simulation.grid.minimum_spacing)
+    assert results.metadata.resolution == pytest.approx(copied.resolution)
+    assert results.metadata.grid == copied.grid
+
+
+def test_automatic_grid_keeps_rectilinear_mesh_for_mode_devices():
+    monitor = bz.ModeMonitor(
+        center=(0.5e-6, 0.5e-6, 0.0),
+        size=(0.0, 0.5e-6, 1.0),
+        freqs=[2.0e14],
+        mode_spec=bz.ModeSpec(polarization="tm"),
+        name="mode",
+    )
+    simulation = bz.Simulation(
+        design=design_2d(),
+        grid_spec=bz.GridSpec.auto(wavelength=1.55e-6),
+        run_time=2e-15,
+        sources=[],
+        monitors=[monitor],
+    )
+
+    assert simulation.grid.metric_kind_for(("x", "y")) == "rectilinear"
+    assert simulation._material_grid().grid == simulation.grid
+    simulation.compile()
+
+
 def test_compiler_builds_separable_staggered_metrics_for_rectilinear_grid():
     result = rasterize(
         Scene((Material(),)),
@@ -360,6 +512,16 @@ def test_rectilinear_monitors_compile_local_line_and_face_weights():
     )
 
     np.testing.assert_allclose(face_spec.integration_weights, [0.06, 0.24, 0.14, 0.56])
+    assert face_spec.sample_region is not None
+    assert face_spec.sample_region.plane_coord == pytest.approx(0.2)
+    interval_x = face_spec.sample_region.axis_interval("x")
+    interval_y = face_spec.sample_region.axis_interval("y")
+    assert interval_x is not None and interval_y is not None
+    assert interval_x.edges is None and interval_y.edges is None
+    assert (interval_x.start, interval_x.stop) == (0, 2)
+    assert (interval_y.start, interval_y.stop) == (0, 2)
+    assert (interval_x.lower, interval_x.upper) == pytest.approx((0.0, 1.0))
+    assert (interval_y.lower, interval_y.upper) == pytest.approx((0.0, 1.0))
 
 
 def test_centered_design_monitor_uses_normalized_grid_once():
@@ -384,7 +546,7 @@ def test_centered_design_monitor_uses_normalized_grid_once():
     assert program.monitors[0].dft_point_count == 16
 
 
-def test_rectilinear_mode_monitor_is_rejected_until_mode_solver_is_metric_aware():
+def test_rectilinear_mode_monitor_compiles_with_exact_integration_weights():
     grid = Grid(
         [0.0, 0.2, 1.0],
         [0.0, 0.3, 1.0],
@@ -405,11 +567,74 @@ def test_rectilinear_mode_monitor_is_rejected_until_mode_solver_is_metric_aware(
         time=np.asarray([0.0, 1e-16]),
     )
 
-    with pytest.raises(NotImplementedError, match="nonuniform mode operator"):
-        simulation.compile()
+    program = simulation.compile()
+
+    assert program.config.metric_kind == "rectilinear"
+    expected = np.outer(grid.cell_widths("y"), grid.cell_widths("x")).reshape(-1)
+    np.testing.assert_allclose(program.monitors[0].integration_weights, expected)
 
 
-def test_rectilinear_gaussian_source_uses_physical_edges_and_local_frame():
+def test_rectilinear_2d_mode_source_and_monitor_compile_on_auto_grid():
+    wavelength = 1.55 * bz.um
+    frequency = bz.LIGHT_SPEED / wavelength
+    design = bz.Design(
+        width=2.0 * bz.um,
+        height=1.5 * bz.um,
+        material=bz.Material(permittivity=1.0),
+    ).with_structure(
+        bz.Rectangle(
+            position=(0.0, 0.55 * bz.um),
+            width=2.0 * bz.um,
+            height=0.4 * bz.um,
+            material=bz.Material(permittivity=4.0),
+        )
+    )
+    mode_spec = bz.ModeSpec(polarization="tm", target_neff=1.8)
+    source = bz.ModeSource(
+        center=(0.4 * bz.um, 0.75 * bz.um, 0.0),
+        size=(0.0, 1.2 * bz.um, 1.0),
+        source_time=bz.GaussianPulse(freq0=frequency, fwidth=0.1 * frequency),
+        direction="+",
+        mode_spec=mode_spec,
+    )
+    monitor = bz.ModeMonitor(
+        center=(1.4 * bz.um, 0.75 * bz.um, 0.0),
+        size=(0.0, 1.2 * bz.um, 1.0),
+        freqs=[frequency],
+        mode_spec=mode_spec,
+        name="mode",
+    )
+    simulation = bz.Simulation(
+        design=design,
+        grid_spec=bz.GridSpec.auto(
+            wavelength=wavelength,
+            min_steps_per_wvl=8,
+            max_scale=1.2,
+        ),
+        run_time=1e-15,
+        sources=[source],
+        monitors=[monitor],
+    )
+
+    program = simulation.compile()
+
+    assert simulation.grid.metric_kind_for(("x", "y")) == "rectilinear"
+    assert program.config.metric_kind == "rectilinear"
+    assert {spec.component for spec in program.sources} == {"Ez", "Hy"}
+    assert np.asarray(program.monitors[0].integration_weights).size > 1
+
+
+@pytest.mark.parametrize(
+    ("plane", "expected_offset"),
+    (
+        ("xy", (-2.0, -3.0, -4.0)),
+        ("xz", (-2.0, -4.0, -3.0)),
+        ("yz", (-4.0, -2.0, -3.0)),
+    ),
+)
+def test_rectilinear_gaussian_source_uses_physical_edges_and_local_frame(
+    plane, expected_offset
+):
     grid = Grid(
         [2.0, 2.2, 3.0],
         [3.0, 3.3, 4.0],
@@ -430,6 +655,7 @@ def test_rectilinear_gaussian_source_uses_physical_edges_and_local_frame():
     simulation = bz.Simulation(
         material_grid=material_grid,
         sources=[source],
+        plane_2d=plane,
         time=np.asarray([0.0, 1e-16]),
     )
 
@@ -437,9 +663,137 @@ def test_rectilinear_gaussian_source_uses_physical_edges_and_local_frame():
     compiled_source = program.sources[0]
 
     assert program.grid.geometry.origin == (0.0, 0.0, 0.0)
-    assert simulation.coordinate_offset == (-2.0, -3.0, -4.0)
+    assert simulation.coordinate_offset == expected_offset
+    np.testing.assert_allclose(simulation.sources[0].position, (0.2, 0.3))
     assert compiled_source.slab_starts == (1, 1)
     assert compiled_source.slab_sizes == (1, 1)
+
+
+@pytest.mark.parametrize(
+    ("plane", "polarization", "component", "expected_axes", "expected_offset"),
+    (
+        ("xy", "tm", "Ez", ("x", "y"), (-2.0, -3.0, -4.0)),
+        ("xz", "tm", "Ey", ("x", "z"), (-2.0, -4.0, -3.0)),
+        ("yz", "tm", "Ex", ("y", "z"), (-4.0, -2.0, -3.0)),
+        ("xy", "te", "Hz", ("x", "y"), (-2.0, -3.0, -4.0)),
+        ("xz", "te", "Hy", ("x", "z"), (-2.0, -4.0, -3.0)),
+        ("yz", "te", "Hx", ("y", "z"), (-4.0, -2.0, -3.0)),
+    ),
+)
+def test_imported_grid_results_keep_local_metadata_and_public_coordinates(
+    plane, polarization, component, expected_axes, expected_offset
+):
+    grid = Grid(
+        [2.0, 2.2, 3.0],
+        [3.0, 3.3, 4.0],
+        [4.0, 5.0],
+    )
+    material_grid = MaterialGrid.from_raster_result(
+        rasterize(
+            Scene((Material(),)),
+            grid,
+            options=RasterOptions(components=f"two_dimensional_{polarization}"),
+        ),
+        polarization=polarization,
+    )
+    recorder = bz.FieldRecorder((component,), interval=1, name="fields")
+    simulation = bz.Simulation(
+        material_grid=material_grid,
+        monitors=[recorder],
+        plane_2d=plane,
+        polarization=polarization,
+        time=np.asarray([0.0, 1e-16]),
+    )
+    program = simulation.compile()
+    from beamz.lattice import component_coordinates_rectilinear
+
+    local_coordinates = component_coordinates_rectilinear(
+        component,
+        program.grid.geometry,
+        plane=plane,
+        polarization=polarization,
+    )
+    monitor_result = bz.MonitorResults(
+        monitor=recorder,
+        fields={
+            component: np.zeros(
+                (
+                    1,
+                    len(local_coordinates[expected_axes[1]]),
+                    len(local_coordinates[expected_axes[0]]),
+                ),
+                dtype=np.float32,
+            )
+        },
+        power_history=np.empty(0),
+        power_timestamps=np.empty(0),
+        power_spectrum=np.empty(0, dtype=np.complex64),
+        field_times=np.asarray([1e-16]),
+        field_steps=np.asarray([1]),
+    )
+
+    results = bz.SimulationResults.from_run(
+        simulation,
+        runtime_fields=program.grid,
+        monitor_results={"fields": monitor_result},
+    )
+    dataset = bz.analysis.to_xarray(results)
+
+    from beamz.analysis.plotting import _coord_extent_um
+
+    assert results.metadata.grid == program.grid.geometry
+    assert results.metadata.grid.origin == (0.0, 0.0, 0.0)
+    assert results.metadata.coordinate_offset == expected_offset
+    assert dataset.attrs["coordinate_frame"] == "public"
+    expected_x = (
+        grid.x_edges
+        if polarization == "tm"
+        else 0.5 * (grid.x_edges[:-1] + grid.x_edges[1:])
+    )
+    expected_y = (
+        grid.y_edges
+        if polarization == "tm"
+        else 0.5 * (grid.y_edges[:-1] + grid.y_edges[1:])
+    )
+    np.testing.assert_allclose(dataset.coords[expected_axes[0]], expected_x)
+    np.testing.assert_allclose(dataset.coords[expected_axes[1]], expected_y)
+    assert _coord_extent_um(
+        dataset[component], sim=results.metadata
+    ) == _coord_extent_um(dataset[component], sim=None)
+
+
+@pytest.mark.parametrize(
+    ("plane", "expected_offset"),
+    (
+        ("xy", (1.0, 2.0, 0.0)),
+        ("xz", (1.0, 0.0, 2.0)),
+        ("yz", (0.0, 1.0, 2.0)),
+    ),
+)
+@pytest.mark.parametrize("polarization", ("tm", "te"))
+def test_centered_2d_devices_round_trip_through_plane_aware_offsets(
+    plane, expected_offset, polarization
+):
+    signal = np.asarray([1.0, 0.0])
+    simulation = bz.Simulation(
+        domain=(2.0, 4.0),
+        sources=[bz.GaussianSource(position=(0.0, 0.0), width=0.1, signal=signal)],
+        plane_2d=plane,
+        polarization=polarization,
+        time=np.asarray([0.0, 1e-16]),
+    )
+
+    assert simulation.coordinate_offset == expected_offset
+    assert simulation.sources[0].position == (1.0, 2.0)
+
+    replacement = bz.GaussianSource(position=(0.25, -0.5), width=0.1, signal=signal)
+    updated = simulation.updated_copy(sources=[replacement])
+    assert updated.coordinate_offset == expected_offset
+    assert updated.sources[0].position == (1.25, 1.5)
+
+    changed_plane = simulation.updated_copy(plane_2d="xz")
+    assert changed_plane.coordinate_offset == (1.0, 0.0, 2.0)
+    assert changed_plane.sources[0].position == (1.0, 2.0)
 
 
 def test_rectilinear_cpml_depth_is_graded_in_physical_distance():

@@ -20,7 +20,12 @@ from beamz._helpers import env_bool, positive_float
 from beamz.const import µm
 from beamz.design.core import Design
 from beamz.design.discretization import MaterialGrid, build_material_grid
-from beamz.design.grid_spec import GridSpec
+from beamz.design.grid import RectilinearGrid
+from beamz.design.grid_spec import (
+    GridSpec,
+    _realize_uniform_grid,
+    _validate_grid_budget,
+)
 from beamz.design.materials import Material, MaterialProtocol
 from beamz.design.structures import Box
 from beamz.devices.boundaries import normalize_boundaries
@@ -31,8 +36,16 @@ from beamz.devices.monitors.monitors import (
     ModeMonitor,
     _Monitor,
 )
-from beamz.devices.sources import CANONICAL_SOURCE_TYPES
-from beamz.lattice import normalize_polarization_2d
+from beamz.devices.sources import (
+    CANONICAL_SOURCE_TYPES,
+    GaussianBeamSource,
+)
+from beamz.lattice import (
+    grid_vector_to_physical_2d,
+    in_plane_vector_2d,
+    normalize_polarization_2d,
+    physical_vector_to_grid_2d,
+)
 from beamz.simulation.compile import CompiledProgramKey as CompiledProgramKey
 from beamz.simulation.compile import (
     _resolved_setup_device_context as _resolved_setup_device_context,
@@ -115,13 +128,13 @@ def _structure_to_domain(structure, offset, domain_size):
     return structure.shift(*offset)
 
 
-def _shift_device_to_domain(device, offset):
+def _shift_device_to_domain(device, offset, *, plane_2d):
     # Simulation domains always use public xyz offsets. A 2D Gaussian source
     # intentionally stores only its in-plane position, so lower the offset at
     # this domain-normalization boundary rather than widening its standalone API.
     position = getattr(device, "position", None)
     if position is not None and len(position) == 2 and len(offset) == 3:
-        offset = offset[:2]
+        offset = in_plane_vector_2d(offset, plane_2d)
     return device.shifted(offset)
 
 
@@ -145,12 +158,18 @@ def _max_index_for_specs(background, structures) -> float:
 
 def _resolve_grid_resolution(grid_spec, background, structures) -> float:
     if grid_spec.resolution is not None:
-        resolution = grid_spec.resolve_resolution()
+        resolution = grid_spec._target_spacing()
     else:
-        resolution = grid_spec.resolve_resolution(
+        resolution = grid_spec._target_spacing(
             max_index=_max_index_for_specs(background, structures)
         )
     return positive_float(resolution, name="Simulation resolution")
+
+
+def _devices_require_uniform_grid(sources, monitors) -> bool:
+    """Return whether current device operators require isotropic spacing."""
+    del monitors
+    return any(isinstance(source, GaussianBeamSource) for source in sources or ())
 
 
 def _normalize_plane_2d(plane) -> str:
@@ -178,39 +197,65 @@ def _time_from_run_time(time, run_time, grid_spec, resolution, dims):
     return np.arange(0.0, float(run_time) + 0.5 * dt, dt)
 
 
-def _resolve_design_time_and_grid(design, *, grid_spec, resolution, time, run_time):
+def _resolve_design_time_and_grid(
+    design,
+    *,
+    grid_spec,
+    resolution,
+    time,
+    run_time,
+    require_uniform_grid=False,
+):
     # Compute and cache the authoritative setup value so later stages do not repeat expensive work.
-    if grid_spec is not None:
-        structures = list(design.structures)
-        resolution = _resolve_grid_resolution(grid_spec, design.background, structures)
+    use_realized_grid = bool(
+        grid_spec is not None and grid_spec.is_automatic and not require_uniform_grid
+    )
+    if use_realized_grid:
+        assert grid_spec is not None
+        grid = grid_spec.realize(design)
+        resolution = grid.minimum_spacing
+    else:
+        if grid_spec is not None:
+            resolution = _resolve_grid_resolution(
+                grid_spec, design.background, list(design.structures)
+            )
+        grid = (
+            grid_spec.realize(design)
+            if grid_spec is not None and not grid_spec.is_automatic
+            else _realize_uniform_grid(design, resolution, spec=grid_spec)
+        )
     dims = 3 if _design_is_3d(design) else 2
-    time = _time_from_run_time(time, run_time, grid_spec, resolution, dims)
-    return resolution, time
+    if grid_spec is not None:
+        grid = _validate_grid_budget(grid, grid_spec, dimensions=dims)
+    time = _time_from_run_time(time, run_time, grid_spec, grid, dims)
+    return resolution, grid, time, use_realized_grid
 
 
-def _prepare_design(design, *, domain, size, background, grid_spec, resolution, time, run_time):  # fmt: skip
+def _prepare_design(design, *, domain, size, background, grid_spec, resolution, time, run_time, require_uniform_grid, plane_2d):  # fmt: skip
     # 1. Resolve the optional domain/size alias. An already domain-based design can keep its coordinates and only needs grid/time normalization.
     sim_size = _normalize_domain(domain, size)
     if design is not None and not isinstance(design, Design):
         raise TypeError("Simulation design must be a canonical Design.")
     if design is not None and sim_size is None:
-        resolution, time = _resolve_design_time_and_grid(
+        resolution, grid, time, use_realized_grid = _resolve_design_time_and_grid(
             design,
             grid_spec=grid_spec,
             resolution=resolution,
             time=time,
             run_time=run_time,
+            require_uniform_grid=require_uniform_grid,
         )
-        return design, resolution, time, (0.0, 0.0, 0.0)
+        return design, resolution, grid, time, (0.0, 0.0, 0.0), use_realized_grid
     if design is not None and not design._centered_coordinates:
-        resolution, time = _resolve_design_time_and_grid(
+        resolution, grid, time, use_realized_grid = _resolve_design_time_and_grid(
             design,
             grid_spec=grid_spec,
             resolution=resolution,
             time=time,
             run_time=run_time,
+            require_uniform_grid=require_uniform_grid,
         )
-        return design, resolution, time, (0.0, 0.0, 0.0)
+        return design, resolution, grid, time, (0.0, 0.0, 0.0), use_realized_grid
     # 2. A centered-coordinate design or explicit size must be converted into Beamz's
     # positive-domain coordinate system; reject the request when neither form is present.
     if sim_size is None:
@@ -229,12 +274,18 @@ def _prepare_design(design, *, domain, size, background, grid_spec, resolution, 
         new_design += _structure_to_domain(structure, offset, sim_size)
     # 4. Resolve adaptive spacing from the rebuilt material set, derive the final time
     # grid, and return the offset needed to shift sources and monitors consistently.
-    if grid_spec is not None:
-        resolution = _resolve_grid_resolution(grid_spec, background, source_structures)
-    time = _time_from_run_time(
-        time, run_time, grid_spec, resolution, 3 if sim_size[2] > 0 else 2
+    resolution, grid, time, use_realized_grid = _resolve_design_time_and_grid(
+        new_design,
+        grid_spec=grid_spec,
+        resolution=resolution,
+        time=time,
+        run_time=run_time,
+        require_uniform_grid=require_uniform_grid,
     )
-    return new_design, resolution, time, offset
+    public_offset = (
+        offset if new_design.is_3d else grid_vector_to_physical_2d(offset, plane_2d)
+    )
+    return new_design, resolution, grid, time, public_offset, use_realized_grid
 
 
 def _prepare_material_grid(
@@ -248,6 +299,7 @@ def _prepare_material_grid(
     raster_options,
     time,
     run_time,
+    plane_2d,
 ):
     """Create domain metadata for an already rasterized solver grid."""
 
@@ -299,8 +351,21 @@ def _prepare_material_grid(
         material_grid.grid,
         dimensions,
     )
-    offset = tuple(-value for value in material_grid.grid.origin)
-    return metadata_design, material_grid.resolution, resolved_time, offset
+    origin = material_grid.grid.origin
+    grid_offset = (-float(origin[0]), -float(origin[1]), -float(origin[2]))
+    offset = (
+        grid_offset
+        if dimensions == 3
+        else grid_vector_to_physical_2d(grid_offset, plane_2d)
+    )
+    return (
+        metadata_design,
+        material_grid.resolution,
+        material_grid.grid,
+        resolved_time,
+        offset,
+        False,
+    )
 
 
 def _rasterize_scene_for_simulation(
@@ -438,15 +503,14 @@ class Simulation:
         Physical geometry and material distribution. Supply exactly one of
         ``design``, ``material_grid``, or ``scene``.
     material_grid : MaterialGrid, optional
-        A compatible uniform solver grid, such as one produced by
+        A compatible uniform or rectilinear solver grid, such as one produced by
         ``MaterialGrid.from_raster_result()``. This is the simulation bridge for
         imported GDS, STL, Gmsh, and raw-mesh scenes.
     scene : beamz.design.raster.Scene, optional
         Reusable scene produced by an importer. Supply it with ``raster_grid``;
         BeamZ rasterizes and validates it during simulation setup.
     raster_grid : beamz.design.raster.Grid, optional
-        Explicit uniform solver grid for ``scene``. Standalone scene
-        rasterization may still use nonuniform grids.
+        Explicit uniform or nonuniform rectilinear solver grid for ``scene``.
     sources : sequence, optional
         Immutable source specifications to inject during execution.
     monitors : sequence of monitor specifications, optional
@@ -455,6 +519,8 @@ class Simulation:
         Domain boundary conditions. An all-edge PEC boundary is used when omitted.
     resolution : float, default=0.02 * um
         Uniform cell spacing in metres when ``grid_spec`` does not override it.
+        Geometry-aware specifications expose their exact mesh through ``grid``;
+        this attribute remains a representative scalar for compatibility.
     time : numpy.ndarray, optional
         One-dimensional, uniformly spaced time samples in seconds. Exactly one of
         ``time`` and ``run_time`` may be supplied.
@@ -530,6 +596,7 @@ class Simulation:
     monitors: tuple[_Monitor, ...]
     boundaries: tuple[object, ...]
     resolution: float
+    grid: RectilinearGrid
     time: np.ndarray
     plane_2d: str
     polarization: str
@@ -540,6 +607,7 @@ class Simulation:
     normalize_source: int | None
     raster_options: Any
     coordinate_offset: tuple[float, float, float]
+    _uses_realized_grid: bool
 
     def __init__(
         self,
@@ -565,6 +633,7 @@ class Simulation:
         raster_options=None,
     ):
         polarization = normalize_polarization_2d(polarization)
+        plane_2d = _normalize_plane_2d(plane_2d)
         if time is not None and run_time is not None:
             raise ValueError("Pass only one of time=... or run_time=....")
         resolution = positive_float(resolution, name="Simulation resolution")
@@ -590,41 +659,52 @@ class Simulation:
                 polarization,
             )
             raster_options = None
+        require_uniform_grid = _devices_require_uniform_grid(sources, monitors)
         # 1. Normalize alternative domain, grid, and time forms into one concrete design;
         # this also returns any coordinate translation introduced by size-based domains.
         if material_grid is None:
-            design, resolution, time, offset = _prepare_design(
-                design=design,
-                domain=domain,
-                size=size,
-                background=background,
-                grid_spec=grid_spec,
-                resolution=resolution,
-                time=time,
-                run_time=run_time,
+            design, resolution, grid, time, offset, uses_realized_grid = (
+                _prepare_design(
+                    design=design,
+                    domain=domain,
+                    size=size,
+                    background=background,
+                    grid_spec=grid_spec,
+                    resolution=resolution,
+                    time=time,
+                    run_time=run_time,
+                    require_uniform_grid=require_uniform_grid,
+                    plane_2d=plane_2d,
+                )
             )
         else:
-            design, resolution, time, offset = _prepare_material_grid(
-                material_grid,
-                design=design,
-                domain=domain,
-                size=size,
-                background=background,
-                grid_spec=grid_spec,
-                raster_options=raster_options,
-                time=time,
-                run_time=run_time,
+            design, resolution, grid, time, offset, uses_realized_grid = (
+                _prepare_material_grid(
+                    material_grid,
+                    design=design,
+                    domain=domain,
+                    size=size,
+                    background=background,
+                    grid_spec=grid_spec,
+                    raster_options=raster_options,
+                    time=time,
+                    run_time=run_time,
+                    plane_2d=plane_2d,
+                )
             )
         # 2. Shift sources and monitors into the normalized domain coordinate system so their public positions remain physically unchanged.
         if offset != (0.0, 0.0, 0.0):
-            sources = tuple(_shift_device_to_domain(s, offset) for s in (sources or ()))
+            sources = tuple(
+                _shift_device_to_domain(s, offset, plane_2d=plane_2d)
+                for s in (sources or ())
+            )
             monitors = tuple(
-                _shift_device_to_domain(m, offset) for m in (monitors or ())
+                _shift_device_to_domain(m, offset, plane_2d=plane_2d)
+                for m in (monitors or ())
             )
 
         # 3. Canonicalize devices, time, plane, and boundaries before resolving the setup
         # device; subsequent cache identity depends on these normalized values.
-        plane_2d = _normalize_plane_2d(plane_2d)
         is_3d = _design_is_3d(design)
         if is_3d and polarization != "tm":
             raise ValueError("polarization applies only to 2D simulations.")
@@ -668,6 +748,7 @@ class Simulation:
         object.__setattr__(self, "monitors", monitors)
         object.__setattr__(self, "boundaries", boundaries)
         object.__setattr__(self, "resolution", resolution)
+        object.__setattr__(self, "grid", grid)
         object.__setattr__(self, "time", time)
         object.__setattr__(self, "plane_2d", plane_2d)
         object.__setattr__(self, "polarization", polarization)
@@ -678,6 +759,7 @@ class Simulation:
         object.__setattr__(self, "normalize_source", normalize_source)
         object.__setattr__(self, "raster_options", raster_options)
         object.__setattr__(self, "coordinate_offset", tuple(float(v) for v in offset))
+        object.__setattr__(self, "_uses_realized_grid", uses_realized_grid)
 
     @property
     def size(self):
@@ -755,6 +837,7 @@ class Simulation:
             self.monitors,
             self.boundaries,
             self.resolution,
+            self.grid,
             self.time,
             self.plane_2d,
             self.polarization,
@@ -837,7 +920,7 @@ class Simulation:
             for name in ("sources", "monitors"):
                 if name in changes:
                     changes[name] = tuple(
-                        _shift_device_to_domain(value, offset)
+                        _shift_device_to_domain(value, offset, plane_2d=self.plane_2d)
                         for value in changes[name] or ()
                     )
         # 3. Start from the current public specification and overlay validated changes so omitted values retain their normalized forms.
@@ -870,7 +953,9 @@ class Simulation:
                 if material_source_changed and name in changes:
                     continue
                 values[name] = tuple(
-                    _shift_device_to_domain(value, inverse_offset)
+                    _shift_device_to_domain(
+                        value, inverse_offset, plane_2d=self.plane_2d
+                    )
                     for value in values[name] or ()
                 )
         # 4. Keep the two mutually exclusive time specifications mutually
@@ -886,7 +971,13 @@ class Simulation:
             values["time"] = None
         result = type(self)(**values)
         if self.material_grid is None and not material_source_changed:
-            object.__setattr__(result, "coordinate_offset", offset)
+            preserved_offset = offset
+            target_plane = str(values["plane_2d"])
+            if not self.is_3d and target_plane != self.plane_2d:
+                preserved_offset = grid_vector_to_physical_2d(
+                    physical_vector_to_grid_2d(offset, self.plane_2d), target_plane
+                )
+            object.__setattr__(result, "coordinate_offset", preserved_offset)
         return result
 
     def _material_grid(self, *, progress: bool = False):
@@ -905,7 +996,7 @@ class Simulation:
             with _resolved_setup_device_context(self.setup_device_resolved):
                 cached = build_material_grid(
                     self.design,
-                    self.resolution,
+                    self.grid if self._uses_realized_grid else self.resolution,
                     progress=progress,
                     polarization=self.polarization,
                     **raster_kwargs,
@@ -925,6 +1016,7 @@ class Simulation:
         return cache_token(
             (
                 self.resolution,
+                self.grid,
                 design.width,
                 design.height,
                 design.depth,
