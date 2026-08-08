@@ -223,7 +223,6 @@ def run_comparison(args: argparse.Namespace) -> RTX3090Comparison:
 
 
 def _block(value) -> None:
-    value.ex.block_until_ready()
     value.ez.block_until_ready()
 
 
@@ -246,127 +245,98 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
     device = devices[0]
     shape = tuple(args.shape)
     resolution = 50e-9
-    if args.profile in {"2d_tm_pec", "2d_te_pec"}:
-        polarization = "tm" if args.profile == "2d_tm_pec" else "te"
-        dt = 0.95 * resolution / (bz.LIGHT_SPEED * np.sqrt(2.0))
-        material_grid = MaterialGrid(
-            permittivity=np.ones((shape[1], shape[2]), dtype=np.float32),
-            conductivity=np.float32(0.0),
-            permeability=np.float32(1.0),
-            resolution=resolution,
-            shape=(shape[1], shape[2]),
-            polarization=polarization,
+    metric_grid = None
+    if args.profile == "axis_uniform_pec":
+        metric_grid = RectilinearGrid.from_spacing(
+            (shape[2], shape[1], shape[0]),
+            (resolution, 1.25 * resolution, 1.5 * resolution),
         )
-        simulation = bz.Simulation(
-            material_grid=material_grid,
-            polarization=polarization,
-            boundaries=[bz.PEC(edges="all")],
-            time=np.arange(args.timesteps, dtype=np.float64) * dt,
-        )
-        reported_shape = (1, shape[1], shape[2])
-    else:
-        metric_grid = None
-        if args.profile == "axis_uniform_pec":
-            metric_grid = RectilinearGrid.from_spacing(
-                (shape[2], shape[1], shape[0]),
-                (resolution, 1.25 * resolution, 1.5 * resolution),
-            )
-        elif args.profile in {"rectilinear_pec", "rectilinear_cpml"}:
-            def graded_edges(count, scale, growth):
-                widths = scale * np.linspace(1.0, growth, count, dtype=np.float64)
-                return np.concatenate(([0.0], np.cumsum(widths)))
+    elif args.profile in {"rectilinear_pec", "rectilinear_cpml"}:
 
-            metric_grid = RectilinearGrid(
-                graded_edges(shape[2], 0.85 * resolution, 1.30),
-                graded_edges(shape[1], 1.05 * resolution, 1.24),
-                graded_edges(shape[0], 1.20 * resolution, 1.18),
+        def graded_edges(count, scale, growth):
+            widths = scale * np.linspace(1.0, growth, count, dtype=np.float64)
+            return np.concatenate(([0.0], np.cumsum(widths)))
+
+        metric_grid = RectilinearGrid(
+            graded_edges(shape[2], 0.85 * resolution, 1.30),
+            graded_edges(shape[1], 1.05 * resolution, 1.24),
+            graded_edges(shape[0], 1.20 * resolution, 1.18),
+        )
+    minimum_spacing = resolution if metric_grid is None else metric_grid.minimum_spacing
+    dt = 0.95 * minimum_spacing / (bz.LIGHT_SPEED * np.sqrt(3.0))
+    size_xyz = (
+        (shape[2] * resolution, shape[1] * resolution, shape[0] * resolution)
+        if metric_grid is None
+        else metric_grid.extent
+    )
+    permittivity = np.ones(shape, dtype=np.float32)
+    if metric_grid is None and args.profile != "uniform_pec":
+        nz, ny, _nx = shape
+        permittivity[nz * 3 // 8 : nz * 5 // 8, ny * 3 // 8 : ny * 5 // 8, :] = (
+            np.float32(3.45**2)
+        )
+    material_grid = MaterialGrid(
+        permittivity=permittivity,
+        conductivity=np.float32(0.0),
+        permeability=np.float32(1.0),
+        resolution=resolution,
+        shape=shape,
+        grid=metric_grid,
+    )
+    pml_cells = min(8, (min(shape) - 1) // 2)
+    uses_cpml = args.profile in {
+        "heterogeneous_cpml",
+        "cpml_source",
+        "cpml_source_monitor",
+        "rectilinear_cpml",
+    }
+    boundaries = [bz.PEC(edges="all")]
+    if uses_cpml:
+        boundaries = [
+            bz.PML(
+                edges="all",
+                thickness=pml_cells * resolution,
+                formulation="cpml",
             )
-        minimum_spacing = (
-            resolution if metric_grid is None else metric_grid.minimum_spacing
-        )
-        dt = 0.95 * minimum_spacing / (bz.LIGHT_SPEED * np.sqrt(3.0))
-        size_xyz = (
-            (shape[2] * resolution, shape[1] * resolution, shape[0] * resolution)
-            if metric_grid is None
-            else metric_grid.extent
-        )
-        permittivity = np.ones(shape, dtype=np.float32)
-        if metric_grid is None and args.profile != "uniform_pec":
-            nz, ny, _nx = shape
-            permittivity[
-                nz * 3 // 8 : nz * 5 // 8, ny * 3 // 8 : ny * 5 // 8, :
-            ] = np.float32(3.45**2)
-        material_grid = MaterialGrid(
-            permittivity=permittivity,
-            conductivity=np.float32(0.0),
-            permeability=np.float32(1.0),
-            resolution=resolution,
-            shape=shape,
-            grid=metric_grid,
-        )
-        pml_cells = min(8, (min(shape) - 1) // 2)
-        uses_cpml = args.profile in {
-            "heterogeneous_cpml",
-            "cpml_source",
-            "cpml_source_monitor",
-            "rectilinear_cpml",
-        }
-        boundaries = [bz.PEC(edges="all")]
-        if uses_cpml:
-            boundaries = [
-                bz.PML(
-                    edges="all",
-                    thickness=pml_cells * resolution,
-                    formulation="cpml",
-                )
-            ]
-        sources = []
-        if args.profile in {
-            "pec_source",
-            "pec_source_monitor",
-            "cpml_source",
-            "cpml_source_monitor",
-        }:
-            omega = 2.0 * np.pi * 193.414e12
-            steps = np.arange(args.timesteps)
-            envelope = np.exp(-(((steps - 24.0) / 8.0) ** 2))
-            sources = [
-                bz.GaussianSource(
-                    position=(
-                        0.25 * size_xyz[0],
-                        0.5 * size_xyz[1],
-                        0.5 * size_xyz[2],
-                    ),
-                    width=max(2.0 * resolution, 0.08 * min(size_xyz[1:])),
-                    signal=(envelope * np.sin(omega * steps * dt)).astype(np.float32),
-                )
-            ]
-        monitors = []
-        if args.profile in {"pec_source_monitor", "cpml_source_monitor"}:
-            clear_y = max(resolution, size_xyz[1] - 2 * pml_cells * resolution)
-            clear_z = max(resolution, size_xyz[2] - 2 * pml_cells * resolution)
-            monitors = [
-                bz.FieldMonitor(
-                    center=(
-                        0.75 * size_xyz[0],
-                        0.5 * size_xyz[1],
-                        0.5 * size_xyz[2],
-                    ),
-                    size=(0.0, clear_y, clear_z),
-                    freqs=np.asarray((190e12, 193.414e12, 196e12)),
-                    fields=("Ey", "Ez", "Hy", "Hz"),
-                    name="transmission",
-                )
-            ]
-        simulation = bz.Simulation(
-            material_grid=material_grid,
-            boundaries=boundaries,
-            sources=sources,
-            monitors=monitors,
-            size=size_xyz,
-            time=np.arange(args.timesteps, dtype=np.float64) * dt,
-        )
-        reported_shape = shape
+        ]
+    sources = []
+    if args.profile in {
+        "pec_source",
+        "pec_source_monitor",
+        "cpml_source",
+        "cpml_source_monitor",
+    }:
+        omega = 2.0 * np.pi * 193.414e12
+        steps = np.arange(args.timesteps)
+        envelope = np.exp(-(((steps - 24.0) / 8.0) ** 2))
+        sources = [
+            bz.GaussianSource(
+                position=(0.25 * size_xyz[0], 0.5 * size_xyz[1], 0.5 * size_xyz[2]),
+                width=max(2.0 * resolution, 0.08 * min(size_xyz[1:])),
+                signal=(envelope * np.sin(omega * steps * dt)).astype(np.float32),
+            )
+        ]
+    monitors = []
+    if args.profile in {"pec_source_monitor", "cpml_source_monitor"}:
+        clear_y = max(resolution, size_xyz[1] - 2 * pml_cells * resolution)
+        clear_z = max(resolution, size_xyz[2] - 2 * pml_cells * resolution)
+        monitors = [
+            bz.FieldMonitor(
+                center=(0.75 * size_xyz[0], 0.5 * size_xyz[1], 0.5 * size_xyz[2]),
+                size=(0.0, clear_y, clear_z),
+                freqs=np.asarray((190e12, 193.414e12, 196e12)),
+                fields=("Ey", "Ez", "Hy", "Hz"),
+                name="transmission",
+            )
+        ]
+    simulation = bz.Simulation(
+        material_grid=material_grid,
+        boundaries=boundaries,
+        sources=sources,
+        monitors=monitors,
+        size=size_xyz,
+        time=np.arange(args.timesteps, dtype=np.float64) * dt,
+    )
     simulation.clear_compiled_cache()
     if args.role == "baseline":
         program = simulation.compile(num_steps=args.timesteps)
@@ -400,7 +370,7 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
         "revision": _revision(Path.cwd()),
         "backend": getattr(program.config, "backend", "jax"),
         "device": str(getattr(device, "device_kind", device)),
-        "grid_zyx": reported_shape,
+        "grid_zyx": shape,
         "timesteps": args.timesteps,
         "profile": args.profile,
         "trace_lower_s": trace_lower_s,
@@ -439,8 +409,6 @@ def _parser() -> argparse.ArgumentParser:
             "axis_uniform_pec",
             "rectilinear_pec",
             "rectilinear_cpml",
-            "2d_tm_pec",
-            "2d_te_pec",
         ),
         default="uniform_pec",
     )

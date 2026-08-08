@@ -770,25 +770,13 @@ def compile_program(
         ("x", "y", "z") if simulation.is_3d else ("x", "y")
     )
     material_grid = simulation._material_grid(progress=progress)
-    cuda_2d_supported = (
-        not simulation.is_3d
-        and requested_backend != "auto"
-        and requested_backend != "cuda_hopper"
-        and not simulation.sources
-        and not simulation.monitors
-        and not any(
-            getattr(boundary, "formulation", None) == "cpml"
-            for boundary in simulation.boundaries
-        )
-    )
-    cuda_grid_supported = cuda_2d_supported or (
-        simulation.is_3d
-        and (requested_backend != "cuda_hopper" or metric_kind == "isotropic_uniform")
+    cuda_grid_supported = simulation.is_3d and (
+        requested_backend != "cuda_hopper" or metric_kind == "isotropic_uniform"
     )
     cuda_material_supported = not material_grid.uses_full_permittivity
     if requested_backend not in {"auto", "jax"} and not cuda_grid_supported:
         requirement = (
-            "a source-free, monitor-free TM/TE grid without CPML"
+            "a 3D simulation"
             if not simulation.is_3d
             else "isotropic uniform metrics for the Hopper-specific kernel"
         )

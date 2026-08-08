@@ -560,7 +560,6 @@ def build_scan(program, *, donate_state: bool = False):
     graph_source = (
         program.sources[0]
         if cfg.backend == "cuda_streamed"
-        and cfg.is_3d
         and len(program.sources) == 1
         and program.sources[0].timing == "pre_e"
         and program.sources[0].component in {"Ex", "Ey", "Ez"}
