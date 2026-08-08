@@ -38,6 +38,23 @@ H100 schema records, it deliberately checks out `origin/main` and emits a table,
 raw JSON statistics, and a graph for the custom CUDA-kernel decision on one RTX
 3090.
 
+`benchmark_rtx3090_capacity.py` holds the physical 3D silicon waveguide fixed and
+shrinks its regular-grid resolution until the first GPU out-of-memory result. Each
+resolution runs in a fresh process with XLA preallocation disabled. The realistic
+curve includes a solved mode source, heterogeneous material, and six-face CPML; a
+matched source-free PEC curve exposes the CUDA field-update ceiling. The runner
+emits raw JSON/CSV, bootstrap intervals, a static QA plot, and a portable-report
+artifact input:
+
+```console
+python scripts/benchmark_rtx3090_capacity.py \
+  --output-dir benchmarks/results/rtx3090-capacity
+```
+
+The deliberate OOM bounds local capacity, so this is an exploratory hardware run,
+not a shared CI gate. Use representative points from its measured throughput
+plateau for recurring regression tests.
+
 The default `(nz, ny, nx) = (128, 256, 384)` grid and 500 timesteps are part of
 the workload identity. Regression records with different features, backend,
 hardware, device count, shape, or timestep count are deliberately not comparable.
