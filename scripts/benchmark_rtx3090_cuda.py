@@ -124,10 +124,14 @@ def _run_child(
         command,
         cwd=source_root,
         env=_child_environment(source_root, script.parents[1]),
-        check=True,
         capture_output=True,
         text=True,
     )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"benchmark {role} child failed with exit code "
+            f"{completed.returncode}:\n{completed.stdout}\n{completed.stderr}"
+        )
     try:
         return json.loads(completed.stdout)
     except json.JSONDecodeError as error:
@@ -267,7 +271,7 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
         else metric_grid.extent
     )
     permittivity = np.ones(shape, dtype=np.float32)
-    if args.profile != "uniform_pec":
+    if metric_grid is None and args.profile != "uniform_pec":
         nz, ny, _nx = shape
         permittivity[nz * 3 // 8 : nz * 5 // 8, ny * 3 // 8 : ny * 5 // 8, :] = (
             np.float32(3.45**2)
