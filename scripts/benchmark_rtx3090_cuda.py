@@ -231,7 +231,7 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
     import numpy as np
 
     import beamz as bz
-    from beamz.design import MaterialGrid
+    from beamz.design import MaterialGrid, RectilinearGrid
     from beamz.simulation import sharding as sharding_runtime
     from beamz.simulation.execute import build_scan, initial_program_state
 
@@ -241,8 +241,31 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
     device = devices[0]
     shape = tuple(args.shape)
     resolution = 50e-9
-    dt = 0.95 * resolution / (bz.LIGHT_SPEED * np.sqrt(3.0))
-    size_xyz = (shape[2] * resolution, shape[1] * resolution, shape[0] * resolution)
+    metric_grid = None
+    if args.profile == "axis_uniform_pec":
+        metric_grid = RectilinearGrid.from_spacing(
+            (shape[2], shape[1], shape[0]),
+            (resolution, 1.25 * resolution, 1.5 * resolution),
+        )
+    elif args.profile in {"rectilinear_pec", "rectilinear_cpml"}:
+        def graded_edges(count, scale, growth):
+            widths = scale * np.linspace(1.0, growth, count, dtype=np.float64)
+            return np.concatenate(([0.0], np.cumsum(widths)))
+
+        metric_grid = RectilinearGrid(
+            graded_edges(shape[2], 0.85 * resolution, 1.30),
+            graded_edges(shape[1], 1.05 * resolution, 1.24),
+            graded_edges(shape[0], 1.20 * resolution, 1.18),
+        )
+    minimum_spacing = (
+        resolution if metric_grid is None else metric_grid.minimum_spacing
+    )
+    dt = 0.95 * minimum_spacing / (bz.LIGHT_SPEED * np.sqrt(3.0))
+    size_xyz = (
+        (shape[2] * resolution, shape[1] * resolution, shape[0] * resolution)
+        if metric_grid is None
+        else metric_grid.extent
+    )
     permittivity = np.ones(shape, dtype=np.float32)
     if args.profile != "uniform_pec":
         nz, ny, _nx = shape
@@ -255,12 +278,14 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
         permeability=np.float32(1.0),
         resolution=resolution,
         shape=shape,
+        grid=metric_grid,
     )
     pml_cells = min(8, (min(shape) - 1) // 2)
     uses_cpml = args.profile in {
         "heterogeneous_cpml",
         "cpml_source",
         "cpml_source_monitor",
+        "rectilinear_cpml",
     }
     boundaries = [bz.PEC(edges="all")]
     if uses_cpml:
@@ -371,6 +396,9 @@ def _parser() -> argparse.ArgumentParser:
             "heterogeneous_cpml",
             "cpml_source",
             "cpml_source_monitor",
+            "axis_uniform_pec",
+            "rectilinear_pec",
+            "rectilinear_cpml",
         ),
         default="uniform_pec",
     )
