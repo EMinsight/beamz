@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+from argparse import Namespace
 from datetime import datetime, timezone
 
 import pytest
 
-from scripts.benchmark_rtx3090_capacity import _looks_like_gpu_oom
+from scripts.benchmark_rtx3090_capacity import (
+    _load_checkpoint,
+    _looks_like_gpu_oom,
+    _write_checkpoint,
+)
 from scripts.rtx3090_capacity import (
     BARE_WORKLOAD,
     MODAL_WORKLOAD,
@@ -153,3 +158,30 @@ def test_gpu_oom_classifier_recognizes_allocator_failures(message):
 
 def test_gpu_oom_classifier_does_not_hide_unrelated_child_errors():
     assert not _looks_like_gpu_oom("ValueError: modal plane is outside the domain")
+
+
+def test_capacity_checkpoint_round_trips_completed_attempts(tmp_path):
+    args = Namespace(
+        output_dir=tmp_path,
+        resolutions_nm=(80.0, 40.0),
+        timesteps=100,
+        samples=5,
+        warmups=2,
+        allocator_fraction=0.92,
+        skip_bare=False,
+        resume=True,
+    )
+    measurement = _measurement(MODAL_WORKLOAD, (32, 48, 64), 8.0, 80.0, 2**30)
+    failure = CapacityFailure(
+        workload=MODAL_WORKLOAD,
+        resolution_nm=40.0,
+        kind="gpu_oom",
+        returncode=1,
+        detail="RESOURCE_EXHAUSTED",
+    )
+
+    _write_checkpoint(args, [measurement], [failure])
+    measurements, failures = _load_checkpoint(args)
+
+    assert measurements == [measurement]
+    assert failures == [failure]

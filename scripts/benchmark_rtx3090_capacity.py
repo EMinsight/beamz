@@ -19,6 +19,7 @@ import platform
 import subprocess
 import sys
 import time
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -255,6 +256,68 @@ def _run_child(
         )
 
 
+def _checkpoint_path(output_dir: Path) -> Path:
+    return output_dir / ".capacity-checkpoint.json"
+
+
+def _write_checkpoint(
+    args: argparse.Namespace,
+    measurements: list[CapacityMeasurement],
+    failures: list[CapacityFailure],
+) -> None:
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "protocol": {
+            "resolutions_nm": list(args.resolutions_nm),
+            "timesteps": args.timesteps,
+            "samples": args.samples,
+            "warmups": args.warmups,
+            "allocator_fraction": args.allocator_fraction,
+            "skip_bare": args.skip_bare,
+        },
+        "measurements": [asdict(item) for item in measurements],
+        "failures": [asdict(item) for item in failures],
+    }
+    _checkpoint_path(args.output_dir).write_text(json.dumps(payload, indent=2) + "\n")
+
+
+def _load_checkpoint(
+    args: argparse.Namespace,
+) -> tuple[list[CapacityMeasurement], list[CapacityFailure]]:
+    path = _checkpoint_path(args.output_dir)
+    if not args.resume or not path.is_file():
+        return [], []
+    payload = json.loads(path.read_text())
+    expected = {
+        "resolutions_nm": list(args.resolutions_nm),
+        "timesteps": args.timesteps,
+        "samples": args.samples,
+        "warmups": args.warmups,
+        "allocator_fraction": args.allocator_fraction,
+        "skip_bare": args.skip_bare,
+    }
+    if payload.get("protocol") != expected:
+        raise RuntimeError(
+            f"checkpoint protocol differs from this run: {path}. "
+            "Use --no-resume or restore the original arguments."
+        )
+    measurements = [
+        CapacityMeasurement.from_child_payload(item)
+        for item in payload.get("measurements", [])
+    ]
+    failures = [
+        CapacityFailure(
+            workload=str(item["workload"]),
+            resolution_nm=float(item["resolution_nm"]),
+            kind=str(item["kind"]),
+            returncode=int(item["returncode"]),
+            detail=str(item["detail"]),
+        )
+        for item in payload.get("failures", [])
+    ]
+    return measurements, failures
+
+
 def _waveguide_simulation(resolution: float, timesteps: int):
     import numpy as np
 
@@ -448,65 +511,135 @@ def run_sweep(args: argparse.Namespace) -> tuple[CapacitySweep, dict[str, Path]]
             "Pass --allow-other-gpu for a non-canonical sweep."
         )
     started_at = _utc_now()
-    measurements: list[CapacityMeasurement] = []
-    failures: list[CapacityFailure] = []
+    measurements, failures = _load_checkpoint(args)
+    if measurements or failures:
+        print(
+            f"resuming {len(measurements)} successful and {len(failures)} failed "
+            f"attempts from {_checkpoint_path(args.output_dir)}",
+            flush=True,
+        )
 
     for index, resolution_nm in enumerate(args.resolutions_nm, start=1):
-        print(
-            f"[{index}/{len(args.resolutions_nm)}] realistic modal waveguide at "
-            f"{resolution_nm:g} nm",
-            flush=True,
+        existing_modal_oom = next(
+            (
+                failure
+                for failure in failures
+                if failure.workload == MODAL_WORKLOAD
+                and failure.resolution_nm == resolution_nm
+                and failure.kind == "gpu_oom"
+            ),
+            None,
         )
-        modal = _run_child(
-            root=root,
-            workload=MODAL_WORKLOAD,
-            resolution_nm=resolution_nm,
-            shape=None,
-            timesteps=args.timesteps,
-            samples=args.samples,
-            warmups=args.warmups,
-            allocator_fraction=args.allocator_fraction,
-            timeout_s=args.child_timeout,
-        )
-        if isinstance(modal, CapacityFailure):
-            failures.append(modal)
-            print(f"  {modal.kind}: child return code {modal.returncode}", flush=True)
-            if modal.kind != "gpu_oom":
-                raise RuntimeError(
-                    f"capacity child failed before a valid GPU OOM:\n{modal.detail}"
-                )
+        if existing_modal_oom is not None:
+            print(
+                f"[{index}/{len(args.resolutions_nm)}] resumed GPU OOM at "
+                f"{resolution_nm:g} nm",
+                flush=True,
+            )
             break
-        measurements.append(modal)
-        print(
-            f"  {modal.cells:,} cells, {modal.median_gcups:.3f} GCUPS, "
-            f"{modal.peak_memory_gib:.2f} GiB active peak",
-            flush=True,
+
+        modal = next(
+            (
+                item
+                for item in measurements
+                if item.workload == MODAL_WORKLOAD
+                and item.resolution_nm == resolution_nm
+            ),
+            None,
         )
+        if modal is None:
+            print(
+                f"[{index}/{len(args.resolutions_nm)}] realistic modal waveguide at "
+                f"{resolution_nm:g} nm",
+                flush=True,
+            )
+            attempt = _run_child(
+                root=root,
+                workload=MODAL_WORKLOAD,
+                resolution_nm=resolution_nm,
+                shape=None,
+                timesteps=args.timesteps,
+                samples=args.samples,
+                warmups=args.warmups,
+                allocator_fraction=args.allocator_fraction,
+                timeout_s=args.child_timeout,
+            )
+            if isinstance(attempt, CapacityFailure):
+                failures.append(attempt)
+                _write_checkpoint(args, measurements, failures)
+                print(
+                    f"  {attempt.kind}: child return code {attempt.returncode}",
+                    flush=True,
+                )
+                if attempt.kind != "gpu_oom":
+                    raise RuntimeError(
+                        "capacity child failed before a valid GPU OOM:\n"
+                        f"{attempt.detail}"
+                    )
+                break
+            modal = attempt
+            measurements.append(modal)
+            _write_checkpoint(args, measurements, failures)
+            print(
+                f"  {modal.cells:,} cells, {modal.median_gcups:.3f} GCUPS, "
+                f"{modal.peak_memory_gib:.2f} GiB active peak",
+                flush=True,
+            )
+        else:
+            print(
+                f"[{index}/{len(args.resolutions_nm)}] resumed {resolution_nm:g} nm: "
+                f"{modal.cells:,} cells, {modal.median_gcups:.3f} GCUPS",
+                flush=True,
+            )
 
         if args.skip_bare:
             continue
-        print("  matched bare PEC ceiling", flush=True)
-        bare = _run_child(
-            root=root,
-            workload=BARE_WORKLOAD,
-            resolution_nm=resolution_nm,
-            shape=modal.grid_zyx,
-            timesteps=args.timesteps,
-            samples=args.samples,
-            warmups=args.warmups,
-            allocator_fraction=args.allocator_fraction,
-            timeout_s=args.child_timeout,
+
+        bare = next(
+            (
+                item
+                for item in measurements
+                if item.workload == BARE_WORKLOAD
+                and item.resolution_nm == resolution_nm
+            ),
+            None,
         )
-        if isinstance(bare, CapacityFailure):
-            failures.append(bare)
-            if bare.kind != "gpu_oom":
-                raise RuntimeError(f"bare child failed:\n{bare.detail}")
-            print("  bare workload reached GPU OOM", flush=True)
-        else:
-            measurements.append(bare)
+        existing_bare_oom = any(
+            failure.workload == BARE_WORKLOAD
+            and failure.resolution_nm == resolution_nm
+            and failure.kind == "gpu_oom"
+            for failure in failures
+        )
+        if bare is None and not existing_bare_oom:
+            print("  matched bare PEC ceiling", flush=True)
+            bare_attempt = _run_child(
+                root=root,
+                workload=BARE_WORKLOAD,
+                resolution_nm=resolution_nm,
+                shape=modal.grid_zyx,
+                timesteps=args.timesteps,
+                samples=args.samples,
+                warmups=args.warmups,
+                allocator_fraction=args.allocator_fraction,
+                timeout_s=args.child_timeout,
+            )
+            if isinstance(bare_attempt, CapacityFailure):
+                failures.append(bare_attempt)
+                _write_checkpoint(args, measurements, failures)
+                if bare_attempt.kind != "gpu_oom":
+                    raise RuntimeError(f"bare child failed:\n{bare_attempt.detail}")
+                print("  bare workload reached GPU OOM", flush=True)
+            else:
+                measurements.append(bare_attempt)
+                _write_checkpoint(args, measurements, failures)
+                print(
+                    f"  {bare_attempt.median_gcups:.3f} GCUPS, "
+                    f"{bare_attempt.peak_memory_gib:.2f} GiB active peak",
+                    flush=True,
+                )
+        elif bare is not None:
             print(
-                f"  {bare.median_gcups:.3f} GCUPS, "
-                f"{bare.peak_memory_gib:.2f} GiB active peak",
+                f"  resumed bare ceiling: {bare.median_gcups:.3f} GCUPS",
                 flush=True,
             )
 
@@ -563,6 +696,12 @@ def _parser() -> argparse.ArgumentParser:
         default=Path("benchmarks/results/rtx3090-capacity"),
     )
     parser.add_argument("--skip-bare", action="store_true")
+    parser.add_argument(
+        "--resume",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="resume a matching per-point checkpoint in the output directory",
+    )
     parser.add_argument("--allow-other-gpu", action="store_true")
     parser.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
