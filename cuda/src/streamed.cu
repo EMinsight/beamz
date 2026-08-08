@@ -220,7 +220,7 @@ __global__ void UpdateAllComponents(BeamzLaunch launch, int y_blocks) {
 }  // namespace
 
 int BeamzLaunchStreamed(void* raw_stream, const BeamzLaunch& launch) {
-  const int input_count = 13 + 4 * launch.nterms;
+  const int input_count = launch.nterms == 0 ? 12 : 13 + 4 * launch.nterms;
   const int output_count = 3 + launch.nterms;
   for (int index = 0; index < input_count; ++index) {
     if (!FitsIntOffsets(launch.inputs[index])) return cudaErrorInvalidValue;
@@ -257,4 +257,43 @@ int BeamzLaunchStreamed(void* raw_stream, const BeamzLaunch& launch) {
         <<<blocks, threads, 0, stream>>>(launch, y_blocks);
   }
   return static_cast<int>(cudaPeekAtLastError());
+}
+
+int BeamzLaunchStreamedSteps(void* raw_stream, const BeamzLaunch& h_launch,
+                             const BeamzLaunch& e_launch, int32_t nsteps) {
+  if (nsteps < 1 || h_launch.phase != 0 || e_launch.phase != 1 ||
+      h_launch.nterms != 0 || e_launch.nterms != 0) {
+    return cudaErrorInvalidValue;
+  }
+  auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
+  auto launch_steps = [&]() {
+    cudaError_t launch_error = cudaSuccess;
+    for (int32_t step = 0; step < nsteps; ++step) {
+      launch_error =
+          static_cast<cudaError_t>(BeamzLaunchStreamed(raw_stream, h_launch));
+      if (launch_error != cudaSuccess) break;
+      launch_error =
+          static_cast<cudaError_t>(BeamzLaunchStreamed(raw_stream, e_launch));
+      if (launch_error != cudaSuccess) break;
+    }
+    return launch_error;
+  };
+  cudaGraph_t graph = nullptr;
+  cudaGraphExec_t executable = nullptr;
+  cudaError_t error =
+      cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal);
+  // Nested capture is not supported. If XLA already owns capture on this stream,
+  // enqueue the kernels directly so they become part of the outer graph.
+  if (error != cudaSuccess) {
+    (void)cudaGetLastError();
+    return launch_steps();
+  }
+  error = launch_steps();
+  cudaError_t end_error = cudaStreamEndCapture(stream, &graph);
+  if (error == cudaSuccess) error = end_error;
+  if (error == cudaSuccess) error = cudaGraphInstantiate(&executable, graph, 0);
+  if (error == cudaSuccess) error = cudaGraphLaunch(executable, stream);
+  if (executable != nullptr) cudaGraphExecDestroy(executable);
+  if (graph != nullptr) cudaGraphDestroy(graph);
+  return error;
 }

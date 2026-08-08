@@ -17,7 +17,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _simulation_and_seed(*, cpml: bool, source: bool = True):
+def _simulation_and_seed(*, cpml: bool, source: bool = True, monitor: bool = True):
     workload = H100Workload(
         name="cuda_hardware_parity",
         shape_zyx=(18, 20, 35),
@@ -29,7 +29,7 @@ def _simulation_and_seed(*, cpml: bool, source: bool = True):
         heterogeneous=True,
         cpml=cpml,
         source=source,
-        monitor=True,
+        monitor=monitor,
     )
     simulation = workload.build()
     program = simulation.compile(backend="jax")
@@ -91,7 +91,7 @@ def test_streamed_cuda_matches_jax_complete_state(cpml):
 
 
 def test_streamed_cuda_owns_source_free_pec_constraints():
-    simulation, state = _simulation_and_seed(cpml=False, source=False)
+    simulation, state = _simulation_and_seed(cpml=False, source=False, monitor=False)
     reference = simulation.advance(
         state=_copy_state(state), num_steps=simulation.num_steps, backend="jax"
     ).state

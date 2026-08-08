@@ -557,6 +557,12 @@ def build_scan(program, *, donate_state: bool = False):
         is_3d=is_3d,
     )
     update_kernel = update_runtime.select_update_kernel(step_context)
+    cuda_multi_step = (
+        cfg.backend == "cuda_streamed"
+        and not boundary.cpml.enabled
+        and not program.sources
+        and not program.monitors
+    )
 
     def run_scan(
         state: SimulationState,
@@ -564,7 +570,16 @@ def build_scan(program, *, donate_state: bool = False):
     ):
         # 4. Run the same transition through scan or fori_loop. The choice changes the
         # lowering strategy, not timestep semantics.
-        if cfg.loop_kind == "scan":
+        if cuda_multi_step:
+            from beamz.simulation.cuda import run_steps
+
+            scan_out = run_steps(state, step_context, coeffs, cfg.num_steps)
+            scan_out = scan_out._replace(
+                t=state.t + dt_scalar * cfg.num_steps,
+                current_step=state.current_step
+                + jnp.asarray(cfg.num_steps, dtype=jnp.int32),
+            )
+        elif cfg.loop_kind == "scan":
 
             def _scan_body(carry, _unused):
                 # Emit no per-step output because final state and explicit buffers hold results.

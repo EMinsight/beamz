@@ -132,6 +132,15 @@ def _elide_zero_conductivity_grid(value):
     return value
 
 
+def _elide_uniform_grid(value):
+    """Represent an exactly uniform CUDA coefficient with one scalar value."""
+
+    arr_np = np.asarray(value)
+    if arr_np.size and bool(np.all(arr_np == arr_np.flat[0])):
+        return jnp.asarray(arr_np.flat[0], dtype=arr_np.dtype)
+    return value
+
+
 def _inverse_permittivity_components(values):
     """Invert a packed symmetric tensor field into six trailing components."""
 
@@ -520,6 +529,17 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
                 ops.precompute_h_update_coefficients(fields.sigma_m_hy, dt),
                 ops.precompute_h_update_coefficients(fields.sigma_m_hz, dt),
             )
+            h_decay_x, h_source_x, h_decay_y, h_source_y, h_decay_z, h_source_z = (
+                _elide_uniform_grid(value)
+                for value in (
+                    h_decay_x,
+                    h_source_x,
+                    h_decay_y,
+                    h_source_y,
+                    h_decay_z,
+                    h_source_z,
+                )
+            )
         else:
             h_decay_x = h_source_x = h_decay_y = h_source_y = empty3
             h_decay_z = h_source_z = empty3
@@ -566,6 +586,17 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
                     dt=dt,
                     region=fields.region_z,
                 ),
+            )
+            e_decay_x, e_source_x, e_decay_y, e_source_y, e_decay_z, e_source_z = (
+                _elide_uniform_grid(value)
+                for value in (
+                    e_decay_x,
+                    e_source_x,
+                    e_decay_y,
+                    e_source_y,
+                    e_decay_z,
+                    e_source_z,
+                )
             )
         else:
             e_decay_x = e_source_x = e_decay_y = e_source_y = empty3

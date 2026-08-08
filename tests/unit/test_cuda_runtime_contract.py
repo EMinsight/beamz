@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from beamz.simulation import kernels
+from beamz.simulation.compile import _elide_uniform_grid
 from beamz.simulation.cuda import runtime as cuda_runtime
 from beamz.simulation.execute import initial_program_state
 from tests.performance.h100_workloads import H100Workload
@@ -110,6 +111,37 @@ def test_cuda_ffi_phase_supports_non_cpml_yee_update(monkeypatch):
     assert next_state.cpml_psi_e_terms == ()
 
 
+def test_cuda_multi_step_ffi_aliases_all_fields(monkeypatch):
+    program, state, context = _program_and_state(cpml=False)
+    captured = []
+
+    def fake_ffi_call(target, result_metadata, **options):
+        def call(*arguments, **attributes):
+            captured.append((target, result_metadata, options, arguments, attributes))
+            return arguments[:6]
+
+        return call
+
+    monkeypatch.setattr(cuda_runtime.jax.ffi, "ffi_call", fake_ffi_call)
+
+    next_state = cuda_runtime.run_steps(state, context, program.coefficients, 7)
+
+    target, results, options, arguments, attributes = captured[0]
+    assert target == "beamz_cuda_streamed_steps"
+    assert len(results) == 6
+    assert len(arguments) == 18
+    assert options["input_output_aliases"] == {index: index for index in range(6)}
+    assert attributes == {
+        "abi_version": np.int32(1),
+        "nsteps": np.int32(7),
+        "dt": np.float32(context.dt),
+        "resolution": np.float32(context.resolution),
+        "metallic_edges": np.int32(63),
+    }
+    assert next_state.hx is state.hx
+    assert next_state.ez is state.ez
+
+
 def test_cuda_backend_selects_hybrid_jax_orchestration_kernel():
     _program, _state, context = _program_and_state(cpml=True)
 
@@ -135,3 +167,14 @@ def test_hopper_backend_uses_sm90_tiled_target(monkeypatch):
     cuda_runtime.update_h(state, context, program.coefficients)
 
     assert targets == ["beamz_cuda_hopper"]
+
+
+def test_uniform_cuda_coefficients_are_compacted_without_rounding():
+    uniform = jnp.full((3, 4, 5), np.float32(1.25))
+    varied = uniform.at[1, 2, 3].set(np.nextafter(np.float32(1.25), np.float32(2.0)))
+
+    compact = _elide_uniform_grid(uniform)
+
+    assert compact.shape == ()
+    assert float(compact) == 1.25
+    assert _elide_uniform_grid(varied).shape == varied.shape

@@ -186,3 +186,49 @@ def update_e(state, ctx, coeffs) -> SimulationState:
         ez=outputs[2],
         cpml_psi_e_terms=outputs[3:],
     )
+
+
+def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
+    """Advance a source-free, monitor-free Yee run through one CUDA FFI call."""
+    if nsteps < 1:
+        raise ValueError("CUDA step count must be positive")
+    if ctx.boundary.cpml.enabled:
+        raise ValueError("multi-step CUDA execution does not support CPML")
+    fields = (state.hx, state.hy, state.hz, state.ex, state.ey, state.ez)
+    materials = (
+        coeffs.h_decay_x,
+        coeffs.h_decay_y,
+        coeffs.h_decay_z,
+        coeffs.h_source_x,
+        coeffs.h_source_y,
+        coeffs.h_source_z,
+        coeffs.e_decay_x,
+        coeffs.e_decay_y,
+        coeffs.e_decay_z,
+        coeffs.e_source_x,
+        coeffs.e_source_y,
+        coeffs.e_source_z,
+    )
+    call = jax.ffi.ffi_call(
+        "beamz_cuda_streamed_steps",
+        tuple(_shape(value) for value in fields),
+        input_output_aliases={index: index for index in range(6)},
+        vmap_method="sequential",
+    )
+    outputs = call(
+        *fields,
+        *materials,
+        abi_version=np.int32(CUDA_ABI_VERSION),
+        nsteps=np.int32(nsteps),
+        dt=np.float32(ctx.dt),
+        resolution=np.float32(ctx.resolution),
+        metallic_edges=np.int32(_metallic_edge_mask(ctx.boundary.cpml.metallic_edges)),
+    )
+    return state._replace(
+        hx=outputs[0],
+        hy=outputs[1],
+        hz=outputs[2],
+        ex=outputs[3],
+        ey=outputs[4],
+        ez=outputs[5],
+    )
