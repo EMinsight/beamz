@@ -732,9 +732,14 @@ def compile_program(
         "yes",
         "on",
     }
-    from .backend import resolve_backend
+    from .backend import normalize_backend, resolve_backend
 
-    resolved_backend = resolve_backend(backend)
+    requested_backend = normalize_backend(backend)
+    resolved_backend = (
+        "jax"
+        if requested_backend == "auto" and not simulation.is_3d
+        else resolve_backend(requested_backend)
+    )
     request = simulation.to_request(
         num_steps=steps,
         loop_kind=loop_kind,
