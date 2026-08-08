@@ -88,10 +88,11 @@ misses by 18%, deeper T cannot cross the retained kernel without first removing
 the duplicated x/y halo computation. On GA102, a global/persistent scheduler
 does not address that cost and would add readiness traffic and atomics.
 
-The swept prototypes were removed after measurement rather than left as dead
-production code. Their results establish a practical stopping rule for this
-algorithm family: revisit multi-step execution only with a fundamentally
-different decomposition that shares x/y halos between thread blocks (for
-example clusters on newer hardware) or a field layout that substantially
-reduces the six-field live state. The existing full-step fusion remains the
-fastest exact schedule tested on the RTX 3090.
+All losing prototypes—including the warp-face and staged-E variants—were
+removed after measurement rather than left as dead production code. Their
+results establish a practical stopping rule for this algorithm family: revisit
+multi-step execution only with a fundamentally different decomposition that
+shares x/y halos between thread blocks (for example clusters on newer hardware)
+or a field layout that substantially reduces the six-field live state. The
+existing full-step fusion remains the fastest exact schedule tested on the RTX
+3090.
