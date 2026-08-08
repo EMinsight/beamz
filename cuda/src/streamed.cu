@@ -376,7 +376,7 @@ __device__ __forceinline__ bool BufferContains(const BeamzBuffer& value, int z,
          y < value.dims[1] && x < value.dims[2];
 }
 
-template <bool ScalarCoefficients, int Component>
+template <bool ScalarCoefficients, int MetricKind, int Component>
 __device__ __forceinline__ float FusedHValue(const BeamzLaunch& launch,
                                              int z, int y, int x) {
   const BeamzBuffer& output = launch.outputs[Component];
@@ -390,12 +390,12 @@ __device__ __forceinline__ float FusedHValue(const BeamzLaunch& launch,
   constexpr int second_source[3] = {1, 2, 0};
   constexpr int first_axis[3] = {1, 0, 2};
   constexpr int second_axis[3] = {0, 2, 1};
-  const float derivative0 = UncheckedDifference<0>(
+  const float derivative0 = ForwardDifference<MetricKind>(
       launch.inputs[3 + first_source[Component]], first_axis[Component], z, y,
-      x, launch.inv_resolution);
-  const float derivative1 = UncheckedDifference<0>(
+      x, launch);
+  const float derivative1 = ForwardDifference<MetricKind>(
       launch.inputs[3 + second_source[Component]], second_axis[Component], z,
-      y, x, launch.inv_resolution);
+      y, x, launch);
   const int linear = (z * static_cast<int>(output.dims[1]) + y) *
                          static_cast<int>(output.dims[2]) +
                      x;
@@ -412,7 +412,7 @@ __device__ __forceinline__ float FusedHValue(const BeamzLaunch& launch,
   return decay * old_field - source * (derivative0 - derivative1);
 }
 
-template <bool ScalarCoefficients, int Component>
+template <bool ScalarCoefficients, int MetricKind, int Component>
 __device__ __forceinline__ float FusedEValue(const BeamzLaunch& launch,
                                              const float* h_fields,
                                              int local_z, int local_y,
@@ -444,7 +444,9 @@ __device__ __forceinline__ float FusedEValue(const BeamzLaunch& launch,
     const float neighbor = h_fields[source_component * kFusedVolume +
                                     FusedOffset(neighbor_z, neighbor_y,
                                                 neighbor_x)];
-    return (center - neighbor) * launch.inv_resolution;
+    const int coordinate = axis == 0 ? z : (axis == 1 ? y : x);
+    return (center - neighbor) *
+           MetricScale<MetricKind>(launch, axis, coordinate);
   };
   const float curl = difference(first_source[Component], first_axis[Component]) -
                      difference(second_source[Component],
@@ -468,7 +470,7 @@ __device__ __forceinline__ float FusedEValue(const BeamzLaunch& launch,
 // Fuse a complete leapfrog timestep without a device-wide barrier.  Each block
 // redundantly computes the one-cell low halo of H in shared memory, then uses it
 // to update its disjoint E/H core into a frozen out-of-place destination.
-template <bool ScalarCoefficients>
+template <bool ScalarCoefficients, int MetricKind>
 __global__ void FusedFullStepPec(BeamzLaunch h_launch,
                                  BeamzLaunch e_launch) {
   extern __shared__ float h_fields[];
@@ -484,11 +486,12 @@ __global__ void FusedFullStepPec(BeamzLaunch h_launch,
     const int x = origin_x + local_x;
     const int y = origin_y + local_y;
     const int z = origin_z + local_z;
-    h_fields[index] = FusedHValue<ScalarCoefficients, 0>(h_launch, z, y, x);
+    h_fields[index] =
+        FusedHValue<ScalarCoefficients, MetricKind, 0>(h_launch, z, y, x);
     h_fields[kFusedVolume + index] =
-        FusedHValue<ScalarCoefficients, 1>(h_launch, z, y, x);
+        FusedHValue<ScalarCoefficients, MetricKind, 1>(h_launch, z, y, x);
     h_fields[2 * kFusedVolume + index] =
-        FusedHValue<ScalarCoefficients, 2>(h_launch, z, y, x);
+        FusedHValue<ScalarCoefficients, MetricKind, 2>(h_launch, z, y, x);
   }
   __syncthreads();
 
@@ -511,14 +514,14 @@ __global__ void FusedFullStepPec(BeamzLaunch h_launch,
       }
     }
     const float e0 =
-        FusedEValue<ScalarCoefficients, 0>(e_launch, h_fields, local_z, local_y,
-                                           local_x, z, y, x);
+        FusedEValue<ScalarCoefficients, MetricKind, 0>(
+            e_launch, h_fields, local_z, local_y, local_x, z, y, x);
     const float e1 =
-        FusedEValue<ScalarCoefficients, 1>(e_launch, h_fields, local_z, local_y,
-                                           local_x, z, y, x);
+        FusedEValue<ScalarCoefficients, MetricKind, 1>(
+            e_launch, h_fields, local_z, local_y, local_x, z, y, x);
     const float e2 =
-        FusedEValue<ScalarCoefficients, 2>(e_launch, h_fields, local_z, local_y,
-                                           local_x, z, y, x);
+        FusedEValue<ScalarCoefficients, MetricKind, 2>(
+            e_launch, h_fields, local_z, local_y, local_x, z, y, x);
     const float values[3] = {e0, e1, e2};
     for (int component = 0; component < 3; ++component) {
       const BeamzBuffer& e_output = e_launch.outputs[component];
@@ -1027,9 +1030,10 @@ int BeamzLaunchTemporalSteps(void* raw_stream, const BeamzLaunch& h_ab,
                              const BeamzLaunch& e_ba, int32_t nsteps) {
   if (nsteps < 4 || h_ab.phase != 0 || e_ab.phase != 1 || h_ba.phase != 0 ||
       e_ba.phase != 1 || h_ab.nterms != 0 || e_ab.nterms != 0 ||
-      h_ba.nterms != 0 || e_ba.nterms != 0 || h_ab.metric_kind != 0 ||
-      e_ab.metric_kind != 0 || h_ba.metric_kind != 0 ||
-      e_ba.metric_kind != 0 || h_ab.metallic_edges != 63 ||
+      h_ba.nterms != 0 || e_ba.nterms != 0 || h_ab.metric_kind < 0 ||
+      h_ab.metric_kind > 2 || e_ab.metric_kind != h_ab.metric_kind ||
+      h_ba.metric_kind != h_ab.metric_kind ||
+      e_ba.metric_kind != h_ab.metric_kind || h_ab.metallic_edges != 63 ||
       e_ab.metallic_edges != 63 || h_ba.metallic_edges != 63 ||
       e_ba.metallic_edges != 63) {
     return cudaErrorInvalidValue;
@@ -1089,12 +1093,34 @@ int BeamzLaunchTemporalSteps(void* raw_stream, const BeamzLaunch& h_ab,
     cudaError_t launch_error = cudaSuccess;
     auto launch_fused = [&](const BeamzLaunch& h_launch,
                             const BeamzLaunch& e_launch) {
-      if (scalar_coefficients) {
-        FusedFullStepPec<true><<<blocks, threads, kFusedSharedBytes, stream>>>(
-            h_launch, e_launch);
+      if (h_launch.metric_kind == 0) {
+        if (scalar_coefficients) {
+          FusedFullStepPec<true, 0>
+              <<<blocks, threads, kFusedSharedBytes, stream>>>(h_launch,
+                                                               e_launch);
+        } else {
+          FusedFullStepPec<false, 0>
+              <<<blocks, threads, kFusedSharedBytes, stream>>>(h_launch,
+                                                               e_launch);
+        }
+      } else if (h_launch.metric_kind == 1) {
+        if (scalar_coefficients) {
+          FusedFullStepPec<true, 1>
+              <<<blocks, threads, kFusedSharedBytes, stream>>>(h_launch,
+                                                               e_launch);
+        } else {
+          FusedFullStepPec<false, 1>
+              <<<blocks, threads, kFusedSharedBytes, stream>>>(h_launch,
+                                                               e_launch);
+        }
+      } else if (scalar_coefficients) {
+        FusedFullStepPec<true, 2>
+            <<<blocks, threads, kFusedSharedBytes, stream>>>(h_launch,
+                                                             e_launch);
       } else {
-        FusedFullStepPec<false><<<blocks, threads, kFusedSharedBytes, stream>>>(
-            h_launch, e_launch);
+        FusedFullStepPec<false, 2>
+            <<<blocks, threads, kFusedSharedBytes, stream>>>(h_launch,
+                                                             e_launch);
       }
       return cudaPeekAtLastError();
     };

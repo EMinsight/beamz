@@ -703,7 +703,6 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
     temporal_eligible = (
         temporal_enabled
         and nsteps >= 4
-        and ctx.config.metric_kind == "isotropic_uniform"
         and _metallic_edge_mask(ctx.boundary.cpml.metallic_edges) == 63
     )
     if temporal_eligible:
@@ -725,7 +724,7 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
             dt=np.float32(ctx.dt),
             resolution=np.float32(ctx.resolution),
             metallic_edges=np.int32(63),
-            metric_kind=np.int32(0),
+            metric_kind=_metric_kind_code(ctx),
         )
         return state._replace(
             hx=outputs[0],
