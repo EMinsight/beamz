@@ -12,7 +12,7 @@ from beamz.simulation.execute import initial_program_state
 from tests.performance.h100_workloads import H100Workload
 
 
-def _program_and_state(*, cpml: bool):
+def _program_and_state(*, cpml: bool, source: bool = False):
     workload = H100Workload(
         name="cuda_contract",
         shape_zyx=(8, 10, 12),
@@ -21,6 +21,7 @@ def _program_and_state(*, cpml: bool):
         pml_cells=2,
         heterogeneous=True,
         cpml=cpml,
+        source=source,
     )
     simulation = workload.build()
     program = simulation.compile(backend="jax")
@@ -169,6 +170,36 @@ def test_cuda_cpml_multi_step_ffi_aliases_fields_and_psi(monkeypatch):
     assert attributes["nsteps"] == np.int32(7)
     assert next_state.cpml_psi_h_terms == state.cpml_psi_h_terms
     assert next_state.cpml_psi_e_terms == state.cpml_psi_e_terms
+
+
+def test_cuda_source_cpml_graph_packs_source_and_aliases_state(monkeypatch):
+    program, state, context = _program_and_state(cpml=True, source=True)
+    captured = []
+
+    def fake_ffi_call(target, result_metadata, **options):
+        def call(*arguments, **attributes):
+            captured.append((target, result_metadata, options, arguments, attributes))
+            return (*arguments[:6], *arguments[31:37], *arguments[62:68])
+
+        return call
+
+    monkeypatch.setattr(cuda_runtime.jax.ffi, "ffi_call", fake_ffi_call)
+
+    next_state = cuda_runtime.run_source_steps(
+        state, context, program.coefficients, program.sources[0], 3
+    )
+
+    target, results, options, arguments, attributes = captured[0]
+    assert target == "beamz_cuda_streamed_source_cpml_steps"
+    assert len(results) == 18
+    assert len(arguments) == 71
+    assert options["input_output_aliases"] == {
+        **{index: index for index in range(6)},
+        **{31 + index: 6 + index for index in range(6)},
+        **{62 + index: 12 + index for index in range(6)},
+    }
+    assert attributes["source_component"] == np.int32(2)
+    assert next_state.cpml_psi_h_terms == state.cpml_psi_h_terms
 
 
 def test_cuda_backend_selects_hybrid_jax_orchestration_kernel():

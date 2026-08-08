@@ -116,6 +116,45 @@ def test_streamed_cuda_owns_source_free_constraints(cpml):
     _assert_state_close(reference, actual)
 
 
+def test_streamed_cuda_graphs_one_packed_cpml_source():
+    simulation, state = _simulation_and_seed(
+        cpml=True,
+        source=True,
+        monitor=False,
+        heterogeneous=True,
+    )
+    reference = simulation.advance(
+        state=_copy_state(state), num_steps=simulation.num_steps, backend="jax"
+    ).state
+    actual = simulation.advance(
+        state=_copy_state(state),
+        num_steps=simulation.num_steps,
+        backend="cuda_streamed",
+    ).state
+
+    _assert_state_close(reference, actual)
+
+
+def test_streamed_cuda_source_graph_continues_from_nonzero_step():
+    simulation, state = _simulation_and_seed(
+        cpml=True,
+        source=True,
+        monitor=False,
+        heterogeneous=True,
+    )
+    prefix = simulation.advance(
+        state=_copy_state(state), num_steps=7, backend="jax"
+    ).state
+    reference = simulation.advance(
+        state=_copy_state(prefix), num_steps=25, backend="jax"
+    ).state
+    actual = simulation.advance(
+        state=_copy_state(prefix), num_steps=25, backend="cuda_streamed"
+    ).state
+
+    _assert_state_close(reference, actual)
+
+
 @pytest.mark.skipif(
     not STATUS.compute_capabilities
     or any(capability < 90 for capability in STATUS.compute_capabilities),

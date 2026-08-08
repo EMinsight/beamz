@@ -35,13 +35,17 @@ bool GraphCacheEnabled() {
 }
 
 std::string GraphKey(void* stream, const BeamzLaunch& h_launch,
-                     const BeamzLaunch& e_launch, int32_t nsteps) {
+                     const BeamzLaunch& e_launch, int32_t nsteps,
+                     const BeamzSourceLaunch* source = nullptr) {
   std::string key;
   key.reserve(sizeof(stream) + sizeof(nsteps) + 2 * sizeof(BeamzLaunch));
   key.append(reinterpret_cast<const char*>(&stream), sizeof(stream));
   key.append(reinterpret_cast<const char*>(&nsteps), sizeof(nsteps));
   key.append(reinterpret_cast<const char*>(&h_launch), sizeof(h_launch));
   key.append(reinterpret_cast<const char*>(&e_launch), sizeof(e_launch));
+  if (source != nullptr) {
+    key.append(reinterpret_cast<const char*>(source), sizeof(*source));
+  }
   return key;
 }
 
@@ -331,6 +335,41 @@ __global__ void UpdateAllFullPecScalarComponents(BeamzLaunch launch,
   }
 }
 
+__global__ void ApplySourceSlab(BeamzLaunch e_launch,
+                                BeamzSourceLaunch source, int step_offset) {
+  const int x = blockIdx.x * blockDim.x + threadIdx.x;
+  const int y = blockIdx.y * blockDim.y + threadIdx.y;
+  const int z = blockIdx.z * blockDim.z + threadIdx.z;
+  if (z >= source.coefficient.dims[0] || y >= source.coefficient.dims[1] ||
+      x >= source.coefficient.dims[2]) {
+    return;
+  }
+  const int target_z = source.starts[0] + z;
+  const int target_y = source.starts[1] + y;
+  const int target_x = source.starts[2] + x;
+  const BeamzBuffer& target = e_launch.outputs[source.component];
+  const int target_offset =
+      (target_z * static_cast<int>(target.dims[1]) + target_y) *
+          static_cast<int>(target.dims[2]) +
+      target_x;
+  const int coefficient_offset =
+      (z * static_cast<int>(source.coefficient.dims[1]) + y) *
+          static_cast<int>(source.coefficient.dims[2]) +
+      x;
+  int waveform_index =
+      static_cast<const int32_t*>(source.current_step.data)[0] + step_offset;
+  waveform_index = waveform_index < 0 ? 0 : waveform_index;
+  waveform_index =
+      waveform_index >= source.waveform.dims[0]
+          ? static_cast<int>(source.waveform.dims[0]) - 1
+          : waveform_index;
+  const float amplitude =
+      static_cast<const float*>(source.waveform.data)[waveform_index];
+  static_cast<float*>(target.data)[target_offset] +=
+      static_cast<const float*>(source.coefficient.data)[coefficient_offset] *
+      amplitude;
+}
+
 }  // namespace
 
 int BeamzLaunchStreamed(void* raw_stream, const BeamzLaunch& launch) {
@@ -383,8 +422,9 @@ int BeamzLaunchStreamed(void* raw_stream, const BeamzLaunch& launch) {
   return static_cast<int>(cudaPeekAtLastError());
 }
 
-int BeamzLaunchStreamedSteps(void* raw_stream, const BeamzLaunch& h_launch,
-                             const BeamzLaunch& e_launch, int32_t nsteps) {
+int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
+                        const BeamzLaunch& e_launch,
+                        const BeamzSourceLaunch* source, int32_t nsteps) {
   if (nsteps < 1 || h_launch.phase != 0 || e_launch.phase != 1 ||
       h_launch.nterms != e_launch.nterms ||
       (h_launch.nterms != 0 && h_launch.nterms != 6)) {
@@ -392,7 +432,7 @@ int BeamzLaunchStreamedSteps(void* raw_stream, const BeamzLaunch& h_launch,
   }
   auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
   const std::string graph_key =
-      GraphKey(raw_stream, h_launch, e_launch, nsteps);
+      GraphKey(raw_stream, h_launch, e_launch, nsteps, source);
   GraphCache& cache = CachedGraphs();
   if (GraphCacheEnabled()) {
     std::lock_guard<std::mutex> lock(cache.mutex);
@@ -404,6 +444,17 @@ int BeamzLaunchStreamedSteps(void* raw_stream, const BeamzLaunch& h_launch,
   auto launch_steps = [&]() {
     cudaError_t launch_error = cudaSuccess;
     for (int32_t step = 0; step < nsteps; ++step) {
+      if (source != nullptr) {
+        const dim3 source_threads(kTileX, kTileY, kTileZ);
+        const dim3 source_blocks(
+            (source->coefficient.dims[2] + kTileX - 1) / kTileX,
+            (source->coefficient.dims[1] + kTileY - 1) / kTileY,
+            (source->coefficient.dims[0] + kTileZ - 1) / kTileZ);
+        ApplySourceSlab<<<source_blocks, source_threads, 0, stream>>>(
+            e_launch, *source, step);
+        launch_error = cudaPeekAtLastError();
+        if (launch_error != cudaSuccess) break;
+      }
       launch_error =
           static_cast<cudaError_t>(BeamzLaunchStreamed(raw_stream, h_launch));
       if (launch_error != cudaSuccess) break;
@@ -448,4 +499,31 @@ int BeamzLaunchStreamedSteps(void* raw_stream, const BeamzLaunch& h_launch,
   }
   if (graph != nullptr) cudaGraphDestroy(graph);
   return error;
+}
+
+int BeamzLaunchStreamedSteps(void* raw_stream, const BeamzLaunch& h_launch,
+                             const BeamzLaunch& e_launch, int32_t nsteps) {
+  return LaunchStreamedGraph(raw_stream, h_launch, e_launch, nullptr, nsteps);
+}
+
+int BeamzLaunchStreamedSourceSteps(void* raw_stream,
+                                   const BeamzLaunch& h_launch,
+                                   const BeamzLaunch& e_launch,
+                                   const BeamzSourceLaunch& source,
+                                   int32_t nsteps) {
+  if (source.coefficient.rank != 3 || source.waveform.rank != 1 ||
+      source.current_step.rank != 0 || source.component < 0 ||
+      source.component > 2 || source.waveform.dims[0] < 1 ||
+      !FitsIntOffsets(source.coefficient) || !FitsIntOffsets(source.waveform)) {
+    return cudaErrorInvalidValue;
+  }
+  const BeamzBuffer& target = e_launch.outputs[source.component];
+  for (int axis = 0; axis < 3; ++axis) {
+    if (source.starts[axis] < 0 ||
+        source.starts[axis] + source.coefficient.dims[axis] >
+            target.dims[axis]) {
+      return cudaErrorInvalidValue;
+    }
+  }
+  return LaunchStreamedGraph(raw_stream, h_launch, e_launch, &source, nsteps);
 }

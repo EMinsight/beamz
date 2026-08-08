@@ -557,8 +557,22 @@ def build_scan(program, *, donate_state: bool = False):
         is_3d=is_3d,
     )
     update_kernel = update_runtime.select_update_kernel(step_context)
+    graph_source = (
+        program.sources[0]
+        if cfg.backend == "cuda_streamed"
+        and boundary.cpml.enabled
+        and len(program.sources) == 1
+        and program.sources[0].timing == "pre_e"
+        and program.sources[0].component in {"Ex", "Ey", "Ez"}
+        and program.sources[0].is_slab
+        and program.sources[0].slab_starts is not None
+        and program.sources[0].slab_sizes is not None
+        else None
+    )
     cuda_multi_step = (
-        cfg.backend == "cuda_streamed" and not program.sources and not program.monitors
+        cfg.backend == "cuda_streamed"
+        and not program.monitors
+        and (not program.sources or graph_source is not None)
     )
 
     def run_scan(
@@ -568,9 +582,15 @@ def build_scan(program, *, donate_state: bool = False):
         # 4. Run the same transition through scan or fori_loop. The choice changes the
         # lowering strategy, not timestep semantics.
         if cuda_multi_step:
-            from beamz.simulation.cuda import run_steps
+            from beamz.simulation.cuda import run_source_steps, run_steps
 
-            scan_out = run_steps(state, step_context, coeffs, cfg.num_steps)
+            scan_out = (
+                run_steps(state, step_context, coeffs, cfg.num_steps)
+                if graph_source is None
+                else run_source_steps(
+                    state, step_context, coeffs, graph_source, cfg.num_steps
+                )
+            )
             scan_out = scan_out._replace(
                 t=state.t + dt_scalar * cfg.num_steps,
                 current_step=state.current_step
