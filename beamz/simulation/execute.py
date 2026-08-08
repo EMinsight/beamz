@@ -479,11 +479,13 @@ def forward_step(
         "h",
         dense_single_slab=cfg.source_single_slab_dense,
     )
-    hx, hy, hz = update_runtime.apply_post_source_boundaries(
-        (state.hx, state.hy, state.hz),
-        (metallic.hx_mask, metallic.hy_mask, metallic.hz_mask),
-    )
-    state = state._replace(hx=hx, hy=hy, hz=hz)
+    cuda_owns_pec = cfg.backend == "cuda_streamed" and not program.sources
+    if not cuda_owns_pec:
+        hx, hy, hz = update_runtime.apply_post_source_boundaries(
+            (state.hx, state.hy, state.hz),
+            (metallic.hx_mask, metallic.hy_mask, metallic.hz_mask),
+        )
+        state = state._replace(hx=hx, hy=hy, hz=hz)
 
     # 3. Advance E, inject its sources, and restore its masks before observation.
     state = update_kernel.update_e(state, ctx, coeffs)
@@ -494,11 +496,12 @@ def forward_step(
         "e",
         dense_single_slab=cfg.source_single_slab_dense,
     )
-    ex, ey, ez = update_runtime.apply_post_source_boundaries(
-        (state.ex, state.ey, state.ez),
-        (metallic.ex_mask, metallic.ey_mask, metallic.ez_mask),
-    )
-    state = state._replace(ex=ex, ey=ey, ez=ez)
+    if not cuda_owns_pec:
+        ex, ey, ez = update_runtime.apply_post_source_boundaries(
+            (state.ex, state.ey, state.ez),
+            (metallic.ex_mask, metallic.ey_mask, metallic.ez_mask),
+        )
+        state = state._replace(ex=ex, ey=ey, ez=ez)
 
     # 4. Observe only fully constrained end-of-step fields, then advance both clocks.
     t_phys = state.t + ctx.dt_scalar

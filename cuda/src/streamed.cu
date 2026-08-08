@@ -2,18 +2,31 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 #include "launch.h"
 
 namespace {
 
-__device__ __forceinline__ int64_t Offset(const BeamzBuffer& value, int z,
-                                          int y, int x) {
+bool FitsIntOffsets(const BeamzBuffer& value) {
+  int64_t elements = 1;
+  for (int axis = 0; axis < value.rank; ++axis) {
+    if (value.dims[axis] > std::numeric_limits<int>::max()) return false;
+    elements *= value.dims[axis];
+    if (elements > std::numeric_limits<int>::max()) return false;
+  }
+  return true;
+}
+
+__device__ __forceinline__ int Offset(const BeamzBuffer& value, int z, int y,
+                                      int x) {
   if (value.rank == 0) return 0;
   const int iz = value.dims[0] == 1 ? 0 : z;
   const int iy = value.dims[1] == 1 ? 0 : y;
   const int ix = value.dims[2] == 1 ? 0 : x;
-  return (static_cast<int64_t>(iz) * value.dims[1] + iy) * value.dims[2] + ix;
+  return (iz * static_cast<int>(value.dims[1]) + iy) *
+             static_cast<int>(value.dims[2]) +
+         ix;
 }
 
 __device__ __forceinline__ float Read(const BeamzBuffer& value, int z, int y,
@@ -23,8 +36,9 @@ __device__ __forceinline__ float Read(const BeamzBuffer& value, int z, int y,
 
 __device__ __forceinline__ float Read3D(const BeamzBuffer& value, int z, int y,
                                         int x) {
-  const int64_t offset =
-      (static_cast<int64_t>(z) * value.dims[1] + y) * value.dims[2] + x;
+  const int offset = (z * static_cast<int>(value.dims[1]) + y) *
+                         static_cast<int>(value.dims[2]) +
+                     x;
   return static_cast<const float*>(value.data)[offset];
 }
 
@@ -98,7 +112,7 @@ __device__ __forceinline__ float CorrectCpml(float derivative, int term, int z,
   const int psi_base = 13 + 3 * launch.nterms;
   const BeamzBuffer& psi_input = launch.inputs[psi_base + term];
   const BeamzBuffer& psi_output = launch.outputs[3 + term];
-  const int64_t psi_offset = Offset(psi_output, pz, py, px);
+  const int psi_offset = Offset(psi_output, pz, py, px);
   const float old_psi = static_cast<const float*>(psi_input.data)[psi_offset];
   const float next_psi =
       Read(launch.inputs[coefficient_base + 1], pz, py, px) * old_psi +
@@ -115,8 +129,37 @@ __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
   const BeamzBuffer& input = launch.inputs[Component];
   const BeamzBuffer& output = launch.outputs[Component];
   if (z >= output.dims[0] || y >= output.dims[1] || x >= output.dims[2]) return;
-  const int64_t linear =
-      (static_cast<int64_t>(z) * output.dims[1] + y) * output.dims[2] + x;
+  const int linear = (z * static_cast<int>(output.dims[1]) + y) *
+                         static_cast<int>(output.dims[2]) +
+                     x;
+  constexpr int normal_axis = 2 - Component;
+  constexpr bool constrained = Phase == 0;
+  const int coordinate = normal_axis == 0 ? z : (normal_axis == 1 ? y : x);
+  const int axis_size = static_cast<int>(output.dims[normal_axis]);
+  const bool on_low_wall =
+      coordinate == 0 && (launch.metallic_edges & (1 << (2 * normal_axis)));
+  const bool on_high_wall =
+      coordinate == axis_size - 1 &&
+      (launch.metallic_edges & (1 << (2 * normal_axis + 1)));
+  if constexpr (constrained) {
+    if (on_low_wall || on_high_wall) {
+      static_cast<float*>(output.data)[linear] = 0.0f;
+      return;
+    }
+  } else {
+    for (int axis = 0; axis < 3; ++axis) {
+      if (axis == normal_axis) continue;
+      const int axis_coordinate = axis == 0 ? z : (axis == 1 ? y : x);
+      const int size = static_cast<int>(output.dims[axis]);
+      if ((axis_coordinate == 0 &&
+           (launch.metallic_edges & (1 << (2 * axis)))) ||
+          (axis_coordinate == size - 1 &&
+           (launch.metallic_edges & (1 << (2 * axis + 1))))) {
+        static_cast<float*>(output.data)[linear] = 0.0f;
+        return;
+      }
+    }
+  }
   const float inv_dx = launch.inv_resolution;
 
   constexpr int first_source[3] = {2, 0, 1};
@@ -177,6 +220,14 @@ __global__ void UpdateAllComponents(BeamzLaunch launch, int y_blocks) {
 }  // namespace
 
 int BeamzLaunchStreamed(void* raw_stream, const BeamzLaunch& launch) {
+  const int input_count = 13 + 4 * launch.nterms;
+  const int output_count = 3 + launch.nterms;
+  for (int index = 0; index < input_count; ++index) {
+    if (!FitsIntOffsets(launch.inputs[index])) return cudaErrorInvalidValue;
+  }
+  for (int index = 0; index < output_count; ++index) {
+    if (!FitsIntOffsets(launch.outputs[index])) return cudaErrorInvalidValue;
+  }
   auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
   constexpr int tile_x = 32;
   constexpr int tile_y = 4;
