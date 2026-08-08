@@ -324,12 +324,12 @@ def _plot_matrix(matrix: RTX3090Matrix, output_path: Path) -> None:
     axes[0].set_xlabel("milliseconds (lower is better)")
     axes[0].set_yticks(positions, names)
     axes[0].invert_yaxis()
-    axes[0].legend(loc="lower right")
+    axes[0].legend(loc="upper right")
     axes[0].grid(axis="x", alpha=0.22)
     for bars in (base_bars, cuda_bars):
         axes[0].bar_label(bars, fmt="%.1f", padding=3, fontsize=8)
 
-    colors = ["#137333" if value > 1.0 else "#b3261e" for value in speedups]
+    colors = ["#1f77b4" if value > 1.0 else "#d97706" for value in speedups]
     speedup_bars = axes[1].barh(
         positions, speedups, color=colors, xerr=speedup_errors, capsize=4
     )
