@@ -7,6 +7,7 @@ import pytest
 
 import beamz as bz
 from beamz.design import MaterialGrid, RectilinearGrid
+from beamz.design.raster import Grid, Material, RasterOptions, Scene, rasterize
 from beamz.simulation import backend as backend_runtime
 
 
@@ -83,6 +84,46 @@ def test_explicit_cuda_rejects_rectilinear_3d_simulations():
         backend_runtime.CudaBackendUnavailable, match="isotropic uniform 3D"
     ):
         _rectilinear_3d_simulation().compile(backend="cuda_streamed")
+
+
+def _full_tensor_3d_simulation():
+    material_grid = MaterialGrid.from_raster_result(
+        rasterize(
+            Scene(
+                (
+                    Material(
+                        epsilon_r=(
+                            (3.0, 0.2, 0.0),
+                            (0.2, 2.0, 0.0),
+                            (0.0, 0.0, 1.0),
+                        )
+                    ),
+                )
+            ),
+            Grid.uniform((0.0, 0.0, 0.0), (0.3, 0.3, 0.3), (3, 3, 3)),
+            options=RasterOptions(smoothing="farjadpour_full"),
+        )
+    )
+    return bz.Simulation(material_grid=material_grid, time=np.arange(3) * 1e-17)
+
+
+def test_auto_preserves_jax_for_full_tensor_permittivity(monkeypatch):
+    monkeypatch.setattr(
+        backend_runtime,
+        "resolve_backend",
+        lambda backend: "cuda_streamed" if backend == "auto" else backend,
+    )
+
+    program = _full_tensor_3d_simulation().compile(backend="auto")
+
+    assert program.config.backend == "jax"
+
+
+def test_explicit_cuda_rejects_full_tensor_permittivity():
+    with pytest.raises(
+        backend_runtime.CudaBackendUnavailable, match="full-tensor permittivity"
+    ):
+        _full_tensor_3d_simulation().compile(backend="cuda_streamed")
 
 
 def test_cuda_status_exposes_complete_diagnostics():

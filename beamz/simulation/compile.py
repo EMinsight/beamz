@@ -769,15 +769,23 @@ def compile_program(
     metric_kind = simulation.grid.metric_kind_for(
         ("x", "y", "z") if simulation.is_3d else ("x", "y")
     )
+    material_grid = simulation._material_grid(progress=progress)
     cuda_grid_supported = simulation.is_3d and metric_kind == "isotropic_uniform"
+    cuda_material_supported = not material_grid.uses_full_permittivity
     if requested_backend not in {"auto", "jax"} and not cuda_grid_supported:
         raise CudaBackendUnavailable(
             "CUDA execution currently requires an isotropic uniform 3D grid; "
             f"this simulation requires {metric_kind!r} metrics. Use backend='jax'."
         )
+    if requested_backend not in {"auto", "jax"} and not cuda_material_supported:
+        raise CudaBackendUnavailable(
+            "CUDA execution does not yet support full-tensor permittivity; "
+            "use backend='jax' for coupled constitutive updates."
+        )
+    cuda_problem_supported = cuda_grid_supported and cuda_material_supported
     resolved_backend = (
         "jax"
-        if requested_backend == "auto" and not cuda_grid_supported
+        if requested_backend == "auto" and not cuda_problem_supported
         else resolve_backend(requested_backend)
     )
     request = simulation.to_request(
