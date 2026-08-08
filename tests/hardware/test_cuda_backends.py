@@ -96,9 +96,10 @@ def test_streamed_cuda_matches_jax_complete_state(cpml):
     _assert_state_close(reference, actual)
 
 
-def test_streamed_cuda_owns_source_free_pec_constraints():
+@pytest.mark.parametrize("cpml", [False, True], ids=["pec_graph", "cpml_graph"])
+def test_streamed_cuda_owns_source_free_constraints(cpml):
     simulation, state = _simulation_and_seed(
-        cpml=False,
+        cpml=cpml,
         source=False,
         monitor=False,
         heterogeneous=False,

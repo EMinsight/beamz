@@ -142,6 +142,35 @@ def test_cuda_multi_step_ffi_aliases_all_fields(monkeypatch):
     assert next_state.ez is state.ez
 
 
+def test_cuda_cpml_multi_step_ffi_aliases_fields_and_psi(monkeypatch):
+    program, state, context = _program_and_state(cpml=True)
+    captured = []
+
+    def fake_ffi_call(target, result_metadata, **options):
+        def call(*arguments, **attributes):
+            captured.append((target, result_metadata, options, arguments, attributes))
+            return (*arguments[:6], *arguments[31:37], *arguments[62:68])
+
+        return call
+
+    monkeypatch.setattr(cuda_runtime.jax.ffi, "ffi_call", fake_ffi_call)
+
+    next_state = cuda_runtime.run_steps(state, context, program.coefficients, 7)
+
+    target, results, options, arguments, attributes = captured[0]
+    assert target == "beamz_cuda_streamed_cpml_steps"
+    assert len(results) == 18
+    assert len(arguments) == 68
+    assert options["input_output_aliases"] == {
+        **{index: index for index in range(6)},
+        **{31 + index: 6 + index for index in range(6)},
+        **{62 + index: 12 + index for index in range(6)},
+    }
+    assert attributes["nsteps"] == np.int32(7)
+    assert next_state.cpml_psi_h_terms == state.cpml_psi_h_terms
+    assert next_state.cpml_psi_e_terms == state.cpml_psi_e_terms
+
+
 def test_cuda_backend_selects_hybrid_jax_orchestration_kernel():
     _program, _state, context = _program_and_state(cpml=True)
 

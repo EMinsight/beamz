@@ -353,7 +353,8 @@ int BeamzLaunchStreamed(void* raw_stream, const BeamzLaunch& launch) {
 int BeamzLaunchStreamedSteps(void* raw_stream, const BeamzLaunch& h_launch,
                              const BeamzLaunch& e_launch, int32_t nsteps) {
   if (nsteps < 1 || h_launch.phase != 0 || e_launch.phase != 1 ||
-      h_launch.nterms != 0 || e_launch.nterms != 0) {
+      h_launch.nterms != e_launch.nterms ||
+      (h_launch.nterms != 0 && h_launch.nterms != 6)) {
     return cudaErrorInvalidValue;
   }
   auto stream = reinterpret_cast<cudaStream_t>(raw_stream);

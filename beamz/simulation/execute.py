@@ -559,7 +559,6 @@ def build_scan(program, *, donate_state: bool = False):
     update_kernel = update_runtime.select_update_kernel(step_context)
     cuda_multi_step = (
         cfg.backend == "cuda_streamed"
-        and not boundary.cpml.enabled
         and not program.sources
         and not program.monitors
     )

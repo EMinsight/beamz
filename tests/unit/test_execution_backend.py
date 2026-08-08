@@ -117,7 +117,10 @@ def test_hopper_only_extension_requires_explicit_opt_in(monkeypatch):
 
 def test_typed_ffi_registrations_use_cuda_api_v1(monkeypatch):
     extension = _extension(
-        "beamz_cuda_streamed", "beamz_cuda_streamed_steps", "beamz_cuda_hopper"
+        "beamz_cuda_streamed",
+        "beamz_cuda_streamed_steps",
+        "beamz_cuda_streamed_cpml_steps",
+        "beamz_cuda_hopper",
     )
     registrations = []
     monkeypatch.setattr(backend_runtime, "_REGISTERED_MODULE", None)
@@ -132,6 +135,7 @@ def test_typed_ffi_registrations_use_cuda_api_v1(monkeypatch):
     assert targets == (
         "beamz_cuda_hopper",
         "beamz_cuda_streamed",
+        "beamz_cuda_streamed_cpml_steps",
         "beamz_cuda_streamed_steps",
     )
     assert {name for name, _, _ in registrations} == set(targets)
