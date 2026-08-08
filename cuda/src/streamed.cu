@@ -8,6 +8,10 @@
 
 namespace {
 
+constexpr int kTileX = 32;
+constexpr int kTileY = 4;
+constexpr int kTileZ = 2;
+
 bool FitsIntOffsets(const BeamzBuffer& value) {
   int64_t elements = 1;
   for (int axis = 0; axis < value.rank; ++axis) {
@@ -217,6 +221,83 @@ __global__ void UpdateAllComponents(BeamzLaunch launch, int y_blocks) {
   }
 }
 
+template <int Phase>
+__device__ __forceinline__ float UncheckedDifference(
+    const BeamzBuffer& value, int axis, int z, int y, int x, float inv_dx) {
+  int neighbor_z = z, neighbor_y = y, neighbor_x = x;
+  if (axis == 0) neighbor_z += Phase == 0 ? 1 : -1;
+  if (axis == 1) neighbor_y += Phase == 0 ? 1 : -1;
+  if (axis == 2) neighbor_x += Phase == 0 ? 1 : -1;
+  const float center = Read3D(value, z, y, x);
+  const float neighbor = Read3D(value, neighbor_z, neighbor_y, neighbor_x);
+  return (Phase == 0 ? neighbor - center : center - neighbor) * inv_dx;
+}
+
+template <int Phase, int Component>
+__device__ __forceinline__ void UpdateFullPecScalarComponent(
+    const BeamzLaunch& launch, int z, int y, int x) {
+  const BeamzBuffer& input = launch.inputs[Component];
+  const BeamzBuffer& output = launch.outputs[Component];
+  if (z >= output.dims[0] || y >= output.dims[1] || x >= output.dims[2]) return;
+  const int linear = (z * static_cast<int>(output.dims[1]) + y) *
+                         static_cast<int>(output.dims[2]) +
+                     x;
+  constexpr int normal_axis = 2 - Component;
+  if constexpr (Phase == 0) {
+    const int coordinate = normal_axis == 0 ? z : (normal_axis == 1 ? y : x);
+    if (coordinate == 0 || coordinate == output.dims[normal_axis] - 1) {
+      static_cast<float*>(output.data)[linear] = 0.0f;
+      return;
+    }
+  } else {
+    for (int axis = 0; axis < 3; ++axis) {
+      if (axis == normal_axis) continue;
+      const int coordinate = axis == 0 ? z : (axis == 1 ? y : x);
+      if (coordinate == 0 || coordinate == output.dims[axis] - 1) {
+        static_cast<float*>(output.data)[linear] = 0.0f;
+        return;
+      }
+    }
+  }
+
+  constexpr int first_source[3] = {2, 0, 1};
+  constexpr int second_source[3] = {1, 2, 0};
+  constexpr int first_axis[3] = {1, 0, 2};
+  constexpr int second_axis[3] = {0, 2, 1};
+  const float derivative0 = UncheckedDifference<Phase>(
+      launch.inputs[3 + first_source[Component]], first_axis[Component], z, y,
+      x, launch.inv_resolution);
+  const float derivative1 = UncheckedDifference<Phase>(
+      launch.inputs[3 + second_source[Component]], second_axis[Component], z,
+      y, x, launch.inv_resolution);
+  const float old_field = static_cast<const float*>(input.data)[linear];
+  const float decay =
+      static_cast<const float*>(launch.inputs[6 + Component].data)[0];
+  const float source =
+      static_cast<const float*>(launch.inputs[9 + Component].data)[0];
+  const float curl = derivative0 - derivative1;
+  static_cast<float*>(output.data)[linear] =
+      Phase == 0 ? decay * old_field - source * curl
+                 : decay * old_field + source * curl;
+}
+
+template <int Phase>
+__global__ void UpdateAllFullPecScalarComponents(BeamzLaunch launch,
+                                                 int y_blocks) {
+  const int x = blockIdx.x * blockDim.x + threadIdx.x;
+  const int z = blockIdx.z * blockDim.z + threadIdx.z;
+  if (blockIdx.y < y_blocks) {
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    UpdateFullPecScalarComponent<Phase, 0>(launch, z, y, x);
+  } else if (blockIdx.y < 2 * y_blocks) {
+    const int y = (blockIdx.y - y_blocks) * blockDim.y + threadIdx.y;
+    UpdateFullPecScalarComponent<Phase, 1>(launch, z, y, x);
+  } else {
+    const int y = (blockIdx.y - 2 * y_blocks) * blockDim.y + threadIdx.y;
+    UpdateFullPecScalarComponent<Phase, 2>(launch, z, y, x);
+  }
+}
+
 }  // namespace
 
 int BeamzLaunchStreamed(void* raw_stream, const BeamzLaunch& launch) {
@@ -229,9 +310,6 @@ int BeamzLaunchStreamed(void* raw_stream, const BeamzLaunch& launch) {
     if (!FitsIntOffsets(launch.outputs[index])) return cudaErrorInvalidValue;
   }
   auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
-  constexpr int tile_x = 32;
-  constexpr int tile_y = 4;
-  constexpr int tile_z = 2;
   int64_t max_x = 0, max_y = 0, max_z = 0;
   for (int component = 0; component < 3; ++component) {
     const BeamzBuffer& output = launch.outputs[component];
@@ -239,11 +317,24 @@ int BeamzLaunchStreamed(void* raw_stream, const BeamzLaunch& launch) {
     max_y = output.dims[1] > max_y ? output.dims[1] : max_y;
     max_z = output.dims[0] > max_z ? output.dims[0] : max_z;
   }
-  const int y_blocks = static_cast<int>((max_y + tile_y - 1) / tile_y);
-  const dim3 threads(tile_x, tile_y, tile_z);
-  const dim3 blocks((max_x + tile_x - 1) / tile_x, 3 * y_blocks,
-                    (max_z + tile_z - 1) / tile_z);
-  if (launch.phase == 0 && launch.nterms == 0) {
+  const int y_blocks = static_cast<int>((max_y + kTileY - 1) / kTileY);
+  const dim3 threads(kTileX, kTileY, kTileZ);
+  const dim3 blocks((max_x + kTileX - 1) / kTileX, 3 * y_blocks,
+                    (max_z + kTileZ - 1) / kTileZ);
+  const bool scalar_coefficients =
+      launch.nterms == 0 && launch.inputs[6].rank == 0 &&
+      launch.inputs[7].rank == 0 && launch.inputs[8].rank == 0 &&
+      launch.inputs[9].rank == 0 && launch.inputs[10].rank == 0 &&
+      launch.inputs[11].rank == 0;
+  if (scalar_coefficients && launch.metallic_edges == 63) {
+    if (launch.phase == 0) {
+      UpdateAllFullPecScalarComponents<0>
+          <<<blocks, threads, 0, stream>>>(launch, y_blocks);
+    } else {
+      UpdateAllFullPecScalarComponents<1>
+          <<<blocks, threads, 0, stream>>>(launch, y_blocks);
+    }
+  } else if (launch.phase == 0 && launch.nterms == 0) {
     UpdateAllComponents<0, false>
         <<<blocks, threads, 0, stream>>>(launch, y_blocks);
   } else if (launch.phase == 0) {
