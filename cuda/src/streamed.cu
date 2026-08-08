@@ -554,7 +554,7 @@ __global__ void AccumulateDftGroups(BeamzLaunch h_launch,
   const int interval = counts[3 * monitor + 2] > 0
                            ? counts[3 * monitor + 2]
                            : 1;
-  if (point >= point_count || frequency >= frequency_count) return;
+  if (frequency >= frequency_count) return;
 
   const int absolute_step =
       static_cast<const int32_t*>(monitors.current_step.data)[0] + step_offset;
@@ -567,12 +567,27 @@ __global__ void AccumulateDftGroups(BeamzLaunch h_launch,
   if (time < start || time > end) return;
 
   const auto* codes = static_cast<const int32_t*>(monitors.codes.data);
-  float window = 1.0f;
-  if (codes[2 * monitor] == 1 && isfinite(end) && end > start) {
-    const float tau = fminf(fmaxf((time - start) / (end - start), 0.0f), 1.0f);
-    window = 0.5f * (1.0f - cosf(6.2831853071795864769f * tau));
-  }
   const int max_frequency_count = static_cast<int>(monitors.frequencies.dims[1]);
+  float window = 0.0f;
+  float phase_sin = 0.0f;
+  float phase_cos = 0.0f;
+  if (threadIdx.x == 0) {
+    window = 1.0f;
+    if (codes[2 * monitor] == 1 && isfinite(end) && end > start) {
+      const float tau =
+          fminf(fmaxf((time - start) / (end - start), 0.0f), 1.0f);
+      window = 0.5f * (1.0f - cosf(6.2831853071795864769f * tau));
+    }
+    const float frequency_hz =
+        static_cast<const float*>(monitors.frequencies.data)
+            [monitor * max_frequency_count + frequency];
+    sincosf(6.2831853071795864769f * frequency_hz * time, &phase_sin,
+            &phase_cos);
+  }
+  window = __shfl_sync(0xffffffff, window, 0);
+  phase_sin = __shfl_sync(0xffffffff, phase_sin, 0);
+  phase_cos = __shfl_sync(0xffffffff, phase_cos, 0);
+  if (point >= point_count) return;
   if (component == 0 && point == 0) {
     static_cast<float*>(monitors.dft_weight.data)
         [monitor * static_cast<int>(monitors.dft_weight.dims[1]) + frequency] +=
@@ -603,12 +618,6 @@ __global__ void AccumulateDftGroups(BeamzLaunch h_launch,
     scale *= e_launch.dt * static_cast<float>(interval) * 299792458.0f /
              length_unit / sqrtf(6.2831853071795864769f);
   }
-  const float frequency_hz =
-      static_cast<const float*>(monitors.frequencies.data)
-          [monitor * max_frequency_count + frequency];
-  float phase_sin, phase_cos;
-  sincosf(6.2831853071795864769f * frequency_hz * time, &phase_sin,
-          &phase_cos);
   const int accumulator_offset =
       ((monitor * 6 + component) * static_cast<int>(monitors.dft_re.dims[2]) +
        frequency) *
