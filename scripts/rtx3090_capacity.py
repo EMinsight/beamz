@@ -1209,7 +1209,7 @@ def _report_artifact(sweep: CapacitySweep) -> dict[str, Any]:
             "type": "markdown",
             "body": (
                 "## Scope and metric definitions\n\n"
-                "**Realistic workload.** A fixed 6.5 × 6.5 × 4.0 µm silicon-on-insulator waveguide, one solved 3D TM mode source, heterogeneous permittivity, and PML on all six faces. Only the uniform regular-grid cell size changes.\n\n"
+                "**Realistic workload.** A fixed 6.5 × 6.5 × 4.0 µm silicon-on-insulator waveguide, one solved 3D TM mode source, heterogeneous permittivity, and PML on all six faces. It follows the repository's 3D waveguide example and intentionally has no monitor. Only the uniform regular-grid cell size changes.\n\n"
                 "**Bare ceiling.** The identical base grid shape with uniform material, no source, and PEC boundaries. It estimates the best custom-CUDA field-update rate, not application throughput.\n\n"
                 "**GCUPS.** `nz × ny × nx × full timesteps ÷ median warm seconds ÷ 1e9`. One conventional cell update means one complete Yee timestep over one base-grid cell."
             ),
@@ -1230,7 +1230,7 @@ def _report_artifact(sweep: CapacitySweep) -> dict[str, Any]:
             "type": "markdown",
             "body": (
                 "## Limitations and robustness checks\n\n"
-                "This is a single-card, single-session measurement, so driver, temperature, display load, and clock policy can move absolute values. Bootstrap intervals quantify repeat timing noise, not machine-to-machine uncertainty. The capacity projection comes from a linear active-memory fit and does not model allocator-bin growth or fragmentation; it is not a measured maximum. The allocator counters cover JAX-managed live and pool bytes; process memory from `nvidia-smi` is retained as a cross-check. The bare ceiling deliberately omits source and absorbing-boundary physics and must not be presented as realistic application GCUPS."
+                "This is a single-card, single-session measurement, so driver, temperature, display load, and clock policy can move absolute values. Bootstrap intervals quantify repeat timing noise, not machine-to-machine uncertainty. Every resolution runs the same 192 timesteps, so finer grids cover less physical simulation time; GCUPS is update throughput, not equal-physical-duration time-to-solution. The capacity projection comes from a linear active-memory fit and does not model allocator-bin growth or fragmentation; it is not a measured maximum. The allocator counters cover JAX-managed live and pool bytes; process memory from `nvidia-smi` is retained as a cross-check. The bare ceiling deliberately omits source and absorbing-boundary physics and must not be presented as realistic application GCUPS."
             ),
         },
         {
