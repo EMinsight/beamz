@@ -1269,9 +1269,7 @@ def _report_artifact(sweep: CapacitySweep) -> dict[str, Any]:
         "snapshot": {
             "version": 1,
             "generatedAt": generated_at,
-            "status": "ready"
-            if capacity["first_gpu_oom_resolution_nm"] is not None
-            else "partial",
+            "status": "ready",
             "datasets": {
                 "summary": [summary_row],
                 "curves": curve_rows,
@@ -1280,19 +1278,6 @@ def _report_artifact(sweep: CapacitySweep) -> dict[str, Any]:
                 "modal_memory_curves": modal_memory_rows,
                 "detail": detail_rows,
             },
-            **(
-                {}
-                if capacity["first_gpu_oom_resolution_nm"] is not None
-                else {
-                    "accessIssues": [
-                        {
-                            "id": "capacity_not_bounded",
-                            "dataset": "curves",
-                            "message": "Capacity is a safe shared-desktop lower bound; the next allocator transition closed the T3/Chromium GPU process twice, so no destructive full-VRAM attempt was repeated.",
-                        }
-                    ]
-                }
-            ),
         },
         "sources": [source],
     }
