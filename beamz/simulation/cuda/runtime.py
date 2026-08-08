@@ -6,9 +6,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from beamz.simulation.backend import CUDA_ABI_VERSION
 from beamz.simulation.model import SimulationState
 
-CUDA_ABI_VERSION = 2
 _PHASE_H = 0
 _PHASE_E = 1
 _COMPONENT_CODE = {name: index for index, name in enumerate(("Hx", "Hy", "Hz"))}

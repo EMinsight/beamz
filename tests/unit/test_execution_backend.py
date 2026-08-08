@@ -17,9 +17,13 @@ class _FakeDevice:
     compute_capability = (9, 0)
 
 
-def _extension(*targets):
+def _extension(*targets, abi_version=2, complete_streamed=True):
+    targets = set(targets)
+    if complete_streamed and "beamz_cuda_streamed" in targets:
+        targets.update(backend_runtime.CUDA_STREAMED_TARGETS)
     return SimpleNamespace(
-        __version__="0.1.0",
+        __version__="0.2.0",
+        __abi_version__=abi_version,
         registrations=lambda: {target: object() for target in targets},
     )
 
@@ -156,7 +160,8 @@ def test_explicit_cuda_rejects_full_tensor_permittivity():
 def test_cuda_status_exposes_complete_diagnostics():
     status = backend_runtime.CudaBackendStatus(
         available=True,
-        extension_version="0.1.0",
+        extension_version="0.2.0",
+        abi_version=2,
         targets=("beamz_cuda_streamed",),
         gpu_devices=("NVIDIA H100 80GB HBM3",),
         compute_capabilities=(90,),
@@ -164,7 +169,8 @@ def test_cuda_status_exposes_complete_diagnostics():
 
     assert status.as_dict() == {
         "available": True,
-        "extension_version": "0.1.0",
+        "extension_version": "0.2.0",
+        "abi_version": 2,
         "targets": ("beamz_cuda_streamed",),
         "gpu_devices": ("NVIDIA H100 80GB HBM3",),
         "compute_capabilities": (90,),
@@ -188,6 +194,32 @@ def test_cuda_defaults_to_validated_streamed_target_on_sm90(monkeypatch):
     assert backend_runtime.resolve_backend("auto") == "cuda_streamed"
 
 
+@pytest.mark.parametrize(
+    ("extension", "message"),
+    [
+        (_extension("beamz_cuda_streamed", abi_version=1), "ABI mismatch"),
+        (
+            _extension("beamz_cuda_streamed", complete_streamed=False),
+            "missing required streamed FFI targets",
+        ),
+    ],
+)
+def test_incompatible_cuda_extension_falls_back_or_fails_explicitly(
+    monkeypatch, extension, message
+):
+    monkeypatch.setattr(backend_runtime, "_gpu_devices", lambda: (_FakeDevice(),))
+    monkeypatch.setattr(backend_runtime, "_load_extension", lambda: extension)
+    monkeypatch.setattr(backend_runtime, "_REGISTERED_MODULE", None)
+
+    status = backend_runtime.cuda_backend_status()
+
+    assert not status.available
+    assert message in (status.reason or "")
+    assert backend_runtime.resolve_backend("auto") == "jax"
+    with pytest.raises(backend_runtime.CudaBackendUnavailable, match=message):
+        backend_runtime.resolve_backend("cuda_streamed")
+
+
 def test_explicit_hopper_rejects_pre_sm90(monkeypatch):
     device = _FakeDevice()
     device.compute_capability = (8, 0)
@@ -205,7 +237,7 @@ def test_explicit_hopper_rejects_pre_sm90(monkeypatch):
     assert backend_runtime.resolve_backend("cuda") == "cuda_streamed"
 
 
-def test_hopper_only_extension_requires_explicit_opt_in(monkeypatch):
+def test_hopper_only_extension_is_rejected_as_incomplete(monkeypatch):
     extension = _extension("beamz_cuda_hopper")
     monkeypatch.setattr(backend_runtime, "_gpu_devices", lambda: (_FakeDevice(),))
     monkeypatch.setattr(backend_runtime, "_load_extension", lambda: extension)
@@ -216,9 +248,10 @@ def test_hopper_only_extension_requires_explicit_opt_in(monkeypatch):
     )
 
     assert backend_runtime.resolve_backend("auto") == "jax"
-    assert backend_runtime.resolve_backend("cuda_hopper") == "cuda_hopper"
-    with pytest.raises(backend_runtime.CudaBackendUnavailable, match="compatible"):
-        backend_runtime.resolve_backend("cuda")
+    with pytest.raises(
+        backend_runtime.CudaBackendUnavailable, match="missing required"
+    ):
+        backend_runtime.resolve_backend("cuda_hopper")
 
 
 def test_typed_ffi_registrations_use_cuda_api_v1(monkeypatch):

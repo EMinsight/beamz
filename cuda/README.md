@@ -4,10 +4,12 @@ This directory builds the optional `beamz-cuda` wheel. It registers typed JAX FF
 targets while the main `beamz` package remains usable with JAX alone.
 
 The streamed backend replaces the six large 3D Yee/CPML array programs with three
-fused magnetic and three fused electric CUDA launches per timestep. Source phases,
-PEC restoration, monitor accumulation, continuation state, and the timestep loop
-remain JAX transformations around those calls. This keeps the CUDA surface local
-while preserving BeamZ's public numerical semantics.
+fused magnetic and three fused electric CUDA launches per timestep. Dedicated
+multi-step CUDA graphs own source-free runs and the common single pre-E electric
+source plus full-time plane-DFT path. More general source and monitor schedules,
+PEC restoration, and continuation state remain JAX transformations around the
+fused phase calls. This keeps the CUDA surface local while preserving BeamZ's
+public numerical semantics.
 
 On SM90, the experimental `beamz_cuda_hopper` target uses the same ABI and arithmetic
 but maps each component to `32 × 4 × 2` spatial tiles. Each derivative input stages
@@ -34,6 +36,11 @@ registers it lazily; `backend="cuda_streamed"` requests it explicitly and
 `backend="cuda_hopper"` requests the tiled target. The first
 release supports one GPU and float32 3D grids. Multi-GPU and 2D simulations retain
 the JAX backend.
+
+BeamZ validates the extension's explicit ABI version and complete streamed-target
+manifest before registering any FFI handler. ABI v2 is distributed as
+`beamz-cuda==0.2.0`; an older or partial wheel makes `auto` fall back to JAX and
+causes explicit CUDA requests to fail with a compatibility diagnostic.
 
 No CUDA result is promoted without all of the following on real hardware:
 

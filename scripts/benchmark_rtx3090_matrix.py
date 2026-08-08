@@ -21,6 +21,13 @@ PROFILES = (
     "pec_source_monitor",
     "cpml_source",
     "cpml_source_monitor",
+    "conductive_pec",
+    "sponge",
+    "mixed_boundaries",
+    "multiple_sources",
+    "h_source",
+    "multiple_monitors",
+    "scheduled_windowed_monitor",
 )
 
 

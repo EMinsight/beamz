@@ -6,7 +6,9 @@ on:
     paths:
       - ".github/workflows/cuda.yml"
       - "beamz/simulation/backend.py"
+      - "beamz/simulation/compile.py"
       - "beamz/simulation/cuda/**"
+      - "beamz/simulation/execute.py"
       - "beamz/simulation/kernels.py"
       - "cuda/**"
       - "scripts/benchmark_h100.py"
@@ -16,7 +18,9 @@ on:
     paths:
       - ".github/workflows/cuda.yml"
       - "beamz/simulation/backend.py"
+      - "beamz/simulation/compile.py"
       - "beamz/simulation/cuda/**"
+      - "beamz/simulation/execute.py"
       - "beamz/simulation/kernels.py"
       - "cuda/**"
       - "scripts/benchmark_h100.py"
@@ -57,9 +61,15 @@ jobs:
           /tmp/beamz-cuda-smoke/bin/python - <<'PY'
           import beamz_cuda
 
+          assert beamz_cuda.__version__ == "0.2.0"
+          assert beamz_cuda.__abi_version__ == 2
           assert set(beamz_cuda.registrations()) == {
               "beamz_cuda_hopper",
               "beamz_cuda_streamed",
+              "beamz_cuda_streamed_steps",
+              "beamz_cuda_streamed_cpml_steps",
+              "beamz_cuda_streamed_source_cpml_steps",
+              "beamz_cuda_streamed_source_monitor_cpml_steps",
           }
           print(beamz_cuda.__version__)
           PY

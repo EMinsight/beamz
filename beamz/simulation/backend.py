@@ -21,6 +21,17 @@ ResolvedBackend = Literal["jax", "cuda_streamed", "cuda_hopper"]
 
 _EXTENSION_MODULE = "beamz_cuda"
 _REGISTERED_MODULE: ModuleType | None = None
+CUDA_ABI_VERSION = 2
+CUDA_STREAMED_TARGETS = frozenset(
+    {
+        "beamz_cuda_streamed",
+        "beamz_cuda_streamed_steps",
+        "beamz_cuda_streamed_cpml_steps",
+        "beamz_cuda_streamed_source_cpml_steps",
+        "beamz_cuda_streamed_source_monitor_cpml_steps",
+    }
+)
+CUDA_HOPPER_TARGET = "beamz_cuda_hopper"
 
 
 class CudaBackendUnavailable(RuntimeError):
@@ -33,6 +44,7 @@ class CudaBackendStatus:
 
     available: bool
     extension_version: str | None
+    abi_version: int | None
     targets: tuple[str, ...]
     gpu_devices: tuple[str, ...]
     compute_capabilities: tuple[int, ...]
@@ -43,6 +55,7 @@ class CudaBackendStatus:
         return {
             "available": self.available,
             "extension_version": self.extension_version,
+            "abi_version": self.abi_version,
             "targets": self.targets,
             "gpu_devices": self.gpu_devices,
             "compute_capabilities": self.compute_capabilities,
@@ -105,15 +118,33 @@ def _compute_capability(device) -> int:
     return int(capability)
 
 
+def _validated_registrations(extension: ModuleType) -> dict[str, object]:
+    abi_version = getattr(extension, "__abi_version__", None)
+    if abi_version != CUDA_ABI_VERSION:
+        raise CudaBackendUnavailable(
+            "beamz_cuda ABI mismatch: "
+            f"runtime requires v{CUDA_ABI_VERSION}, extension provides "
+            f"{abi_version!r}"
+        )
+    registrations = extension.registrations()
+    if not isinstance(registrations, dict) or not registrations:
+        raise CudaBackendUnavailable("beamz_cuda exposes no FFI registrations")
+    targets = {str(name) for name in registrations}
+    missing = sorted(CUDA_STREAMED_TARGETS - targets)
+    if missing:
+        raise CudaBackendUnavailable(
+            "beamz_cuda is missing required streamed FFI targets: " + ", ".join(missing)
+        )
+    return registrations
+
+
 def register_cuda_ffi_targets(module: ModuleType | None = None) -> tuple[str, ...]:
     """Register extension-provided typed FFI handlers exactly once."""
     global _REGISTERED_MODULE
     extension = _load_extension() if module is None else module
     if _REGISTERED_MODULE is extension:
-        return tuple(sorted(extension.registrations()))
-    registrations = extension.registrations()
-    if not isinstance(registrations, dict) or not registrations:
-        raise CudaBackendUnavailable("beamz_cuda exposes no FFI registrations")
+        return tuple(sorted(_validated_registrations(extension)))
+    registrations = _validated_registrations(extension)
     for name, capsule in registrations.items():
         jax.ffi.register_ffi_target(
             str(name),
@@ -135,6 +166,7 @@ def cuda_backend_status(*, register: bool = True) -> CudaBackendStatus:
         return CudaBackendStatus(
             False,
             None,
+            None,
             (),
             device_names,
             capabilities,
@@ -142,14 +174,16 @@ def cuda_backend_status(*, register: bool = True) -> CudaBackendStatus:
         )
     try:
         extension = _load_extension()
+        registrations = _validated_registrations(extension)
         targets = (
             register_cuda_ffi_targets(extension)
             if register
-            else tuple(sorted(extension.registrations()))
+            else tuple(sorted(registrations))
         )
     except (ImportError, AttributeError, CudaBackendUnavailable) as exc:
         return CudaBackendStatus(
             False,
+            None,
             None,
             (),
             device_names,
@@ -160,6 +194,7 @@ def cuda_backend_status(*, register: bool = True) -> CudaBackendStatus:
     return CudaBackendStatus(
         True,
         version,
+        CUDA_ABI_VERSION,
         targets,
         device_names,
         capabilities,
@@ -179,9 +214,9 @@ def resolve_backend(backend: str | None) -> ResolvedBackend:
             f"CUDA execution backend was requested but is unavailable: {status.reason}. "
             "Install the beamz-cuda wheel matching JAX/CUDA, or use backend='jax'."
         )
-    has_streamed = "beamz_cuda_streamed" in status.targets
+    has_streamed = CUDA_STREAMED_TARGETS.issubset(status.targets)
     has_hopper = (
-        "beamz_cuda_hopper" in status.targets
+        CUDA_HOPPER_TARGET in status.targets
         and bool(status.compute_capabilities)
         and all(capability >= 90 for capability in status.compute_capabilities)
     )

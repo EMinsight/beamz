@@ -230,6 +230,7 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
     """Run one source revision.  This path intentionally imports no PR-only helpers."""
     import platform
     import time
+    from dataclasses import replace
 
     import jax
     import numpy as np
@@ -275,9 +276,17 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
         permittivity[nz * 3 // 8 : nz * 5 // 8, ny * 3 // 8 : ny * 5 // 8, :] = (
             np.float32(3.45**2)
         )
+    conductivity = np.float32(0.0)
+    if args.profile == "conductive_pec":
+        conductivity_grid = np.zeros(shape, dtype=np.float32)
+        nz, ny, _nx = shape
+        conductivity_grid[nz // 4 : 3 * nz // 4, ny // 4 : 3 * ny // 4, :] = np.float32(
+            2.5e3
+        )
+        conductivity = conductivity_grid
     material_grid = MaterialGrid(
         permittivity=permittivity,
-        conductivity=np.float32(0.0),
+        conductivity=conductivity,
         permeability=np.float32(1.0),
         resolution=resolution,
         shape=shape,
@@ -299,35 +308,94 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
                 formulation="cpml",
             )
         ]
+    elif args.profile == "sponge":
+        boundaries = [
+            bz.PML(
+                edges="all",
+                thickness=pml_cells * resolution,
+                formulation="sponge",
+            )
+        ]
+    elif args.profile == "mixed_boundaries":
+        boundaries = [
+            bz.PML(
+                edges=("left", "right"),
+                thickness=pml_cells * resolution,
+                formulation="sponge",
+            ),
+            bz.PEC(edges=("front", "back", "bottom", "top")),
+        ]
     sources = []
     if args.profile in {
         "pec_source",
         "pec_source_monitor",
         "cpml_source",
         "cpml_source_monitor",
+        "multiple_sources",
+        "multiple_monitors",
+        "scheduled_windowed_monitor",
     }:
         omega = 2.0 * np.pi * 193.414e12
         steps = np.arange(args.timesteps)
         envelope = np.exp(-(((steps - 24.0) / 8.0) ** 2))
+        source_positions = (
+            (0.25, 0.40)
+            if args.profile
+            in {"multiple_sources", "multiple_monitors", "scheduled_windowed_monitor"}
+            else (0.25,)
+        )
         sources = [
             bz.GaussianSource(
-                position=(0.25 * size_xyz[0], 0.5 * size_xyz[1], 0.5 * size_xyz[2]),
+                position=(fraction * size_xyz[0], 0.5 * size_xyz[1], 0.5 * size_xyz[2]),
                 width=max(2.0 * resolution, 0.08 * min(size_xyz[1:])),
-                signal=(envelope * np.sin(omega * steps * dt)).astype(np.float32),
+                signal=(
+                    (1.0 if index == 0 else 0.6) * envelope * np.sin(omega * steps * dt)
+                ).astype(np.float32),
+            )
+            for index, fraction in enumerate(source_positions)
+        ]
+    elif args.profile == "h_source":
+        target_shape = (shape[0] + 1, shape[1], shape[2])
+        source_index = (
+            slice(target_shape[0] // 2, target_shape[0] // 2 + 1),
+            slice(shape[1] // 4, 3 * shape[1] // 4),
+            slice(shape[2] // 4, 3 * shape[2] // 4),
+        )
+        coefficient_shape = tuple(key.stop - key.start for key in source_index)
+        sources = [
+            bz.CustomSource(
+                component="Hz",
+                timing="h",
+                index=source_index,
+                coeff=np.full(coefficient_shape, 1e-4, dtype=np.float32),
+                waveform=np.sin(np.linspace(0.0, 6.0 * np.pi, args.timesteps)).astype(
+                    np.float32
+                ),
+                target_shape=target_shape,
             )
         ]
     monitors = []
-    if args.profile in {"pec_source_monitor", "cpml_source_monitor"}:
+    if args.profile in {
+        "pec_source_monitor",
+        "cpml_source_monitor",
+        "multiple_monitors",
+        "scheduled_windowed_monitor",
+    }:
         clear_y = max(resolution, size_xyz[1] - 2 * pml_cells * resolution)
         clear_z = max(resolution, size_xyz[2] - 2 * pml_cells * resolution)
+        monitor_positions = (
+            (0.68, 0.78) if args.profile == "multiple_monitors" else (0.75,)
+        )
         monitors = [
             bz.FieldMonitor(
-                center=(0.75 * size_xyz[0], 0.5 * size_xyz[1], 0.5 * size_xyz[2]),
+                center=(fraction * size_xyz[0], 0.5 * size_xyz[1], 0.5 * size_xyz[2]),
                 size=(0.0, clear_y, clear_z),
                 freqs=np.asarray((190e12, 193.414e12, 196e12)),
                 fields=("Ey", "Ez", "Hy", "Hz"),
-                name="transmission",
+                interval=3 if args.profile == "scheduled_windowed_monitor" else 1,
+                name=f"transmission_{index}",
             )
+            for index, fraction in enumerate(monitor_positions)
         ]
     simulation = bz.Simulation(
         material_grid=material_grid,
@@ -342,6 +410,14 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
         program = simulation.compile(num_steps=args.timesteps)
     else:
         program = simulation.compile(num_steps=args.timesteps, backend=args.backend)
+    if args.profile == "scheduled_windowed_monitor":
+        monitor = replace(
+            program.monitors[0],
+            dft_t_start=float(simulation.time[3]),
+            dft_t_end=float(simulation.time[-4]),
+            dft_window_code=1,
+        )
+        program = replace(program, monitors=(monitor,))
     state = initial_program_state(
         program,
         t=float(simulation.time[0]),
@@ -409,6 +485,13 @@ def _parser() -> argparse.ArgumentParser:
             "axis_uniform_pec",
             "rectilinear_pec",
             "rectilinear_cpml",
+            "conductive_pec",
+            "sponge",
+            "mixed_boundaries",
+            "multiple_sources",
+            "h_source",
+            "multiple_monitors",
+            "scheduled_windowed_monitor",
         ),
         default="uniform_pec",
     )

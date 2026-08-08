@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import jax
 import numpy as np
 import pytest
@@ -10,7 +12,7 @@ import beamz as bz
 from beamz.design import MaterialGrid
 from beamz.design.raster import Grid, Material, Scene, rasterize
 from beamz.simulation.backend import cuda_backend_status
-from beamz.simulation.execute import initial_program_state
+from beamz.simulation.execute import build_scan, initial_program_state
 from tests.performance.h100_workloads import H100Workload
 
 STATUS = cuda_backend_status()
@@ -122,6 +124,151 @@ def _assert_state_close(reference, actual):
             )
         else:
             np.testing.assert_array_equal(observed, expected)
+
+
+def _feature_simulation(profile: str):
+    shape = (16, 18, 24)
+    resolution = 80e-9
+    timesteps = 24
+    dt = 0.9 * resolution / (bz.LIGHT_SPEED * np.sqrt(3.0))
+    permittivity = np.ones(shape, dtype=np.float32)
+    permittivity[5:11, 6:12, :] = np.float32(2.25)
+    conductivity = np.float32(0.0)
+    boundaries = [bz.PEC(edges="all")]
+    if profile == "conductive":
+        conductivity_grid = np.zeros(shape, dtype=np.float32)
+        conductivity_grid[4:12, 5:13, :] = np.float32(2.5e3)
+        conductivity = conductivity_grid
+    elif profile == "sponge":
+        boundaries = [
+            bz.PML(edges="all", thickness=3 * resolution, formulation="sponge")
+        ]
+    elif profile == "mixed_faces":
+        boundaries = [
+            bz.PML(
+                edges=("left", "right"),
+                thickness=3 * resolution,
+                formulation="sponge",
+            ),
+            bz.PEC(edges=("front", "back", "bottom", "top")),
+        ]
+    material_grid = MaterialGrid(
+        permittivity=permittivity,
+        conductivity=conductivity,
+        permeability=np.float32(1.0),
+        resolution=resolution,
+        shape=shape,
+    )
+    time = np.arange(timesteps, dtype=np.float64) * dt
+    size_xyz = (shape[2] * resolution, shape[1] * resolution, shape[0] * resolution)
+    waveform = np.sin(np.linspace(0.0, 3.0 * np.pi, timesteps)).astype(np.float32)
+    sources = []
+    if profile in {
+        "multiple_sources",
+        "multiple_monitors",
+        "scheduled_windowed_monitor",
+    }:
+        sources = [
+            bz.GaussianSource(
+                position=(fraction * size_xyz[0], 0.5 * size_xyz[1], 0.5 * size_xyz[2]),
+                width=2.5 * resolution,
+                signal=waveform if index == 0 else 0.6 * waveform,
+            )
+            for index, fraction in enumerate((0.3, 0.45))
+        ]
+    elif profile == "h_source":
+        probe = bz.Simulation(material_grid=material_grid, time=time)
+        target_shape = tuple(probe.initial_state().hz.shape)
+        source_index = (
+            slice(target_shape[0] // 2, target_shape[0] // 2 + 1),
+            slice(3, target_shape[1] - 3),
+            slice(4, target_shape[2] - 4),
+        )
+        source_shape = tuple(key.stop - key.start for key in source_index)
+        sources = [
+            bz.CustomSource(
+                component="Hz",
+                timing="h",
+                index=source_index,
+                coeff=np.full(source_shape, 1e-4, dtype=np.float32),
+                waveform=waveform,
+                target_shape=target_shape,
+            )
+        ]
+    monitors = []
+    if profile in {"multiple_monitors", "scheduled_windowed_monitor"}:
+        positions = (0.65, 0.78) if profile == "multiple_monitors" else (0.72,)
+        monitors = [
+            bz.FieldMonitor(
+                center=(fraction * size_xyz[0], 0.5 * size_xyz[1], 0.5 * size_xyz[2]),
+                size=(0.0, 0.5 * size_xyz[1], 0.5 * size_xyz[2]),
+                freqs=np.asarray((190e12, 195e12)),
+                fields=("Ey", "Ez", "Hy", "Hz"),
+                interval=3 if profile == "scheduled_windowed_monitor" else 1,
+                name=f"plane_{index}",
+            )
+            for index, fraction in enumerate(positions)
+        ]
+    return bz.Simulation(
+        material_grid=material_grid,
+        boundaries=boundaries,
+        sources=sources,
+        monitors=monitors,
+        time=time,
+    )
+
+
+def _feature_program_state(simulation, backend: str, profile: str, state):
+    program = simulation.compile(num_steps=simulation.num_steps, backend=backend)
+    if profile == "scheduled_windowed_monitor":
+        monitor = replace(
+            program.monitors[0],
+            dft_t_start=float(simulation.time[3]),
+            dft_t_end=float(simulation.time[-4]),
+            dft_window_code=1,
+        )
+        program = replace(program, monitors=(monitor,))
+    return build_scan(program)(state, program.coefficients)
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [
+        "conductive",
+        "sponge",
+        "mixed_faces",
+        "multiple_sources",
+        "h_source",
+        "multiple_monitors",
+        "scheduled_windowed_monitor",
+    ],
+)
+def test_streamed_cuda_matches_jax_for_extended_feature_envelope(profile):
+    simulation = _feature_simulation(profile)
+    reference_program = simulation.compile(backend="jax")
+    state = initial_program_state(
+        reference_program,
+        t=float(simulation.time[0]),
+        current_step=0,
+        monitor_steps=simulation.num_steps,
+    )
+    rng = np.random.default_rng(20260813)
+    state = state._replace(
+        **{
+            name: rng.normal(size=np.asarray(getattr(state, name)).shape).astype(
+                np.float32
+            )
+            * 1e-6
+            for name in ("ex", "ey", "ez", "hx", "hy", "hz")
+        }
+    )
+
+    reference = _feature_program_state(simulation, "jax", profile, _copy_state(state))
+    actual = _feature_program_state(
+        simulation, "cuda_streamed", profile, _copy_state(state)
+    )
+
+    _assert_state_close(reference, actual)
 
 
 @pytest.mark.parametrize("cpml", [False, True], ids=["pec", "cpml"])
