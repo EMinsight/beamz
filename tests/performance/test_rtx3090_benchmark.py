@@ -7,7 +7,9 @@ import pytest
 from scripts.rtx3090_benchmark import (
     BackendMeasurement,
     RTX3090Comparison,
+    RTX3090Matrix,
     summarize_timings,
+    write_matrix_artifacts,
     write_report_artifacts,
 )
 
@@ -64,4 +66,22 @@ def test_report_writes_machine_readable_statistics_markdown_and_graph(tmp_path):
     assert payload["runtime_speedup_ci95"][1] >= payload["runtime_speedup"]
     assert payload["cuda_is_faster"]
     assert "Custom CUDA speedup: **2.100×**" in paths["markdown"].read_text()
+    assert paths["graph"].read_bytes().startswith(b"\x89PNG")
+
+
+def test_matrix_report_writes_profile_statistics_and_graph(tmp_path):
+    comparison = RTX3090Comparison(
+        _measurement("origin/main JAX/XLA", (2.0, 2.1, 2.2, 2.1, 2.0)),
+        _measurement("PR CUDA streamed", (1.0, 1.1, 1.0, 1.1, 1.0)),
+    )
+    matrix = RTX3090Matrix(
+        (("uniform_pec", comparison), ("heterogeneous_cpml", comparison))
+    )
+
+    paths = write_matrix_artifacts(matrix, tmp_path)
+    payload = json.loads(paths["json"].read_text())
+
+    assert payload["schema_version"] == "beamz.performance/rtx3090-matrix-v1"
+    assert payload["profiles"]["uniform_pec"]["runtime_speedup"] == pytest.approx(2.1)
+    assert "heterogeneous_cpml" in paths["markdown"].read_text()
     assert paths["graph"].read_bytes().startswith(b"\x89PNG")

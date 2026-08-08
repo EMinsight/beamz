@@ -227,6 +227,125 @@ class RTX3090Comparison:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class RTX3090Matrix:
+    """Comparable results for the cumulative CUDA feature envelope."""
+
+    comparisons: tuple[tuple[str, RTX3090Comparison], ...]
+
+    def __post_init__(self) -> None:
+        names = tuple(name for name, _comparison in self.comparisons)
+        if not names or len(set(names)) != len(names):
+            raise ValueError("matrix profile names must be non-empty and unique")
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": "beamz.performance/rtx3090-matrix-v1",
+            "profiles": {
+                name: comparison.as_dict() for name, comparison in self.comparisons
+            },
+        }
+
+
+def write_matrix_artifacts(matrix: RTX3090Matrix, output_dir: Path) -> dict[str, Path]:
+    """Write machine-readable, tabular, and graphical workload-matrix results."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    paths = {
+        "json": output_dir / "rtx3090-workload-matrix.json",
+        "markdown": output_dir / "rtx3090-workload-matrix.md",
+        "graph": output_dir / "rtx3090-workload-matrix.png",
+    }
+    paths["json"].write_text(json.dumps(matrix.as_dict(), indent=2) + "\n")
+    paths["markdown"].write_text(_matrix_markdown(matrix))
+    _plot_matrix(matrix, paths["graph"])
+    return paths
+
+
+def _matrix_markdown(matrix: RTX3090Matrix) -> str:
+    rows = [
+        "# RTX 3090 CUDA FDTD workload matrix",
+        "",
+        "Warm, already-compiled full-simulation runtimes; 95% intervals use "
+        "independent bootstrap resampling of medians.",
+        "",
+        "| Workload | origin/main JAX | PR CUDA | Speedup (95% CI) | CUDA GCUPS |",
+        "| --- | ---: | ---: | ---: | ---: |",
+    ]
+    for name, comparison in matrix.comparisons:
+        low, high = comparison.runtime_speedup_ci95
+        rows.append(
+            f"| {name} | {comparison.baseline.timing.median_s * 1e3:.3f} ms | "
+            f"{comparison.cuda.timing.median_s * 1e3:.3f} ms | "
+            f"{comparison.runtime_speedup:.3f}× [{low:.3f}, {high:.3f}] | "
+            f"{comparison.cuda.median_gcups:.3f} |"
+        )
+    rows.extend(("",))
+    return "\n".join(rows)
+
+
+def _plot_matrix(matrix: RTX3090Matrix, output_path: Path) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    names = tuple(name.replace("_", " ") for name, _ in matrix.comparisons)
+    comparisons = tuple(comparison for _, comparison in matrix.comparisons)
+    positions = np.arange(len(names))
+    height = 0.34
+    baseline_ms = np.asarray(
+        [comparison.baseline.timing.median_s * 1e3 for comparison in comparisons]
+    )
+    cuda_ms = np.asarray(
+        [comparison.cuda.timing.median_s * 1e3 for comparison in comparisons]
+    )
+    speedups = np.asarray([comparison.runtime_speedup for comparison in comparisons])
+    speedup_ci = tuple(comparison.runtime_speedup_ci95 for comparison in comparisons)
+    speedup_errors = np.asarray(
+        (
+            [speedups[i] - interval[0] for i, interval in enumerate(speedup_ci)],
+            [interval[1] - speedups[i] for i, interval in enumerate(speedup_ci)],
+        )
+    )
+
+    figure, axes = plt.subplots(1, 2, figsize=(13.5, 5.8), layout="constrained")
+    base_bars = axes[0].barh(
+        positions - height / 2,
+        baseline_ms,
+        height,
+        color="#7f8c8d",
+        label="origin/main JAX",
+    )
+    cuda_bars = axes[0].barh(
+        positions + height / 2, cuda_ms, height, color="#1f77b4", label="PR CUDA"
+    )
+    axes[0].set_title("Warm full-simulation runtime")
+    axes[0].set_xlabel("milliseconds (lower is better)")
+    axes[0].set_yticks(positions, names)
+    axes[0].invert_yaxis()
+    axes[0].legend(loc="lower right")
+    axes[0].grid(axis="x", alpha=0.22)
+    for bars in (base_bars, cuda_bars):
+        axes[0].bar_label(bars, fmt="%.1f", padding=3, fontsize=8)
+
+    colors = ["#137333" if value > 1.0 else "#b3261e" for value in speedups]
+    speedup_bars = axes[1].barh(
+        positions, speedups, color=colors, xerr=speedup_errors, capsize=4
+    )
+    axes[1].axvline(1.0, color="#303030", linestyle="--", linewidth=1.2)
+    axes[1].set_title("CUDA runtime speedup")
+    axes[1].set_xlabel("origin/main median / CUDA median (higher is better)")
+    axes[1].set_yticks(positions, names)
+    axes[1].invert_yaxis()
+    axes[1].grid(axis="x", alpha=0.22)
+    axes[1].bar_label(speedup_bars, fmt="%.2f×", padding=4, fontsize=9)
+    axes[1].set_xlim(0.0, max(1.1, float(np.max(speedups + speedup_errors[1]))) * 1.16)
+    figure.suptitle("BeamZ cumulative feature workloads on RTX 3090", fontweight="bold")
+    figure.savefig(output_path, dpi=180)
+    plt.close(figure)
+
+
 def write_report_artifacts(
     comparison: RTX3090Comparison, output_dir: Path
 ) -> dict[str, Path]:

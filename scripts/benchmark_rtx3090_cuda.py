@@ -99,6 +99,7 @@ def _run_child(
     timesteps: int,
     samples: int,
     warmups: int,
+    profile: str,
 ) -> dict[str, object]:
     command = (
         sys.executable,
@@ -116,6 +117,8 @@ def _run_child(
         str(samples),
         "--warmups",
         str(warmups),
+        "--profile",
+        profile,
     )
     completed = subprocess.run(
         command,
@@ -187,6 +190,7 @@ def run_comparison(args: argparse.Namespace) -> RTX3090Comparison:
             timesteps=args.timesteps,
             samples=args.samples,
             warmups=args.warmups,
+            profile=args.profile,
         )
         cuda_payload = _run_child(
             script=script,
@@ -197,6 +201,7 @@ def run_comparison(args: argparse.Namespace) -> RTX3090Comparison:
             timesteps=args.timesteps,
             samples=args.samples,
             warmups=args.warmups,
+            profile=args.profile,
         )
     finally:
         if baseline_root.exists():
@@ -238,16 +243,64 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
     resolution = 50e-9
     dt = 0.95 * resolution / (bz.LIGHT_SPEED * np.sqrt(3.0))
     size_xyz = (shape[2] * resolution, shape[1] * resolution, shape[0] * resolution)
+    permittivity = np.ones(shape, dtype=np.float32)
+    if args.profile != "uniform_pec":
+        nz, ny, _nx = shape
+        permittivity[nz * 3 // 8 : nz * 5 // 8, ny * 3 // 8 : ny * 5 // 8, :] = (
+            np.float32(3.45**2)
+        )
     material_grid = MaterialGrid(
-        permittivity=np.ones(shape, dtype=np.float32),
+        permittivity=permittivity,
         conductivity=np.float32(0.0),
         permeability=np.float32(1.0),
         resolution=resolution,
         shape=shape,
     )
+    pml_cells = min(8, (min(shape) - 1) // 2)
+    uses_cpml = args.profile in {
+        "heterogeneous_cpml",
+        "cpml_source",
+        "cpml_source_monitor",
+    }
+    boundaries = [bz.PEC(edges="all")]
+    if uses_cpml:
+        boundaries = [
+            bz.PML(
+                edges="all",
+                thickness=pml_cells * resolution,
+                formulation="cpml",
+            )
+        ]
+    sources = []
+    if args.profile in {"cpml_source", "cpml_source_monitor"}:
+        omega = 2.0 * np.pi * 193.414e12
+        steps = np.arange(args.timesteps)
+        envelope = np.exp(-(((steps - 24.0) / 8.0) ** 2))
+        sources = [
+            bz.GaussianSource(
+                position=(0.25 * size_xyz[0], 0.5 * size_xyz[1], 0.5 * size_xyz[2]),
+                width=max(2.0 * resolution, 0.08 * min(size_xyz[1:])),
+                signal=(envelope * np.sin(omega * steps * dt)).astype(np.float32),
+            )
+        ]
+    monitors = []
+    if args.profile == "cpml_source_monitor":
+        clear_y = max(resolution, size_xyz[1] - 2 * pml_cells * resolution)
+        clear_z = max(resolution, size_xyz[2] - 2 * pml_cells * resolution)
+        monitors = [
+            bz.FieldMonitor(
+                center=(0.75 * size_xyz[0], 0.5 * size_xyz[1], 0.5 * size_xyz[2]),
+                size=(0.0, clear_y, clear_z),
+                freqs=np.asarray((190e12, 193.414e12, 196e12)),
+                fields=("Ey", "Ez", "Hy", "Hz"),
+                name="transmission",
+            )
+        ]
     simulation = bz.Simulation(
         material_grid=material_grid,
-        boundaries=[bz.PEC(edges="all")],
+        boundaries=boundaries,
+        sources=sources,
+        monitors=monitors,
         size=size_xyz,
         time=np.arange(args.timesteps, dtype=np.float64) * dt,
     )
@@ -286,6 +339,7 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
         "device": str(getattr(device, "device_kind", device)),
         "grid_zyx": shape,
         "timesteps": args.timesteps,
+        "profile": args.profile,
         "trace_lower_s": trace_lower_s,
         "compile_s": compile_s,
         "warm_runtime_samples_s": samples,
@@ -309,6 +363,17 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--timesteps", type=int, default=200)
     parser.add_argument("--samples", type=int, default=11)
     parser.add_argument("--warmups", type=int, default=3)
+    parser.add_argument(
+        "--profile",
+        choices=(
+            "uniform_pec",
+            "heterogeneous_pec",
+            "heterogeneous_cpml",
+            "cpml_source",
+            "cpml_source_monitor",
+        ),
+        default="uniform_pec",
+    )
     parser.add_argument(
         "--backend", choices=("jax", "cuda", "cuda_streamed"), default="cuda_streamed"
     )
