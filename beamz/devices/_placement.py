@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
+
+import numpy as np
 
 _AXES = ("x", "y", "z")
 
@@ -11,13 +15,44 @@ class SnappedInterval:
     start: int
     stop: int
     step: float
+    edges: tuple[float, ...] | None = None
+    physical_bounds: tuple[float, float] | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "start", int(self.start))
+        object.__setattr__(self, "stop", int(self.stop))
+        object.__setattr__(self, "step", float(self.step))
+        if self.edges is not None:
+            object.__setattr__(
+                self, "edges", tuple(float(value) for value in self.edges)
+            )
+        if self.physical_bounds is not None:
+            raw_bounds = tuple(float(value) for value in self.physical_bounds)
+            if len(raw_bounds) != 2 or not np.all(np.isfinite(raw_bounds)):
+                raise ValueError(
+                    "SnappedInterval physical_bounds must contain two finite values."
+                )
+            bounds = (raw_bounds[0], raw_bounds[1])
+            if bounds[1] < bounds[0]:
+                raise ValueError(
+                    "SnappedInterval physical_bounds must be nondecreasing."
+                )
+            object.__setattr__(self, "physical_bounds", bounds)
 
     @property
     def lower(self) -> float:
+        if self.edges is not None:
+            return float(self.edges[int(self.start)])
+        if self.physical_bounds is not None:
+            return self.physical_bounds[0]
         return float(self.start) * float(self.step)
 
     @property
     def upper(self) -> float:
+        if self.edges is not None:
+            return float(self.edges[int(self.stop)])
+        if self.physical_bounds is not None:
+            return self.physical_bounds[1]
         return float(self.stop) * float(self.step)
 
     @property
@@ -26,7 +61,7 @@ class SnappedInterval:
 
     @property
     def size(self) -> float:
-        return max(0, int(self.stop) - int(self.start)) * float(self.step)
+        return max(0.0, self.upper - self.lower)
 
     def as_slice(self) -> slice:
         return slice(int(self.start), int(self.stop))
@@ -38,9 +73,38 @@ class SnappedRegion:
     normal_axis: str
     plane_index: int
     plane_coord: float
-    intervals: dict[str, SnappedInterval] = field(default_factory=dict)
+    intervals: Mapping[str, SnappedInterval] = field(default_factory=dict)
     companion_index: int | None = None
     companion_coord: float | None = None
+
+    def __post_init__(self) -> None:
+        normal_axis = str(self.normal_axis).lower()
+        if normal_axis not in _AXES:
+            raise ValueError(
+                f"Snapped region normal axis must be one of {_AXES}; "
+                f"got {self.normal_axis!r}."
+            )
+        intervals = {}
+        for axis, interval in self.intervals.items():
+            normalized_axis = str(axis).lower()
+            if normalized_axis not in _AXES:
+                raise ValueError(
+                    f"Snapped interval axis must be one of {_AXES}; got {axis!r}."
+                )
+            if not isinstance(interval, SnappedInterval):
+                raise TypeError(
+                    "SnappedRegion intervals must be SnappedInterval values."
+                )
+            intervals[normalized_axis] = interval
+        object.__setattr__(self, "ndim", int(self.ndim))
+        object.__setattr__(self, "normal_axis", normal_axis)
+        object.__setattr__(self, "plane_index", int(self.plane_index))
+        object.__setattr__(self, "plane_coord", float(self.plane_coord))
+        object.__setattr__(self, "intervals", MappingProxyType(intervals))
+        if self.companion_index is not None:
+            object.__setattr__(self, "companion_index", int(self.companion_index))
+        if self.companion_coord is not None:
+            object.__setattr__(self, "companion_coord", float(self.companion_coord))
 
     def axis_interval(self, axis: str) -> SnappedInterval | None:
         return self.intervals.get(str(axis).lower())
@@ -123,6 +187,101 @@ def snap_edge_interval(
         start = max(0, stop - need)
 
     return SnappedInterval(start=int(start), stop=int(stop), step=float(step))
+
+
+def snap_rectilinear_cell_center(coord: float, edges) -> tuple[int, float]:
+    """Snap a coordinate to the nearest physical cell center."""
+    edge_array = np.asarray(edges, dtype=np.float64)
+    centers = 0.5 * (edge_array[:-1] + edge_array[1:])
+    if centers.size == 0:
+        return 0, 0.0
+    index = int(np.argmin(np.abs(centers - float(coord))))
+    return index, float(centers[index])
+
+
+def snap_rectilinear_edge_interval(
+    lower: float,
+    upper: float,
+    edges,
+    *,
+    min_cells: int = 1,
+) -> SnappedInterval:
+    """Snap physical bounds to the overlapping rectilinear cells."""
+    edge_array = np.asarray(edges, dtype=np.float64)
+    count = max(0, edge_array.size - 1)
+    if count == 0:
+        return SnappedInterval(0, 0, 0.0, tuple(edge_array))
+    lo, hi = sorted((float(lower), float(upper)))
+    start = int(np.searchsorted(edge_array, lo, side="right") - 1)
+    stop = int(np.searchsorted(edge_array, hi, side="left"))
+    start = max(0, min(start, count))
+    stop = max(0, min(stop, count))
+    need = max(1, int(min_cells))
+    if stop - start < need:
+        cell, _ = snap_rectilinear_cell_center(0.5 * (lo + hi), edge_array)
+        start = max(0, min(cell, count - need))
+        stop = min(count, start + need)
+    representative = float(np.min(np.diff(edge_array)))
+    return SnappedInterval(
+        int(start),
+        int(stop),
+        representative,
+        tuple(float(value) for value in edge_array),
+    )
+
+
+def snap_axis_aligned_line_region_grid(
+    start: tuple[float, ...],
+    end: tuple[float, ...],
+    grid,
+) -> SnappedRegion | None:
+    """Snap a 2D line using realized x/y cell edges."""
+    x0, y0 = float(start[0]), float(start[1])
+    x1, y1 = float(end[0]), float(end[1])
+    tolerance = 1e-12 * max(*map(abs, (x0, x1, y0, y1)), grid.minimum_spacing, 1.0)
+    if abs(x0 - x1) <= tolerance:
+        index, coordinate = snap_rectilinear_cell_center(0.5 * (x0 + x1), grid.x_edges)
+        return SnappedRegion(
+            2,
+            "x",
+            index,
+            coordinate,
+            {"y": snap_rectilinear_edge_interval(y0, y1, grid.y_edges)},
+        )
+    if abs(y0 - y1) <= tolerance:
+        index, coordinate = snap_rectilinear_cell_center(0.5 * (y0 + y1), grid.y_edges)
+        return SnappedRegion(
+            2,
+            "y",
+            index,
+            coordinate,
+            {"x": snap_rectilinear_edge_interval(x0, x1, grid.x_edges)},
+        )
+    return None
+
+
+def snap_plane_region_grid(*, center, size, plane_normal: str, grid) -> SnappedRegion:
+    """Snap a center/size plane using realized rectilinear edges."""
+    center = tuple(float(value) for value in center)
+    size = tuple(float(value) for value in size)
+    axis = str(plane_normal).lower()
+    edges = {"x": grid.x_edges, "y": grid.y_edges, "z": grid.z_edges}
+    axis_index = {"x": 0, "y": 1, "z": 2}
+    plane_index, plane_coord = snap_rectilinear_cell_center(
+        center[axis_index[axis]], edges[axis]
+    )
+    intervals = {}
+    for tangential in _AXES:
+        if tangential == axis:
+            continue
+        index = axis_index[tangential]
+        half = 0.5 * size[index]
+        intervals[tangential] = snap_rectilinear_edge_interval(
+            center[index] - half,
+            center[index] + half,
+            edges[tangential],
+        )
+    return SnappedRegion(3, axis, plane_index, plane_coord, intervals)
 
 
 def snap_centered_extent(
@@ -209,6 +368,57 @@ def snap_mode_source_region(
         intervals=intervals,
         companion_index=int(companion_index),
         companion_coord=float(companion_coord),
+    )
+
+
+def snap_mode_source_region_grid(
+    *,
+    center: tuple[float, ...],
+    width: float,
+    height: float | None,
+    axis: str,
+    direction_sign: float,
+    grid,
+    is_3d: bool,
+) -> SnappedRegion:
+    """Snap a mode launch to the realized rectilinear Yee grid."""
+    axis = str(axis).lower()
+    edges = {name: np.asarray(grid.axis_edges(name)) for name in _AXES}
+    plane_index, plane_coord = snap_rectilinear_cell_center(
+        center[_axis_pos(axis)], edges[axis]
+    )
+    counts = {name: int(values.size - 1) for name, values in edges.items()}
+    companion_max = max(counts[axis] - 2, 0)
+    companion_index = (
+        max(0, plane_index - 1)
+        if direction_sign > 0.0
+        else min(companion_max, plane_index + 1)
+    )
+    companion_coord = float(edges[axis][companion_index + 1])
+
+    extents = {
+        "x": {"y": float(width), "z": float(height if height is not None else width)},
+        "y": {"x": float(width), "z": float(height if height is not None else width)},
+        "z": {"x": float(width), "y": float(height if height is not None else width)},
+    }[axis]
+    intervals = {}
+    for transverse, extent in extents.items():
+        if not is_3d and transverse == "z":
+            continue
+        coord = float(center[_axis_pos(transverse)])
+        intervals[transverse] = snap_rectilinear_edge_interval(
+            coord - 0.5 * extent,
+            coord + 0.5 * extent,
+            edges[transverse],
+        )
+    return SnappedRegion(
+        ndim=3 if is_3d else 2,
+        normal_axis=axis,
+        plane_index=plane_index,
+        plane_coord=plane_coord,
+        intervals=intervals,
+        companion_index=companion_index,
+        companion_coord=companion_coord,
     )
 
 

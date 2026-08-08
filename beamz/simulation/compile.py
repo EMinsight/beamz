@@ -36,6 +36,7 @@ from beamz.simulation.model import (
     CompiledGrid,
     CompiledProgram,
     CpmlPlan,
+    DerivativeMetricPlan,
     MetallicPlan,
     RunConfig,
     ShardingConfig,
@@ -49,6 +50,7 @@ from .observe import MONITOR_FIELDS, empty_monitor_values
 from .sharding import (
     build_sharding_plan,
     lower_compiled_arrays,
+    lower_derivative_metrics,
     normalize_sharding_config,
     sharding_cache_token,
 )
@@ -128,6 +130,57 @@ def _elide_zero_conductivity_grid(value):
     if arr_np.size and not bool(np.any(arr_np != 0.0)):
         return jnp.asarray(0.0, dtype=getattr(value, "dtype", jnp.float32))
     return value
+
+
+def _inverse_permittivity_components(values):
+    """Invert a packed symmetric tensor field into six trailing components."""
+
+    packed = np.asarray(values)
+    xx, yy, zz, xy, xz, yz = packed
+    determinant = (
+        xx * yy * zz + 2.0 * xy * xz * yz - xx * yz * yz - yy * xz * xz - zz * xy * xy
+    )
+    cofactors = (
+        yy * zz - yz * yz,
+        xx * zz - xz * xz,
+        xx * yy - xy * xy,
+        xz * yz - xy * zz,
+        xy * yz - xz * yy,
+        xy * xz - xx * yz,
+    )
+    return jnp.asarray(np.stack(cofactors, axis=-1) / determinant[..., None])
+
+
+def _compile_derivative_metrics(material_grid) -> DerivativeMetricPlan:
+    """Precompute O(nx + ny + nz) staggered inverse-distance metrics."""
+    kind = material_grid.metric_kind
+    empty = jnp.zeros((0,), dtype=jnp.float32)
+    if kind == "isotropic_uniform":
+        return DerivativeMetricPlan(*(empty for _ in range(6)))
+
+    assert material_grid.grid is not None
+    active_axes = ("x", "y", "z") if len(material_grid.shape) == 3 else ("x", "y")
+    forward = {}
+    backward = {}
+    for axis in active_axes:
+        widths = material_grid.grid.cell_widths(axis)
+        if kind == "axis_uniform":
+            forward[axis] = backward[axis] = jnp.asarray(
+                1.0 / float(widths[0]), dtype=jnp.float32
+            )
+            continue
+        inverse_forward = 1.0 / widths
+        inverse_backward = np.empty(widths.size + 1, dtype=np.float64)
+        inverse_backward[0] = 1.0 / widths[0]
+        inverse_backward[-1] = 1.0 / widths[-1]
+        if widths.size > 1:
+            inverse_backward[1:-1] = 2.0 / (widths[:-1] + widths[1:])
+        forward[axis] = jnp.asarray(inverse_forward, dtype=jnp.float32)
+        backward[axis] = jnp.asarray(inverse_backward, dtype=jnp.float32)
+    return DerivativeMetricPlan(
+        *(forward.get(axis, empty) for axis in ("x", "y", "z")),
+        *(backward.get(axis, empty) for axis in ("x", "y", "z")),
+    )
 
 
 def _compile_cpml_plan(
@@ -246,6 +299,7 @@ def _prepare_compilation(
         request.run.t0,
         request.run.total_steps,
         request.domain,
+        grid=logical_fields.geometry,
     )
     monitor_fields = SimpleNamespace(
         **{
@@ -265,6 +319,7 @@ def _prepare_compilation(
         dt,
         request.domain.plane_2d,
         request.domain.polarization_2d,
+        grid=logical_fields.geometry,
     )
     loop_aliases = {
         "fori": "fori_loop",
@@ -284,6 +339,7 @@ def _prepare_compilation(
         num_steps=num_steps,
         plane_2d=request.domain.plane_2d,
         is_3d=bool(request.domain.is_3d),
+        metric_kind=request.materials.metric_kind,
         polarization_2d=request.domain.polarization_2d,
         loop_kind=loop_kind,
         source_single_slab_dense=bool(request.run.source_single_slab_dense),
@@ -304,6 +360,14 @@ def _compile_grid(
 ) -> CompiledGrid:
     """Lower cell materials and boundary data into one frozen logical Yee lattice."""
     material_grid = request.materials
+    assert material_grid.grid is not None
+    grid_origin = material_grid.grid.origin
+    # Simulation has already shifted devices into solver-local coordinates. Normalize
+    # the realized grid from its own origin so centered-domain offsets are not applied
+    # a second time, while imported grids retain the same local frame.
+    local_geometry = material_grid.grid.translated(
+        (-grid_origin[0], -grid_origin[1], -grid_origin[2])
+    )
     material_source = boundary_data
     profiles = boundary_data.profiles
     shapes = MappingProxyType(
@@ -325,6 +389,7 @@ def _compile_grid(
     )
     values = {
         "material_grid": material_grid,
+        "geometry": local_geometry,
         "component_shapes": shapes,
         "resolution": material_grid.resolution,
         "plane_2d": "xy" if not request.domain.is_3d else request.domain.plane_2d,
@@ -412,6 +477,7 @@ def _compile_boundary(fields, cpml, boundary_data, *, is_3d: bool) -> BoundaryPl
             masks["Hy"],
             masks["Hz"],
         ),
+        logical_component_shapes=fields.component_shapes,
     )
 
 
@@ -500,6 +566,40 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
         )
         e_conductivity_x = e_conductivity_y = e_conductivity_z = empty3
         e_permittivity_x = e_permittivity_y = e_permittivity_z = empty3
+    empty_inverse = jnp.zeros((0,), dtype=jnp.float32)
+    if request.materials.uses_full_permittivity:
+        if any(
+            np.any(np.asarray(value) != 0.0)
+            for value in (fields.sig_x, fields.sig_y, fields.sig_z)
+        ):
+            raise ValueError(
+                "Full-tensor permittivity requires lossless electric updates; "
+                "use CPML rather than conductive or sponge-PML materials."
+            )
+        support_tensors = request.materials.yee_tensors
+        e_inverse_diagonal_x = (
+            _inverse_permittivity_components(support_tensors["eps_x"])[..., 0]
+            if "eps_x" in support_tensors
+            else empty_inverse
+        )
+        e_inverse_diagonal_y = (
+            _inverse_permittivity_components(support_tensors["eps_y"])[..., 1]
+            if "eps_y" in support_tensors
+            else empty_inverse
+        )
+        e_inverse_diagonal_z = (
+            _inverse_permittivity_components(support_tensors["eps_z"])[..., 2]
+            if "eps_z" in support_tensors
+            else empty_inverse
+        )
+        e_inverse_offdiagonal = _inverse_permittivity_components(
+            support_tensors["eps_node"]
+        )[..., 3:]
+    else:
+        e_inverse_diagonal_x = e_inverse_diagonal_y = e_inverse_diagonal_z = (
+            empty_inverse
+        )
+        e_inverse_offdiagonal = empty_inverse
     # 5. Precompute the same packed recurrence record for every 2D or 3D derivative.
     cpml = _compile_cpml_plan(
         fields,
@@ -525,14 +625,18 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
         e_source_x=e_source_x,
         e_conductivity_x=e_conductivity_x,
         e_permittivity_x=e_permittivity_x,
+        e_inverse_diagonal_x=e_inverse_diagonal_x,
         e_decay_y=e_decay_y,
         e_source_y=e_source_y,
         e_conductivity_y=e_conductivity_y,
         e_permittivity_y=e_permittivity_y,
+        e_inverse_diagonal_y=e_inverse_diagonal_y,
         e_decay_z=e_decay_z,
         e_source_z=e_source_z,
         e_conductivity_z=e_conductivity_z,
         e_permittivity_z=e_permittivity_z,
+        e_inverse_diagonal_z=e_inverse_diagonal_z,
+        e_inverse_offdiagonal=e_inverse_offdiagonal,
     )
     boundary = _compile_boundary(
         fields,
@@ -543,10 +647,14 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
     update_coefficients, boundary = lower_compiled_arrays(
         update_coefficients, boundary, sharding_layout
     )
+    metrics = lower_derivative_metrics(
+        _compile_derivative_metrics(request.materials), sharding_layout
+    )
     return CompiledProgram(
         grid=logical_grid,
         config=config,
         coefficients=update_coefficients,
+        metrics=metrics,
         boundary=boundary,
         sources=source_specs,
         monitors=monitor_specs,
@@ -653,6 +761,10 @@ _REFERENCED_COEFFICIENTS = {
     "e_permittivity_x",
     "e_permittivity_y",
     "e_permittivity_z",
+    "e_inverse_diagonal_x",
+    "e_inverse_diagonal_y",
+    "e_inverse_diagonal_z",
+    "e_inverse_offdiagonal",
 }
 
 

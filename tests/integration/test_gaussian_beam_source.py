@@ -1,3 +1,4 @@
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -14,6 +15,7 @@ from beamz import (
     GaussianPulse,
     GridSpec,
     Material,
+    RectilinearGrid,
     Simulation,
     um,
 )
@@ -26,9 +28,10 @@ from beamz.devices.sources.planar_tfsf import (
     advance_incident_e_3d,
     advance_incident_h_3d,
     build_incident_3d_phasor_state,
-    expand_3d_residuals,
+    launched_side_component_mask_3d,
     mask_incident_3d_state_to_launched_side,
 )
+from tests.utils import compiled_grid
 
 
 def _empty_3d_fields(shape=(10, 10, 10)):
@@ -74,6 +77,17 @@ def _pulse(wavelength):
         offset=0.0,
         remove_dc_component=False,
     )
+
+
+def _expand_residuals(residuals, fields, components):
+    expanded = {
+        component: np.zeros_like(getattr(fields, component), dtype=np.complex128)
+        for component in components
+    }
+    for residual in residuals:
+        if residual.component in expanded:
+            expanded[residual.component][residual.index] += residual.residual
+    return expanded
 
 
 def test_gaussian_beam_source_emits_compiled_planar_tfsf_specs():
@@ -222,8 +236,8 @@ def test_gaussian_beam_source_has_low_source_plane_residual_error():
         resolution=resolution,
         max_shift=source.max_shift,
     )
-    h_delta = expand_3d_residuals(residuals, fields, ("Hx", "Hy", "Hz"))
-    e_delta = expand_3d_residuals(residuals, fields, ("Ex", "Ey", "Ez"))
+    h_delta = _expand_residuals(residuals, fields, ("Hx", "Hy", "Hz"))
+    e_delta = _expand_residuals(residuals, fields, ("Ex", "Ey", "Ez"))
 
     for component in ("Hx", "Hy", "Hz"):
         np.testing.assert_allclose(
@@ -239,6 +253,65 @@ def test_gaussian_beam_source_has_low_source_plane_residual_error():
             rtol=1e-6,
             atol=1e-8,
         )
+
+
+def test_planar_phasor_residuals_support_rectilinear_metrics_and_padding():
+    resolution = 0.25 * um
+    material = np.ones((9, 10, 11), dtype=np.float64)
+    fields = compiled_grid(
+        material,
+        np.zeros_like(material),
+        material,
+        resolution,
+    )
+
+    def graded_edges(count, phase):
+        angles = np.linspace(phase, phase + np.pi, count)
+        widths = resolution * (0.85 + 0.3 * np.sin(angles) ** 2)
+        return np.concatenate(([0.0], np.cumsum(widths)))
+
+    grid = RectilinearGrid(
+        graded_edges(11, 0.0),
+        graded_edges(10, 0.2),
+        graded_edges(9, 0.4),
+    )
+    fields.geometry = grid
+    source = GaussianBeamSource(
+        center=(1.25 * um, 1.2 * um, 1.0 * um),
+        size=(1.2 * um, 1.1 * um),
+        source_time=_pulse(1.55 * um),
+        direction="+x",
+        angle_theta=0.05,
+        angle_phi=0.1,
+        pol_angle=0.2,
+        waist_radius=0.4 * um,
+    )
+    profile = replace(
+        gaussian_beam_field_profile(source, fields, resolution=resolution),
+        grid=grid,
+    )
+    dt = 0.1 * um / (LIGHT_SPEED * np.sqrt(3.0))
+
+    residuals = field_profile_phasor_residuals(
+        profile,
+        fields,
+        dt=dt,
+        resolution=resolution,
+        max_shift=source.max_shift,
+    )
+
+    assert residuals
+    assert {residual.timing for residual in residuals} == {"e", "h"}
+    assert all(np.all(np.isfinite(residual.residual)) for residual in residuals)
+
+    padded_shape = (fields.Ex.shape[0], fields.Ex.shape[1], grid.shape[0] + 2)
+    padded_mask = launched_side_component_mask_3d(
+        profile,
+        "Ex",
+        padded_shape,
+        resolution=resolution,
+    )
+    assert padded_mask.shape == (1, 1, padded_shape[2])
 
 
 def test_gaussian_beam_source_compiled_engine_support():
@@ -318,11 +391,7 @@ def test_gaussian_beam_source_flux_normalizes_by_sampled_waveform():
         sources=[source],
         monitors=monitors,
         boundaries=[PML(thickness=0.6 * um)],
-        grid_spec=GridSpec.auto(
-            min_steps_per_wvl=8,
-            wavelength=wavelength,
-            courant=0.48,
-        ),
+        grid_spec=GridSpec.uniform(wavelength / 8, courant=0.48),
         run_time=260e-15,
     )
 

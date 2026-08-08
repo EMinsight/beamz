@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
+from beamz import RectilinearGrid
 from beamz.lattice import (
     canonical_component_2d,
     component_coordinates_2d_um,
     component_coordinates_3d_um,
+    component_coordinates_rectilinear,
     component_material_at,
     component_shape_2d,
     component_shape_3d,
+    coordinates_in_public_frame,
+    grid_axes_in_physical_frame_2d,
+    grid_vector_to_physical_2d,
+    in_plane_vector_2d,
     material_for_component,
+    physical_vector_to_grid_2d,
     public_component_2d,
 )
 from tests.utils import compiled_grid
@@ -57,6 +65,63 @@ def test_component_coordinates_3d_follow_standard_yee_offsets():
     np.testing.assert_allclose(ey["x"][-1], 3.0)
     np.testing.assert_allclose(ez["x"][-1], 3.0)
     np.testing.assert_allclose(hx["x"][-1], 3.0)
+
+
+def test_rectilinear_component_coordinates_use_exact_edges_and_centers():
+    grid = RectilinearGrid(
+        np.asarray([0.0, 1.0, 3.0]),
+        np.asarray([0.0, 2.0, 5.0]),
+        np.asarray([0.0, 4.0, 6.0]),
+    )
+
+    ex = component_coordinates_rectilinear("Ex", grid)
+    hx = component_coordinates_rectilinear("Hx", grid)
+    hy_2d = component_coordinates_rectilinear("Hy", grid, plane="xy")
+
+    np.testing.assert_allclose(ex["x"], [0.5, 2.0])
+    np.testing.assert_allclose(ex["y"], grid.y_edges)
+    np.testing.assert_allclose(hx["z"], [2.0, 5.0])
+    np.testing.assert_allclose(hx["y"], [1.0, 3.5])
+    np.testing.assert_allclose(hy_2d["x"], [0.5, 2.0])
+    np.testing.assert_allclose(hy_2d["y"], grid.y_edges)
+
+
+def test_rectilinear_coordinate_helpers_reject_invalid_inputs():
+    grid = RectilinearGrid(
+        np.asarray([0.0, 1.0]),
+        np.asarray([0.0, 1.0]),
+        np.asarray([0.0, 1.0]),
+    )
+
+    assert (
+        component_coordinates_rectilinear("Ez", grid, plane="xy", polarization="te")
+        == {}
+    )
+    with pytest.raises(ValueError, match="Unsupported 2D plane"):
+        grid_axes_in_physical_frame_2d("invalid")
+    with pytest.raises(ValueError, match="must contain three values"):
+        grid_vector_to_physical_2d((1.0, 2.0), "xy")  # type: ignore[arg-type]
+
+
+def test_component_coordinates_translate_from_solver_local_to_public_frame():
+    coordinates = {"x": np.asarray([0.0, 0.2, 1.0]), "y": np.asarray([0.0, 1.0])}
+
+    public = coordinates_in_public_frame(coordinates, (-2.0, -3.0, -4.0))
+
+    np.testing.assert_allclose(public["x"], [2.0, 2.2, 3.0])
+    np.testing.assert_allclose(public["y"], [3.0, 4.0])
+
+
+def test_two_dimensional_grid_vectors_map_to_physical_plane_axes():
+    assert grid_axes_in_physical_frame_2d("xy") == ("x", "y", "z")
+    assert grid_axes_in_physical_frame_2d("xz") == ("x", "z", "y")
+    assert grid_axes_in_physical_frame_2d("yz") == ("y", "z", "x")
+    assert grid_vector_to_physical_2d((2.0, 3.0, 4.0), "xz") == (2.0, 4.0, 3.0)
+    assert grid_vector_to_physical_2d((2.0, 3.0, 4.0), "yz") == (4.0, 2.0, 3.0)
+    assert physical_vector_to_grid_2d((2.0, 4.0, 3.0), "xz") == (2.0, 3.0, 4.0)
+    assert physical_vector_to_grid_2d((4.0, 2.0, 3.0), "yz") == (2.0, 3.0, 4.0)
+    assert in_plane_vector_2d((2.0, 4.0, 3.0), "xz") == (2.0, 3.0)
+    assert in_plane_vector_2d((4.0, 2.0, 3.0), "yz") == (2.0, 3.0)
 
 
 def test_component_coordinates_2d_follow_standard_xy_offsets():

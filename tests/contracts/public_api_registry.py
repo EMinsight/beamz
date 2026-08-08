@@ -50,6 +50,7 @@ FUNCTION_EXPORTS = (
 RUNTIME_EXPORTS = (
     "ModeData",
     "MonitorResults",
+    "RunTermination",
     "SimulationResults",
     "SimulationRun",
     "SimulationState",
@@ -57,6 +58,7 @@ RUNTIME_EXPORTS = (
 )
 
 CONFIGURATION_CASES = (
+    PublicConfigCase("AutoTermination", bz.AutoTermination),
     PublicConfigCase("Material", bz.Material),
     PublicConfigCase("Design", lambda: bz.Design(width=2.0, height=2.0)),
     PublicConfigCase("Box", bz.Box),
@@ -145,6 +147,28 @@ CONFIGURATION_CASES = (
         ),
     ),
     PublicConfigCase("GridSpec", bz.GridSpec),
+    PublicConfigCase(
+        "MeshOverride",
+        lambda: bz.MeshOverride(center=(0.0, 0.0), size=(1.0, 1.0), dl=0.1),
+    ),
+    PublicConfigCase(
+        "Grid",
+        lambda: bz.Grid.from_spacing((1, 1, 1), 1.0),
+    ),
+    PublicConfigCase(
+        "RectilinearGrid",
+        lambda: bz.RectilinearGrid.from_spacing((1, 1, 1), 1.0),
+    ),
+    PublicConfigCase(
+        "AxisGridQuality",
+        lambda: bz.AxisGridQuality(1, 1.0, 1.0, 1.0, 1.0, None),
+    ),
+    PublicConfigCase(
+        "GridQualityReport",
+        lambda: bz.GridQualityReport(
+            *(bz.AxisGridQuality(1, 1.0, 1.0, 1.0, 1.0, None) for _ in range(3))
+        ),
+    ),
     PublicConfigCase("GaussianPulse", lambda: bz.GaussianPulse(2e14, 2e13)),
     PublicConfigCase("SampledSignal", lambda: bz.SampledSignal(np.ones(2), dt=1e-15)),
     PublicConfigCase("ModeSpec", bz.ModeSpec),

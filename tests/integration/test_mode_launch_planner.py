@@ -62,6 +62,20 @@ def _direct_yee_2d_fields(shape, *, resolution=1.0):
     return fields
 
 
+def _full_tensor_2d_fields(shape, *, resolution=1.0):
+    fields = _direct_yee_2d_fields(shape, resolution=resolution)
+    support_shape = fields.material_grid.yee_materials["eps_z"].shape
+    tensor = np.zeros((6, *support_shape), dtype=np.float32)
+    tensor[:3] = 2.25
+    tensor[3] = 0.1
+    fields.material_grid = replace(
+        fields.material_grid,
+        yee_tensors={"eps_z": tensor},
+        smoothing="farjadpour_full",
+    )
+    return fields
+
+
 def _mode_source(**overrides):
     source_time = overrides.pop(
         "source_time", GaussianPulse(freq0=2.0e14, fwidth=2.0e13)
@@ -228,11 +242,11 @@ def test_mode_launch_rejects_conductive_material_profile():
         plan_mode_source_launch(_mode_source(), fields, resolution=1.0, dt=1e-15)
 
 
-def test_2d_mode_launch_rejects_materials_requiring_direct_yee_supports():
-    fields = _direct_yee_2d_fields((5, 6))
+def test_2d_mode_launch_rejects_full_off_diagonal_materials():
+    fields = _full_tensor_2d_fields((5, 6))
     source = _mode_source(mode_spec=ModeSpec(polarization="tm"))
 
-    with pytest.raises(ValueError, match="direct Yee-support"):
+    with pytest.raises(ValueError, match="full off-diagonal"):
         plan_mode_source_launch(source, fields, resolution=1.0, dt=1e-15)
 
 
@@ -265,6 +279,8 @@ def test_2d_te_mode_launch_uses_te_solver_and_te_yee_components(monkeypatch):
 
     assert {entry.component for entry in plan.entries} == {"Ey", "Hz"}
     assert seen["filter_pol"] == "te"
+    assert seen["grid_edges"] is None
+    assert plan.normal_spacing is None
 
 
 def test_2d_mode_source_rejects_polarization_mismatch():
@@ -281,8 +297,8 @@ def test_2d_mode_source_rejects_polarization_mismatch():
         plan_mode_source_launch(source, fields, resolution=1.0, dt=1e-15)
 
 
-def test_public_mode_solve_rejects_materials_requiring_direct_yee_supports():
-    fields = _direct_yee_2d_fields((5, 6))
+def test_public_mode_solve_rejects_full_off_diagonal_materials():
+    fields = _full_tensor_2d_fields((5, 6))
     simulation = SimpleNamespace(fields=fields, resolution=1.0)
     plane = SimpleNamespace(
         center=(2.5, 2.5, 2.5),
@@ -290,7 +306,7 @@ def test_public_mode_solve_rejects_materials_requiring_direct_yee_supports():
         axis="x",
     )
 
-    with pytest.raises(ValueError, match="direct Yee-support"):
+    with pytest.raises(ValueError, match="full off-diagonal"):
         mode_plane_context(simulation=simulation, plane=plane)
 
 
@@ -466,7 +482,7 @@ def test_mode_launch_amplitude_scale_normalizes_measured_launch_power():
     assert _launch_amplitude_scale(0.0) == pytest.approx(1.0)
 
 
-def test_launch_diagnostics_use_yee_plane_power_contract(monkeypatch):
+def test_launch_diagnostics_use_mode_profile_power_contract():
     fields = _uniform_3d_fields()
     source = _mode_source(power=2.0)
     profile = np.ones((2, 2), dtype=np.complex128)
@@ -482,21 +498,7 @@ def test_launch_diagnostics_use_yee_plane_power_contract(monkeypatch):
         k_axis=1.0,
         phase_ref_coord=1.5,
         phase_plane_coord=1.5,
-    )
-    monkeypatch.setattr(
-        mode_launch_module,
-        "_reconstructed_3d_launch_phasor_state",
-        lambda *args, **kwargs: {},
-    )
-    monkeypatch.setattr(
-        mode_launch_module.planar_tfsf,
-        "deembed_3d_phasor_profiles",
-        lambda *args, **kwargs: field_profile.components,
-    )
-    monkeypatch.setattr(
-        mode_launch_module,
-        "_yee_plane_power_3d",
-        lambda *args, **kwargs: 2.12,
+        power_weights={"Ey": np.ones((2, 2))},
     )
 
     ratio, power = _launch_power_diagnostics_3d(
@@ -509,8 +511,8 @@ def test_launch_diagnostics_use_yee_plane_power_contract(monkeypatch):
         requested_power=2.0,
     )
 
-    assert power == pytest.approx(2.12)
-    assert ratio == pytest.approx(1.06)
+    assert power == pytest.approx(2.0)
+    assert ratio == pytest.approx(1.0)
 
 
 def test_mode_launch_plan_reports_scaled_net_launched_power():

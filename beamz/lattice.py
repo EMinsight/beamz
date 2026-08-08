@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Literal, Mapping
+from typing import Any, Literal, Mapping
 
 import jax.numpy as jnp
 import numpy as np
@@ -62,6 +62,106 @@ def component_coordinates_3d_um(
     }
 
 
+def component_coordinates_rectilinear(
+    component: str,
+    grid,
+    *,
+    plane: str | None = None,
+    polarization: str = "tm",
+) -> dict[str, np.ndarray]:
+    """Return exact physical Yee coordinates from rectilinear grid edges."""
+
+    def samples(axis: str, offset: float) -> np.ndarray:
+        edges = np.asarray(grid.axis_edges(axis), dtype=np.float64)
+        return edges if offset == 0.0 else 0.5 * (edges[:-1] + edges[1:])
+
+    if plane is None:
+        offsets = component_axis_offsets_3d(component)
+        return {axis: samples(axis, offsets[axis]) for axis in ("z", "y", "x")}
+
+    normalized_plane = str(plane).lower()
+    canonical = canonical_component_2d(component, normalized_plane, polarization)
+    if canonical is None:
+        return {}
+    row_offset, column_offset = {
+        "Ez": (0.0, 0.0),
+        "Hx": (0.5, 0.0),
+        "Hy": (0.0, 0.5),
+        "Ex": (0.0, 0.5),
+        "Ey": (0.5, 0.0),
+        "Hz": (0.5, 0.5),
+    }[canonical]
+    row_axis, column_axis = {
+        "xy": ("y", "x"),
+        "yz": ("z", "y"),
+        "xz": ("z", "x"),
+    }[normalized_plane]
+    return {
+        row_axis: samples("y", row_offset),
+        column_axis: samples("x", column_offset),
+    }
+
+
+def grid_axes_in_physical_frame_2d(plane: str) -> tuple[str, str, str]:
+    """Map stored rectilinear ``(x, y, z)`` axes to physical axes for a 2D plane."""
+    try:
+        return {
+            "xy": ("x", "y", "z"),
+            "xz": ("x", "z", "y"),
+            "yz": ("y", "z", "x"),
+        }[str(plane).lower()]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported 2D plane {plane!r}.") from exc
+
+
+def grid_vector_to_physical_2d(
+    values: tuple[float, float, float], plane: str
+) -> tuple[float, float, float]:
+    """Permute a stored-grid vector into public physical ``(x, y, z)`` order."""
+    stored = tuple(float(value) for value in values)
+    if len(stored) != 3:
+        raise ValueError("A stored-grid vector must contain three values.")
+    physical = dict.fromkeys("xyz", 0.0)
+    for axis, value in zip(grid_axes_in_physical_frame_2d(plane), stored, strict=True):
+        physical[axis] = value
+    return physical["x"], physical["y"], physical["z"]
+
+
+def physical_vector_to_grid_2d(
+    values: tuple[float, float, float], plane: str
+) -> tuple[float, float, float]:
+    """Permute a public physical vector into stored-grid ``(x, y, z)`` order."""
+    physical = dict(zip("xyz", map(float, values), strict=True))
+    grid_x, grid_y, grid_z = grid_axes_in_physical_frame_2d(plane)
+    return physical[grid_x], physical[grid_y], physical[grid_z]
+
+
+def in_plane_vector_2d(
+    values: tuple[float, float, float], plane: str
+) -> tuple[float, float]:
+    """Select the public offsets corresponding to stored grid ``(x, y)`` order."""
+    physical = dict(zip("xyz", map(float, values), strict=True))
+    grid_x, grid_y, _ = grid_axes_in_physical_frame_2d(plane)
+    return physical[grid_x], physical[grid_y]
+
+
+def coordinates_in_public_frame(
+    coordinates: Mapping[str, Any],
+    coordinate_offset: tuple[float, float, float],
+) -> dict[str, np.ndarray]:
+    """Translate solver-local axis coordinates into the public coordinate frame.
+
+    Simulation devices are lowered according to ``local = public + offset``.
+    Analysis therefore applies the inverse translation to exact Yee coordinates.
+    """
+
+    offsets = dict(zip("xyz", map(float, coordinate_offset), strict=True))
+    return {
+        axis: np.asarray(values, dtype=np.float64) - offsets.get(axis, 0.0)
+        for axis, values in coordinates.items()
+    }
+
+
 _FIELD_COMPONENTS = ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
 
 
@@ -111,7 +211,7 @@ def _uniform_axis_centers(lower: float, upper: float, count: int) -> np.ndarray:
     return lower + (np.arange(count, dtype=np.float64) + 0.5) * step
 
 
-def yee_plane_coordinates_3d(center, size, normal_axis: str, region):
+def yee_plane_coordinates_3d(center, size, normal_axis: str, region, grid=None):
     """Return tangential cell-center coordinates for a snapped physical plane."""
     center = tuple(float(value) for value in center)
     size = tuple(float(value) for value in size)
@@ -123,13 +223,18 @@ def yee_plane_coordinates_3d(center, size, normal_axis: str, region):
         interval = region.axis_interval(axis)
         if interval is None:
             raise ValueError(f"Plane is missing its {axis!r} tangential interval.")
-        lower = center[index] - 0.5 * size[index]
-        upper = center[index] + 0.5 * size[index]
-        coordinates.append(
-            _uniform_axis_centers(
-                lower, upper, int(interval.stop) - int(interval.start)
+        if grid is not None:
+            coordinates.append(
+                np.asarray(grid.centers(axis))[int(interval.start) : int(interval.stop)]
             )
-        )
+        else:
+            lower = center[index] - 0.5 * size[index]
+            upper = center[index] + 0.5 * size[index]
+            coordinates.append(
+                _uniform_axis_centers(
+                    lower, upper, int(interval.stop) - int(interval.start)
+                )
+            )
     return coordinates[0], coordinates[1]
 
 
@@ -175,19 +280,32 @@ def _component_plane_plan_3d(
     resolution: float,
     grid_shape: tuple[int, int, int],
     field_shape: tuple[int, int, int],
+    grid=None,
 ):
     axis0, axis1 = plane_axes_3d(normal_axis)
-    component_coords = component_coordinates_3d_um(
-        component,
-        grid_shape,
-        float(resolution / µm),
-    )
+    if grid is None:
+        component_coords = {
+            axis: values * µm
+            for axis, values in component_coordinates_3d_um(
+                component,
+                grid_shape,
+                float(resolution / µm),
+            ).items()
+        }
+    else:
+        offsets = component_axis_offsets_3d(component)
+        component_coords = {
+            axis: (
+                np.asarray(grid.axis_edges(axis))
+                if offsets[axis] == 0.0
+                else np.asarray(grid.centers(axis))
+            )
+            for axis in ("x", "y", "z")
+        }
     lengths: dict[str, int] = dict(zip(("z", "y", "x"), field_shape, strict=True))
-    source0 = np.asarray(component_coords[axis0])[: lengths[axis0]] * µm
-    source1 = np.asarray(component_coords[axis1])[: lengths[axis1]] * µm
-    source_normal = (
-        np.asarray(component_coords[normal_axis])[: lengths[normal_axis]] * µm
-    )
+    source0 = np.asarray(component_coords[axis0])[: lengths[axis0]]
+    source1 = np.asarray(component_coords[axis1])[: lengths[axis1]]
+    source_normal = np.asarray(component_coords[normal_axis])[: lengths[normal_axis]]
     grid0, grid1 = np.meshgrid(*coordinates, indexing="ij")
     target0, target1 = grid0.reshape(-1), grid1.reshape(-1)
     target_normal = np.full_like(target0, float(plane_position))
@@ -254,6 +372,7 @@ class YeePlaneQuadrature:
 
     normal_axis: int
     sample_area: float
+    integration_weights: np.ndarray
     coordinates: tuple[np.ndarray, np.ndarray]
     plans: Mapping[str, tuple[np.ndarray, np.ndarray]]
 
@@ -284,10 +403,11 @@ def compile_yee_plane_quadrature_3d(
     resolution: float,
     grid_shape: tuple[int, int, int],
     component_shapes: Mapping[str, tuple[int, int, int]],
+    grid=None,
 ) -> YeePlaneQuadrature:
     """Compile the canonical plane colocation used by monitors and sources."""
     normal_axis = str(normal_axis).lower()
-    coordinates = yee_plane_coordinates_3d(center, size, normal_axis, region)
+    coordinates = yee_plane_coordinates_3d(center, size, normal_axis, region, grid=grid)
     plane_position = float(tuple(center)[{"x": 0, "y": 1, "z": 2}[normal_axis]])
     plans = {}
     for component in _FIELD_COMPONENTS:
@@ -300,16 +420,35 @@ def compile_yee_plane_quadrature_3d(
             resolution=float(resolution),
             grid_shape=grid_shape,
             field_shape=(int(shape[0]), int(shape[1]), int(shape[2])),
+            grid=grid,
         )
+    if grid is None:
+        sample_area = plane_sample_area(coordinates, float(resolution))
+        integration_weights = np.empty((0,), dtype=np.float64)
+    else:
+        axis0, axis1 = plane_axes_3d(normal_axis)
+        interval0 = region.axis_interval(axis0)
+        interval1 = region.axis_interval(axis1)
+        widths0 = np.asarray(grid.cell_widths(axis0))[
+            int(interval0.start) : int(interval0.stop)
+        ]
+        widths1 = np.asarray(grid.cell_widths(axis1))[
+            int(interval1.start) : int(interval1.stop)
+        ]
+        integration_weights = (widths0[:, None] * widths1[None, :]).reshape(-1)
+        sample_area = float(np.mean(integration_weights))
     return YeePlaneQuadrature(
         normal_axis={"x": 0, "y": 1, "z": 2}[normal_axis],
-        sample_area=plane_sample_area(coordinates, float(resolution)),
+        sample_area=sample_area,
+        integration_weights=integration_weights,
         coordinates=coordinates,
         plans=plans,
     )
 
 
-def yee_flux(samples, normal_axis: int, *, normal_sign=1.0, measure=1.0, phasor=False):
+def yee_flux(
+    samples, normal_axis: int, *, normal_sign=1.0, measure: Any = 1.0, phasor=False
+):
     """Integrate signed Poynting flux from six colocated Yee field samples."""
     ex, ey, ez, hx, hy, hz = (jnp.asarray(value) for value in samples)
     if phasor:
@@ -321,7 +460,7 @@ def yee_flux(samples, normal_axis: int, *, normal_sign=1.0, measure=1.0, phasor=
         flux = jnp.sqrt(jnp.abs(sx) ** 2 + jnp.abs(sy) ** 2 + jnp.abs(sz) ** 2)
     else:
         flux = (sx, sy, sz)[int(normal_axis)] * float(normal_sign)
-    total = jnp.sum(flux) * float(measure)
+    total = jnp.sum(flux * jnp.asarray(measure, dtype=flux.dtype))
     return 0.5 * jnp.real(total) if phasor else total
 
 
@@ -334,39 +473,104 @@ def curl_e_to_h_3d(ex, ey, ez, resolution):
     )
 
 
+def _rectilinear_inverse_distances(grid, axis: str, *, backward: bool) -> np.ndarray:
+    widths = np.asarray(grid.cell_widths(axis), dtype=np.float64)
+    if not backward:
+        return 1.0 / widths
+    inverse = np.empty(widths.size + 1, dtype=np.float64)
+    inverse[0], inverse[-1] = 1.0 / widths[0], 1.0 / widths[-1]
+    if widths.size > 1:
+        inverse[1:-1] = 2.0 / (widths[:-1] + widths[1:])
+    return inverse
+
+
+def curl_e_to_h_3d_metric(ex, ey, ez, grid):
+    """Differentiate electric fields using exact rectilinear cell widths."""
+    ix = _rectilinear_inverse_distances(grid, "x", backward=False)
+    iy = _rectilinear_inverse_distances(grid, "y", backward=False)
+    iz = _rectilinear_inverse_distances(grid, "z", backward=False)
+    return (
+        metric_adjacent_difference(ez, 1, iy) - metric_adjacent_difference(ey, 0, iz),
+        metric_adjacent_difference(ex, 0, iz) - metric_adjacent_difference(ez, 2, ix),
+        metric_adjacent_difference(ey, 2, ix) - metric_adjacent_difference(ex, 1, iy),
+    )
+
+
 def adjacent_difference(array, axis, resolution):
     resolution = jnp.asarray(resolution, dtype=array.dtype)
     moved = jnp.moveaxis(array, axis, 0)
+    if resolution.ndim == 1:
+        resolution = resolution.reshape((resolution.size,) + (1,) * (moved.ndim - 1))
     return jnp.moveaxis((moved[1:] - moved[:-1]) / resolution, 0, axis)
 
 
-def _pad_with_boundary_ghosts(array, axis, metallic_edges):
-    shape = list(array.shape)
+def metric_adjacent_difference(array, axis, inverse_distance):
+    """Apply an adjacent difference scaled by a precomputed inverse distance."""
+    values = jnp.asarray(array)
+    inverse_distance = jnp.asarray(inverse_distance, dtype=values.dtype)
+    moved = jnp.moveaxis(values, axis, 0)
+    if inverse_distance.ndim == 1:
+        inverse_distance = inverse_distance.reshape(
+            (inverse_distance.size,) + (1,) * (moved.ndim - 1)
+        )
+    return jnp.moveaxis(
+        (moved[1:] - moved[:-1]) * inverse_distance,
+        0,
+        axis,
+    )
+
+
+def _pad_with_boundary_ghosts(
+    array, axis, metallic_edges, *, logical_size: int | None = None
+):
+    logical_size = int(array.shape[axis]) if logical_size is None else int(logical_size)
+    if logical_size <= 0 or logical_size > int(array.shape[axis]):
+        raise ValueError(
+            f"Logical boundary size {logical_size} is invalid for shape {array.shape}."
+        )
+    physical_region = [slice(None)] * array.ndim
+    physical_region[axis] = slice(0, logical_size)
+    physical = array[tuple(physical_region)]
+    storage_region = [slice(None)] * array.ndim
+    storage_region[axis] = slice(logical_size, None)
+    storage_padding = array[tuple(storage_region)]
+    shape = list(physical.shape)
     shape[axis] = 1
     zero = jnp.zeros(tuple(shape), dtype=array.dtype)
     low_edge, high_edge = (("front", "back"), ("bottom", "top"), ("left", "right"))[
         axis
     ]
-    low = zero if low_edge in metallic_edges else jnp.take(array, jnp.array([0]), axis)
+    low = (
+        zero if low_edge in metallic_edges else jnp.take(physical, jnp.array([0]), axis)
+    )
     high = (
         zero
         if high_edge in metallic_edges
-        else jnp.take(array, jnp.array([array.shape[axis] - 1]), axis)
+        else jnp.take(physical, jnp.array([logical_size - 1]), axis)
     )
-    return jnp.concatenate((low, array, high), axis=axis)
+    return jnp.concatenate((low, physical, high, storage_padding), axis=axis)
 
 
-def build_h_boundary_views_for_e_3d(hx, hy, hz, metallic_edges=frozenset()):
+def build_h_boundary_views_for_e_3d(
+    hx, hy, hz, metallic_edges=frozenset(), *, logical_shapes=None
+):
     """Create the six ghost-padded H views consumed by the 3D E curl."""
     return {
-        name: _pad_with_boundary_ghosts(field, axis, metallic_edges)
-        for name, field, axis in (
-            ("hz_y", hz, 1),
-            ("hy_z", hy, 0),
-            ("hx_z", hx, 0),
-            ("hz_x", hz, 2),
-            ("hy_x", hy, 2),
-            ("hx_y", hx, 1),
+        name: _pad_with_boundary_ghosts(
+            field,
+            axis,
+            metallic_edges,
+            logical_size=(
+                None if logical_shapes is None else logical_shapes[component][axis]
+            ),
+        )
+        for name, component, field, axis in (
+            ("hz_y", "Hz", hz, 1),
+            ("hy_z", "Hy", hy, 0),
+            ("hx_z", "Hx", hx, 0),
+            ("hz_x", "Hz", hz, 2),
+            ("hy_x", "Hy", hy, 2),
+            ("hx_y", "Hx", hx, 1),
         )
     }
 
@@ -396,6 +600,43 @@ def curl_h_to_e_3d(
         - adjacent_difference(boundary_views["hz_x"], 2, resolution),
         adjacent_difference(boundary_views["hy_x"], 2, resolution)
         - adjacent_difference(boundary_views["hx_y"], 1, resolution),
+    )
+    expected = (ex_shape, ey_shape, ez_shape)
+    if any(curl.shape != shape for curl, shape in zip(curls, expected, strict=True)):
+        raise ValueError(
+            f"curl(H) shapes {tuple(curl.shape for curl in curls)} do not match {expected}"
+        )
+    return curls
+
+
+def curl_h_to_e_3d_metric(
+    hx,
+    hy,
+    hz,
+    grid,
+    ex_shape=None,
+    ey_shape=None,
+    ez_shape=None,
+    *,
+    boundary_views,
+):
+    """Differentiate magnetic fields using exact dual-grid distances."""
+    if ex_shape is None:
+        ex_shape = (hz.shape[0], hz.shape[1] + 1, hz.shape[2])
+    if ey_shape is None:
+        ey_shape = (hx.shape[0] + 1, hx.shape[1], hx.shape[2])
+    if ez_shape is None:
+        ez_shape = (hy.shape[0], hy.shape[1], hy.shape[2] + 1)
+    ix = _rectilinear_inverse_distances(grid, "x", backward=True)
+    iy = _rectilinear_inverse_distances(grid, "y", backward=True)
+    iz = _rectilinear_inverse_distances(grid, "z", backward=True)
+    curls = (
+        metric_adjacent_difference(boundary_views["hz_y"], 1, iy)
+        - metric_adjacent_difference(boundary_views["hy_z"], 0, iz),
+        metric_adjacent_difference(boundary_views["hx_z"], 0, iz)
+        - metric_adjacent_difference(boundary_views["hz_x"], 2, ix),
+        metric_adjacent_difference(boundary_views["hy_x"], 2, ix)
+        - metric_adjacent_difference(boundary_views["hx_y"], 1, iy),
     )
     expected = (ex_shape, ey_shape, ez_shape)
     if any(curl.shape != shape for curl, shape in zip(curls, expected, strict=True)):
@@ -748,6 +989,12 @@ def _total_conductivity(fields):
     for key in keys:
         if key in fields.pml_data:
             sigma_pml = sigma_pml + fields.pml_data[key]
+    material_grid = getattr(fields, "material_grid", None)
+    if (
+        getattr(material_grid, "metric_kind", "isotropic_uniform")
+        != "isotropic_uniform"
+    ):
+        return base_sigma + sigma_pml
     return jnp.maximum(base_sigma, sigma_pml)
 
 

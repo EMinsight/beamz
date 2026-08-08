@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import jax.numpy as jnp
 import numpy as np
 
 from beamz.simulation import kernels
@@ -33,9 +34,10 @@ def _program_and_state(*, cpml: bool):
         config=config,
         boundary=program.boundary,
         source_batches={},
+        metrics=program.metrics,
         resolution=config.resolution,
         dt=config.dt,
-        dt_scalar=np.float32(config.dt),
+        dt_scalar=jnp.asarray(config.dt, dtype=jnp.float32),
         is_3d=True,
     )
     return program, state, context

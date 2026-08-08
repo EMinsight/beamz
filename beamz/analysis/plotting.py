@@ -10,9 +10,9 @@ from typing import Any
 import numpy as np
 
 from beamz._helpers import get_si_scale_and_label
+from beamz.analysis._coordinates import monitor_plane_coordinates_3d
 from beamz.analysis.data import AnalysisData, analysis_inputs, static_fields
 from beamz.devices.visualization import visual_spec_from_device
-from beamz.lattice import common_grid_shape_3d
 from beamz.simulation.observe import source_field_amplitude_normalization
 
 _UM = 1e-6
@@ -401,6 +401,8 @@ def plot_field_view(
     aspect=None,
     interpolation="nearest",
     norm=None,
+    x_edges=None,
+    y_edges=None,
 ):
     """Plot scalar or complex field data through the shared image primitive."""
     view = (
@@ -420,21 +422,46 @@ def plot_field_view(
         vmax = scale if np.isfinite(scale) and scale > 0.0 else 1.0
     if vmax is not None and vmin is None:
         vmin = 0.0 if view.magnitude else -float(vmax)
-    image = ax.imshow(
-        array,
-        origin="lower",
-        extent=extent,
-        cmap=cmap,
-        norm=norm,
-        aspect=aspect or ("auto" if array.shape[0] == 1 else "equal"),
-        vmin=vmin,
-        vmax=vmax,
-        interpolation=interpolation,
-    )
+    if (x_edges is None) != (y_edges is None):
+        raise ValueError("x_edges and y_edges must be provided together.")
+    if x_edges is not None and y_edges is not None:
+        x_edges = np.asarray(x_edges, dtype=float)
+        y_edges = np.asarray(y_edges, dtype=float)
+        if x_edges.shape != (array.shape[1] + 1,) or y_edges.shape != (
+            array.shape[0] + 1,
+        ):
+            raise ValueError(
+                "Rectilinear plot edges must have one more entry than their "
+                f"field axis; got field {array.shape}, x {x_edges.shape}, "
+                f"and y {y_edges.shape}."
+            )
+        image = ax.pcolormesh(
+            x_edges,
+            y_edges,
+            array,
+            shading="flat",
+            cmap=cmap,
+            norm=norm,
+            vmin=vmin,
+            vmax=vmax,
+        )
+        ax.set_aspect(aspect or ("auto" if array.shape[0] == 1 else "equal"))
+    else:
+        image = ax.imshow(
+            array,
+            origin="lower",
+            extent=extent,
+            cmap=cmap,
+            norm=norm,
+            aspect=aspect or ("auto" if array.shape[0] == 1 else "equal"),
+            vmin=vmin,
+            vmax=vmax,
+            interpolation=interpolation,
+        )
     return image, view
 
 
-def _tidy3d_origin_for_simulation(sim):
+def _simulation_origin(sim):
     offset = getattr(sim, "coordinate_offset", None)
     if offset is not None:
         values = tuple(float(v) for v in offset)
@@ -465,7 +492,7 @@ def _material_category_array(
     return np.where(eps >= core_mid, 2, np.where(eps >= sub_mid, 1, 0))
 
 
-def _tidy3d_material_cmap():
+def _material_cmap():
     from matplotlib.colors import BoundaryNorm, ListedColormap
 
     cmap = ListedColormap(["#f5f5f5", "#83abc0", "#d86c96"])
@@ -490,7 +517,7 @@ def _field_permittivity(sim):
     return np.asarray(()) if value is None else np.asarray(value)
 
 
-def _tidy3d_material_levels(sim):
+def _material_levels(sim):
     eps = _field_permittivity(sim)
     finite = np.real(eps[np.isfinite(eps)]) if eps.size else np.asarray(())
     if finite.size == 0:
@@ -501,7 +528,7 @@ def _tidy3d_material_levels(sim):
     return core, substrate
 
 
-def _tidy3d_pml_thickness(sim):
+def _pml_thickness(sim):
     for boundary in getattr(sim, "boundaries", ()) or ():
         thickness = getattr(boundary, "thickness", None)
         if thickness is not None:
@@ -536,6 +563,8 @@ def _draw_field_eps_overlay(
     reverse=False,
     alpha=0.2,
     core_permittivity=None,
+    x_edges=None,
+    y_edges=None,
 ):
     if eps_slice is None:
         return None
@@ -558,6 +587,15 @@ def _draw_field_eps_overlay(
     rgba = np.zeros((*core.shape, 4), dtype=float)
     rgba[core, :3] = eps_color[core, None]
     rgba[core, 3] = np.clip(float(alpha), 0.0, 1.0)
+    if x_edges is not None and y_edges is not None:
+        overlay = ax.pcolormesh(
+            x_edges,
+            y_edges,
+            rgba,
+            shading="flat",
+        )
+        ax.set_aspect("equal")
+        return overlay
     return ax.imshow(
         rgba,
         origin="lower",
@@ -567,7 +605,7 @@ def _draw_field_eps_overlay(
     )
 
 
-def _tidy3d_field_display_scale_and_units(field):
+def _field_display_scale_and_units(field):
     family = str(field)[:1].upper()
     if family == "E":
         return _UM, "V/um"
@@ -724,7 +762,7 @@ def _plot_simulation_slices(
         for axis, position in (("z", z), ("y", y))
     ]
     if categorical:
-        core_eps, substrate_eps = _tidy3d_material_levels(sim)
+        core_eps, substrate_eps = _material_levels(sim)
         xy, xz = (
             _material_category_array(
                 item.values,
@@ -740,7 +778,7 @@ def _plot_simulation_slices(
         xz = np.where((z_coords > substrate_height)[:, None] & (xz == 1), 0, xz)
         xz = np.where((z_coords <= substrate_height)[:, None] & (xz == 0), 1, xz)
         values = (xy, xz)
-        cmap, norm = _tidy3d_material_cmap()
+        cmap, norm = _material_cmap()
     else:
         values, norm = (item.values for item in slices), None
 
@@ -770,7 +808,7 @@ def _plot_simulation_slices(
             source_markers=source_markers,
             monitor_markers=monitor_markers,
         )
-        thickness = _tidy3d_pml_thickness(sim)
+        thickness = _pml_thickness(sim)
         if thickness is not None and thickness > 0.0:
             style = dict(
                 facecolor="#9a9a9a",
@@ -877,7 +915,7 @@ def _plot_3d_cross_sections(
     zlim=None,
 ):
     if origin is None:
-        origin = _tidy3d_origin_for_simulation(sim)
+        origin = _simulation_origin(sim)
     return _plot_simulation_slices(
         sim,
         z=z,
@@ -903,7 +941,7 @@ def plot_simulation(
     *,
     z=None,
     y=None,
-    tidy3d=None,
+    categorical_cross_sections=True,
     source_markers=True,
     monitor_markers=True,
     width_ratios=None,
@@ -917,11 +955,11 @@ def plot_simulation(
     title="Simulation Layout",
     **_kwargs,
 ):
-    """Plot a simulation layout or Tidy3D-style 3D cross sections."""
+    """Plot a simulation layout or styled 3D cross sections."""
     if bool(getattr(sim, "is_3d", False)) and (z is not None or y is not None):
         if ax is not None:
             raise ValueError("3D cross-section plots create their own axes.")
-        if tidy3d is False:
+        if not categorical_cross_sections:
             return _plot_3d_material_cross_sections(
                 sim,
                 z=z,
@@ -964,7 +1002,7 @@ def view_simulation_3d(sim, *, mode="auto", open_browser=True, show=False, **kwa
     """Return a static view for notebooks without restoring the old viewer stack."""
     del mode, open_browser
     if bool(getattr(sim, "is_3d", False)):
-        origin = _tidy3d_origin_for_simulation(sim)
+        origin = _simulation_origin(sim)
         if any(abs(value) > 0.0 for value in origin):
             kwargs.setdefault("z", 0.0)
             kwargs.setdefault("y", 0.0)
@@ -975,7 +1013,11 @@ def view_simulation_3d(sim, *, mode="auto", open_browser=True, show=False, **kwa
 
 
 def _coord_extent_um(da, *, sim=None):
-    offset = getattr(sim, "coordinate_offset", (0.0, 0.0, 0.0))
+    offset = (
+        (0.0, 0.0, 0.0)
+        if da.attrs.get("coordinate_frame") == "public"
+        else getattr(sim, "coordinate_offset", (0.0, 0.0, 0.0))
+    )
     offset_by_dim = {"x": offset[0], "y": offset[1], "z": offset[2]}
     dims = [dim for dim in da.dims if dim in {"x", "y", "z", "s"}]
     if len(dims) < 2:
@@ -1104,43 +1146,26 @@ def _monitor_dft_values(data, field_name, *, frequency=None, val="real"):
 
 def _monitor_plane_shape_and_coords(simulation, monitor):
     plane_shape = getattr(monitor, "_compiled_dft_shape_3d", None)
-    fields = getattr(simulation, "fields", None)
-    if getattr(fields, "component_shapes", None):
-        # The 3D monitor compiler collocates every Yee component on a plane
-        # derived from the largest staggered component shape, not from the
-        # smaller material grid. Reconstruct the same target grid for detached
-        # results so its dimensions match the flattened DFT buffers.
-        base_shape = common_grid_shape_3d(fields)
-    else:
-        base_shape = tuple(
-            int(v)
-            for v in getattr(
-                fields,
-                "grid_shape",
-                np.asarray(getattr(fields, "permittivity", ())).shape,
-            )
-        )
-    coords0, coords1 = monitor.get_analysis_plane_coords_3d(
-        dx=float(simulation.resolution),
-        dy=float(simulation.resolution),
-        dz=float(simulation.resolution),
-        field_shape=base_shape,
-    )
-    coords0 = np.asarray(coords0, dtype=float)
-    coords1 = np.asarray(coords1, dtype=float)
+    region, coords0, coords1 = monitor_plane_coordinates_3d(simulation, monitor)
     if plane_shape is None:
         plane_shape = (int(coords0.size), int(coords1.size))
     else:
         plane_shape = tuple(int(v) for v in plane_shape)
         coords0 = coords0[: plane_shape[0]]
         coords1 = coords1[: plane_shape[1]]
-    return plane_shape, coords0, coords1
+    return plane_shape, coords0, coords1, region
 
 
 def _reshape_dft_plane(values, f_idx, plane_shape):
-    return np.asarray(values[f_idx], dtype=np.complex128).reshape(
-        tuple(int(v) for v in plane_shape)
-    )
+    shape = tuple(int(v) for v in plane_shape)
+    samples = np.asarray(values[f_idx], dtype=np.complex128)
+    expected = int(np.prod(shape))
+    if samples.size != expected:
+        raise ValueError(
+            f"Recorded DFT plane has {samples.size} samples, but its exact "
+            f"rectilinear coordinates require shape {shape} ({expected} samples)."
+        )
+    return samples.reshape(shape)
 
 
 def _dft_plane_components(data, field, frequency_index, plane_shape):
@@ -1195,6 +1220,22 @@ def _coordinate_extent(coords0, coords1, *, origin0, origin1, fallback_step):
     return x0, x1, y0, y1
 
 
+def _edges_are_uniform(edges) -> bool:
+    edges = np.asarray(edges, dtype=float)
+    widths = np.diff(edges)
+    if widths.size < 2:
+        return True
+    scale = max(1.0, float(np.max(np.abs(edges), initial=0.0)))
+    return bool(
+        np.allclose(
+            widths,
+            widths[0],
+            rtol=1e-12,
+            atol=8.0 * np.finfo(float).eps * scale,
+        )
+    )
+
+
 def _field_colorbar_label(
     field, view, *, display_field=None, units="", show_units=True
 ):
@@ -1224,38 +1265,99 @@ def _overlay_material_slice(
     reverse,
     alpha,
     core_permittivity,
+    sample_region=None,
 ):
-    eps_slice = _field_eps_slice(
-        simulation, plane=normal, plane_position=float(position)
-    )
-    if eps_slice is None:
-        return None
     vertical, horizontal = _PLANE_AXES[normal]
     origin_by_axis: dict[str, float] = dict(
         zip(("x", "y", "z"), map(float, origin), strict=True)
     )
-    shape = np.asarray(eps_slice).shape
-    metadata = simulation.coordinates
-    lengths: dict[str, float] = {
-        "x": metadata.width,
-        "y": metadata.height,
-        "z": metadata.depth,
-    }
-
-    def length(axis, fallback):
-        return float(lengths[axis] or fallback)
-
-    extent = (
-        (0.0 - origin_by_axis[horizontal]) / _UM,
-        (
-            length(horizontal, shape[1] * simulation.resolution)
-            - origin_by_axis[horizontal]
+    grid = getattr(simulation.coordinates, "grid", None)
+    plot_x_edges = None
+    plot_y_edges = None
+    if grid is not None and sample_region is not None:
+        materials = simulation.materials
+        eps = (
+            np.asarray(materials.permittivity)
+            if materials is not None
+            else np.asarray(())
         )
-        / _UM,
-        (0.0 - origin_by_axis[vertical]) / _UM,
-        (length(vertical, shape[0] * simulation.resolution) - origin_by_axis[vertical])
-        / _UM,
-    )
+        if materials is not None and eps.ndim == 3:
+            storage_axes = ("z", "y", "x")
+            selectors = []
+            for dimension, axis in enumerate(storage_axes):
+                data_origin = int(materials.origin[dimension])
+                if axis == normal:
+                    selector = int(sample_region.plane_index) - data_origin
+                    if not 0 <= selector < eps.shape[dimension]:
+                        return None
+                else:
+                    interval = sample_region.axis_interval(axis)
+                    if interval is None:
+                        return None
+                    start = int(interval.start) - data_origin
+                    stop = int(interval.stop) - data_origin
+                    if start < 0 or stop > eps.shape[dimension] or stop <= start:
+                        return None
+                    selector = slice(
+                        start,
+                        stop,
+                    )
+                selectors.append(selector)
+            eps_slice = eps[tuple(selectors)]
+        else:
+            eps_slice = None
+        vertical_interval = sample_region.axis_interval(vertical)
+        horizontal_interval = sample_region.axis_interval(horizontal)
+        if vertical_interval is None or horizontal_interval is None:
+            return None
+        x_edges = (
+            grid.axis_edges(horizontal)[
+                horizontal_interval.start : horizontal_interval.stop + 1
+            ]
+            - origin_by_axis[horizontal]
+        ) / _UM
+        y_edges = (
+            grid.axis_edges(vertical)[
+                vertical_interval.start : vertical_interval.stop + 1
+            ]
+            - origin_by_axis[vertical]
+        ) / _UM
+        extent = (x_edges[0], x_edges[-1], y_edges[0], y_edges[-1])
+        if not _edges_are_uniform(x_edges) or not _edges_are_uniform(y_edges):
+            plot_x_edges, plot_y_edges = x_edges, y_edges
+    else:
+        eps_slice = _field_eps_slice(
+            simulation, plane=normal, plane_position=float(position)
+        )
+        if eps_slice is None:
+            return None
+        shape = np.asarray(eps_slice).shape
+        metadata = simulation.coordinates
+        lengths: dict[str, float] = {
+            "x": metadata.width,
+            "y": metadata.height,
+            "z": metadata.depth,
+        }
+
+        def length(axis, fallback):
+            return float(lengths[axis] or fallback)
+
+        extent = (
+            (0.0 - origin_by_axis[horizontal]) / _UM,
+            (
+                length(horizontal, shape[1] * simulation.resolution)
+                - origin_by_axis[horizontal]
+            )
+            / _UM,
+            (0.0 - origin_by_axis[vertical]) / _UM,
+            (
+                length(vertical, shape[0] * simulation.resolution)
+                - origin_by_axis[vertical]
+            )
+            / _UM,
+        )
+    if eps_slice is None:
+        return None
     return _draw_field_eps_overlay(
         ax,
         eps_slice,
@@ -1263,6 +1365,8 @@ def _overlay_material_slice(
         reverse=reverse,
         alpha=alpha,
         core_permittivity=core_permittivity,
+        x_edges=plot_x_edges,
+        y_edges=plot_y_edges,
     )
 
 
@@ -1290,10 +1394,18 @@ def plot_dft_field(
     core_permittivity=None,
     xlim=None,
     ylim=None,
+    show_grid=False,
+    grid_color="black",
+    grid_linewidth=0.2,
+    grid_alpha=0.18,
     show_units=True,
     show=True,
 ):
-    """Plot a frequency-domain scalar or vector field on a monitor plane."""
+    """Plot a frequency-domain scalar or vector field on a monitor plane.
+
+    Pass ``show_grid=True`` to draw the physical cell edges; grid lines are
+    hidden by default.
+    """
     if not isinstance(simulation, AnalysisData):
         raise TypeError("plot_dft_field requires AnalysisData.")
     data = simulation
@@ -1318,7 +1430,7 @@ def plot_dft_field(
 
     field_key = str(field)
     coordinate_context = data.coordinates if data is not None else simulation
-    plane_shape, target0, target1 = _monitor_plane_shape_and_coords(
+    plane_shape, target0, target1, sample_region = _monitor_plane_shape_and_coords(
         coordinate_context, monitor
     )
     components, vector = _dft_plane_components(data, field_key, f_idx, plane_shape)
@@ -1328,21 +1440,44 @@ def plot_dft_field(
             components, source_normalization, f_idx, freqs.size
         )
 
-    field_scale, field_units = _tidy3d_field_display_scale_and_units(field_key)
+    field_scale, field_units = _field_display_scale_and_units(field_key)
     components = [component * field_scale for component in components]
     view = _field_view(components if vector else components[0], val=val, vector=vector)
 
     if origin is None:
-        origin = _tidy3d_origin_for_simulation(coordinate_context)
+        origin = _simulation_origin(coordinate_context)
     ox, oy, oz = (float(v) for v in origin)
     origin_by_axis = {"x": ox, "y": oy, "z": oz}
-    extent = _coordinate_extent(
-        target0,
-        target1,
-        origin0=origin_by_axis[axis0],
-        origin1=origin_by_axis[axis1],
-        fallback_step=simulation.resolution,
-    )
+    grid = getattr(coordinate_context, "grid", None)
+    plot_x_edges = None
+    plot_y_edges = None
+    grid_x_edges = None
+    grid_y_edges = None
+    if grid is not None:
+        interval0 = sample_region.axis_interval(axis0)
+        interval1 = sample_region.axis_interval(axis1)
+        if interval0 is None or interval1 is None:
+            raise ValueError("A 3D DFT monitor is missing a tangential grid interval.")
+        edges0 = grid.axis_edges(axis0)
+        edges1 = grid.axis_edges(axis1)
+        x_edges = (
+            edges1[interval1.start : interval1.stop + 1] - origin_by_axis[axis1]
+        ) / _UM
+        y_edges = (
+            edges0[interval0.start : interval0.stop + 1] - origin_by_axis[axis0]
+        ) / _UM
+        grid_x_edges, grid_y_edges = x_edges, y_edges
+        extent = (x_edges[0], x_edges[-1], y_edges[0], y_edges[-1])
+        if not _edges_are_uniform(x_edges) or not _edges_are_uniform(y_edges):
+            plot_x_edges, plot_y_edges = x_edges, y_edges
+    else:
+        extent = _coordinate_extent(
+            target0,
+            target1,
+            origin0=origin_by_axis[axis0],
+            origin1=origin_by_axis[axis1],
+            fallback_step=simulation.resolution,
+        )
     fig, ax = _figure_axes(ax, figsize=figsize)
     im, _ = plot_field_view(
         ax,
@@ -1353,6 +1488,8 @@ def plot_dft_field(
         vmax=vmax,
         percentile=percentile,
         aspect="equal",
+        x_edges=plot_x_edges,
+        y_edges=plot_y_edges,
     )
 
     if overlay_core:
@@ -1365,6 +1502,26 @@ def plot_dft_field(
             reverse=view.magnitude,
             alpha=eps_alpha,
             core_permittivity=core_permittivity,
+            sample_region=sample_region if plot_x_edges is not None else None,
+        )
+
+    draw_grid = bool(show_grid)
+    if draw_grid and grid_x_edges is not None and grid_y_edges is not None:
+        ax.vlines(
+            grid_x_edges,
+            grid_y_edges[0],
+            grid_y_edges[-1],
+            colors=grid_color,
+            linewidths=float(grid_linewidth),
+            alpha=float(grid_alpha),
+        )
+        ax.hlines(
+            grid_y_edges,
+            grid_x_edges[0],
+            grid_x_edges[-1],
+            colors=grid_color,
+            linewidths=float(grid_linewidth),
+            alpha=float(grid_alpha),
         )
 
     cbar_label = _field_colorbar_label(
@@ -1443,6 +1600,10 @@ def plot_result_field(
     vmax=None,
     xlim=None,
     ylim=None,
+    show_grid=False,
+    grid_color="black",
+    grid_linewidth=0.2,
+    grid_alpha=0.18,
     **_kwargs,
 ):
     """Plot saved simulation fields or a monitor DFT field."""
@@ -1480,6 +1641,10 @@ def plot_result_field(
                     vmax=vmax,
                     xlim=xlim,
                     ylim=ylim,
+                    show_grid=show_grid,
+                    grid_color=grid_color,
+                    grid_linewidth=grid_linewidth,
+                    grid_alpha=grid_alpha,
                     colorbar=colorbar,
                 )
         values, freq = _monitor_dft_values(
@@ -1536,7 +1701,7 @@ def plot_mode_field_components(
     cmap=None,
     show=True,
 ):
-    """Plot selected electric or magnetic components from solved mode data."""
+    """Plot selected electric or magnetic components on their physical grid."""
     import matplotlib.pyplot as plt
 
     value_kind = str(val).lower()
@@ -1552,6 +1717,8 @@ def plot_mode_field_components(
         fig = axes.flat[0].figure
     component_index = {name: idx for idx, name in enumerate(("Ex", "Ey", "Ez"))}
     component_index.update({name: idx for idx, name in enumerate(("Hx", "Hy", "Hz"))})
+    grid_edges = getattr(modes, "grid_edges", None)
+    transverse_axes = getattr(modes, "transverse_axes", None)
     neffs = []
     for row, mode_index in enumerate(selected_modes):
         neff = np.asarray(modes.neffs)[f_idx, mode_index]
@@ -1568,16 +1735,51 @@ def plot_mode_field_components(
                 if value_kind == "phase"
                 else "magma"
             )
+            raw_field = np.asarray(values)
+            field = (
+                raw_field
+                if grid_edges is not None and raw_field.ndim == len(grid_edges)
+                else np.squeeze(raw_field)
+            )
+            plot_edges = None
+            if grid_edges is not None and len(grid_edges) == field.ndim:
+                plot_edges = tuple(
+                    np.asarray(edge, dtype=float) / _UM for edge in grid_edges
+                )
+            if field.ndim == 2 and plot_edges is not None:
+                y_edges, x_edges = plot_edges
+                y_axis, x_axis = (
+                    tuple(transverse_axes)
+                    if transverse_axes is not None and len(transverse_axes) == 2
+                    else ("axis 0", "axis 1")
+                )
+                xlabel = f"{x_axis} (um)"
+                ylabel = f"{y_axis} (um)"
+            elif field.ndim == 1 and plot_edges is not None:
+                x_edges = plot_edges[0]
+                y_edges = np.asarray([-0.5, 0.5])
+                x_axis = (
+                    str(transverse_axes[0])
+                    if transverse_axes is not None and len(transverse_axes) == 1
+                    else "axis 0"
+                )
+                xlabel = f"{x_axis} (um)"
+                ylabel = ""
+            else:
+                x_edges = y_edges = None
+                xlabel = ylabel = "grid index"
             plot_field_view(
                 axes[row, col],
-                np.squeeze(values),
+                field,
                 val=value_kind,
                 cmap=cmap or default_cmap,
+                x_edges=x_edges,
+                y_edges=y_edges,
             )
             axes[row, col].set(
                 title=f"{field_name} mode {mode_index}, n_eff={np.real(neff):.4g}",
-                xlabel="grid index",
-                ylabel="grid index",
+                xlabel=xlabel,
+                ylabel=ylabel,
             )
     fig.suptitle(f"Mode fields at f={float(modes.frequencies[f_idx]):.6g} Hz")
     fig.tight_layout()

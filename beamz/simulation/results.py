@@ -11,7 +11,9 @@ from typing import Any, Protocol
 import numpy as np
 
 from beamz._cache_tokens import cache_token
+from beamz.design.grid import RectilinearGrid
 from beamz.devices._immutable import immutable_snapshot, readonly_array
+from beamz.devices._placement import SnappedRegion
 from beamz.devices.monitors.compiler import CompiledMonitorSpec
 from beamz.devices.monitors.monitors import _Monitor
 from beamz.lattice import canonical_component_2d
@@ -53,6 +55,75 @@ class _RunConfigLike(Protocol):
     polarization_2d: str
 
 
+@dataclass(frozen=True, slots=True)
+class RunTermination:
+    """Describe why a bounded simulation run stopped and its final residuals.
+
+    Attributes
+    ----------
+    reason : {"converged", "time_limit", "nonfinite", "diverged"}
+        Terminal condition reached by the execution controller.
+    steps : int
+        Number of timesteps executed.
+    time : float
+        Physical time of the final runtime state, in seconds.
+    converged : bool
+        Whether every applicable convergence criterion passed.
+    field_decay, monitor_change, source_decay : float or None
+        Final normalized field-energy, monitor-change, and remaining-source residuals.
+    energy, peak_energy, max_field : float or None
+        Final integrated energy, recorded peak energy, and maximum absolute field.
+    consecutive_checks : int
+        Number of successful checks accumulated at termination.
+    """
+
+    reason: str
+    steps: int
+    time: float
+    converged: bool
+    field_decay: float | None = None
+    monitor_change: float | None = None
+    source_decay: float | None = None
+    energy: float | None = None
+    peak_energy: float | None = None
+    max_field: float | None = None
+    consecutive_checks: int = 0
+
+    def __post_init__(self) -> None:
+        reasons = {"converged", "time_limit", "nonfinite", "diverged"}
+        reason = str(self.reason)
+        if reason not in reasons:
+            raise ValueError(f"RunTermination.reason must be one of {sorted(reasons)}.")
+        object.__setattr__(self, "reason", reason)
+        for name in ("steps", "consecutive_checks"):
+            value = getattr(self, name)
+            if (
+                isinstance(value, (bool, np.bool_))
+                or int(value) != value
+                or int(value) < 0
+            ):
+                raise ValueError(
+                    f"RunTermination.{name} must be a non-negative integer."
+                )
+            object.__setattr__(self, name, int(value))
+        time = float(self.time)
+        if not np.isfinite(time):
+            raise ValueError("RunTermination.time must be finite.")
+        object.__setattr__(self, "time", time)
+        object.__setattr__(self, "converged", bool(self.converged))
+        for name in (
+            "field_decay",
+            "monitor_change",
+            "source_decay",
+            "energy",
+            "peak_energy",
+            "max_field",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, float(value))
+
+
 def _array_snapshot(value: Any, dtype=None) -> np.ndarray:
     # Copy only analysis-required data so results remain reproducible without live
     # simulation ownership.
@@ -91,13 +162,28 @@ def material_region_for_monitor(simulation, monitor: _Monitor, *, runtime_fields
     permeability = np.asarray(runtime_fields.permeability)
     full_shape = tuple(int(value) for value in permittivity.shape)
 
+    grid = runtime_fields.geometry
     if permittivity.ndim == 3:
-        indices = monitor.get_grid_slice_3d(
-            simulation.resolution,
-            simulation.resolution,
-            simulation.resolution,
-            full_shape,
+        from beamz.devices._placement import snap_plane_region_grid
+
+        snapped_region = snap_plane_region_grid(
+            center=monitor.center,
+            size=monitor.size,
+            plane_normal=monitor.plane_normal,
+            grid=grid,
         )
+        if snapped_region is None:
+            return None
+
+        def axis_index(axis):
+            if axis == snapped_region.normal_axis:
+                return snapped_region.plane_index
+            interval = snapped_region.axis_interval(axis)
+            if interval is None:
+                raise RuntimeError(f"Monitor region omits transverse axis {axis!r}.")
+            return interval.as_slice()
+
+        indices = tuple(axis_index(axis) for axis in ("z", "y", "x"))
         dim = {"z": 0, "y": 1, "x": 2}[axis]
         normal = indices[dim]
         if isinstance(normal, slice):
@@ -107,9 +193,17 @@ def material_region_for_monitor(simulation, monitor: _Monitor, *, runtime_fields
         else:
             plane = int(normal)
     elif permittivity.ndim == 2:
-        points = monitor.get_grid_points_2d(
-            simulation.resolution, simulation.resolution
+        from beamz.devices._placement import (
+            line_region_points,
+            snap_axis_aligned_line_region_grid,
         )
+
+        snapped_region = snap_axis_aligned_line_region_grid(
+            monitor.start, monitor.end, grid
+        )
+        if snapped_region is None:
+            return None
+        points = line_region_points(snapped_region)
         if not points:
             return None
         if axis not in {"x", "y"}:
@@ -127,15 +221,15 @@ def material_region_for_monitor(simulation, monitor: _Monitor, *, runtime_fields
 
     plane = int(np.clip(plane, 0, full_shape[dim] - 1))
     start, stop = max(0, plane - 2), min(full_shape[dim], plane + 3)
-    region = [slice(None)] * permittivity.ndim
-    region[dim] = slice(start, stop)
+    crop = [slice(None)] * permittivity.ndim
+    crop[dim] = slice(start, stop)
     origin = [0] * permittivity.ndim
     origin[dim] = start
     permeability_region = (
-        permeability if permeability.ndim == 0 else permeability[tuple(region)]
+        permeability if permeability.ndim == 0 else permeability[tuple(crop)]
     )
     return MaterialRegion(
-        permittivity[tuple(region)],
+        permittivity[tuple(crop)],
         permeability_region,
         tuple(origin),
         full_shape,
@@ -219,13 +313,16 @@ class SimulationMetadata:
     polarization_2d : {"tm", "te"}
         Polarization used to interpret two-dimensional field arrays.
     coordinate_offset : tuple of float
-        Translation from normalized domain coordinates to public coordinates.
+        Translation added to public coordinates to obtain solver-local coordinates.
     time : numpy.ndarray
         Complete immutable simulation time grid in seconds.
     width, height, depth : float
         Domain extents in metres.
     fields : FieldMetadata
         Field shapes and optional material information.
+    grid : RectilinearGrid, optional
+        Exact physical grid used by the simulation. Older manually constructed
+        metadata may omit it and fall back to ``resolution``.
 
     Notes
     -----
@@ -245,10 +342,13 @@ class SimulationMetadata:
     depth: float
     fields: FieldMetadata
     polarization_2d: str = "tm"
+    grid: RectilinearGrid | None = None
 
     def __post_init__(self):
         if not isinstance(self.fields, FieldMetadata):
             raise TypeError("SimulationMetadata.fields must be FieldMetadata.")
+        if self.grid is not None and not isinstance(self.grid, RectilinearGrid):
+            raise TypeError("SimulationMetadata.grid must be RectilinearGrid or None.")
         offset = tuple(float(value) for value in self.coordinate_offset)
         if len(offset) != 3:
             raise ValueError(
@@ -294,6 +394,7 @@ class SimulationMetadata:
             self.height,
             self.depth,
             self.fields,
+            self.grid,
         )
 
     def __eq__(self, other):
@@ -388,6 +489,9 @@ class SimulationMetadata:
                 materials=materials,
             ),
             polarization_2d=simulation.polarization,
+            # Field arrays are indexed on the compiler's normalized geometry. Imported
+            # material grids may retain a nonzero public origin on ``simulation.grid``.
+            grid=runtime_fields.geometry,
         )
 
 
@@ -428,6 +532,8 @@ class MonitorResults:
         Optional scalar objective associated with this acquisition.
     material_region : MaterialRegion or None
         Material snapshot colocated with the monitor for downstream modal analysis.
+    sample_region : SnappedRegion or None
+        Exact grid-aware spatial region retained from monitor compilation.
 
     Examples
     --------
@@ -459,6 +565,9 @@ class MonitorResults:
     normal_axis: int = -1
     normal_sign: float = 1.0
     power_scale: float = 0.0
+    integration_weights: np.ndarray = field(
+        default_factory=lambda: np.empty(0, dtype=float)
+    )
     _raw_dft_fields: Mapping[str, np.ndarray] | None = field(
         default=None, compare=False, repr=False
     )
@@ -471,6 +580,7 @@ class MonitorResults:
     material_region: MaterialRegion | None = field(
         default=None, compare=False, repr=False
     )
+    sample_region: SnappedRegion | None = field(default=None, compare=False, repr=False)
 
     def __post_init__(self):
         if not isinstance(self.monitor, _Monitor):
@@ -480,6 +590,12 @@ class MonitorResults:
         ):
             raise TypeError(
                 "MonitorResults.material_region must be a MaterialRegion or None."
+            )
+        if self.sample_region is not None and not isinstance(
+            self.sample_region, SnappedRegion
+        ):
+            raise TypeError(
+                "MonitorResults.sample_region must be a SnappedRegion or None."
             )
         if not isinstance(self.fields, Mapping) or not isinstance(
             self.dft_fields, Mapping
@@ -495,6 +611,7 @@ class MonitorResults:
             "field_steps",
             "dft_frequencies",
             "dft_weight_sum",
+            "integration_weights",
         ):
             object.__setattr__(self, name, _array_snapshot(getattr(self, name)))
         if self.field_times.shape != self.field_steps.shape:
@@ -692,6 +809,7 @@ class MonitorResults:
                     state.recorded_steps[spec.recorder_index][:recorder_count],
                     dtype=int,
                 ).copy(),
+                sample_region=spec.sample_region,
             )
         dft_fields: dict[str, np.ndarray] = {}
         if spec.dft_enabled and fc > 0 and pc > 0:
@@ -744,7 +862,9 @@ class MonitorResults:
             normal_axis=int(spec.normal_axis),
             normal_sign=float(spec.normal_sign),
             power_scale=float(spec.power_scale),
+            integration_weights=np.asarray(spec.integration_weights),
             objective_value=None,
+            sample_region=spec.sample_region,
         )
 
 
@@ -802,6 +922,7 @@ class SimulationResults:
     source_launch_powers: tuple[float | None, ...] = field(
         default_factory=tuple, repr=False
     )
+    termination: RunTermination | None = None
 
     def __post_init__(self):
         if not isinstance(self.metadata, SimulationMetadata):
@@ -838,6 +959,12 @@ class SimulationResults:
                     f"normalization source {source} is invalid for {len(self.sources)} sources."
                 )
         object.__setattr__(self, "normalization_source", source)
+        if self.termination is not None and not isinstance(
+            self.termination, RunTermination
+        ):
+            raise TypeError(
+                "SimulationResults.termination must be RunTermination or None."
+            )
 
     def __getitem__(self, name):
         """Return a named monitor result.
@@ -886,10 +1013,10 @@ class SimulationResults:
     def launched_power(self, source: int = 0) -> float:
         """Return the internally calibrated net power leaving a mode source.
 
-        The reconstructed source fields are colocated and integrated with the
-        same Yee-grid Poynting convention as a 3D flux monitor, after applying
-        the compiler's launch-amplitude correction. It does not require an
-        additional runtime monitor or reference simulation.
+        The solved source mode is integrated with the mode solver's exact
+        component-staggered transverse metric after applying the compiler's
+        launch-amplitude correction. It does not require an additional runtime
+        monitor or reference simulation.
 
         Parameters
         ----------

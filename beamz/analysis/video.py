@@ -8,9 +8,12 @@ from typing import Any
 
 import numpy as np
 
+from beamz.analysis._coordinates import monitor_plane_coordinates_3d
 from beamz.lattice import (
     component_coordinates_2d_um,
     component_coordinates_3d_um,
+    component_coordinates_rectilinear,
+    coordinates_in_public_frame,
     plane_axes_3d,
 )
 from beamz.simulation.results import MonitorResults, SimulationResults
@@ -89,8 +92,8 @@ def _select_recording(results, *, monitor_name, field) -> MonitorResults:
     return matches[0]
 
 
-def _axis_extent(values, *, offset, fallback_step):
-    coordinates = np.asarray(values, dtype=float) - float(offset)
+def _axis_extent(values, *, fallback_step):
+    coordinates = np.asarray(values, dtype=float)
     if coordinates.size == 0:
         raise ValueError("Recorded field coordinates are empty.")
     step = (
@@ -104,17 +107,6 @@ def _axis_extent(values, *, offset, fallback_step):
     )
 
 
-def _common_component_shape(metadata):
-    shapes = [
-        tuple(int(value) for value in shape)
-        for shape in metadata.fields.component_shapes.values()
-        if len(shape) == 3
-    ]
-    if not shapes:
-        raise ValueError("3D recorder metadata has no three-dimensional fields.")
-    return tuple(max(shape[axis] for shape in shapes) for axis in range(3))
-
-
 def _video_data(results, recording, *, field, plane, index):
     metadata = results.metadata
     frames = np.asarray(recording.fields[field])
@@ -124,10 +116,8 @@ def _video_data(results, recording, *, field, plane, index):
             f"Recorder {recording.monitor.name!r} has no complete {field!r} frames."
         )
 
-    offsets_um = {
-        axis: value / _UM
-        for axis, value in zip("xyz", metadata.coordinate_offset, strict=True)
-    }
+    offsets_um = tuple(value / _UM for value in metadata.coordinate_offset)
+    offset_by_axis = dict(zip("xyz", offsets_um, strict=True))
     resolution_um = metadata.resolution / _UM
     monitor = recording.monitor
 
@@ -139,32 +129,58 @@ def _video_data(results, recording, *, field, plane, index):
             )
         normal = monitor.plane_normal
         vertical, horizontal = plane_axes_3d(normal)
-        coord0, coord1 = monitor.get_analysis_plane_coords_3d(
-            dx=metadata.resolution,
-            dy=metadata.resolution,
-            dz=metadata.resolution,
-            field_shape=_common_component_shape(metadata),
+        region, coord0, coord1 = monitor_plane_coordinates_3d(
+            metadata,
+            monitor,
+            region=recording.sample_region,
         )
         if frames.shape[1:] != (coord0.size, coord1.size):
             raise ValueError(
                 f"Recorded {field!r} frame shape {frames.shape[1:]} does not match "
                 f"the monitor plane {(coord0.size, coord1.size)}."
             )
-        x_extent = _axis_extent(
-            coord1 / _UM,
-            offset=offsets_um[horizontal],
-            fallback_step=resolution_um,
+        if region is not None and metadata.grid is not None:
+            horizontal_interval = region.axis_interval(horizontal)
+            vertical_interval = region.axis_interval(vertical)
+            assert horizontal_interval is not None and vertical_interval is not None
+            horizontal_edges = metadata.grid.axis_edges(horizontal)
+            vertical_edges = metadata.grid.axis_edges(vertical)
+            x_extent = (
+                horizontal_edges[int(horizontal_interval.start)] / _UM
+                - offset_by_axis[horizontal],
+                horizontal_edges[int(horizontal_interval.stop)] / _UM
+                - offset_by_axis[horizontal],
+            )
+            y_extent = (
+                vertical_edges[int(vertical_interval.start)] / _UM
+                - offset_by_axis[vertical],
+                vertical_edges[int(vertical_interval.stop)] / _UM
+                - offset_by_axis[vertical],
+            )
+        else:
+            x_extent = _axis_extent(
+                coord1 / _UM - offset_by_axis[horizontal],
+                fallback_step=resolution_um,
+            )
+            y_extent = _axis_extent(
+                coord0 / _UM - offset_by_axis[vertical],
+                fallback_step=resolution_um,
+            )
+        plane_position = (
+            float(region.plane_coord)
+            if region is not None
+            else float(monitor.plane_position)
         )
-        y_extent = _axis_extent(
-            coord0 / _UM,
-            offset=offsets_um[vertical],
-            fallback_step=resolution_um,
-        )
-        position_um = monitor.plane_position / _UM - offsets_um[normal]
+        position_um = plane_position / _UM - offset_by_axis[normal]
         return _VideoData(
             frames,
             times,
-            (*x_extent, *y_extent),
+            (
+                float(x_extent[0]),
+                float(x_extent[1]),
+                float(y_extent[0]),
+                float(y_extent[1]),
+            ),
             horizontal,
             vertical,
             f"{normal}={position_um:.3g} um",
@@ -187,23 +203,31 @@ def _video_data(results, recording, *, field, plane, index):
             )
         selected_index %= frames.shape[frame_axis]
         frames = np.take(frames, selected_index, axis=frame_axis)
-        coordinates = component_coordinates_3d_um(
-            field,
-            metadata.fields.grid_shape,
-            resolution_um,
+        local_coordinates = (
+            {
+                axis: values / _UM
+                for axis, values in component_coordinates_rectilinear(
+                    field, metadata.grid
+                ).items()
+            }
+            if metadata.grid is not None
+            else component_coordinates_3d_um(
+                field,
+                metadata.fields.grid_shape,
+                resolution_um,
+            )
         )
+        coordinates = coordinates_in_public_frame(local_coordinates, offsets_um)
         vertical, horizontal = plane_axes_3d(normal)
         x_extent = _axis_extent(
             coordinates[horizontal],
-            offset=offsets_um[horizontal],
             fallback_step=resolution_um,
         )
         y_extent = _axis_extent(
             coordinates[vertical],
-            offset=offsets_um[vertical],
             fallback_step=resolution_um,
         )
-        position_um = coordinates[normal][selected_index] - offsets_um[normal]
+        position_um = coordinates[normal][selected_index]
         return _VideoData(
             frames,
             times,
@@ -220,21 +244,32 @@ def _video_data(results, recording, *, field, plane, index):
         "xz": ("z", "x"),
         "yz": ("z", "y"),
     }[metadata.plane_2d]
-    coordinates = component_coordinates_2d_um(
-        field,
-        metadata.fields.grid_shape,
-        resolution_um,
-        metadata.plane_2d,
-        metadata.polarization_2d,
+    local_coordinates = (
+        {
+            axis: values / _UM
+            for axis, values in component_coordinates_rectilinear(
+                field,
+                metadata.grid,
+                plane=metadata.plane_2d,
+                polarization=metadata.polarization_2d,
+            ).items()
+        }
+        if metadata.grid is not None
+        else component_coordinates_2d_um(
+            field,
+            metadata.fields.grid_shape,
+            resolution_um,
+            metadata.plane_2d,
+            metadata.polarization_2d,
+        )
     )
+    coordinates = coordinates_in_public_frame(local_coordinates, offsets_um)
     x_extent = _axis_extent(
         coordinates[horizontal],
-        offset=offsets_um[horizontal],
         fallback_step=resolution_um,
     )
     y_extent = _axis_extent(
         coordinates[vertical],
-        offset=offsets_um[vertical],
         fallback_step=resolution_um,
     )
     return _VideoData(

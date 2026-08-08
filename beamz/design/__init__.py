@@ -5,7 +5,13 @@ Design module for BEAMZ - Contains components for designing photonic structures.
 from beamz.design.core import Design
 from beamz.design.discretization import MaterialGrid, build_material_grid
 from beamz.design.gds import ImportedComponent, export_gds, import_component, import_gds
-from beamz.design.grid_spec import GridSpec
+from beamz.design.grid import (
+    AxisGridQuality,
+    Grid,
+    GridQualityReport,
+    RectilinearGrid,
+)
+from beamz.design.grid_spec import GridSpec, MeshOverride
 from beamz.design.materials import Material
 from beamz.design.structures import (
     Box,
@@ -30,6 +36,11 @@ __all__ = [
     "Polygon",
     "Taper",
     "GridSpec",
+    "MeshOverride",
+    "Grid",
+    "RectilinearGrid",
+    "AxisGridQuality",
+    "GridQualityReport",
     "ImportedComponent",
     "import_component",
     "import_gds",

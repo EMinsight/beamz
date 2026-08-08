@@ -3,22 +3,20 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, Literal, cast
 
 import numpy as np
 
 from beamz.const import EPS_0, LIGHT_SPEED, MU_0
 from beamz.devices._immutable import readonly_array
-from beamz.devices._placement import snap_mode_source_region, snap_plane_region
-from beamz.devices.modes.discrete import solve_beamz_mode
-from beamz.devices.modes.fields import _numeric_wave_number
-from beamz.devices.modes.plane import solve_mode_plane_3d, solve_modes
-from beamz.lattice import (
-    common_grid_shape_3d,
-    compile_yee_plane_quadrature_3d,
-    yee_flux,
+from beamz.devices._placement import (
+    snap_mode_source_region,
+    snap_mode_source_region_grid,
 )
+from beamz.devices.modes.discrete import solve_beamz_mode
+from beamz.devices.modes.fields import _modal_power, _numeric_wave_number
+from beamz.devices.modes.plane import solve_mode_plane_3d, solve_modes
 
 from . import planar_tfsf
 from .solve import _require_cell_mode_materials
@@ -83,6 +81,7 @@ class ModePlanEntry:
 @dataclass(frozen=True)
 class Mode2DLaunchPlan:
     entries: tuple[ModePlanEntry, ...]
+    normal_spacing: float | None = None
 
 
 @dataclass(frozen=True)
@@ -128,8 +127,10 @@ def _modal_power_2d(e_profile, h_profile, signed_flux_sign, dl):
     n = int(min(e.size, h.size))
     if n <= 0:
         return 0.0
+    measure = np.asarray(dl, dtype=float)
+    weights = measure if measure.ndim == 0 else measure.reshape(-1)[:n]
     p = 0.5 * np.real(
-        np.sum(float(signed_flux_sign) * e[:n] * np.conjugate(h[:n])) * float(dl)
+        np.sum(weights * float(signed_flux_sign) * e[:n] * np.conjugate(h[:n]))
     )
     return float(p)
 
@@ -170,8 +171,15 @@ def _make_1d_window(width_cells, alpha=0.3):
 
 
 def _solve_2d_mode(
-    source: ModeSource, eps_profile, omega, resolution, axis, polarization: str
+    source: ModeSource,
+    eps_profile,
+    omega: float,
+    resolution: float,
+    axis: str,
+    polarization: str,
+    grid_edges: np.ndarray | None = None,
 ):
+    del axis
     mode_spec = source.mode_spec
     eps_profile_arr = np.asarray(eps_profile)
     n_local_max = float(np.sqrt(max(float(np.max(np.real(eps_profile_arr))), 1e-12)))
@@ -197,6 +205,7 @@ def _solve_2d_mode(
         filter_pol=cast(Literal["te", "tm"], polarization),
         target_neff=target_neff,
         return_fields=True,
+        grid_edges=None if grid_edges is None else (np.asarray(grid_edges),),
     )
     mode_idx = min(int(mode_spec.mode_index), len(neff_val) - 1)
     return np.asarray(neff_val)[mode_idx], e_fields[mode_idx], h_fields[mode_idx]
@@ -228,6 +237,7 @@ def _plan_2d_entries(
     shape,
     resolution,
     polarization,
+    measure=None,
 ):
     axis = source.axis
     transverse_axis = "y" if axis == "x" else "x"
@@ -255,7 +265,7 @@ def _plan_2d_entries(
             jz_profile,
             magnetic_profile,
             flux_sign=flux_sign,
-            resolution=resolution,
+            resolution=resolution if measure is None else measure,
             power=source.power,
         )
         support = slice(start, end)
@@ -296,7 +306,7 @@ def _plan_2d_entries(
         electric_profile,
         mz_profile,
         flux_sign=1.0 if axis == "x" else -1.0,
-        resolution=resolution,
+        resolution=resolution if measure is None else measure,
         power=source.power,
     )
     normal_cells = shape[1] if axis == "x" else shape[0]
@@ -328,6 +338,7 @@ def _plan_2d_mode_source(
     fields,
     resolution: float,
     dt: float | None,
+    grid=None,
 ) -> Mode2DLaunchPlan:
     polarization = str(getattr(fields, "polarization_2d", "tm"))
     requested = source.mode_spec.polarization
@@ -352,26 +363,78 @@ def _plan_2d_mode_source(
         raise ValueError(
             "direction '+z'/'-z' requires a 3D permittivity grid; received 2D data"
         )
-    snapped = snap_mode_source_region(
-        center=tuple(float(v) for v in source.center),
-        width=float(source.transverse_size[0]),
-        height=None,
-        axis=axis,
-        direction_sign=1.0 if source.direction == "+" else -1.0,
-        grid_shape=(ny, nx),
-        resolution=float(resolution),
-        is_3d=False,
+    metric_grid = (
+        grid
+        if grid is not None and grid.metric_kind_for(("x", "y")) != "isotropic_uniform"
+        else None
     )
+    source_center = tuple(float(v) for v in source.center)
+    source_width = float(source.transverse_size[0])
+    direction_sign = 1.0 if source.direction == "+" else -1.0
+    if metric_grid is not None:
+        snapped = snap_mode_source_region_grid(
+            center=source_center,
+            width=source_width,
+            height=None,
+            axis=axis,
+            direction_sign=direction_sign,
+            is_3d=False,
+            grid=metric_grid,
+        )
+    else:
+        snapped = snap_mode_source_region(
+            center=source_center,
+            width=source_width,
+            height=None,
+            axis=axis,
+            direction_sign=direction_sign,
+            is_3d=False,
+            grid_shape=(ny, nx),
+            resolution=float(resolution),
+        )
     center_idx = int(snapped.plane_index)
     if snapped.companion_index is None:
         raise ValueError("A mode source launch needs a companion Yee plane.")
     offset_idx = int(snapped.companion_index)
-    eps_profile = (
-        permittivity[:, center_idx] if axis == "x" else permittivity[center_idx, :]
-    )
+    material_grid = getattr(fields, "material_grid", None)
+    if (
+        material_grid is not None
+        and material_grid.uses_direct_yee_materials
+        and metric_grid is None
+    ):
+        component = (
+            "eps_z" if polarization == "tm" else ("eps_y" if axis == "x" else "eps_x")
+        )
+        direct = np.asarray(getattr(fields, component))
+        normal_index = min(center_idx, direct.shape[1 if axis == "x" else 0] - 1)
+        eps_profile = (
+            direct[:, normal_index] if axis == "x" else direct[normal_index, :]
+        )
+    else:
+        eps_profile = (
+            permittivity[:, center_idx] if axis == "x" else permittivity[center_idx, :]
+        )
     omega = 2.0 * np.pi * source.frequency
+    interval = snapped.axis_interval("y" if axis == "x" else "x")
+    if interval is None:
+        raise RuntimeError("A 2D mode source is missing its transverse interval.")
+    if metric_grid is not None:
+        transverse_axis = "y" if axis == "x" else "x"
+        grid_edges = np.asarray(metric_grid.axis_edges(transverse_axis))
+        measure = np.asarray(metric_grid.cell_widths(transverse_axis))[
+            int(interval.start) : int(interval.stop)
+        ]
+    else:
+        grid_edges = None
+        measure = None
     neff, e_mode, h_mode = _solve_2d_mode(
-        source, eps_profile, omega, resolution, axis, polarization
+        source,
+        eps_profile,
+        omega,
+        resolution,
+        axis,
+        polarization,
+        grid_edges=grid_edges,
     )
     entries = _plan_2d_entries(
         source,
@@ -384,8 +447,14 @@ def _plan_2d_mode_source(
         (ny, nx),
         resolution,
         polarization,
+        measure=measure,
     )
-    return Mode2DLaunchPlan(entries=entries)
+    normal_spacing = (
+        float(metric_grid.cell_widths(axis)[center_idx])
+        if metric_grid is not None
+        else None
+    )
+    return Mode2DLaunchPlan(entries=entries, normal_spacing=normal_spacing)
 
 
 def _plan_3d_mode_source(
@@ -393,6 +462,7 @@ def _plan_3d_mode_source(
     fields,
     resolution: float,
     dt: float | None,
+    grid=None,
 ) -> Mode3DLaunchPlan:
     if np.any(np.asarray(fields.conductivity) != 0.0):
         raise ValueError(
@@ -402,17 +472,35 @@ def _plan_3d_mode_source(
     permittivity = np.asarray(fields.permittivity)
     nz, ny, nx = permittivity.shape
     axis = source.axis
-    width, height = source.transverse_size
-    snapped = snap_mode_source_region(
-        center=tuple(float(v) for v in source.center),
-        width=float(width),
-        height=float(height),
-        axis=axis,
-        direction_sign=1.0 if source.direction == "+" else -1.0,
-        grid_shape=(nz, ny, nx),
-        resolution=float(resolution),
-        is_3d=True,
+    metric_grid = (
+        grid if grid is not None and grid.metric_kind != "isotropic_uniform" else None
     )
+    width, height = source.transverse_size
+    source_center = tuple(float(v) for v in source.center)
+    source_width = float(width)
+    source_height = float(height)
+    direction_sign = 1.0 if source.direction == "+" else -1.0
+    if grid is not None:
+        snapped = snap_mode_source_region_grid(
+            center=source_center,
+            width=source_width,
+            height=source_height,
+            axis=axis,
+            direction_sign=direction_sign,
+            is_3d=True,
+            grid=grid,
+        )
+    else:
+        snapped = snap_mode_source_region(
+            center=source_center,
+            width=source_width,
+            height=source_height,
+            axis=axis,
+            direction_sign=direction_sign,
+            is_3d=True,
+            grid_shape=(nz, ny, nx),
+            resolution=float(resolution),
+        )
     center_idx = int(snapped.plane_index)
     if snapped.companion_index is None:
         raise ValueError("A mode source launch needs a companion Yee plane.")
@@ -449,6 +537,7 @@ def _plan_3d_mode_source(
         ),
         snapped_region=snapped,
         solver=solve_beamz_mode,
+        grid=metric_grid,
     )
     profiles = {
         name: np.asarray(value, dtype=np.complex128)
@@ -479,6 +568,8 @@ def _plan_3d_mode_source(
         k_axis=float(k_axis),
         phase_ref_coord=float(discrete_mode.phase_reference_coord),
         phase_plane_coord=float(discrete_mode.phase_plane_coord),
+        grid=metric_grid,
+        power_weights=discrete_mode.integration_weights,
     )
     residuals = (
         *planar_tfsf.compute_discrete_3d_h_phasor_residuals(
@@ -525,62 +616,6 @@ def _launch_amplitude_scale(launch_power_ratio: float | None) -> float:
     return float(1.0 / np.sqrt(ratio))
 
 
-def _reconstructed_3d_launch_phasor_state(
-    field_profile: FieldProfile3D,
-    residuals: tuple[planar_tfsf.ModeSource3DResidual, ...],
-    fields,
-    *,
-    resolution: float,
-    dt: float,
-) -> dict[str, np.ndarray]:
-    full_prev = planar_tfsf.build_incident_3d_phasor_state(
-        field_profile,
-        fields,
-        resolution=resolution,
-        t_e=0.0,
-        t_h=-0.5 * dt,
-        masked=False,
-        max_shift=12,
-    )
-    masked_prev = planar_tfsf.build_incident_3d_phasor_state(
-        field_profile,
-        fields,
-        resolution=resolution,
-        t_e=0.0,
-        t_h=-0.5 * dt,
-        masked=True,
-        max_shift=12,
-    )
-    h_full_next = planar_tfsf.advance_incident_h_3d(
-        fields, full_prev, dt, resolution=resolution
-    )
-    h_target_next = planar_tfsf.mask_incident_3d_state_to_launched_side(
-        field_profile,
-        h_full_next,
-        resolution=resolution,
-    )
-    h_mask_next = planar_tfsf.advance_incident_h_3d(
-        fields, masked_prev, dt, resolution=resolution
-    )
-    h_delta = planar_tfsf.expand_3d_residuals(residuals, fields, ("Hx", "Hy", "Hz"))
-    e_mask_next = planar_tfsf.advance_incident_e_3d(
-        fields,
-        masked_prev,
-        h_target_next,
-        dt,
-        resolution=resolution,
-    )
-    e_delta = planar_tfsf.expand_3d_residuals(residuals, fields, ("Ex", "Ey", "Ez"))
-    return {
-        "Ex": e_mask_next["Ex"] + e_delta["Ex"],
-        "Ey": e_mask_next["Ey"] + e_delta["Ey"],
-        "Ez": e_mask_next["Ez"] + e_delta["Ez"],
-        "Hx": h_mask_next["Hx"] + h_delta["Hx"],
-        "Hy": h_mask_next["Hy"] + h_delta["Hy"],
-        "Hz": h_mask_next["Hz"] + h_delta["Hz"],
-    }
-
-
 def _launch_power_diagnostics_3d(
     source: ModeSource,
     field_profile: FieldProfile3D,
@@ -591,38 +626,18 @@ def _launch_power_diagnostics_3d(
     dt: float | None,
     requested_power: float,
 ) -> tuple[float | None, float | None]:
-    if dt is None or float(dt) <= 0.0:
-        return None, None
+    del source, residuals, fields, resolution, dt
     if (not np.isfinite(requested_power)) or requested_power <= 1e-30:
         return None, None
-    try:
-        state = _reconstructed_3d_launch_phasor_state(
-            field_profile,
-            residuals,
-            fields,
-            resolution=float(resolution),
-            dt=float(dt),
-        )
-        field_profiles = planar_tfsf.deembed_3d_phasor_profiles(
-            field_profile,
-            state,
-            resolution=float(resolution),
-            t_e=float(dt),
-            t_h=0.5 * float(dt),
-        )
-        launched_power = _yee_plane_power_3d(
-            source,
-            replace(field_profile, components=field_profiles),
-            fields,
-            resolution=float(resolution),
-        )
-    except Exception:
+    weights = field_profile.power_weights
+    if not weights:
         return None, None
-
-    # Calibrate against the shared colocated Yee-grid Poynting integral. A modal
-    # overlap is useful for diagnosing launch purity, but
-    # its component-grid quadrature is not the power contract exposed to users.
-    # Mixing the two conventions produced a few-percent source/monitor mismatch.
+    launched_power = _modal_power(
+        field_profile.components,
+        axis=field_profile.axis,
+        measure=weights,
+        direction_sign=float(field_profile.direction_sign),
+    )
     ratio = float(launched_power / float(requested_power))
     if (not np.isfinite(ratio)) or ratio <= 1e-24:
         ratio = None
@@ -631,73 +646,31 @@ def _launch_power_diagnostics_3d(
     return ratio, launched_power
 
 
-def _yee_plane_power_3d(
-    source: ModeSource,
-    field_profile: FieldProfile3D,
-    fields,
-    *,
-    resolution: float,
-) -> float:
-    """Measure an incident mode with the canonical Yee-plane quadrature."""
-    component_shapes = {
-        component: tuple(getattr(fields, component).shape)
-        for component in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")
-    }
-    grid_shape = common_grid_shape_3d(fields)
-    axis_index = {"x": 0, "y": 1, "z": 2}[source.axis]
-    lower = np.asarray(source.center) - 0.5 * np.asarray(source.size)
-    upper = np.asarray(source.center) + 0.5 * np.asarray(source.size)
-    lower[axis_index] = upper[axis_index] = source.center[axis_index]
-    region = snap_plane_region(
-        start=tuple(lower),
-        end=tuple(upper),
-        plane_normal=source.axis,
-        size=None,
-        dx=float(resolution),
-        dy=float(resolution),
-        dz=float(resolution),
-        shape=grid_shape,
-    )
-    quadrature = compile_yee_plane_quadrature_3d(
-        center=source.center,
-        size=source.size,
-        normal_axis=source.axis,
-        region=region,
-        resolution=float(resolution),
-        grid_shape=grid_shape,
-        component_shapes=component_shapes,
-    )
-    state = planar_tfsf.build_incident_3d_phasor_state(
-        field_profile,
-        fields,
-        resolution=float(resolution),
-        t_e=0.0,
-        t_h=0.0,
-        masked=False,
-        max_shift=12,
-    )
-    power = yee_flux(
-        quadrature.sample(state),
-        quadrature.normal_axis,
-        normal_sign=float(field_profile.direction_sign),
-        measure=quadrature.sample_area,
-        phasor=True,
-    )
-    return float(np.asarray(power))
-
-
 def plan_mode_source_launch(
     source: ModeSource,
     fields,
     *,
     resolution: float,
     dt: float | None,
+    grid=None,
 ) -> ModeLaunchPlan:
     permittivity = np.asarray(fields.permittivity)
     if permittivity.ndim == 3:
-        return _plan_3d_mode_source(source, fields, float(resolution), dt)
+        return _plan_3d_mode_source(
+            source,
+            fields,
+            float(resolution),
+            dt,
+            grid=grid if grid is not None else getattr(fields, "geometry", None),
+        )
     if permittivity.ndim == 2:
-        return _plan_2d_mode_source(source, fields, float(resolution), dt)
+        return _plan_2d_mode_source(
+            source,
+            fields,
+            float(resolution),
+            dt,
+            grid=grid if grid is not None else getattr(fields, "geometry", None),
+        )
     raise ValueError("ModeSource expects a 2D or 3D permittivity grid.")
 
 

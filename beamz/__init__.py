@@ -28,9 +28,10 @@ from beamz.const import (
 
 # Import design-related classes and functions
 from beamz.design.core import Design
+from beamz.design.grid import AxisGridQuality, Grid, GridQualityReport, RectilinearGrid
 
 # Import simulation-related classes and functions
-from beamz.design.grid_spec import GridSpec
+from beamz.design.grid_spec import GridSpec, MeshOverride
 from beamz.design.materials import Material
 from beamz.design.structures import (
     Box,
@@ -57,8 +58,13 @@ from beamz.devices.sources import (
 )
 from beamz.devices.sources.time import ramped_cosine
 from beamz.simulation.api import Simulation
-from beamz.simulation.model import SimulationState
-from beamz.simulation.results import MonitorResults, SimulationResults, SimulationRun
+from beamz.simulation.model import AutoTermination, SimulationState
+from beamz.simulation.results import (
+    MonitorResults,
+    RunTermination,
+    SimulationResults,
+    SimulationRun,
+)
 
 inf = float("inf")
 
@@ -102,6 +108,11 @@ __all__ = [
     "ramped_cosine",
     "Simulation",
     "GridSpec",
+    "MeshOverride",
+    "Grid",
+    "RectilinearGrid",
+    "AxisGridQuality",
+    "GridQualityReport",
     "GaussianPulse",
     "SampledSignal",
     "ModeSpec",
@@ -110,6 +121,8 @@ __all__ = [
     "SimulationResults",
     "SimulationRun",
     "SimulationState",
+    "AutoTermination",
+    "RunTermination",
     "PML",
     "PEC",
     "Absorber",
