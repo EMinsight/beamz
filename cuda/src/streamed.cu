@@ -278,19 +278,13 @@ __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
 }
 
 template <int Phase, bool Cpml, int MetricKind>
-__global__ void UpdateAllComponents(BeamzLaunch launch, int y_blocks) {
+__global__ void UpdateFusedComponents(BeamzLaunch launch) {
   const int x = blockIdx.x * blockDim.x + threadIdx.x;
+  const int y = blockIdx.y * blockDim.y + threadIdx.y;
   const int z = blockIdx.z * blockDim.z + threadIdx.z;
-  if (blockIdx.y < y_blocks) {
-    const int y = blockIdx.y * blockDim.y + threadIdx.y;
-    UpdateComponent<Phase, 0, Cpml, MetricKind>(launch, z, y, x);
-  } else if (blockIdx.y < 2 * y_blocks) {
-    const int y = (blockIdx.y - y_blocks) * blockDim.y + threadIdx.y;
-    UpdateComponent<Phase, 1, Cpml, MetricKind>(launch, z, y, x);
-  } else {
-    const int y = (blockIdx.y - 2 * y_blocks) * blockDim.y + threadIdx.y;
-    UpdateComponent<Phase, 2, Cpml, MetricKind>(launch, z, y, x);
-  }
+  UpdateComponent<Phase, 0, Cpml, MetricKind>(launch, z, y, x);
+  UpdateComponent<Phase, 1, Cpml, MetricKind>(launch, z, y, x);
+  UpdateComponent<Phase, 2, Cpml, MetricKind>(launch, z, y, x);
 }
 
 template <int Phase>
@@ -354,37 +348,30 @@ __device__ __forceinline__ void UpdateFullPecScalarComponent(
 }
 
 template <int Phase>
-__global__ void UpdateAllFullPecScalarComponents(BeamzLaunch launch,
-                                                 int y_blocks) {
+__global__ void UpdateFusedFullPecScalarComponents(BeamzLaunch launch) {
   const int x = blockIdx.x * blockDim.x + threadIdx.x;
+  const int y = blockIdx.y * blockDim.y + threadIdx.y;
   const int z = blockIdx.z * blockDim.z + threadIdx.z;
-  if (blockIdx.y < y_blocks) {
-    const int y = blockIdx.y * blockDim.y + threadIdx.y;
-    UpdateFullPecScalarComponent<Phase, 0>(launch, z, y, x);
-  } else if (blockIdx.y < 2 * y_blocks) {
-    const int y = (blockIdx.y - y_blocks) * blockDim.y + threadIdx.y;
-    UpdateFullPecScalarComponent<Phase, 1>(launch, z, y, x);
-  } else {
-    const int y = (blockIdx.y - 2 * y_blocks) * blockDim.y + threadIdx.y;
-    UpdateFullPecScalarComponent<Phase, 2>(launch, z, y, x);
-  }
+  UpdateFullPecScalarComponent<Phase, 0>(launch, z, y, x);
+  UpdateFullPecScalarComponent<Phase, 1>(launch, z, y, x);
+  UpdateFullPecScalarComponent<Phase, 2>(launch, z, y, x);
 }
 
 template <int MetricKind>
-void LaunchGenericUpdate(cudaStream_t stream, const BeamzLaunch& launch,
-                         dim3 blocks, dim3 threads, int y_blocks) {
+void LaunchFusedUpdate(cudaStream_t stream, const BeamzLaunch& launch,
+                       dim3 blocks, dim3 threads) {
   if (launch.phase == 0 && launch.nterms == 0) {
-    UpdateAllComponents<0, false, MetricKind>
-        <<<blocks, threads, 0, stream>>>(launch, y_blocks);
+    UpdateFusedComponents<0, false, MetricKind>
+        <<<blocks, threads, 0, stream>>>(launch);
   } else if (launch.phase == 0) {
-    UpdateAllComponents<0, true, MetricKind>
-        <<<blocks, threads, 0, stream>>>(launch, y_blocks);
+    UpdateFusedComponents<0, true, MetricKind>
+        <<<blocks, threads, 0, stream>>>(launch);
   } else if (launch.nterms == 0) {
-    UpdateAllComponents<1, false, MetricKind>
-        <<<blocks, threads, 0, stream>>>(launch, y_blocks);
+    UpdateFusedComponents<1, false, MetricKind>
+        <<<blocks, threads, 0, stream>>>(launch);
   } else {
-    UpdateAllComponents<1, true, MetricKind>
-        <<<blocks, threads, 0, stream>>>(launch, y_blocks);
+    UpdateFusedComponents<1, true, MetricKind>
+        <<<blocks, threads, 0, stream>>>(launch);
   }
 }
 
@@ -668,8 +655,8 @@ int BeamzLaunchStreamed(void* raw_stream, const BeamzLaunch& launch) {
   const int tile_z =
       launch.nterms != 0 || launch.metric_kind != 0 ? kPressureTileZ : kTileZ;
   const dim3 threads(kTileX, kTileY, tile_z);
-  const dim3 blocks((max_x + kTileX - 1) / kTileX, 3 * y_blocks,
-                    (max_z + tile_z - 1) / tile_z);
+  const dim3 fused_blocks((max_x + kTileX - 1) / kTileX, y_blocks,
+                          (max_z + tile_z - 1) / tile_z);
   const bool scalar_coefficients =
       launch.nterms == 0 && launch.inputs[6].rank == 0 &&
       launch.inputs[7].rank == 0 && launch.inputs[8].rank == 0 &&
@@ -678,18 +665,18 @@ int BeamzLaunchStreamed(void* raw_stream, const BeamzLaunch& launch) {
   if (launch.metric_kind == 0 && scalar_coefficients &&
       launch.metallic_edges == 63) {
     if (launch.phase == 0) {
-      UpdateAllFullPecScalarComponents<0>
-          <<<blocks, threads, 0, stream>>>(launch, y_blocks);
+      UpdateFusedFullPecScalarComponents<0>
+          <<<fused_blocks, threads, 0, stream>>>(launch);
     } else {
-      UpdateAllFullPecScalarComponents<1>
-          <<<blocks, threads, 0, stream>>>(launch, y_blocks);
+      UpdateFusedFullPecScalarComponents<1>
+          <<<fused_blocks, threads, 0, stream>>>(launch);
     }
   } else if (launch.metric_kind == 0) {
-    LaunchGenericUpdate<0>(stream, launch, blocks, threads, y_blocks);
+    LaunchFusedUpdate<0>(stream, launch, fused_blocks, threads);
   } else if (launch.metric_kind == 1) {
-    LaunchGenericUpdate<1>(stream, launch, blocks, threads, y_blocks);
+    LaunchFusedUpdate<1>(stream, launch, fused_blocks, threads);
   } else {
-    LaunchGenericUpdate<2>(stream, launch, blocks, threads, y_blocks);
+    LaunchFusedUpdate<2>(stream, launch, fused_blocks, threads);
   }
   return static_cast<int>(cudaPeekAtLastError());
 }
