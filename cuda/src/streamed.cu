@@ -376,7 +376,7 @@ __device__ __forceinline__ bool BufferContains(const BeamzBuffer& value, int z,
          y < value.dims[1] && x < value.dims[2];
 }
 
-template <int Component>
+template <bool ScalarCoefficients, int Component>
 __device__ __forceinline__ float FusedHValue(const BeamzLaunch& launch,
                                              int z, int y, int x) {
   const BeamzBuffer& output = launch.outputs[Component];
@@ -402,13 +402,17 @@ __device__ __forceinline__ float FusedHValue(const BeamzLaunch& launch,
   const float old_field =
       static_cast<const float*>(launch.inputs[Component].data)[linear];
   const float decay =
-      static_cast<const float*>(launch.inputs[6 + Component].data)[0];
+      ScalarCoefficients
+          ? static_cast<const float*>(launch.inputs[6 + Component].data)[0]
+          : Read3D(launch.inputs[6 + Component], z, y, x);
   const float source =
-      static_cast<const float*>(launch.inputs[9 + Component].data)[0];
+      ScalarCoefficients
+          ? static_cast<const float*>(launch.inputs[9 + Component].data)[0]
+          : Read3D(launch.inputs[9 + Component], z, y, x);
   return decay * old_field - source * (derivative0 - derivative1);
 }
 
-template <int Component>
+template <bool ScalarCoefficients, int Component>
 __device__ __forceinline__ float FusedEValue(const BeamzLaunch& launch,
                                              const float* h_fields,
                                              int local_z, int local_y,
@@ -451,17 +455,22 @@ __device__ __forceinline__ float FusedEValue(const BeamzLaunch& launch,
   const float old_field =
       static_cast<const float*>(launch.inputs[Component].data)[linear];
   const float decay =
-      static_cast<const float*>(launch.inputs[6 + Component].data)[0];
+      ScalarCoefficients
+          ? static_cast<const float*>(launch.inputs[6 + Component].data)[0]
+          : Read3D(launch.inputs[6 + Component], z, y, x);
   const float source =
-      static_cast<const float*>(launch.inputs[9 + Component].data)[0];
+      ScalarCoefficients
+          ? static_cast<const float*>(launch.inputs[9 + Component].data)[0]
+          : Read3D(launch.inputs[9 + Component], z, y, x);
   return decay * old_field + source * curl;
 }
 
 // Fuse a complete leapfrog timestep without a device-wide barrier.  Each block
 // redundantly computes the one-cell low halo of H in shared memory, then uses it
 // to update its disjoint E/H core into a frozen out-of-place destination.
-__global__ void FusedFullStepPecScalar(BeamzLaunch h_launch,
-                                       BeamzLaunch e_launch) {
+template <bool ScalarCoefficients>
+__global__ void FusedFullStepPec(BeamzLaunch h_launch,
+                                 BeamzLaunch e_launch) {
   extern __shared__ float h_fields[];
   const int thread = threadIdx.y * blockDim.x + threadIdx.x;
   const int threads = blockDim.x * blockDim.y;
@@ -475,9 +484,11 @@ __global__ void FusedFullStepPecScalar(BeamzLaunch h_launch,
     const int x = origin_x + local_x;
     const int y = origin_y + local_y;
     const int z = origin_z + local_z;
-    h_fields[index] = FusedHValue<0>(h_launch, z, y, x);
-    h_fields[kFusedVolume + index] = FusedHValue<1>(h_launch, z, y, x);
-    h_fields[2 * kFusedVolume + index] = FusedHValue<2>(h_launch, z, y, x);
+    h_fields[index] = FusedHValue<ScalarCoefficients, 0>(h_launch, z, y, x);
+    h_fields[kFusedVolume + index] =
+        FusedHValue<ScalarCoefficients, 1>(h_launch, z, y, x);
+    h_fields[2 * kFusedVolume + index] =
+        FusedHValue<ScalarCoefficients, 2>(h_launch, z, y, x);
   }
   __syncthreads();
 
@@ -500,11 +511,14 @@ __global__ void FusedFullStepPecScalar(BeamzLaunch h_launch,
       }
     }
     const float e0 =
-        FusedEValue<0>(e_launch, h_fields, local_z, local_y, local_x, z, y, x);
+        FusedEValue<ScalarCoefficients, 0>(e_launch, h_fields, local_z, local_y,
+                                           local_x, z, y, x);
     const float e1 =
-        FusedEValue<1>(e_launch, h_fields, local_z, local_y, local_x, z, y, x);
+        FusedEValue<ScalarCoefficients, 1>(e_launch, h_fields, local_z, local_y,
+                                           local_x, z, y, x);
     const float e2 =
-        FusedEValue<2>(e_launch, h_fields, local_z, local_y, local_x, z, y, x);
+        FusedEValue<ScalarCoefficients, 2>(e_launch, h_fields, local_z, local_y,
+                                           local_x, z, y, x);
     const float values[3] = {e0, e1, e2};
     for (int component = 0; component < 3; ++component) {
       const BeamzBuffer& e_output = e_launch.outputs[component];
@@ -1020,11 +1034,14 @@ int BeamzLaunchTemporalSteps(void* raw_stream, const BeamzLaunch& h_ab,
       e_ba.metallic_edges != 63) {
     return cudaErrorInvalidValue;
   }
+  bool scalar_coefficients = true;
   for (int material = 0; material < 6; ++material) {
-    if (h_ab.inputs[6 + material].rank != 0 ||
-        e_ab.inputs[6 + material].rank != 0) {
+    const int h_rank = h_ab.inputs[6 + material].rank;
+    const int e_rank = e_ab.inputs[6 + material].rank;
+    if ((h_rank != 0 && h_rank != 3) || (e_rank != 0 && e_rank != 3)) {
       return cudaErrorInvalidValue;
     }
+    scalar_coefficients &= h_rank == 0 && e_rank == 0;
   }
 
   auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
@@ -1070,15 +1087,22 @@ int BeamzLaunchTemporalSteps(void* raw_stream, const BeamzLaunch& h_ab,
 
   auto launch_steps = [&]() {
     cudaError_t launch_error = cudaSuccess;
+    auto launch_fused = [&](const BeamzLaunch& h_launch,
+                            const BeamzLaunch& e_launch) {
+      if (scalar_coefficients) {
+        FusedFullStepPec<true><<<blocks, threads, kFusedSharedBytes, stream>>>(
+            h_launch, e_launch);
+      } else {
+        FusedFullStepPec<false><<<blocks, threads, kFusedSharedBytes, stream>>>(
+            h_launch, e_launch);
+      }
+      return cudaPeekAtLastError();
+    };
     const int32_t step_pairs = nsteps / 2;
     for (int32_t pair = 0; pair < step_pairs; ++pair) {
-      FusedFullStepPecScalar<<<blocks, threads, kFusedSharedBytes, stream>>>(
-          h_ab, e_ab);
-      launch_error = cudaPeekAtLastError();
+      launch_error = launch_fused(h_ab, e_ab);
       if (launch_error != cudaSuccess) return launch_error;
-      FusedFullStepPecScalar<<<blocks, threads, kFusedSharedBytes, stream>>>(
-          h_ba, e_ba);
-      launch_error = cudaPeekAtLastError();
+      launch_error = launch_fused(h_ba, e_ba);
       if (launch_error != cudaSuccess) return launch_error;
     }
     for (int32_t step = 2 * step_pairs; step < nsteps; ++step) {

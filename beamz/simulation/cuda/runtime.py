@@ -705,7 +705,6 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
         and nsteps >= 4
         and ctx.config.metric_kind == "isotropic_uniform"
         and _metallic_edge_mask(ctx.boundary.cpml.metallic_edges) == 63
-        and all(value.ndim == 0 for value in materials)
     )
     if temporal_eligible:
         workspace = tuple(jnp.empty_like(value) for value in fields)
