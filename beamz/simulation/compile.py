@@ -772,6 +772,7 @@ def compile_program(
     material_grid = simulation._material_grid(progress=progress)
     cuda_2d_supported = (
         not simulation.is_3d
+        and requested_backend != "auto"
         and requested_backend != "cuda_hopper"
         and not simulation.sources
         and not simulation.monitors

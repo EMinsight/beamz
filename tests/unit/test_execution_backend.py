@@ -32,7 +32,7 @@ def test_auto_preserves_jax_when_cuda_is_not_visible(monkeypatch):
         backend_runtime.resolve_backend("cuda")
 
 
-def test_auto_selects_streamed_cuda_for_source_free_2d_simulations(monkeypatch):
+def test_auto_preserves_jax_for_source_free_2d_simulations(monkeypatch):
     monkeypatch.setattr(
         backend_runtime,
         "resolve_backend",
@@ -45,6 +45,23 @@ def test_auto_selects_streamed_cuda_for_source_free_2d_simulations(monkeypatch):
     )
 
     program = simulation.compile(backend="auto")
+
+    assert program.config.backend == "jax"
+
+
+def test_explicit_streamed_cuda_accepts_source_free_2d_simulations(monkeypatch):
+    monkeypatch.setattr(
+        backend_runtime,
+        "resolve_backend",
+        lambda backend: "cuda_streamed" if backend == "cuda_streamed" else backend,
+    )
+    simulation = bz.Simulation(
+        domain=(0.4 * bz.um, 0.3 * bz.um),
+        resolution=0.1 * bz.um,
+        time=np.arange(3) * 1e-17,
+    )
+
+    program = simulation.compile(backend="cuda_streamed")
 
     assert program.config.backend == "cuda_streamed"
 
