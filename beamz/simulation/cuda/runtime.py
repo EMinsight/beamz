@@ -359,6 +359,53 @@ def run_source_steps(state, ctx, coeffs, source, nsteps: int) -> SimulationState
     )
 
 
+def run_source_group_steps(state, ctx, coeffs, groups, nsteps: int) -> SimulationState:
+    """Advance packed slab-source groups in every leapfrog phase on CUDA."""
+    if nsteps < 1:
+        raise ValueError("CUDA step count must be positive")
+    if len(groups) != 9:
+        raise ValueError("CUDA source graph requires nine phase/component groups")
+    empty_coefficients = jnp.zeros((0, 1, 1, 1), dtype=jnp.float32)
+    empty_waveforms = jnp.zeros((0, 1), dtype=jnp.float32)
+    empty_starts = jnp.zeros((0, 3), dtype=jnp.int32)
+    source_arguments = []
+    for group in groups:
+        source_arguments.extend(
+            (empty_coefficients, empty_waveforms, empty_starts)
+            if group is None
+            else (group.coeffs, group.waveforms, group.starts)
+        )
+    arguments, result_values, aliases = _graph_io(state, ctx, coeffs)
+    call = jax.ffi.ffi_call(
+        "beamz_cuda_streamed_source_groups_cpml_steps",
+        tuple(_shape(value) for value in result_values),
+        input_output_aliases=aliases,
+        vmap_method="sequential",
+    )
+    outputs = call(
+        *arguments,
+        *source_arguments,
+        state.current_step,
+        abi_version=np.int32(CUDA_ABI_VERSION),
+        nsteps=np.int32(nsteps),
+        dt=np.float32(ctx.dt),
+        resolution=np.float32(ctx.resolution),
+        metallic_edges=np.int32(_metallic_edge_mask(ctx.boundary.cpml.metallic_edges)),
+        metric_kind=_metric_kind_code(ctx),
+        cpml_enabled=np.int32(ctx.boundary.cpml.enabled),
+    )
+    if ctx.boundary.cpml.enabled:
+        return _replace_graph_outputs(state, outputs)
+    return state._replace(
+        hx=outputs[0],
+        hy=outputs[1],
+        hz=outputs[2],
+        ex=outputs[3],
+        ey=outputs[4],
+        ez=outputs[5],
+    )
+
+
 def run_source_monitor_steps(
     state, ctx, coeffs, source, monitor, nsteps: int
 ) -> SimulationState:

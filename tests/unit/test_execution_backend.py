@@ -260,6 +260,7 @@ def test_typed_ffi_registrations_use_cuda_api_v1(monkeypatch):
         "beamz_cuda_streamed_steps",
         "beamz_cuda_streamed_cpml_steps",
         "beamz_cuda_streamed_source_cpml_steps",
+        "beamz_cuda_streamed_source_groups_cpml_steps",
         "beamz_cuda_streamed_source_monitor_cpml_steps",
         "beamz_cuda_hopper",
     )
@@ -278,6 +279,7 @@ def test_typed_ffi_registrations_use_cuda_api_v1(monkeypatch):
         "beamz_cuda_streamed",
         "beamz_cuda_streamed_cpml_steps",
         "beamz_cuda_streamed_source_cpml_steps",
+        "beamz_cuda_streamed_source_groups_cpml_steps",
         "beamz_cuda_streamed_source_monitor_cpml_steps",
         "beamz_cuda_streamed_steps",
     )

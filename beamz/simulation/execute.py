@@ -586,10 +586,18 @@ def build_scan(program, *, donate_state: bool = False):
         and not bool(jax.config.read("jax_enable_x64"))
         else None
     )
+    graph_source_groups = tuple(
+        source_batches[(timing, component)][0]
+        for timing, components in SOURCE_PHASE_COMPONENTS.items()
+        for component in components
+    )
+    source_groups_supported = bool(program.sources) and all(
+        not rest for _group, rest in source_batches.values()
+    )
     cuda_multi_step = (
         cfg.backend == "cuda_streamed"
         and (not program.monitors or graph_monitor is not None)
-        and (not program.sources or graph_source is not None)
+        and (not program.sources or source_groups_supported)
     )
 
     def run_scan(
@@ -600,24 +608,28 @@ def build_scan(program, *, donate_state: bool = False):
         # lowering strategy, not timestep semantics.
         if cuda_multi_step:
             from beamz.simulation.cuda import (
+                run_source_group_steps,
                 run_source_monitor_steps,
-                run_source_steps,
                 run_steps,
             )
 
             scan_out = (
                 run_steps(state, step_context, coeffs, cfg.num_steps)
-                if graph_source is None
-                else run_source_steps(
-                    state, step_context, coeffs, graph_source, cfg.num_steps
-                )
-                if graph_monitor is None
+                if not program.sources
                 else run_source_monitor_steps(
                     state,
                     step_context,
                     coeffs,
                     graph_source,
                     graph_monitor,
+                    cfg.num_steps,
+                )
+                if graph_monitor is not None
+                else run_source_group_steps(
+                    state,
+                    step_context,
+                    coeffs,
+                    graph_source_groups,
                     cfg.num_steps,
                 )
             )

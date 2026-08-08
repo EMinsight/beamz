@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import jax.numpy as jnp
 import numpy as np
@@ -204,6 +205,56 @@ def test_cuda_source_cpml_graph_packs_source_and_aliases_state(monkeypatch):
     assert attributes["source_component"] == np.int32(2)
     assert attributes["cpml_enabled"] == np.int32(1)
     assert next_state.cpml_psi_h_terms == state.cpml_psi_h_terms
+
+
+def test_cuda_source_group_graph_packs_all_phases_and_aliases_state(monkeypatch):
+    program, state, context = _program_and_state(cpml=True)
+    captured = []
+
+    def fake_ffi_call(target, result_metadata, **options):
+        def call(*arguments, **attributes):
+            captured.append((target, result_metadata, options, arguments, attributes))
+            return (*arguments[:6], *arguments[31:37], *arguments[62:68])
+
+        return call
+
+    monkeypatch.setattr(cuda_runtime.jax.ffi, "ffi_call", fake_ffi_call)
+    source_group = SimpleNamespace(
+        coeffs=jnp.ones((2, 3, 4, 5), dtype=jnp.float32),
+        waveforms=jnp.ones((2, 8), dtype=jnp.float32),
+        starts=jnp.zeros((2, 3), dtype=jnp.int32),
+    )
+    groups = (source_group, None, None, None, None, None, None, None, None)
+
+    next_state = cuda_runtime.run_source_group_steps(
+        state, context, program.coefficients, groups, 3
+    )
+
+    target, results, options, arguments, attributes = captured[0]
+    assert target == "beamz_cuda_streamed_source_groups_cpml_steps"
+    assert len(results) == 18
+    assert len(arguments) == 102
+    assert arguments[74] is source_group.coeffs
+    assert arguments[75] is source_group.waveforms
+    assert arguments[76] is source_group.starts
+    assert arguments[101] is state.current_step
+    assert options["input_output_aliases"] == {
+        **{index: index for index in range(6)},
+        **{31 + index: 6 + index for index in range(6)},
+        **{62 + index: 12 + index for index in range(6)},
+    }
+    assert attributes["nsteps"] == np.int32(3)
+    assert attributes["cpml_enabled"] == np.int32(1)
+    assert next_state.cpml_psi_h_terms == state.cpml_psi_h_terms
+
+
+def test_cuda_source_group_graph_requires_all_phase_component_slots():
+    program, state, context = _program_and_state(cpml=False)
+
+    with np.testing.assert_raises_regex(ValueError, "nine phase/component groups"):
+        cuda_runtime.run_source_group_steps(
+            state, context, program.coefficients, (None,) * 8, 3
+        )
 
 
 def test_cuda_source_graph_supports_pec_without_cpml(monkeypatch):

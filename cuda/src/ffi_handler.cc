@@ -335,6 +335,106 @@ ffi::Error StreamedSourceCpmlStepsHandler(
                           std::to_string(error));
 }
 
+ffi::Error StreamedSourceGroupsCpmlStepsHandler(
+    void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
+    int32_t abi_version, int32_t nsteps, float dt, float resolution,
+    int32_t metallic_edges, int32_t metric_kind, int32_t cpml_enabled) {
+  constexpr int32_t kSourceGroupCount = 9;
+  if (abi_version != BEAMZ_CUDA_ABI_VERSION || nsteps < 1 ||
+      metric_kind < 0 || metric_kind > 2 || cpml_enabled < 0 ||
+      cpml_enabled > 1) {
+    return ffi::Error::InvalidArgument(
+        "invalid BeamZ CUDA source-group graph attributes");
+  }
+  BeamzBuffer inputs[102]{};
+  BeamzBuffer outputs[18]{};
+  const size_t graph_input_count = cpml_enabled ? 74 : 24;
+  const size_t graph_output_count = cpml_enabled ? 18 : 6;
+  constexpr size_t source_input_count = 3 * kSourceGroupCount + 1;
+  for (size_t index = 0; index < graph_input_count + source_input_count;
+       ++index) {
+    auto decoded = args.get<ffi::AnyBuffer>(index);
+    if (!decoded) return decoded.error();
+    if (auto error = DecodeBuffer(*decoded, &inputs[index]); error.failure()) {
+      return error;
+    }
+  }
+  for (size_t index = 0; index < graph_output_count; ++index) {
+    auto decoded = rets.get<ffi::AnyBuffer>(index);
+    if (!decoded) return decoded.error();
+    if (auto error = DecodeBuffer(**decoded, &outputs[index]); error.failure()) {
+      return error;
+    }
+  }
+
+  auto initialize = [&](int32_t phase) {
+    BeamzLaunch launch{};
+    launch.abi_version = abi_version;
+    launch.phase = phase;
+    launch.nterms = cpml_enabled ? 6 : 0;
+    launch.metric_kind = metric_kind;
+    launch.dt = dt;
+    launch.resolution = resolution;
+    launch.inv_resolution = 1.0f / resolution;
+    launch.dt_over_eps = dt / kEps0;
+    launch.dt_over_mu = dt / kMu0;
+    launch.metallic_edges = metallic_edges;
+    return launch;
+  };
+  BeamzLaunch h_launch = initialize(0);
+  BeamzLaunch e_launch = initialize(1);
+  for (int component = 0; component < 3; ++component) {
+    h_launch.inputs[component] = inputs[component];
+    h_launch.inputs[3 + component] = inputs[3 + component];
+    h_launch.outputs[component] = outputs[component];
+    e_launch.inputs[component] = inputs[3 + component];
+    e_launch.inputs[3 + component] = outputs[component];
+    e_launch.outputs[component] = outputs[3 + component];
+  }
+  if (cpml_enabled) {
+    for (int index = 0; index < 31; ++index) {
+      h_launch.inputs[6 + index] = inputs[6 + index];
+      e_launch.inputs[6 + index] = inputs[37 + index];
+    }
+    for (int term = 0; term < 6; ++term) {
+      h_launch.outputs[3 + term] = outputs[6 + term];
+      e_launch.outputs[3 + term] = outputs[12 + term];
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+      h_launch.metrics[axis] = inputs[68 + axis];
+      e_launch.metrics[axis] = inputs[71 + axis];
+    }
+  } else {
+    for (int material = 0; material < 6; ++material) {
+      h_launch.inputs[6 + material] = inputs[6 + material];
+      e_launch.inputs[6 + material] = inputs[12 + material];
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+      h_launch.metrics[axis] = inputs[18 + axis];
+      e_launch.metrics[axis] = inputs[21 + axis];
+    }
+  }
+
+  BeamzSourceGroupLaunch groups[kSourceGroupCount]{};
+  const BeamzBuffer& current_step =
+      inputs[graph_input_count + 3 * kSourceGroupCount];
+  for (int32_t index = 0; index < kSourceGroupCount; ++index) {
+    groups[index].coefficients = inputs[graph_input_count + 3 * index];
+    groups[index].waveforms = inputs[graph_input_count + 3 * index + 1];
+    groups[index].starts = inputs[graph_input_count + 3 * index + 2];
+    groups[index].current_step = current_step;
+    groups[index].timing = index / 3;
+    groups[index].component = index % 3;
+  }
+  const int error = BeamzLaunchStreamedSourceGroupSteps(
+      stream, h_launch, e_launch, groups, kSourceGroupCount, nsteps);
+  return error == 0
+             ? ffi::Error::Success()
+             : ffi::Error::Internal(
+                   "BeamZ CUDA source-group CPML graph launch failed: " +
+                   std::to_string(error));
+}
+
 ffi::Error StreamedSourceMonitorCpmlStepsHandler(
     void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
     int32_t abi_version, int32_t nsteps, float dt, float resolution,
@@ -507,6 +607,21 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<int32_t>("source_start_z")
         .Attr<int32_t>("source_start_y")
         .Attr<int32_t>("source_start_x")
+        .Attr<int32_t>("metric_kind")
+        .Attr<int32_t>("cpml_enabled"));
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    beamz_cuda_streamed_source_groups_cpml_steps,
+    StreamedSourceGroupsCpmlStepsHandler,
+    ffi::Ffi::Bind()
+        .Ctx<ffi::PlatformStream<void*>>()
+        .RemainingArgs()
+        .RemainingRets()
+        .Attr<int32_t>("abi_version")
+        .Attr<int32_t>("nsteps")
+        .Attr<float>("dt")
+        .Attr<float>("resolution")
+        .Attr<int32_t>("metallic_edges")
         .Attr<int32_t>("metric_kind")
         .Attr<int32_t>("cpml_enabled"));
 

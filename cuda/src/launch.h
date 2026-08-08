@@ -33,6 +33,15 @@ struct BeamzSourceLaunch {
   int32_t starts[3];
 };
 
+struct BeamzSourceGroupLaunch {
+  BeamzBuffer coefficients;
+  BeamzBuffer waveforms;
+  BeamzBuffer starts;
+  BeamzBuffer current_step;
+  int32_t component;
+  int32_t timing;
+};
+
 struct BeamzDftLaunch {
   BeamzBuffer indices[6];
   BeamzBuffer weights[6];
@@ -54,6 +63,10 @@ int BeamzLaunchStreamedSourceSteps(void* stream, const BeamzLaunch& h_launch,
                                    const BeamzLaunch& e_launch,
                                    const BeamzSourceLaunch& source,
                                    int32_t nsteps);
+int BeamzLaunchStreamedSourceGroupSteps(
+    void* stream, const BeamzLaunch& h_launch, const BeamzLaunch& e_launch,
+    const BeamzSourceGroupLaunch* source_groups, int32_t source_group_count,
+    int32_t nsteps);
 int BeamzLaunchStreamedSourceMonitorSteps(
     void* stream, const BeamzLaunch& h_launch, const BeamzLaunch& e_launch,
     const BeamzSourceLaunch& source, const BeamzDftLaunch& monitor,

@@ -1,6 +1,7 @@
 """Private typed-FFI runtime for BeamZ's optional CUDA wheel."""
 
 from .runtime import (
+    run_source_group_steps,
     run_source_monitor_steps,
     run_source_steps,
     run_steps,
@@ -9,6 +10,7 @@ from .runtime import (
 )
 
 __all__ = [
+    "run_source_group_steps",
     "run_source_monitor_steps",
     "run_source_steps",
     "run_steps",
