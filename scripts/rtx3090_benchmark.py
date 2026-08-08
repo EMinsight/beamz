@@ -54,6 +54,33 @@ def _bootstrap_median_interval(
     return _percentile(tuple(medians), 0.025), _percentile(tuple(medians), 0.975)
 
 
+def _bootstrap_median_ratio_interval(
+    numerator: tuple[float, ...],
+    denominator: tuple[float, ...],
+    *,
+    draws: int = 4_000,
+    seed: int = 3090,
+) -> tuple[float, float]:
+    """Return an independent-bootstrap 95% interval for a median ratio."""
+    if draws < 100:
+        raise ValueError("bootstrap draws must be at least 100")
+    generator = random.Random(seed)
+    numerator_count = len(numerator)
+    denominator_count = len(denominator)
+    ratios = sorted(
+        statistics.median(
+            numerator[generator.randrange(numerator_count)]
+            for _ in range(numerator_count)
+        )
+        / statistics.median(
+            denominator[generator.randrange(denominator_count)]
+            for _ in range(denominator_count)
+        )
+        for _ in range(draws)
+    )
+    return _percentile(tuple(ratios), 0.025), _percentile(tuple(ratios), 0.975)
+
+
 @dataclass(frozen=True, slots=True)
 class TimingStatistics:
     """Descriptive statistics for independent, warm executable samples."""
@@ -173,6 +200,13 @@ class RTX3090Comparison:
         return self.cuda.median_gcups / self.baseline.median_gcups
 
     @property
+    def runtime_speedup_ci95(self) -> tuple[float, float]:
+        return _bootstrap_median_ratio_interval(
+            self.baseline.warm_runtime_samples_s,
+            self.cuda.warm_runtime_samples_s,
+        )
+
+    @property
     def compile_speedup(self) -> float:
         return self.baseline.compile_s / self.cuda.compile_s
 
@@ -186,6 +220,7 @@ class RTX3090Comparison:
             "baseline": self.baseline.as_dict(),
             "cuda": self.cuda.as_dict(),
             "runtime_speedup": self.runtime_speedup,
+            "runtime_speedup_ci95": self.runtime_speedup_ci95,
             "gcups_speedup": self.gcups_speedup,
             "compile_speedup": self.compile_speedup,
             "cuda_is_faster": self.cuda_is_faster,
@@ -213,6 +248,7 @@ def _markdown_report(comparison: RTX3090Comparison) -> str:
     cuda = comparison.cuda
     baseline_timing = baseline.timing
     cuda_timing = cuda.timing
+    speedup_low, speedup_high = comparison.runtime_speedup_ci95
     return "\n".join(
         (
             "# RTX 3090 custom CUDA FDTD benchmark",
@@ -238,7 +274,8 @@ def _markdown_report(comparison: RTX3090Comparison) -> str:
             "",
             (
                 f"Custom CUDA speedup: **{comparison.runtime_speedup:.3f}×** "
-                f"({'faster' if comparison.cuda_is_faster else 'slower'})"
+                f"(95% bootstrap CI [{speedup_low:.3f}, {speedup_high:.3f}]×; "
+                f"{'faster' if comparison.cuda_is_faster else 'slower'})"
             ),
             "",
         )
@@ -278,10 +315,10 @@ def _plot_report(comparison: RTX3090Comparison, output_path: Path) -> None:
     )
     axes[0].set_title("Warm executable runtime")
     axes[0].set_ylabel("seconds (median, 95% bootstrap CI)")
-    axes[1].bar(positions, gcups, color=colors)
+    throughput_bars = axes[1].bar(positions, gcups, color=colors)
     axes[1].set_title("FDTD throughput")
     axes[1].set_ylabel("GCUPS (median)")
-    axes[2].bar(positions, compile_times, color=colors)
+    compile_bars = axes[2].bar(positions, compile_times, color=colors)
     axes[2].set_title("First executable compilation")
     axes[2].set_ylabel("seconds")
     for axis in axes:
@@ -296,10 +333,34 @@ def _plot_report(comparison: RTX3090Comparison, output_path: Path) -> None:
             va="bottom",
             fontsize=9,
         )
+    for bar, value in zip(throughput_bars, gcups, strict=True):
+        axes[1].text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f"{value:.3f}",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
+    for bar, value in zip(compile_bars, compile_times, strict=True):
+        axes[2].text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f"{value:.3f}s",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
+    axes[0].set_ylim(0.0, max(item.median_ci95_high_s for item in timing) * 1.16)
+    axes[1].set_ylim(0.0, max(gcups) * 1.18)
+    axes[2].set_ylim(0.0, max(compile_times) * 1.16)
     axes[1].text(
         0.5,
-        0.96,
-        f"CUDA speedup: {comparison.runtime_speedup:.2f}×",
+        0.97,
+        "CUDA speedup: "
+        f"{comparison.runtime_speedup:.2f}× "
+        f"[{comparison.runtime_speedup_ci95[0]:.2f}, "
+        f"{comparison.runtime_speedup_ci95[1]:.2f}]",
         transform=axes[1].transAxes,
         ha="center",
         va="top",

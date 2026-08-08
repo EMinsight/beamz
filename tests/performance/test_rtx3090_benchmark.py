@@ -59,6 +59,9 @@ def test_report_writes_machine_readable_statistics_markdown_and_graph(tmp_path):
 
     assert payload["schema_version"] == "beamz.performance/rtx3090-v1"
     assert payload["runtime_speedup"] == pytest.approx(2.1)
+    assert payload["runtime_speedup_ci95"][0] > 1.0
+    assert payload["runtime_speedup_ci95"][0] <= payload["runtime_speedup"]
+    assert payload["runtime_speedup_ci95"][1] >= payload["runtime_speedup"]
     assert payload["cuda_is_faster"]
     assert "Custom CUDA speedup: **2.100×**" in paths["markdown"].read_text()
     assert paths["graph"].read_bytes().startswith(b"\x89PNG")
