@@ -6,7 +6,7 @@
 struct BeamzBuffer {
   void* data;
   int32_t rank;
-  int64_t dims[3];
+  int64_t dims[4];
 };
 
 struct BeamzLaunch {
@@ -31,6 +31,19 @@ struct BeamzSourceLaunch {
   int32_t starts[3];
 };
 
+struct BeamzDftLaunch {
+  BeamzBuffer indices[6];
+  BeamzBuffer weights[6];
+  BeamzBuffer frequencies;
+  BeamzBuffer component_mask;
+  BeamzBuffer dft_re;
+  BeamzBuffer dft_im;
+  BeamzBuffer dft_weight;
+  BeamzBuffer time;
+  int32_t frequency_count;
+  int32_t point_count;
+};
+
 // Returns zero after enqueueing all work, otherwise a CUDA runtime error code.
 int BeamzLaunchStreamed(void* stream, const BeamzLaunch& launch);
 int BeamzLaunchStreamedSteps(void* stream, const BeamzLaunch& h_launch,
@@ -39,6 +52,10 @@ int BeamzLaunchStreamedSourceSteps(void* stream, const BeamzLaunch& h_launch,
                                    const BeamzLaunch& e_launch,
                                    const BeamzSourceLaunch& source,
                                    int32_t nsteps);
+int BeamzLaunchStreamedSourceMonitorSteps(
+    void* stream, const BeamzLaunch& h_launch, const BeamzLaunch& e_launch,
+    const BeamzSourceLaunch& source, const BeamzDftLaunch& monitor,
+    int32_t nsteps);
 int BeamzLaunchHopper(void* stream, const BeamzLaunch& launch);
 
 #endif  // BEAMZ_CUDA_LAUNCH_H_

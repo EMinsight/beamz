@@ -12,7 +12,7 @@ from beamz.simulation.execute import initial_program_state
 from tests.performance.h100_workloads import H100Workload
 
 
-def _program_and_state(*, cpml: bool, source: bool = False):
+def _program_and_state(*, cpml: bool, source: bool = False, monitor: bool = False):
     workload = H100Workload(
         name="cuda_contract",
         shape_zyx=(8, 10, 12),
@@ -22,6 +22,7 @@ def _program_and_state(*, cpml: bool, source: bool = False):
         heterogeneous=True,
         cpml=cpml,
         source=source,
+        monitor=monitor,
     )
     simulation = workload.build()
     program = simulation.compile(backend="jax")
@@ -200,6 +201,44 @@ def test_cuda_source_cpml_graph_packs_source_and_aliases_state(monkeypatch):
     }
     assert attributes["source_component"] == np.int32(2)
     assert next_state.cpml_psi_h_terms == state.cpml_psi_h_terms
+
+
+def test_cuda_source_monitor_graph_aliases_dft_accumulators(monkeypatch):
+    program, state, context = _program_and_state(cpml=True, source=True, monitor=True)
+    captured = []
+
+    def fake_ffi_call(target, result_metadata, **options):
+        def call(*arguments, **attributes):
+            captured.append((target, result_metadata, options, arguments, attributes))
+            return (
+                *arguments[:6],
+                *arguments[31:37],
+                *arguments[62:68],
+                *arguments[85:88],
+            )
+
+        return call
+
+    monkeypatch.setattr(cuda_runtime.jax.ffi, "ffi_call", fake_ffi_call)
+
+    next_state = cuda_runtime.run_source_monitor_steps(
+        state,
+        context,
+        program.coefficients,
+        program.sources[0],
+        program.monitors[0],
+        3,
+    )
+
+    target, results, options, arguments, attributes = captured[0]
+    assert target == "beamz_cuda_streamed_source_monitor_cpml_steps"
+    assert len(results) == 21
+    assert len(arguments) == 89
+    assert options["input_output_aliases"][85] == 18
+    assert options["input_output_aliases"][86] == 19
+    assert options["input_output_aliases"][87] == 20
+    assert attributes["frequency_count"] == np.int32(3)
+    assert next_state.dft_vec_re is state.dft_vec_re
 
 
 def test_cuda_backend_selects_hybrid_jax_orchestration_kernel():

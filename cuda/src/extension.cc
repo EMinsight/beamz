@@ -17,6 +17,9 @@ NB_MODULE(beamz_cuda, module) {
         nb::capsule(reinterpret_cast<void*>(beamz_cuda_streamed_cpml_steps));
     registrations["beamz_cuda_streamed_source_cpml_steps"] = nb::capsule(
         reinterpret_cast<void*>(beamz_cuda_streamed_source_cpml_steps));
+    registrations["beamz_cuda_streamed_source_monitor_cpml_steps"] =
+        nb::capsule(reinterpret_cast<void*>(
+            beamz_cuda_streamed_source_monitor_cpml_steps));
     registrations["beamz_cuda_hopper"] =
         nb::capsule(reinterpret_cast<void*>(beamz_cuda_hopper));
     return registrations;

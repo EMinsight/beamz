@@ -281,6 +281,73 @@ def run_source_steps(state, ctx, coeffs, source, nsteps: int) -> SimulationState
     return _replace_graph_outputs(state, outputs)
 
 
+def run_source_monitor_steps(
+    state, ctx, coeffs, source, monitor, nsteps: int
+) -> SimulationState:
+    """Advance one packed source and one rectangular plane DFT in a CUDA graph."""
+    if (
+        not monitor.dft_enabled
+        or monitor.dft_record_interval != 1
+        or monitor.dft_t_start != 0.0
+        or np.isfinite(monitor.dft_t_end)
+        or monitor.dft_window_code != 0
+        or monitor.dft_normalization_code != 0
+        or monitor.freq_count < 1
+        or monitor.dft_point_count < 1
+        or state.dft_vec_re.dtype != jnp.float32
+    ):
+        raise ValueError("CUDA monitor graph requires a full-time float32 plane DFT")
+    arguments, result_values, aliases = _cpml_graph_io(state, ctx, coeffs)
+    result_values = (
+        *result_values,
+        state.dft_vec_re,
+        state.dft_vec_im,
+        state.dft_weight_sum,
+    )
+    aliases = {
+        **aliases,
+        85: 18,
+        86: 19,
+        87: 20,
+    }
+    call = jax.ffi.ffi_call(
+        "beamz_cuda_streamed_source_monitor_cpml_steps",
+        tuple(_shape(value) for value in result_values),
+        input_output_aliases=aliases,
+        vmap_method="sequential",
+    )
+    outputs = call(
+        *arguments,
+        source.coeff,
+        source.waveform,
+        state.current_step,
+        *monitor.dft_flat_idx,
+        *monitor.dft_weights,
+        monitor.freq_hz,
+        monitor.dft_component_mask,
+        state.dft_vec_re,
+        state.dft_vec_im,
+        state.dft_weight_sum,
+        state.t,
+        abi_version=np.int32(CUDA_ABI_VERSION),
+        nsteps=np.int32(nsteps),
+        dt=np.float32(ctx.dt),
+        resolution=np.float32(ctx.resolution),
+        metallic_edges=np.int32(_metallic_edge_mask(ctx.boundary.cpml.metallic_edges)),
+        source_component=np.int32(_COMPONENT_CODE[source.component]),
+        source_start_z=np.int32(source.slab_starts[0]),
+        source_start_y=np.int32(source.slab_starts[1]),
+        source_start_x=np.int32(source.slab_starts[2]),
+        frequency_count=np.int32(monitor.freq_count),
+        point_count=np.int32(monitor.dft_point_count),
+    )
+    return _replace_graph_outputs(state, outputs)._replace(
+        dft_vec_re=outputs[18],
+        dft_vec_im=outputs[19],
+        dft_weight_sum=outputs[20],
+    )
+
+
 def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
     """Advance a source-free, monitor-free Yee run through one CUDA FFI call."""
     if nsteps < 1:

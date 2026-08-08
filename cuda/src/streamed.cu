@@ -36,7 +36,8 @@ bool GraphCacheEnabled() {
 
 std::string GraphKey(void* stream, const BeamzLaunch& h_launch,
                      const BeamzLaunch& e_launch, int32_t nsteps,
-                     const BeamzSourceLaunch* source = nullptr) {
+                     const BeamzSourceLaunch* source = nullptr,
+                     const BeamzDftLaunch* monitor = nullptr) {
   std::string key;
   key.reserve(sizeof(stream) + sizeof(nsteps) + 2 * sizeof(BeamzLaunch));
   key.append(reinterpret_cast<const char*>(&stream), sizeof(stream));
@@ -45,6 +46,9 @@ std::string GraphKey(void* stream, const BeamzLaunch& h_launch,
   key.append(reinterpret_cast<const char*>(&e_launch), sizeof(e_launch));
   if (source != nullptr) {
     key.append(reinterpret_cast<const char*>(source), sizeof(*source));
+  }
+  if (monitor != nullptr) {
+    key.append(reinterpret_cast<const char*>(monitor), sizeof(*monitor));
   }
   return key;
 }
@@ -370,6 +374,54 @@ __global__ void ApplySourceSlab(BeamzLaunch e_launch,
       amplitude;
 }
 
+__global__ void AccumulatePlaneDft(BeamzLaunch h_launch,
+                                   BeamzLaunch e_launch,
+                                   BeamzDftLaunch monitor, int step_offset) {
+  const int point = blockIdx.x * blockDim.x + threadIdx.x;
+  const int frequency = blockIdx.y * blockDim.y + threadIdx.y;
+  const int component = blockIdx.z * blockDim.z + threadIdx.z;
+  if (point >= monitor.point_count || frequency >= monitor.frequency_count ||
+      component >= 6) {
+    return;
+  }
+  if (component == 0 && point == 0) {
+    static_cast<float*>(monitor.dft_weight.data)[frequency] += 1.0f;
+  }
+  const float mask =
+      static_cast<const float*>(monitor.component_mask.data)[component];
+  if (mask == 0.0f) return;
+
+  const BeamzBuffer& indices = monitor.indices[component];
+  const BeamzBuffer& weights = monitor.weights[component];
+  const BeamzBuffer& field = component < 3 ? e_launch.outputs[component]
+                                           : h_launch.outputs[component - 3];
+  float sample = 0.0f;
+  const int neighbors = static_cast<int>(indices.dims[1]);
+  for (int neighbor = 0; neighbor < neighbors; ++neighbor) {
+    const int gather_offset = point * neighbors + neighbor;
+    const int field_offset =
+        static_cast<const int32_t*>(indices.data)[gather_offset];
+    sample += static_cast<const float*>(field.data)[field_offset] *
+              static_cast<const float*>(weights.data)[gather_offset];
+  }
+
+  const float t = static_cast<const float*>(monitor.time.data)[0] +
+                  static_cast<float>(step_offset + 1) * e_launch.dt;
+  const float theta = 6.2831853071795864769f *
+                      static_cast<const float*>(monitor.frequencies.data)[frequency] *
+                      t;
+  float phase_sin, phase_cos;
+  sincosf(theta, &phase_sin, &phase_cos);
+  const int accumulator_offset =
+      (component * static_cast<int>(monitor.dft_re.dims[2]) + frequency) *
+          static_cast<int>(monitor.dft_re.dims[3]) +
+      point;
+  static_cast<float*>(monitor.dft_re.data)[accumulator_offset] +=
+      sample * phase_cos;
+  static_cast<float*>(monitor.dft_im.data)[accumulator_offset] +=
+      sample * phase_sin;
+}
+
 }  // namespace
 
 int BeamzLaunchStreamed(void* raw_stream, const BeamzLaunch& launch) {
@@ -424,7 +476,8 @@ int BeamzLaunchStreamed(void* raw_stream, const BeamzLaunch& launch) {
 
 int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
                         const BeamzLaunch& e_launch,
-                        const BeamzSourceLaunch* source, int32_t nsteps) {
+                        const BeamzSourceLaunch* source,
+                        const BeamzDftLaunch* monitor, int32_t nsteps) {
   if (nsteps < 1 || h_launch.phase != 0 || e_launch.phase != 1 ||
       h_launch.nterms != e_launch.nterms ||
       (h_launch.nterms != 0 && h_launch.nterms != 6)) {
@@ -432,9 +485,10 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
   }
   auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
   const std::string graph_key =
-      GraphKey(raw_stream, h_launch, e_launch, nsteps, source);
+      GraphKey(raw_stream, h_launch, e_launch, nsteps, source, monitor);
   GraphCache& cache = CachedGraphs();
-  if (GraphCacheEnabled()) {
+  const bool cache_enabled = GraphCacheEnabled();
+  if (cache_enabled) {
     std::lock_guard<std::mutex> lock(cache.mutex);
     const auto cached = cache.entries.find(graph_key);
     if (cached != cache.entries.end()) {
@@ -461,6 +515,18 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
       launch_error =
           static_cast<cudaError_t>(BeamzLaunchStreamed(raw_stream, e_launch));
       if (launch_error != cudaSuccess) break;
+      if (monitor != nullptr) {
+        const dim3 monitor_threads(32, 3, 2);
+        const dim3 monitor_blocks(
+            (monitor->point_count + monitor_threads.x - 1) / monitor_threads.x,
+            (monitor->frequency_count + monitor_threads.y - 1) /
+                monitor_threads.y,
+            (6 + monitor_threads.z - 1) / monitor_threads.z);
+        AccumulatePlaneDft<<<monitor_blocks, monitor_threads, 0, stream>>>(
+            h_launch, e_launch, *monitor, step);
+        launch_error = cudaPeekAtLastError();
+        if (launch_error != cudaSuccess) break;
+      }
     }
     return launch_error;
   };
@@ -478,7 +544,7 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
   cudaError_t end_error = cudaStreamEndCapture(stream, &graph);
   if (error == cudaSuccess) error = end_error;
   if (error == cudaSuccess) error = cudaGraphInstantiate(&executable, graph, 0);
-  if (error == cudaSuccess && GraphCacheEnabled()) {
+  if (error == cudaSuccess && cache_enabled) {
     std::lock_guard<std::mutex> lock(cache.mutex);
     if (cache.entries.size() >= kMaxCachedGraphs) {
       for (const auto& [unused_key, cached] : cache.entries) {
@@ -492,9 +558,14 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
       cudaGraphExecDestroy(executable);
       executable = entry->second;
     }
+    // Keep the executable protected from concurrent eviction until the launch has
+    // been submitted to its stream.
+    error = cudaGraphLaunch(executable, stream);
   }
-  if (error == cudaSuccess) error = cudaGraphLaunch(executable, stream);
-  if (!GraphCacheEnabled() && executable != nullptr) {
+  if (error == cudaSuccess && !cache_enabled) {
+    error = cudaGraphLaunch(executable, stream);
+  }
+  if (!cache_enabled && executable != nullptr) {
     cudaGraphExecDestroy(executable);
   }
   if (graph != nullptr) cudaGraphDestroy(graph);
@@ -503,7 +574,8 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
 
 int BeamzLaunchStreamedSteps(void* raw_stream, const BeamzLaunch& h_launch,
                              const BeamzLaunch& e_launch, int32_t nsteps) {
-  return LaunchStreamedGraph(raw_stream, h_launch, e_launch, nullptr, nsteps);
+  return LaunchStreamedGraph(raw_stream, h_launch, e_launch, nullptr, nullptr,
+                             nsteps);
 }
 
 int BeamzLaunchStreamedSourceSteps(void* raw_stream,
@@ -525,5 +597,43 @@ int BeamzLaunchStreamedSourceSteps(void* raw_stream,
       return cudaErrorInvalidValue;
     }
   }
-  return LaunchStreamedGraph(raw_stream, h_launch, e_launch, &source, nsteps);
+  return LaunchStreamedGraph(raw_stream, h_launch, e_launch, &source, nullptr,
+                             nsteps);
+}
+
+int BeamzLaunchStreamedSourceMonitorSteps(
+    void* raw_stream, const BeamzLaunch& h_launch,
+    const BeamzLaunch& e_launch, const BeamzSourceLaunch& source,
+    const BeamzDftLaunch& monitor, int32_t nsteps) {
+  if (monitor.frequency_count < 1 || monitor.point_count < 1 ||
+      monitor.frequencies.rank != 1 || monitor.component_mask.rank != 1 ||
+      monitor.dft_re.rank != 4 || monitor.dft_im.rank != 4 ||
+      monitor.dft_weight.rank != 2 || monitor.time.rank != 0) {
+    return cudaErrorInvalidValue;
+  }
+  for (int component = 0; component < 6; ++component) {
+    if (monitor.indices[component].rank != 2 ||
+        monitor.weights[component].rank != 2 ||
+        monitor.indices[component].dims[0] < monitor.point_count ||
+        monitor.weights[component].dims[0] < monitor.point_count ||
+        monitor.indices[component].dims[1] !=
+            monitor.weights[component].dims[1]) {
+      return cudaErrorInvalidValue;
+    }
+  }
+  if (source.coefficient.rank != 3 || source.waveform.rank != 1 ||
+      source.current_step.rank != 0 || source.component < 0 ||
+      source.component > 2 || source.waveform.dims[0] < 1) {
+    return cudaErrorInvalidValue;
+  }
+  const BeamzBuffer& target = e_launch.outputs[source.component];
+  for (int axis = 0; axis < 3; ++axis) {
+    if (source.starts[axis] < 0 ||
+        source.starts[axis] + source.coefficient.dims[axis] >
+            target.dims[axis]) {
+      return cudaErrorInvalidValue;
+    }
+  }
+  return LaunchStreamedGraph(raw_stream, h_launch, e_launch, &source, &monitor,
+                             nsteps);
 }

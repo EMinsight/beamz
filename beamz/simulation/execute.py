@@ -569,9 +569,27 @@ def build_scan(program, *, donate_state: bool = False):
         and program.sources[0].slab_sizes is not None
         else None
     )
+    graph_monitor = (
+        program.monitors[0]
+        if graph_source is not None
+        and len(program.monitors) == 1
+        and program.monitors[0].recorder_index < 0
+        and not program.monitors[0].accumulate_power
+        and not program.monitors[0].accumulate_frequency
+        and program.monitors[0].dft_enabled
+        and program.monitors[0].dft_record_interval == 1
+        and program.monitors[0].dft_t_start == 0.0
+        and not np.isfinite(program.monitors[0].dft_t_end)
+        and program.monitors[0].dft_window_code == 0
+        and program.monitors[0].dft_normalization_code == 0
+        and program.monitors[0].freq_count > 0
+        and program.monitors[0].dft_point_count > 0
+        and not bool(jax.config.read("jax_enable_x64"))
+        else None
+    )
     cuda_multi_step = (
         cfg.backend == "cuda_streamed"
-        and not program.monitors
+        and (not program.monitors or graph_monitor is not None)
         and (not program.sources or graph_source is not None)
     )
 
@@ -582,13 +600,26 @@ def build_scan(program, *, donate_state: bool = False):
         # 4. Run the same transition through scan or fori_loop. The choice changes the
         # lowering strategy, not timestep semantics.
         if cuda_multi_step:
-            from beamz.simulation.cuda import run_source_steps, run_steps
+            from beamz.simulation.cuda import (
+                run_source_monitor_steps,
+                run_source_steps,
+                run_steps,
+            )
 
             scan_out = (
                 run_steps(state, step_context, coeffs, cfg.num_steps)
                 if graph_source is None
                 else run_source_steps(
                     state, step_context, coeffs, graph_source, cfg.num_steps
+                )
+                if graph_monitor is None
+                else run_source_monitor_steps(
+                    state,
+                    step_context,
+                    coeffs,
+                    graph_source,
+                    graph_monitor,
+                    cfg.num_steps,
                 )
             )
             scan_out = scan_out._replace(
