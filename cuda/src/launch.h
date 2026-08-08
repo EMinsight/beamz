@@ -50,6 +50,9 @@ struct BeamzDftLaunch {
 int BeamzLaunchStreamed(void* stream, const BeamzLaunch& launch);
 int BeamzLaunchStreamedSteps(void* stream, const BeamzLaunch& h_launch,
                              const BeamzLaunch& e_launch, int32_t nsteps);
+int BeamzLaunchStreamed2dSteps(void* stream, const BeamzLaunch& h_launch,
+                               const BeamzLaunch& e_launch,
+                               int32_t polarization, int32_t nsteps);
 int BeamzLaunchStreamedSourceSteps(void* stream, const BeamzLaunch& h_launch,
                                    const BeamzLaunch& e_launch,
                                    const BeamzSourceLaunch& source,

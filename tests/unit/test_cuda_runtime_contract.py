@@ -5,6 +5,7 @@ from dataclasses import replace
 import jax.numpy as jnp
 import numpy as np
 
+import beamz as bz
 from beamz.simulation import kernels
 from beamz.simulation.compile import _elide_uniform_grid
 from beamz.simulation.cuda import runtime as cuda_runtime
@@ -144,6 +145,49 @@ def test_cuda_multi_step_ffi_aliases_all_fields(monkeypatch):
     }
     assert next_state.hx is state.hx
     assert next_state.ez is state.ez
+
+
+def test_cuda_2d_multi_step_uses_reduced_polarization_target(monkeypatch):
+    simulation = bz.Simulation(
+        domain=(0.8 * bz.um, 0.6 * bz.um),
+        resolution=0.1 * bz.um,
+        polarization="te",
+        time=np.arange(4) * 1e-17,
+    )
+    program = simulation.compile(backend="jax")
+    state = initial_program_state(
+        program, t=float(simulation.time[0]), current_step=0, monitor_steps=4
+    )
+    config = replace(program.config, backend="cuda_streamed")
+    context = kernels.CompiledStepContext(
+        config=config,
+        boundary=program.boundary,
+        source_batches={},
+        metrics=program.metrics,
+        resolution=config.resolution,
+        dt=config.dt,
+        dt_scalar=jnp.asarray(config.dt, dtype=jnp.float32),
+        is_3d=False,
+    )
+    captured = []
+
+    def fake_ffi_call(target, result_metadata, **options):
+        def call(*arguments, **attributes):
+            captured.append((target, result_metadata, options, arguments, attributes))
+            return arguments[:6]
+
+        return call
+
+    monkeypatch.setattr(cuda_runtime.jax.ffi, "ffi_call", fake_ffi_call)
+
+    cuda_runtime.run_steps(state, context, program.coefficients, 3)
+
+    target, results, options, arguments, attributes = captured[0]
+    assert target == "beamz_cuda_streamed_2d_steps"
+    assert len(results) == 6
+    assert len(arguments) == 24
+    assert options["input_output_aliases"] == {index: index for index in range(6)}
+    assert attributes["polarization"] == np.int32(1)
 
 
 def test_cuda_cpml_multi_step_ffi_aliases_fields_and_psi(monkeypatch):

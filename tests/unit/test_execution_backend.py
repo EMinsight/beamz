@@ -32,7 +32,7 @@ def test_auto_preserves_jax_when_cuda_is_not_visible(monkeypatch):
         backend_runtime.resolve_backend("cuda")
 
 
-def test_auto_preserves_jax_for_unsupported_2d_simulations(monkeypatch):
+def test_auto_selects_streamed_cuda_for_source_free_2d_simulations(monkeypatch):
     monkeypatch.setattr(
         backend_runtime,
         "resolve_backend",
@@ -46,7 +46,39 @@ def test_auto_preserves_jax_for_unsupported_2d_simulations(monkeypatch):
 
     program = simulation.compile(backend="auto")
 
+    assert program.config.backend == "cuda_streamed"
+
+
+def test_auto_preserves_jax_for_2d_cpml_simulations(monkeypatch):
+    monkeypatch.setattr(
+        backend_runtime,
+        "resolve_backend",
+        lambda backend: "cuda_streamed" if backend == "auto" else backend,
+    )
+    simulation = bz.Simulation(
+        domain=(0.4 * bz.um, 0.3 * bz.um),
+        resolution=0.1 * bz.um,
+        time=np.arange(3) * 1e-17,
+        boundaries=[bz.PML(thickness=0.1 * bz.um, formulation="cpml")],
+    )
+
+    program = simulation.compile(backend="auto")
+
     assert program.config.backend == "jax"
+
+
+def test_explicit_cuda_rejects_2d_cpml_simulations():
+    simulation = bz.Simulation(
+        domain=(0.4 * bz.um, 0.3 * bz.um),
+        resolution=0.1 * bz.um,
+        time=np.arange(3) * 1e-17,
+        boundaries=[bz.PML(thickness=0.1 * bz.um, formulation="cpml")],
+    )
+
+    with pytest.raises(
+        backend_runtime.CudaBackendUnavailable, match="without CPML"
+    ):
+        simulation.compile(backend="cuda_streamed")
 
 
 def _rectilinear_3d_simulation():
@@ -210,6 +242,7 @@ def test_hopper_only_extension_requires_explicit_opt_in(monkeypatch):
 def test_typed_ffi_registrations_use_cuda_api_v1(monkeypatch):
     extension = _extension(
         "beamz_cuda_streamed",
+        "beamz_cuda_streamed_2d_steps",
         "beamz_cuda_streamed_steps",
         "beamz_cuda_streamed_cpml_steps",
         "beamz_cuda_streamed_source_cpml_steps",
@@ -229,6 +262,7 @@ def test_typed_ffi_registrations_use_cuda_api_v1(monkeypatch):
     assert targets == (
         "beamz_cuda_hopper",
         "beamz_cuda_streamed",
+        "beamz_cuda_streamed_2d_steps",
         "beamz_cuda_streamed_cpml_steps",
         "beamz_cuda_streamed_source_cpml_steps",
         "beamz_cuda_streamed_source_monitor_cpml_steps",

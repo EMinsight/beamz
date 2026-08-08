@@ -6,6 +6,8 @@
 extern "C" XLA_FFI_Error* beamz_cuda_streamed(XLA_FFI_CallFrame* call_frame);
 extern "C" XLA_FFI_Error* beamz_cuda_streamed_steps(
     XLA_FFI_CallFrame* call_frame);
+extern "C" XLA_FFI_Error* beamz_cuda_streamed_2d_steps(
+    XLA_FFI_CallFrame* call_frame);
 extern "C" XLA_FFI_Error* beamz_cuda_streamed_cpml_steps(
     XLA_FFI_CallFrame* call_frame);
 extern "C" XLA_FFI_Error* beamz_cuda_streamed_source_cpml_steps(

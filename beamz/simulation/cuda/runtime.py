@@ -447,6 +447,8 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
         raise ValueError("CUDA step count must be positive")
     fields = (state.hx, state.hy, state.hz, state.ex, state.ey, state.ez)
     if ctx.boundary.cpml.enabled:
+        if not ctx.is_3d:
+            raise ValueError("CUDA 2D multi-step execution does not yet support CPML")
         arguments, result_values, aliases = _cpml_graph_io(state, ctx, coeffs)
         call = jax.ffi.ffi_call(
             "beamz_cuda_streamed_cpml_steps",
@@ -480,23 +482,37 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
         coeffs.e_source_y,
         coeffs.e_source_z,
     )
+    target = (
+        "beamz_cuda_streamed_steps"
+        if ctx.is_3d
+        else "beamz_cuda_streamed_2d_steps"
+    )
     call = jax.ffi.ffi_call(
-        "beamz_cuda_streamed_steps",
+        target,
         tuple(_shape(value) for value in fields),
         input_output_aliases={index: index for index in range(6)},
         vmap_method="sequential",
     )
+    attributes = {
+        "abi_version": np.int32(CUDA_ABI_VERSION),
+        "nsteps": np.int32(nsteps),
+        "dt": np.float32(ctx.dt),
+        "resolution": np.float32(ctx.resolution),
+        "metallic_edges": np.int32(
+            _metallic_edge_mask(ctx.boundary.cpml.metallic_edges)
+        ),
+        "metric_kind": _metric_kind_code(ctx),
+    }
+    if not ctx.is_3d:
+        attributes["polarization"] = np.int32(
+            0 if ctx.config.polarization_2d == "tm" else 1
+        )
     outputs = call(
         *fields,
         *materials,
         *_phase_metrics(ctx, _PHASE_H),
         *_phase_metrics(ctx, _PHASE_E),
-        abi_version=np.int32(CUDA_ABI_VERSION),
-        nsteps=np.int32(nsteps),
-        dt=np.float32(ctx.dt),
-        resolution=np.float32(ctx.resolution),
-        metallic_edges=np.int32(_metallic_edge_mask(ctx.boundary.cpml.metallic_edges)),
-        metric_kind=_metric_kind_code(ctx),
+        **attributes,
     )
     return state._replace(
         hx=outputs[0],

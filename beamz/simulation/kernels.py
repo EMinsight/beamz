@@ -1588,10 +1588,6 @@ def select_update_kernel(ctx: CompiledStepContext) -> StepUpdateKernel:
     """Select the static update-kernel variant before JAX tracing."""
 
     if ctx.config.backend != "jax":
-        if not ctx.is_3d:
-            raise ValueError(
-                "CUDA execution currently requires a three-dimensional grid"
-            )
         if ctx.config.sharding.enabled:
             raise ValueError(
                 "CUDA execution currently supports one GPU; use backend='jax' "

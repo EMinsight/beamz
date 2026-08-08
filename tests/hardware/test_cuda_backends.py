@@ -8,7 +8,7 @@ import pytest
 
 import beamz as bz
 from beamz.design import MaterialGrid
-from beamz.design.raster import Grid, Material, Scene, rasterize
+from beamz.design.raster import Grid, Material, RasterOptions, Scene, rasterize
 from beamz.simulation.backend import cuda_backend_status
 from beamz.simulation.execute import initial_program_state
 from tests.performance.h100_workloads import H100Workload
@@ -213,6 +213,65 @@ def test_streamed_cuda_matches_jax_on_nonuniform_grids(metric_kind, cpml):
     ).state
 
     assert simulation.compile(backend="cuda_streamed").config.metric_kind == metric_kind
+    _assert_state_close(reference, actual)
+
+
+@pytest.mark.parametrize("polarization", ["tm", "te"])
+@pytest.mark.parametrize("rectilinear", [False, True], ids=["uniform", "graded"])
+def test_streamed_cuda_matches_jax_for_source_free_2d(polarization, rectilinear):
+    if rectilinear:
+        x_widths = 70e-9 * np.linspace(1.0, 1.25, 32)
+        y_widths = 85e-9 * np.linspace(1.0, 1.18, 24)
+        grid = Grid(
+            np.concatenate(([0.0], np.cumsum(x_widths))),
+            np.concatenate(([0.0], np.cumsum(y_widths))),
+            np.asarray((0.0, 1.0)),
+        )
+        material_grid = MaterialGrid.from_raster_result(
+            rasterize(
+                Scene((Material(),)),
+                grid,
+                options=RasterOptions(
+                    components=f"two_dimensional_{polarization}"
+                ),
+            ),
+            polarization=polarization,
+        )
+        simulation = bz.Simulation(
+            material_grid=material_grid,
+            polarization=polarization,
+            time=np.arange(24, dtype=np.float64) * 2e-17,
+            boundaries=[bz.PEC(edges="all")],
+        )
+    else:
+        simulation = bz.Simulation(
+            domain=(2.4e-6, 1.8e-6),
+            resolution=75e-9,
+            polarization=polarization,
+            time=np.arange(24, dtype=np.float64) * 2e-17,
+            boundaries=[bz.PEC(edges="all")],
+        )
+    state = simulation.initial_state()
+    rng = np.random.default_rng(20260812)
+    state = state._replace(
+        **{
+            name: rng.normal(size=np.asarray(getattr(state, name)).shape).astype(
+                np.float32
+            )
+            * 1e-5
+            for name in ("ex", "ey", "ez", "hx", "hy", "hz")
+        }
+    )
+
+    reference = simulation.advance(
+        state=_copy_state(state), num_steps=simulation.num_steps, backend="jax"
+    ).state
+    actual = simulation.advance(
+        state=_copy_state(state),
+        num_steps=simulation.num_steps,
+        backend="cuda_streamed",
+    ).state
+
     _assert_state_close(reference, actual)
 
 
