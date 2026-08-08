@@ -14,6 +14,11 @@ PROFILES = (
     "uniform_pec",
     "heterogeneous_pec",
     "heterogeneous_cpml",
+    "axis_uniform_pec",
+    "rectilinear_pec",
+    "rectilinear_cpml",
+    "pec_source",
+    "pec_source_monitor",
     "cpml_source",
     "cpml_source_monitor",
 )
