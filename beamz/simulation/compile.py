@@ -763,12 +763,21 @@ def compile_program(
         "yes",
         "on",
     }
-    from .backend import normalize_backend, resolve_backend
+    from .backend import CudaBackendUnavailable, normalize_backend, resolve_backend
 
     requested_backend = normalize_backend(backend)
+    metric_kind = simulation.grid.metric_kind_for(
+        ("x", "y", "z") if simulation.is_3d else ("x", "y")
+    )
+    cuda_grid_supported = simulation.is_3d and metric_kind == "isotropic_uniform"
+    if requested_backend not in {"auto", "jax"} and not cuda_grid_supported:
+        raise CudaBackendUnavailable(
+            "CUDA execution currently requires an isotropic uniform 3D grid; "
+            f"this simulation requires {metric_kind!r} metrics. Use backend='jax'."
+        )
     resolved_backend = (
         "jax"
-        if requested_backend == "auto" and not simulation.is_3d
+        if requested_backend == "auto" and not cuda_grid_supported
         else resolve_backend(requested_backend)
     )
     request = simulation.to_request(

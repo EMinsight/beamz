@@ -405,7 +405,7 @@ def test_compiled_3d_cpml_uses_material_coefficients():
         resolution=dx,
     )
 
-    program = sim.compile(num_steps=1)
+    program = sim.compile(num_steps=1, backend="jax")
     coefficients = program.coefficients
 
     assert program.boundary.cpml.enabled
@@ -451,7 +451,7 @@ def test_compiled_3d_cpml_uses_material_coefficients():
     assert float(coefficients.h_sigma_m_x) == 0.0
     assert float(coefficients.h_sigma_m_y) == 0.0
     assert float(coefficients.h_sigma_m_z) == 0.0
-    sim.advance(num_steps=1, progress=False)
+    sim.advance(num_steps=1, progress=False, backend="jax")
 
 
 def test_compiled_3d_field_recorder_uses_logical_component_shape():
@@ -483,8 +483,8 @@ def test_compiled_3d_field_recorder_uses_logical_component_shape():
         resolution=dx,
     )
 
-    program = sim.compile(num_steps=2)
-    result = sim.advance(num_steps=2, progress=False)
+    program = sim.compile(num_steps=2, backend="jax")
+    result = sim.advance(num_steps=2, progress=False, backend="jax")
     frames = result.results.monitor("frames")
     plane = result.results.monitor("plane")
     assert not hasattr(result.results, "snapshots")
@@ -530,7 +530,7 @@ def test_compiled_3d_sponge_pml_uses_material_coefficients():
         resolution=dx,
     )
 
-    program = sim.compile(num_steps=1)
+    program = sim.compile(num_steps=1, backend="jax")
     assert not program.boundary.cpml.enabled
     coefficients = program.coefficients
     assert coefficients.e_decay_x.shape == (0, 0, 0)
@@ -550,7 +550,7 @@ def test_compiled_3d_sponge_pml_uses_material_coefficients():
         np.asarray(_fields_for_sim(sim).sigma_m_hx),
     )
 
-    sim.advance(num_steps=1, progress=False)
+    sim.advance(num_steps=1, progress=False, backend="jax")
 
 
 def test_simulation_memory_estimate_reports_fields_and_compiled_coefficients():
@@ -620,7 +620,7 @@ def test_compiled_uses_material_coefficients_for_3d_loss():
         resolution=dx,
     )
 
-    program = sim.compile(num_steps=1)
+    program = sim.compile(num_steps=1, backend="jax")
     coefficients = program.coefficients
 
     assert coefficients.e_decay_x.shape == (0, 0, 0)
@@ -640,7 +640,7 @@ def test_compiled_uses_material_coefficients_for_3d_loss():
         np.asarray(_fields_for_sim(sim).sigma_m_hx),
     )
 
-    sim.advance(num_steps=1, progress=False)
+    sim.advance(num_steps=1, progress=False, backend="jax")
 
 
 def test_compiled_3d_cpml_profiles_match_expected_x_boundary_embedding():

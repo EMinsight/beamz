@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import beamz as bz
+from beamz.design import MaterialGrid, RectilinearGrid
 from beamz.simulation import backend as backend_runtime
 
 
@@ -45,6 +46,43 @@ def test_auto_preserves_jax_for_unsupported_2d_simulations(monkeypatch):
     program = simulation.compile(backend="auto")
 
     assert program.config.backend == "jax"
+
+
+def _rectilinear_3d_simulation():
+    grid = RectilinearGrid(
+        np.asarray((0.0, 0.1, 0.3)),
+        np.asarray((0.0, 0.15, 0.3)),
+        np.asarray((0.0, 0.1, 0.3)),
+    )
+    shape = (2, 2, 2)
+    materials = MaterialGrid(
+        permittivity=np.ones(shape, dtype=np.float32),
+        conductivity=np.float32(0.0),
+        permeability=np.float32(1.0),
+        resolution=0.1,
+        shape=shape,
+        grid=grid,
+    )
+    return bz.Simulation(material_grid=materials, time=np.arange(3) * 1e-17)
+
+
+def test_auto_preserves_jax_for_rectilinear_3d_simulations(monkeypatch):
+    monkeypatch.setattr(
+        backend_runtime,
+        "resolve_backend",
+        lambda backend: "cuda_streamed" if backend == "auto" else backend,
+    )
+
+    program = _rectilinear_3d_simulation().compile(backend="auto")
+
+    assert program.config.backend == "jax"
+
+
+def test_explicit_cuda_rejects_rectilinear_3d_simulations():
+    with pytest.raises(
+        backend_runtime.CudaBackendUnavailable, match="isotropic uniform 3D"
+    ):
+        _rectilinear_3d_simulation().compile(backend="cuda_streamed")
 
 
 def test_cuda_status_exposes_complete_diagnostics():
