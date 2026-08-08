@@ -26,6 +26,7 @@ CUDA_STREAMED_TARGETS = frozenset(
     {
         "beamz_cuda_streamed",
         "beamz_cuda_streamed_steps",
+        "beamz_cuda_temporal_steps",
         "beamz_cuda_streamed_cpml_steps",
         "beamz_cuda_streamed_source_cpml_steps",
         "beamz_cuda_streamed_source_groups_cpml_steps",

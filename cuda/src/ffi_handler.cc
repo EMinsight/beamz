@@ -170,6 +170,76 @@ ffi::Error StreamedStepsHandler(void* stream, ffi::RemainingArgs args,
                           std::to_string(error));
 }
 
+// Out-of-place temporal updates need a second, XLA-owned field set.  Exposing
+// that workspace as aliased results makes device writes visible to XLA instead
+// of mutating buffers which the typed FFI contract considers read-only.
+ffi::Error TemporalStepsHandler(void* stream, ffi::RemainingArgs args,
+                                ffi::RemainingRets rets, int32_t abi_version,
+                                int32_t nsteps, float dt, float resolution,
+                                int32_t metallic_edges, int32_t metric_kind) {
+  if (abi_version != BEAMZ_CUDA_ABI_VERSION) {
+    return ffi::Error::InvalidArgument("beamz_cuda ABI version mismatch");
+  }
+  if (nsteps < 1 || metric_kind < 0 || metric_kind > 2) {
+    return ffi::Error::InvalidArgument("invalid BeamZ CUDA temporal attributes");
+  }
+  BeamzBuffer inputs[30]{};
+  BeamzBuffer outputs[12]{};
+  for (size_t index = 0; index < 30; ++index) {
+    auto decoded = args.get<ffi::AnyBuffer>(index);
+    if (!decoded) return decoded.error();
+    if (auto error = DecodeBuffer(*decoded, &inputs[index]); error.failure()) {
+      return error;
+    }
+  }
+  for (size_t index = 0; index < 12; ++index) {
+    auto decoded = rets.get<ffi::AnyBuffer>(index);
+    if (!decoded) return decoded.error();
+    if (auto error = DecodeBuffer(**decoded, &outputs[index]); error.failure()) {
+      return error;
+    }
+  }
+
+  auto initialize = [&](int32_t phase) {
+    BeamzLaunch launch{};
+    launch.abi_version = abi_version;
+    launch.phase = phase;
+    launch.nterms = 0;
+    launch.metric_kind = metric_kind;
+    launch.dt = dt;
+    launch.resolution = resolution;
+    launch.inv_resolution = 1.0f / resolution;
+    launch.dt_over_eps = dt / kEps0;
+    launch.dt_over_mu = dt / kMu0;
+    launch.metallic_edges = metallic_edges;
+    return launch;
+  };
+  BeamzLaunch h_launch = initialize(0);
+  BeamzLaunch e_launch = initialize(1);
+  for (int component = 0; component < 3; ++component) {
+    h_launch.inputs[component] = inputs[component];
+    h_launch.inputs[3 + component] = inputs[3 + component];
+    h_launch.outputs[component] = outputs[component];
+    e_launch.inputs[component] = inputs[3 + component];
+    e_launch.inputs[3 + component] = outputs[component];
+    e_launch.outputs[component] = outputs[3 + component];
+  }
+  for (int material = 0; material < 6; ++material) {
+    h_launch.inputs[6 + material] = inputs[12 + material];
+    e_launch.inputs[6 + material] = inputs[18 + material];
+  }
+  for (int axis = 0; axis < 3; ++axis) {
+    h_launch.metrics[axis] = inputs[24 + axis];
+    e_launch.metrics[axis] = inputs[27 + axis];
+  }
+  const int error =
+      BeamzLaunchStreamedSteps(stream, h_launch, e_launch, nsteps);
+  return error == 0 ? ffi::Error::Success()
+                    : ffi::Error::Internal(
+                          "BeamZ CUDA temporal workspace launch failed: " +
+                          std::to_string(error));
+}
+
 ffi::Error StreamedCpmlStepsHandler(
     void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
     int32_t abi_version, int32_t nsteps, float dt, float resolution,
@@ -686,6 +756,18 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_streamed, StreamedHandler,
                                   .Attr<int32_t>("metric_kind"));
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_streamed_steps, StreamedStepsHandler,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<void*>>()
+                                  .RemainingArgs()
+                                  .RemainingRets()
+                                  .Attr<int32_t>("abi_version")
+                                  .Attr<int32_t>("nsteps")
+                                  .Attr<float>("dt")
+                                  .Attr<float>("resolution")
+                                  .Attr<int32_t>("metallic_edges")
+                                  .Attr<int32_t>("metric_kind"));
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_temporal_steps, TemporalStepsHandler,
                               ffi::Ffi::Bind()
                                   .Ctx<ffi::PlatformStream<void*>>()
                                   .RemainingArgs()
