@@ -15,6 +15,7 @@ namespace {
 constexpr int kTileX = 32;
 constexpr int kTileY = 4;
 constexpr int kTileZ = 2;
+constexpr int kPressureTileZ = 1;
 constexpr size_t kMaxCachedGraphs = 32;
 
 struct GraphCache {
@@ -489,9 +490,11 @@ int BeamzLaunchStreamed(void* raw_stream, const BeamzLaunch& launch) {
     max_z = output.dims[0] > max_z ? output.dims[0] : max_z;
   }
   const int y_blocks = static_cast<int>((max_y + kTileY - 1) / kTileY);
-  const dim3 threads(kTileX, kTileY, kTileZ);
+  const int tile_z =
+      launch.nterms != 0 || launch.metric_kind != 0 ? kPressureTileZ : kTileZ;
+  const dim3 threads(kTileX, kTileY, tile_z);
   const dim3 blocks((max_x + kTileX - 1) / kTileX, 3 * y_blocks,
-                    (max_z + kTileZ - 1) / kTileZ);
+                    (max_z + tile_z - 1) / tile_z);
   const bool scalar_coefficients =
       launch.nterms == 0 && launch.inputs[6].rank == 0 &&
       launch.inputs[7].rank == 0 && launch.inputs[8].rank == 0 &&
