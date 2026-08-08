@@ -1,8 +1,12 @@
 #include <cuda_runtime_api.h>
 
 #include <cstddef>
+#include <cstdlib>
 #include <cstdint>
 #include <limits>
+#include <mutex>
+#include <string>
+#include <unordered_map>
 
 #include "launch.h"
 
@@ -11,6 +15,35 @@ namespace {
 constexpr int kTileX = 32;
 constexpr int kTileY = 4;
 constexpr int kTileZ = 2;
+constexpr size_t kMaxCachedGraphs = 32;
+
+struct GraphCache {
+  std::mutex mutex;
+  std::unordered_map<std::string, cudaGraphExec_t> entries;
+};
+
+GraphCache& CachedGraphs() {
+  // Deliberately retain executable handles until process teardown. CUDA contexts may
+  // already be gone when static destructors run, and the bounded cache is tiny.
+  static auto* cache = new GraphCache();
+  return *cache;
+}
+
+bool GraphCacheEnabled() {
+  const char* value = std::getenv("BEAMZ_CUDA_DISABLE_GRAPH_CACHE");
+  return value == nullptr || value[0] == '\0' || value[0] == '0';
+}
+
+std::string GraphKey(void* stream, const BeamzLaunch& h_launch,
+                     const BeamzLaunch& e_launch, int32_t nsteps) {
+  std::string key;
+  key.reserve(sizeof(stream) + sizeof(nsteps) + 2 * sizeof(BeamzLaunch));
+  key.append(reinterpret_cast<const char*>(&stream), sizeof(stream));
+  key.append(reinterpret_cast<const char*>(&nsteps), sizeof(nsteps));
+  key.append(reinterpret_cast<const char*>(&h_launch), sizeof(h_launch));
+  key.append(reinterpret_cast<const char*>(&e_launch), sizeof(e_launch));
+  return key;
+}
 
 bool FitsIntOffsets(const BeamzBuffer& value) {
   int64_t elements = 1;
@@ -358,6 +391,16 @@ int BeamzLaunchStreamedSteps(void* raw_stream, const BeamzLaunch& h_launch,
     return cudaErrorInvalidValue;
   }
   auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
+  const std::string graph_key =
+      GraphKey(raw_stream, h_launch, e_launch, nsteps);
+  GraphCache& cache = CachedGraphs();
+  if (GraphCacheEnabled()) {
+    std::lock_guard<std::mutex> lock(cache.mutex);
+    const auto cached = cache.entries.find(graph_key);
+    if (cached != cache.entries.end()) {
+      return static_cast<int>(cudaGraphLaunch(cached->second, stream));
+    }
+  }
   auto launch_steps = [&]() {
     cudaError_t launch_error = cudaSuccess;
     for (int32_t step = 0; step < nsteps; ++step) {
@@ -384,8 +427,25 @@ int BeamzLaunchStreamedSteps(void* raw_stream, const BeamzLaunch& h_launch,
   cudaError_t end_error = cudaStreamEndCapture(stream, &graph);
   if (error == cudaSuccess) error = end_error;
   if (error == cudaSuccess) error = cudaGraphInstantiate(&executable, graph, 0);
+  if (error == cudaSuccess && GraphCacheEnabled()) {
+    std::lock_guard<std::mutex> lock(cache.mutex);
+    if (cache.entries.size() >= kMaxCachedGraphs) {
+      for (const auto& [unused_key, cached] : cache.entries) {
+        (void)unused_key;
+        cudaGraphExecDestroy(cached);
+      }
+      cache.entries.clear();
+    }
+    const auto [entry, inserted] = cache.entries.emplace(graph_key, executable);
+    if (!inserted) {
+      cudaGraphExecDestroy(executable);
+      executable = entry->second;
+    }
+  }
   if (error == cudaSuccess) error = cudaGraphLaunch(executable, stream);
-  if (executable != nullptr) cudaGraphExecDestroy(executable);
+  if (!GraphCacheEnabled() && executable != nullptr) {
+    cudaGraphExecDestroy(executable);
+  }
   if (graph != nullptr) cudaGraphDestroy(graph);
   return error;
 }
