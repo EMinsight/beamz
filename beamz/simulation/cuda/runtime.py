@@ -264,6 +264,39 @@ def _cpml_graph_io(state, ctx, coeffs):
     return arguments, result_values, aliases
 
 
+def _yee_graph_io(state, ctx, coeffs):
+    fields = (state.hx, state.hy, state.hz, state.ex, state.ey, state.ez)
+    materials = (
+        coeffs.h_decay_x,
+        coeffs.h_decay_y,
+        coeffs.h_decay_z,
+        coeffs.h_source_x,
+        coeffs.h_source_y,
+        coeffs.h_source_z,
+        coeffs.e_decay_x,
+        coeffs.e_decay_y,
+        coeffs.e_decay_z,
+        coeffs.e_source_x,
+        coeffs.e_source_y,
+        coeffs.e_source_z,
+    )
+    arguments = (
+        *fields,
+        *materials,
+        *_phase_metrics(ctx, _PHASE_H),
+        *_phase_metrics(ctx, _PHASE_E),
+    )
+    return arguments, fields, {index: index for index in range(6)}
+
+
+def _graph_io(state, ctx, coeffs):
+    return (
+        _cpml_graph_io(state, ctx, coeffs)
+        if ctx.boundary.cpml.enabled
+        else _yee_graph_io(state, ctx, coeffs)
+    )
+
+
 def _replace_graph_outputs(state, outputs) -> SimulationState:
     return state._replace(
         hx=outputs[0],
@@ -278,11 +311,9 @@ def _replace_graph_outputs(state, outputs) -> SimulationState:
 
 
 def run_source_steps(state, ctx, coeffs, source, nsteps: int) -> SimulationState:
-    """Advance one packed pre-E source and CPML through one CUDA graph call."""
+    """Advance one packed pre-E source through one CUDA graph call."""
     if nsteps < 1:
         raise ValueError("CUDA step count must be positive")
-    if not ctx.boundary.cpml.enabled:
-        raise ValueError("CUDA source graph requires CPML")
     if (
         source.timing != "pre_e"
         or source.component not in {"Ex", "Ey", "Ez"}
@@ -292,7 +323,7 @@ def run_source_steps(state, ctx, coeffs, source, nsteps: int) -> SimulationState
         or tuple(source.coeff.shape) != tuple(source.slab_sizes)
     ):
         raise ValueError("CUDA source graph requires one packed pre-E slab source")
-    arguments, result_values, aliases = _cpml_graph_io(state, ctx, coeffs)
+    arguments, result_values, aliases = _graph_io(state, ctx, coeffs)
     call = jax.ffi.ffi_call(
         "beamz_cuda_streamed_source_cpml_steps",
         tuple(_shape(value) for value in result_values),
@@ -310,12 +341,22 @@ def run_source_steps(state, ctx, coeffs, source, nsteps: int) -> SimulationState
         resolution=np.float32(ctx.resolution),
         metallic_edges=np.int32(_metallic_edge_mask(ctx.boundary.cpml.metallic_edges)),
         metric_kind=_metric_kind_code(ctx),
+        cpml_enabled=np.int32(ctx.boundary.cpml.enabled),
         source_component=np.int32(_COMPONENT_CODE[source.component]),
         source_start_z=np.int32(source.slab_starts[0]),
         source_start_y=np.int32(source.slab_starts[1]),
         source_start_x=np.int32(source.slab_starts[2]),
     )
-    return _replace_graph_outputs(state, outputs)
+    if ctx.boundary.cpml.enabled:
+        return _replace_graph_outputs(state, outputs)
+    return state._replace(
+        hx=outputs[0],
+        hy=outputs[1],
+        hz=outputs[2],
+        ex=outputs[3],
+        ey=outputs[4],
+        ez=outputs[5],
+    )
 
 
 def run_source_monitor_steps(
@@ -334,7 +375,8 @@ def run_source_monitor_steps(
         or state.dft_vec_re.dtype != jnp.float32
     ):
         raise ValueError("CUDA monitor graph requires a full-time float32 plane DFT")
-    arguments, result_values, aliases = _cpml_graph_io(state, ctx, coeffs)
+    arguments, result_values, aliases = _graph_io(state, ctx, coeffs)
+    state_output_count = len(result_values)
     result_values = (
         *result_values,
         state.dft_vec_re,
@@ -343,9 +385,9 @@ def run_source_monitor_steps(
     )
     aliases = {
         **aliases,
-        91: 18,
-        92: 19,
-        93: 20,
+        len(arguments) + 17: state_output_count,
+        len(arguments) + 18: state_output_count + 1,
+        len(arguments) + 19: state_output_count + 2,
     }
     call = jax.ffi.ffi_call(
         "beamz_cuda_streamed_source_monitor_cpml_steps",
@@ -372,6 +414,7 @@ def run_source_monitor_steps(
         resolution=np.float32(ctx.resolution),
         metallic_edges=np.int32(_metallic_edge_mask(ctx.boundary.cpml.metallic_edges)),
         metric_kind=_metric_kind_code(ctx),
+        cpml_enabled=np.int32(ctx.boundary.cpml.enabled),
         source_component=np.int32(_COMPONENT_CODE[source.component]),
         source_start_z=np.int32(source.slab_starts[0]),
         source_start_y=np.int32(source.slab_starts[1]),
@@ -379,10 +422,22 @@ def run_source_monitor_steps(
         frequency_count=np.int32(monitor.freq_count),
         point_count=np.int32(monitor.dft_point_count),
     )
-    return _replace_graph_outputs(state, outputs)._replace(
-        dft_vec_re=outputs[18],
-        dft_vec_im=outputs[19],
-        dft_weight_sum=outputs[20],
+    next_state = (
+        _replace_graph_outputs(state, outputs)
+        if ctx.boundary.cpml.enabled
+        else state._replace(
+            hx=outputs[0],
+            hy=outputs[1],
+            hz=outputs[2],
+            ex=outputs[3],
+            ey=outputs[4],
+            ez=outputs[5],
+        )
+    )
+    return next_state._replace(
+        dft_vec_re=outputs[state_output_count],
+        dft_vec_im=outputs[state_output_count + 1],
+        dft_weight_sum=outputs[state_output_count + 2],
     )
 
 

@@ -245,23 +245,26 @@ ffi::Error StreamedSourceCpmlStepsHandler(
     void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
     int32_t abi_version, int32_t nsteps, float dt, float resolution,
     int32_t metallic_edges, int32_t source_component, int32_t source_start_z,
-    int32_t source_start_y, int32_t source_start_x, int32_t metric_kind) {
+    int32_t source_start_y, int32_t source_start_x, int32_t metric_kind,
+    int32_t cpml_enabled) {
   if (abi_version != BEAMZ_CUDA_ABI_VERSION || nsteps < 1 ||
       source_component < 0 || source_component > 2 || metric_kind < 0 ||
-      metric_kind > 2) {
+      metric_kind > 2 || cpml_enabled < 0 || cpml_enabled > 1) {
     return ffi::Error::InvalidArgument(
         "invalid BeamZ CUDA source-graph attributes");
   }
   BeamzBuffer inputs[77]{};
   BeamzBuffer outputs[18]{};
-  for (size_t index = 0; index < 77; ++index) {
+  const size_t graph_input_count = cpml_enabled ? 74 : 24;
+  const size_t graph_output_count = cpml_enabled ? 18 : 6;
+  for (size_t index = 0; index < graph_input_count + 3; ++index) {
     auto decoded = args.get<ffi::AnyBuffer>(index);
     if (!decoded) return decoded.error();
     if (auto error = DecodeBuffer(*decoded, &inputs[index]); error.failure()) {
       return error;
     }
   }
-  for (size_t index = 0; index < 18; ++index) {
+  for (size_t index = 0; index < graph_output_count; ++index) {
     auto decoded = rets.get<ffi::AnyBuffer>(index);
     if (!decoded) return decoded.error();
     if (auto error = DecodeBuffer(**decoded, &outputs[index]); error.failure()) {
@@ -273,7 +276,7 @@ ffi::Error StreamedSourceCpmlStepsHandler(
     BeamzLaunch launch{};
     launch.abi_version = abi_version;
     launch.phase = phase;
-    launch.nterms = 6;
+    launch.nterms = cpml_enabled ? 6 : 0;
     launch.metric_kind = metric_kind;
     launch.dt = dt;
     launch.resolution = resolution;
@@ -293,22 +296,33 @@ ffi::Error StreamedSourceCpmlStepsHandler(
     e_launch.inputs[3 + component] = outputs[component];
     e_launch.outputs[component] = outputs[3 + component];
   }
-  for (int index = 0; index < 31; ++index) {
-    h_launch.inputs[6 + index] = inputs[6 + index];
-    e_launch.inputs[6 + index] = inputs[37 + index];
-  }
-  for (int term = 0; term < 6; ++term) {
-    h_launch.outputs[3 + term] = outputs[6 + term];
-    e_launch.outputs[3 + term] = outputs[12 + term];
-  }
-  for (int axis = 0; axis < 3; ++axis) {
-    h_launch.metrics[axis] = inputs[68 + axis];
-    e_launch.metrics[axis] = inputs[71 + axis];
+  if (cpml_enabled) {
+    for (int index = 0; index < 31; ++index) {
+      h_launch.inputs[6 + index] = inputs[6 + index];
+      e_launch.inputs[6 + index] = inputs[37 + index];
+    }
+    for (int term = 0; term < 6; ++term) {
+      h_launch.outputs[3 + term] = outputs[6 + term];
+      e_launch.outputs[3 + term] = outputs[12 + term];
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+      h_launch.metrics[axis] = inputs[68 + axis];
+      e_launch.metrics[axis] = inputs[71 + axis];
+    }
+  } else {
+    for (int material = 0; material < 6; ++material) {
+      h_launch.inputs[6 + material] = inputs[6 + material];
+      e_launch.inputs[6 + material] = inputs[12 + material];
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+      h_launch.metrics[axis] = inputs[18 + axis];
+      e_launch.metrics[axis] = inputs[21 + axis];
+    }
   }
   BeamzSourceLaunch source{};
-  source.coefficient = inputs[74];
-  source.waveform = inputs[75];
-  source.current_step = inputs[76];
+  source.coefficient = inputs[graph_input_count];
+  source.waveform = inputs[graph_input_count + 1];
+  source.current_step = inputs[graph_input_count + 2];
   source.component = source_component;
   source.starts[0] = source_start_z;
   source.starts[1] = source_start_y;
@@ -326,23 +340,26 @@ ffi::Error StreamedSourceMonitorCpmlStepsHandler(
     int32_t abi_version, int32_t nsteps, float dt, float resolution,
     int32_t metallic_edges, int32_t source_component, int32_t source_start_z,
     int32_t source_start_y, int32_t source_start_x, int32_t frequency_count,
-    int32_t point_count, int32_t metric_kind) {
+    int32_t point_count, int32_t metric_kind, int32_t cpml_enabled) {
   if (abi_version != BEAMZ_CUDA_ABI_VERSION || nsteps < 1 ||
       source_component < 0 || source_component > 2 || frequency_count < 1 ||
-      point_count < 1 || metric_kind < 0 || metric_kind > 2) {
+      point_count < 1 || metric_kind < 0 || metric_kind > 2 ||
+      cpml_enabled < 0 || cpml_enabled > 1) {
     return ffi::Error::InvalidArgument(
         "invalid BeamZ CUDA source-monitor graph attributes");
   }
   BeamzBuffer inputs[95]{};
   BeamzBuffer outputs[21]{};
-  for (size_t index = 0; index < 95; ++index) {
+  const size_t graph_input_count = cpml_enabled ? 74 : 24;
+  const size_t graph_output_count = cpml_enabled ? 18 : 6;
+  for (size_t index = 0; index < graph_input_count + 21; ++index) {
     auto decoded = args.get<ffi::AnyBuffer>(index);
     if (!decoded) return decoded.error();
     if (auto error = DecodeBuffer(*decoded, &inputs[index]); error.failure()) {
       return error;
     }
   }
-  for (size_t index = 0; index < 21; ++index) {
+  for (size_t index = 0; index < graph_output_count + 3; ++index) {
     auto decoded = rets.get<ffi::AnyBuffer>(index);
     if (!decoded) return decoded.error();
     if (auto error = DecodeBuffer(**decoded, &outputs[index]); error.failure()) {
@@ -354,7 +371,7 @@ ffi::Error StreamedSourceMonitorCpmlStepsHandler(
     BeamzLaunch launch{};
     launch.abi_version = abi_version;
     launch.phase = phase;
-    launch.nterms = 6;
+    launch.nterms = cpml_enabled ? 6 : 0;
     launch.metric_kind = metric_kind;
     launch.dt = dt;
     launch.resolution = resolution;
@@ -374,37 +391,48 @@ ffi::Error StreamedSourceMonitorCpmlStepsHandler(
     e_launch.inputs[3 + component] = outputs[component];
     e_launch.outputs[component] = outputs[3 + component];
   }
-  for (int index = 0; index < 31; ++index) {
-    h_launch.inputs[6 + index] = inputs[6 + index];
-    e_launch.inputs[6 + index] = inputs[37 + index];
-  }
-  for (int term = 0; term < 6; ++term) {
-    h_launch.outputs[3 + term] = outputs[6 + term];
-    e_launch.outputs[3 + term] = outputs[12 + term];
-  }
-  for (int axis = 0; axis < 3; ++axis) {
-    h_launch.metrics[axis] = inputs[68 + axis];
-    e_launch.metrics[axis] = inputs[71 + axis];
+  if (cpml_enabled) {
+    for (int index = 0; index < 31; ++index) {
+      h_launch.inputs[6 + index] = inputs[6 + index];
+      e_launch.inputs[6 + index] = inputs[37 + index];
+    }
+    for (int term = 0; term < 6; ++term) {
+      h_launch.outputs[3 + term] = outputs[6 + term];
+      e_launch.outputs[3 + term] = outputs[12 + term];
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+      h_launch.metrics[axis] = inputs[68 + axis];
+      e_launch.metrics[axis] = inputs[71 + axis];
+    }
+  } else {
+    for (int material = 0; material < 6; ++material) {
+      h_launch.inputs[6 + material] = inputs[6 + material];
+      e_launch.inputs[6 + material] = inputs[12 + material];
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+      h_launch.metrics[axis] = inputs[18 + axis];
+      e_launch.metrics[axis] = inputs[21 + axis];
+    }
   }
   BeamzSourceLaunch source{};
-  source.coefficient = inputs[74];
-  source.waveform = inputs[75];
-  source.current_step = inputs[76];
+  source.coefficient = inputs[graph_input_count];
+  source.waveform = inputs[graph_input_count + 1];
+  source.current_step = inputs[graph_input_count + 2];
   source.component = source_component;
   source.starts[0] = source_start_z;
   source.starts[1] = source_start_y;
   source.starts[2] = source_start_x;
   BeamzDftLaunch monitor{};
   for (int component = 0; component < 6; ++component) {
-    monitor.indices[component] = inputs[77 + component];
-    monitor.weights[component] = inputs[83 + component];
+    monitor.indices[component] = inputs[graph_input_count + 3 + component];
+    monitor.weights[component] = inputs[graph_input_count + 9 + component];
   }
-  monitor.frequencies = inputs[89];
-  monitor.component_mask = inputs[90];
-  monitor.dft_re = outputs[18];
-  monitor.dft_im = outputs[19];
-  monitor.dft_weight = outputs[20];
-  monitor.time = inputs[94];
+  monitor.frequencies = inputs[graph_input_count + 15];
+  monitor.component_mask = inputs[graph_input_count + 16];
+  monitor.dft_re = outputs[graph_output_count];
+  monitor.dft_im = outputs[graph_output_count + 1];
+  monitor.dft_weight = outputs[graph_output_count + 2];
+  monitor.time = inputs[graph_input_count + 20];
   monitor.frequency_count = frequency_count;
   monitor.point_count = point_count;
   const int error = BeamzLaunchStreamedSourceMonitorSteps(
@@ -479,7 +507,8 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<int32_t>("source_start_z")
         .Attr<int32_t>("source_start_y")
         .Attr<int32_t>("source_start_x")
-        .Attr<int32_t>("metric_kind"));
+        .Attr<int32_t>("metric_kind")
+        .Attr<int32_t>("cpml_enabled"));
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     beamz_cuda_streamed_source_monitor_cpml_steps,
@@ -499,7 +528,8 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<int32_t>("source_start_x")
         .Attr<int32_t>("frequency_count")
         .Attr<int32_t>("point_count")
-        .Attr<int32_t>("metric_kind"));
+        .Attr<int32_t>("metric_kind")
+        .Attr<int32_t>("cpml_enabled"));
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_hopper, HopperHandler,
                               ffi::Ffi::Bind()

@@ -202,7 +202,34 @@ def test_cuda_source_cpml_graph_packs_source_and_aliases_state(monkeypatch):
         **{62 + index: 12 + index for index in range(6)},
     }
     assert attributes["source_component"] == np.int32(2)
+    assert attributes["cpml_enabled"] == np.int32(1)
     assert next_state.cpml_psi_h_terms == state.cpml_psi_h_terms
+
+
+def test_cuda_source_graph_supports_pec_without_cpml(monkeypatch):
+    program, state, context = _program_and_state(cpml=False, source=True)
+    captured = []
+
+    def fake_ffi_call(target, result_metadata, **options):
+        def call(*arguments, **attributes):
+            captured.append((target, result_metadata, options, arguments, attributes))
+            return arguments[:6]
+
+        return call
+
+    monkeypatch.setattr(cuda_runtime.jax.ffi, "ffi_call", fake_ffi_call)
+
+    next_state = cuda_runtime.run_source_steps(
+        state, context, program.coefficients, program.sources[0], 3
+    )
+
+    target, results, options, arguments, attributes = captured[0]
+    assert target == "beamz_cuda_streamed_source_cpml_steps"
+    assert len(results) == 6
+    assert len(arguments) == 27
+    assert options["input_output_aliases"] == {index: index for index in range(6)}
+    assert attributes["cpml_enabled"] == np.int32(0)
+    assert next_state.ez is state.ez
 
 
 def test_cuda_source_monitor_graph_aliases_dft_accumulators(monkeypatch):
@@ -240,6 +267,41 @@ def test_cuda_source_monitor_graph_aliases_dft_accumulators(monkeypatch):
     assert options["input_output_aliases"][92] == 19
     assert options["input_output_aliases"][93] == 20
     assert attributes["frequency_count"] == np.int32(3)
+    assert attributes["cpml_enabled"] == np.int32(1)
+    assert next_state.dft_vec_re is state.dft_vec_re
+
+
+def test_cuda_source_monitor_graph_supports_pec_without_cpml(monkeypatch):
+    program, state, context = _program_and_state(
+        cpml=False, source=True, monitor=True
+    )
+    captured = []
+
+    def fake_ffi_call(target, result_metadata, **options):
+        def call(*arguments, **attributes):
+            captured.append((target, result_metadata, options, arguments, attributes))
+            return (*arguments[:6], *arguments[41:44])
+
+        return call
+
+    monkeypatch.setattr(cuda_runtime.jax.ffi, "ffi_call", fake_ffi_call)
+
+    next_state = cuda_runtime.run_source_monitor_steps(
+        state,
+        context,
+        program.coefficients,
+        program.sources[0],
+        program.monitors[0],
+        3,
+    )
+
+    _target, results, options, arguments, attributes = captured[0]
+    assert len(results) == 9
+    assert len(arguments) == 45
+    assert options["input_output_aliases"][41] == 6
+    assert options["input_output_aliases"][42] == 7
+    assert options["input_output_aliases"][43] == 8
+    assert attributes["cpml_enabled"] == np.int32(0)
     assert next_state.dft_vec_re is state.dft_vec_re
 
 
