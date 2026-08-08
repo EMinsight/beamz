@@ -1,0 +1,354 @@
+#!/usr/bin/env python3
+"""Compare PR CUDA FDTD with origin/main's JAX/XLA FDTD on one RTX 3090.
+
+The parent process creates a detached ``origin/main`` worktree and runs it and the
+checked-out PR in separate Python processes.  Both are therefore timed with the
+same JAX/CUDA environment while importing their own revision of BeamZ.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+try:  # ``python scripts/...`` exposes the sibling module directly.
+    from rtx3090_benchmark import (
+        BackendMeasurement,
+        RTX3090Comparison,
+        write_report_artifacts,
+    )
+except ModuleNotFoundError:  # ``import scripts.benchmark...`` is useful in tests.
+    from scripts.rtx3090_benchmark import (
+        BackendMeasurement,
+        RTX3090Comparison,
+        write_report_artifacts,
+    )
+
+
+def _git(root: Path, *args: str) -> str:
+    return subprocess.run(
+        ("git", *args),
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _nvidia_smi() -> dict[str, str | None]:
+    """Collect stable driver/CUDA metadata without making it part of timing."""
+    try:
+        output = subprocess.run(
+            (
+                "nvidia-smi",
+                "--query-gpu=name,driver_version",
+                "--format=csv,noheader",
+            ),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        name, driver = (part.strip() for part in output.splitlines()[0].split(",", 1))
+    except (OSError, subprocess.CalledProcessError, IndexError, ValueError):
+        name, driver = "unknown", None
+    try:
+        output = subprocess.run(
+            ("nvidia-smi",), check=True, capture_output=True, text=True
+        ).stdout
+        cuda = next(
+            (
+                line.split(marker, 1)[1].split()[0]
+                for line in output.splitlines()
+                for marker in ("CUDA Version:", "CUDA UMD Version:")
+                if marker in line
+            ),
+            None,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        cuda = None
+    return {"device": name, "driver_version": driver, "cuda_version": cuda}
+
+
+def _child_environment(source_root: Path, runner_root: Path) -> dict[str, str]:
+    environment = os.environ.copy()
+    source_paths = (str(source_root), str(runner_root))
+    previous_path = environment.get("PYTHONPATH")
+    paths = [*source_paths]
+    if previous_path:
+        paths.append(previous_path)
+    environment["PYTHONPATH"] = os.pathsep.join(paths)
+    # Persisted executables can turn a source-level comparison into a cache comparison.
+    environment["BEAMZ_DISABLE_JAX_PERSISTENT_CACHE"] = "1"
+    environment.pop("JAX_COMPILATION_CACHE_DIR", None)
+    return environment
+
+
+def _run_child(
+    *,
+    script: Path,
+    source_root: Path,
+    role: str,
+    backend: str,
+    shape: tuple[int, int, int],
+    timesteps: int,
+    samples: int,
+    warmups: int,
+) -> dict[str, object]:
+    command = (
+        sys.executable,
+        str(script),
+        "--child",
+        "--role",
+        role,
+        "--backend",
+        backend,
+        "--shape",
+        *(str(value) for value in shape),
+        "--timesteps",
+        str(timesteps),
+        "--samples",
+        str(samples),
+        "--warmups",
+        str(warmups),
+    )
+    completed = subprocess.run(
+        command,
+        cwd=source_root,
+        env=_child_environment(source_root, script.parents[1]),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    try:
+        return json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(
+            f"benchmark child emitted invalid JSON:\n{completed.stdout}\n{completed.stderr}"
+        ) from error
+
+
+def _measurement(payload: dict[str, object], label: str) -> BackendMeasurement:
+    return BackendMeasurement(
+        label=label,
+        revision=str(payload["revision"]),
+        backend=str(payload["backend"]),
+        device=str(payload["device"]),
+        grid_zyx=tuple(int(value) for value in payload["grid_zyx"]),  # type: ignore[arg-type]
+        timesteps=int(payload["timesteps"]),
+        trace_lower_s=float(payload["trace_lower_s"]),
+        compile_s=float(payload["compile_s"]),
+        warm_runtime_samples_s=tuple(
+            float(value)
+            for value in payload["warm_runtime_samples_s"]  # type: ignore[arg-type]
+        ),
+        driver_version=(
+            None
+            if payload.get("driver_version") is None
+            else str(payload["driver_version"])
+        ),
+        cuda_version=(
+            None
+            if payload.get("cuda_version") is None
+            else str(payload["cuda_version"])
+        ),
+    )
+
+
+def run_comparison(args: argparse.Namespace) -> RTX3090Comparison:
+    root = Path(__file__).resolve().parents[1]
+    script = Path(__file__).resolve()
+    metadata = _nvidia_smi()
+    device = str(metadata["device"])
+    if not args.allow_other_gpu and "RTX 3090" not in device.upper():
+        raise RuntimeError(
+            f"this protocol is calibrated for an RTX 3090; detected {device!r}. "
+            "Pass --allow-other-gpu to collect a non-canonical record."
+        )
+    temporary_parent = Path(tempfile.mkdtemp(prefix="beamz-origin-main-"))
+    baseline_root = temporary_parent / "origin-main"
+    try:
+        subprocess.run(
+            ("git", "worktree", "add", "--detach", str(baseline_root), "origin/main"),
+            cwd=root,
+            check=True,
+        )
+        baseline_payload = _run_child(
+            script=script,
+            source_root=baseline_root,
+            role="baseline",
+            backend="jax",
+            shape=tuple(args.shape),
+            timesteps=args.timesteps,
+            samples=args.samples,
+            warmups=args.warmups,
+        )
+        cuda_payload = _run_child(
+            script=script,
+            source_root=root,
+            role="cuda",
+            backend=args.backend,
+            shape=tuple(args.shape),
+            timesteps=args.timesteps,
+            samples=args.samples,
+            warmups=args.warmups,
+        )
+    finally:
+        if baseline_root.exists():
+            subprocess.run(
+                ("git", "worktree", "remove", "--force", str(baseline_root)),
+                cwd=root,
+                check=False,
+            )
+        shutil.rmtree(temporary_parent, ignore_errors=True)
+    comparison = RTX3090Comparison(
+        _measurement(baseline_payload, "origin/main JAX/XLA"),
+        _measurement(cuda_payload, "PR CUDA streamed"),
+    )
+    return comparison
+
+
+def _block(value) -> None:
+    value.ez.block_until_ready()
+
+
+def _run_child_benchmark(args: argparse.Namespace) -> None:
+    """Run one source revision.  This path intentionally imports no PR-only helpers."""
+    import platform
+    import time
+
+    import jax
+    import numpy as np
+
+    import beamz as bz
+    from beamz.design import MaterialGrid
+    from beamz.simulation import sharding as sharding_runtime
+    from beamz.simulation.execute import build_scan, initial_program_state
+
+    devices = tuple(jax.devices("gpu"))
+    if len(devices) != 1:
+        raise RuntimeError(f"expected exactly one visible GPU, found {devices!r}")
+    device = devices[0]
+    shape = tuple(args.shape)
+    resolution = 50e-9
+    dt = 0.95 * resolution / (bz.LIGHT_SPEED * np.sqrt(3.0))
+    size_xyz = (shape[2] * resolution, shape[1] * resolution, shape[0] * resolution)
+    material_grid = MaterialGrid(
+        permittivity=np.ones(shape, dtype=np.float32),
+        conductivity=np.float32(0.0),
+        permeability=np.float32(1.0),
+        resolution=resolution,
+        shape=shape,
+    )
+    simulation = bz.Simulation(
+        material_grid=material_grid,
+        boundaries=[bz.PEC(edges="all")],
+        size=size_xyz,
+        time=np.arange(args.timesteps, dtype=np.float64) * dt,
+    )
+    simulation.clear_compiled_cache()
+    if args.role == "baseline":
+        program = simulation.compile(num_steps=args.timesteps)
+    else:
+        program = simulation.compile(num_steps=args.timesteps, backend=args.backend)
+    state = initial_program_state(
+        program,
+        t=float(simulation.time[0]),
+        current_step=0,
+        monitor_steps=args.timesteps,
+    )
+    coefficients = sharding_runtime.place_tree(program, program.coefficients)
+    scan = build_scan(program, donate_state=False)
+    trace_started = time.perf_counter()
+    lowered = scan.lower(state, coefficients)
+    trace_lower_s = time.perf_counter() - trace_started
+    compile_started = time.perf_counter()
+    executable = lowered.compile()
+    compile_s = time.perf_counter() - compile_started
+    for _ in range(args.warmups):
+        warmed = executable(state, coefficients)
+        _block(warmed)
+    samples = []
+    for _ in range(args.samples):
+        started = time.perf_counter()
+        result = executable(state, coefficients)
+        _block(result)
+        samples.append(time.perf_counter() - started)
+    smi = _nvidia_smi()
+    payload = {
+        "revision": _revision(Path.cwd()),
+        "backend": getattr(program.config, "backend", "jax"),
+        "device": str(getattr(device, "device_kind", device)),
+        "grid_zyx": shape,
+        "timesteps": args.timesteps,
+        "trace_lower_s": trace_lower_s,
+        "compile_s": compile_s,
+        "warm_runtime_samples_s": samples,
+        "driver_version": smi["driver_version"],
+        "cuda_version": smi["cuda_version"],
+        "python_version": platform.python_version(),
+    }
+    print(json.dumps(payload, allow_nan=False))
+
+
+def _revision(root: Path) -> str:
+    commit = _git(root, "rev-parse", "HEAD")
+    return commit + ("-dirty" if _git(root, "status", "--porcelain") else "")
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--shape", nargs=3, type=int, default=(96, 128, 192), metavar=("NZ", "NY", "NX")
+    )
+    parser.add_argument("--timesteps", type=int, default=200)
+    parser.add_argument("--samples", type=int, default=11)
+    parser.add_argument("--warmups", type=int, default=3)
+    parser.add_argument(
+        "--backend", choices=("jax", "cuda", "cuda_streamed"), default="cuda_streamed"
+    )
+    parser.add_argument(
+        "--output-dir", type=Path, default=Path("benchmarks/results/rtx3090")
+    )
+    parser.add_argument("--allow-other-gpu", action="store_true")
+    parser.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--role", choices=("baseline", "cuda"), help=argparse.SUPPRESS)
+    return parser
+
+
+def main() -> None:
+    args = _parser().parse_args()
+    if args.samples < 3:
+        raise SystemExit("--samples must be at least three")
+    if args.warmups < 1:
+        raise SystemExit("--warmups must be positive")
+    if any(value <= 2 for value in args.shape):
+        raise SystemExit("each --shape dimension must be greater than two")
+    if args.timesteps < 1:
+        raise SystemExit("--timesteps must be positive")
+    if not args.child and args.backend == "jax":
+        raise SystemExit("--backend jax is reserved for the origin/main child run")
+    if args.child:
+        if args.role is None:
+            raise SystemExit("--child requires --role")
+        _run_child_benchmark(args)
+        return
+    comparison = run_comparison(args)
+    paths = write_report_artifacts(comparison, args.output_dir)
+    print(
+        f"CUDA {'wins' if comparison.cuda_is_faster else 'regresses'}: "
+        f"{comparison.runtime_speedup:.3f}x runtime speedup"
+    )
+    for kind, path in paths.items():
+        print(f"{kind}: {path}")
+    if not comparison.cuda_is_faster:
+        raise SystemExit("custom CUDA is slower than origin/main JAX/XLA")
+
+
+if __name__ == "__main__":
+    main()

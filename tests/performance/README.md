@@ -33,6 +33,11 @@ Use `compare_benchmarks()` for same-backend regression gates and
 `compare_backend_speedup()` to compare JAX, streamed CUDA, and Hopper records for the
 same physical workload and hardware.
 
+`RTX3090.md` documents the controlled PR-versus-`origin/main` harness. Unlike the
+H100 schema records, it deliberately checks out `origin/main` and emits a table,
+raw JSON statistics, and a graph for the custom CUDA-kernel decision on one RTX
+3090.
+
 The default `(nz, ny, nx) = (128, 256, 384)` grid and 500 timesteps are part of
 the workload identity. Regression records with different features, backend,
 hardware, device count, shape, or timestep count are deliberately not comparable.

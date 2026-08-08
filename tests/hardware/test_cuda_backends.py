@@ -11,7 +11,10 @@ from beamz.simulation.execute import initial_program_state
 from tests.performance.h100_workloads import H100Workload
 
 STATUS = cuda_backend_status()
-pytestmark = pytest.mark.skipif(not STATUS.available, reason=STATUS.reason)
+pytestmark = pytest.mark.skipif(
+    not STATUS.available,
+    reason=STATUS.reason or "CUDA backend unavailable",
+)
 
 
 def _simulation_and_seed(*, cpml: bool):
