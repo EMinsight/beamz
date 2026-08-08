@@ -38,30 +38,40 @@ using Launcher = int (*)(void*, const BeamzLaunch&);
 ffi::Error Dispatch(Launcher launcher, void* stream, ffi::RemainingArgs args,
                     ffi::RemainingRets rets, int32_t abi_version, int32_t phase,
                     int32_t nterms, float dt, float resolution,
-                    int32_t metallic_edges) {
+                    int32_t metallic_edges, int32_t metric_kind) {
   if (abi_version != BEAMZ_CUDA_ABI_VERSION) {
     return ffi::Error::InvalidArgument("beamz_cuda ABI version mismatch");
   }
-  if (phase < 0 || phase > 1 || (nterms != 0 && nterms != 6)) {
+  if (phase < 0 || phase > 1 || (nterms != 0 && nterms != 6) ||
+      metric_kind < 0 || metric_kind > 2) {
     return ffi::Error::InvalidArgument(
         "invalid BeamZ CUDA phase or CPML term count");
   }
-  const size_t input_count = 13 + 4 * static_cast<size_t>(nterms);
+  const size_t payload_count = 13 + 4 * static_cast<size_t>(nterms);
   const size_t output_count = 3 + static_cast<size_t>(nterms);
   BeamzLaunch launch{};
   launch.abi_version = abi_version;
   launch.phase = phase;
   launch.nterms = nterms;
+  launch.metric_kind = metric_kind;
   launch.dt = dt;
   launch.resolution = resolution;
   launch.inv_resolution = 1.0f / resolution;
   launch.dt_over_eps = dt / kEps0;
   launch.dt_over_mu = dt / kMu0;
   launch.metallic_edges = metallic_edges;
-  for (size_t index = 0; index < input_count; ++index) {
+  for (size_t index = 0; index < payload_count; ++index) {
     auto decoded = args.get<ffi::AnyBuffer>(index);
     if (!decoded) return decoded.error();
     if (auto error = DecodeBuffer(*decoded, &launch.inputs[index]);
+        error.failure()) {
+      return error;
+    }
+  }
+  for (size_t axis = 0; axis < 3; ++axis) {
+    auto decoded = args.get<ffi::AnyBuffer>(payload_count + axis);
+    if (!decoded) return decoded.error();
+    if (auto error = DecodeBuffer(*decoded, &launch.metrics[axis]);
         error.failure()) {
       return error;
     }
@@ -83,24 +93,28 @@ ffi::Error Dispatch(Launcher launcher, void* stream, ffi::RemainingArgs args,
 ffi::Error StreamedHandler(void* stream, ffi::RemainingArgs args,
                            ffi::RemainingRets rets, int32_t abi_version,
                            int32_t phase, int32_t nterms, float dt,
-                           float resolution, int32_t metallic_edges) {
+                           float resolution, int32_t metallic_edges,
+                           int32_t metric_kind) {
   return Dispatch(BeamzLaunchStreamed, stream, args, rets, abi_version, phase,
-                  nterms, dt, resolution, metallic_edges);
+                  nterms, dt, resolution, metallic_edges, metric_kind);
 }
 
 ffi::Error StreamedStepsHandler(void* stream, ffi::RemainingArgs args,
                                 ffi::RemainingRets rets, int32_t abi_version,
                                 int32_t nsteps, float dt, float resolution,
-                                int32_t metallic_edges) {
+                                int32_t metallic_edges, int32_t metric_kind) {
   if (abi_version != BEAMZ_CUDA_ABI_VERSION) {
     return ffi::Error::InvalidArgument("beamz_cuda ABI version mismatch");
   }
   if (nsteps < 1) {
     return ffi::Error::InvalidArgument("BeamZ CUDA step count must be positive");
   }
-  BeamzBuffer inputs[18]{};
+  if (metric_kind < 0 || metric_kind > 2) {
+    return ffi::Error::InvalidArgument("invalid BeamZ CUDA metric kind");
+  }
+  BeamzBuffer inputs[24]{};
   BeamzBuffer outputs[6]{};
-  for (size_t index = 0; index < 18; ++index) {
+  for (size_t index = 0; index < 24; ++index) {
     auto decoded = args.get<ffi::AnyBuffer>(index);
     if (!decoded) return decoded.error();
     if (auto error = DecodeBuffer(*decoded, &inputs[index]); error.failure()) {
@@ -120,6 +134,7 @@ ffi::Error StreamedStepsHandler(void* stream, ffi::RemainingArgs args,
     launch.abi_version = abi_version;
     launch.phase = phase;
     launch.nterms = 0;
+    launch.metric_kind = metric_kind;
     launch.dt = dt;
     launch.resolution = resolution;
     launch.inv_resolution = 1.0f / resolution;
@@ -143,6 +158,10 @@ ffi::Error StreamedStepsHandler(void* stream, ffi::RemainingArgs args,
     h_launch.inputs[6 + material] = inputs[6 + material];
     e_launch.inputs[6 + material] = inputs[12 + material];
   }
+  for (int axis = 0; axis < 3; ++axis) {
+    h_launch.metrics[axis] = inputs[18 + axis];
+    e_launch.metrics[axis] = inputs[21 + axis];
+  }
   const int error =
       BeamzLaunchStreamedSteps(stream, h_launch, e_launch, nsteps);
   return error == 0 ? ffi::Error::Success()
@@ -154,16 +173,16 @@ ffi::Error StreamedStepsHandler(void* stream, ffi::RemainingArgs args,
 ffi::Error StreamedCpmlStepsHandler(
     void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
     int32_t abi_version, int32_t nsteps, float dt, float resolution,
-    int32_t metallic_edges) {
+    int32_t metallic_edges, int32_t metric_kind) {
   if (abi_version != BEAMZ_CUDA_ABI_VERSION) {
     return ffi::Error::InvalidArgument("beamz_cuda ABI version mismatch");
   }
-  if (nsteps < 1) {
+  if (nsteps < 1 || metric_kind < 0 || metric_kind > 2) {
     return ffi::Error::InvalidArgument("BeamZ CUDA step count must be positive");
   }
-  BeamzBuffer inputs[68]{};
+  BeamzBuffer inputs[74]{};
   BeamzBuffer outputs[18]{};
-  for (size_t index = 0; index < 68; ++index) {
+  for (size_t index = 0; index < 74; ++index) {
     auto decoded = args.get<ffi::AnyBuffer>(index);
     if (!decoded) return decoded.error();
     if (auto error = DecodeBuffer(*decoded, &inputs[index]); error.failure()) {
@@ -183,6 +202,7 @@ ffi::Error StreamedCpmlStepsHandler(
     launch.abi_version = abi_version;
     launch.phase = phase;
     launch.nterms = 6;
+    launch.metric_kind = metric_kind;
     launch.dt = dt;
     launch.resolution = resolution;
     launch.inv_resolution = 1.0f / resolution;
@@ -208,6 +228,10 @@ ffi::Error StreamedCpmlStepsHandler(
   for (int term = 0; term < 6; ++term) {
     h_launch.outputs[3 + term] = outputs[6 + term];
     e_launch.outputs[3 + term] = outputs[12 + term];
+  }
+  for (int axis = 0; axis < 3; ++axis) {
+    h_launch.metrics[axis] = inputs[68 + axis];
+    e_launch.metrics[axis] = inputs[71 + axis];
   }
   const int error =
       BeamzLaunchStreamedSteps(stream, h_launch, e_launch, nsteps);
@@ -221,15 +245,16 @@ ffi::Error StreamedSourceCpmlStepsHandler(
     void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
     int32_t abi_version, int32_t nsteps, float dt, float resolution,
     int32_t metallic_edges, int32_t source_component, int32_t source_start_z,
-    int32_t source_start_y, int32_t source_start_x) {
+    int32_t source_start_y, int32_t source_start_x, int32_t metric_kind) {
   if (abi_version != BEAMZ_CUDA_ABI_VERSION || nsteps < 1 ||
-      source_component < 0 || source_component > 2) {
+      source_component < 0 || source_component > 2 || metric_kind < 0 ||
+      metric_kind > 2) {
     return ffi::Error::InvalidArgument(
         "invalid BeamZ CUDA source-graph attributes");
   }
-  BeamzBuffer inputs[71]{};
+  BeamzBuffer inputs[77]{};
   BeamzBuffer outputs[18]{};
-  for (size_t index = 0; index < 71; ++index) {
+  for (size_t index = 0; index < 77; ++index) {
     auto decoded = args.get<ffi::AnyBuffer>(index);
     if (!decoded) return decoded.error();
     if (auto error = DecodeBuffer(*decoded, &inputs[index]); error.failure()) {
@@ -249,6 +274,7 @@ ffi::Error StreamedSourceCpmlStepsHandler(
     launch.abi_version = abi_version;
     launch.phase = phase;
     launch.nterms = 6;
+    launch.metric_kind = metric_kind;
     launch.dt = dt;
     launch.resolution = resolution;
     launch.inv_resolution = 1.0f / resolution;
@@ -275,10 +301,14 @@ ffi::Error StreamedSourceCpmlStepsHandler(
     h_launch.outputs[3 + term] = outputs[6 + term];
     e_launch.outputs[3 + term] = outputs[12 + term];
   }
+  for (int axis = 0; axis < 3; ++axis) {
+    h_launch.metrics[axis] = inputs[68 + axis];
+    e_launch.metrics[axis] = inputs[71 + axis];
+  }
   BeamzSourceLaunch source{};
-  source.coefficient = inputs[68];
-  source.waveform = inputs[69];
-  source.current_step = inputs[70];
+  source.coefficient = inputs[74];
+  source.waveform = inputs[75];
+  source.current_step = inputs[76];
   source.component = source_component;
   source.starts[0] = source_start_z;
   source.starts[1] = source_start_y;
@@ -296,16 +326,16 @@ ffi::Error StreamedSourceMonitorCpmlStepsHandler(
     int32_t abi_version, int32_t nsteps, float dt, float resolution,
     int32_t metallic_edges, int32_t source_component, int32_t source_start_z,
     int32_t source_start_y, int32_t source_start_x, int32_t frequency_count,
-    int32_t point_count) {
+    int32_t point_count, int32_t metric_kind) {
   if (abi_version != BEAMZ_CUDA_ABI_VERSION || nsteps < 1 ||
       source_component < 0 || source_component > 2 || frequency_count < 1 ||
-      point_count < 1) {
+      point_count < 1 || metric_kind < 0 || metric_kind > 2) {
     return ffi::Error::InvalidArgument(
         "invalid BeamZ CUDA source-monitor graph attributes");
   }
-  BeamzBuffer inputs[89]{};
+  BeamzBuffer inputs[95]{};
   BeamzBuffer outputs[21]{};
-  for (size_t index = 0; index < 89; ++index) {
+  for (size_t index = 0; index < 95; ++index) {
     auto decoded = args.get<ffi::AnyBuffer>(index);
     if (!decoded) return decoded.error();
     if (auto error = DecodeBuffer(*decoded, &inputs[index]); error.failure()) {
@@ -325,6 +355,7 @@ ffi::Error StreamedSourceMonitorCpmlStepsHandler(
     launch.abi_version = abi_version;
     launch.phase = phase;
     launch.nterms = 6;
+    launch.metric_kind = metric_kind;
     launch.dt = dt;
     launch.resolution = resolution;
     launch.inv_resolution = 1.0f / resolution;
@@ -351,25 +382,29 @@ ffi::Error StreamedSourceMonitorCpmlStepsHandler(
     h_launch.outputs[3 + term] = outputs[6 + term];
     e_launch.outputs[3 + term] = outputs[12 + term];
   }
+  for (int axis = 0; axis < 3; ++axis) {
+    h_launch.metrics[axis] = inputs[68 + axis];
+    e_launch.metrics[axis] = inputs[71 + axis];
+  }
   BeamzSourceLaunch source{};
-  source.coefficient = inputs[68];
-  source.waveform = inputs[69];
-  source.current_step = inputs[70];
+  source.coefficient = inputs[74];
+  source.waveform = inputs[75];
+  source.current_step = inputs[76];
   source.component = source_component;
   source.starts[0] = source_start_z;
   source.starts[1] = source_start_y;
   source.starts[2] = source_start_x;
   BeamzDftLaunch monitor{};
   for (int component = 0; component < 6; ++component) {
-    monitor.indices[component] = inputs[71 + component];
-    monitor.weights[component] = inputs[77 + component];
+    monitor.indices[component] = inputs[77 + component];
+    monitor.weights[component] = inputs[83 + component];
   }
-  monitor.frequencies = inputs[83];
-  monitor.component_mask = inputs[84];
+  monitor.frequencies = inputs[89];
+  monitor.component_mask = inputs[90];
   monitor.dft_re = outputs[18];
   monitor.dft_im = outputs[19];
   monitor.dft_weight = outputs[20];
-  monitor.time = inputs[88];
+  monitor.time = inputs[94];
   monitor.frequency_count = frequency_count;
   monitor.point_count = point_count;
   const int error = BeamzLaunchStreamedSourceMonitorSteps(
@@ -383,9 +418,10 @@ ffi::Error StreamedSourceMonitorCpmlStepsHandler(
 ffi::Error HopperHandler(void* stream, ffi::RemainingArgs args,
                          ffi::RemainingRets rets, int32_t abi_version,
                          int32_t phase, int32_t nterms, float dt,
-                         float resolution, int32_t metallic_edges) {
+                         float resolution, int32_t metallic_edges,
+                         int32_t metric_kind) {
   return Dispatch(BeamzLaunchHopper, stream, args, rets, abi_version, phase,
-                  nterms, dt, resolution, metallic_edges);
+                  nterms, dt, resolution, metallic_edges, metric_kind);
 }
 
 }  // namespace
@@ -400,7 +436,8 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_streamed, StreamedHandler,
                                   .Attr<int32_t>("nterms")
                                   .Attr<float>("dt")
                                   .Attr<float>("resolution")
-                                  .Attr<int32_t>("metallic_edges"));
+                                  .Attr<int32_t>("metallic_edges")
+                                  .Attr<int32_t>("metric_kind"));
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_streamed_steps, StreamedStepsHandler,
                               ffi::Ffi::Bind()
@@ -411,7 +448,8 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_streamed_steps, StreamedStepsHandler,
                                   .Attr<int32_t>("nsteps")
                                   .Attr<float>("dt")
                                   .Attr<float>("resolution")
-                                  .Attr<int32_t>("metallic_edges"));
+                                  .Attr<int32_t>("metallic_edges")
+                                  .Attr<int32_t>("metric_kind"));
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     beamz_cuda_streamed_cpml_steps, StreamedCpmlStepsHandler,
@@ -423,7 +461,8 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<int32_t>("nsteps")
         .Attr<float>("dt")
         .Attr<float>("resolution")
-        .Attr<int32_t>("metallic_edges"));
+        .Attr<int32_t>("metallic_edges")
+        .Attr<int32_t>("metric_kind"));
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     beamz_cuda_streamed_source_cpml_steps, StreamedSourceCpmlStepsHandler,
@@ -439,7 +478,8 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<int32_t>("source_component")
         .Attr<int32_t>("source_start_z")
         .Attr<int32_t>("source_start_y")
-        .Attr<int32_t>("source_start_x"));
+        .Attr<int32_t>("source_start_x")
+        .Attr<int32_t>("metric_kind"));
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     beamz_cuda_streamed_source_monitor_cpml_steps,
@@ -458,7 +498,8 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<int32_t>("source_start_y")
         .Attr<int32_t>("source_start_x")
         .Attr<int32_t>("frequency_count")
-        .Attr<int32_t>("point_count"));
+        .Attr<int32_t>("point_count")
+        .Attr<int32_t>("metric_kind"));
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_hopper, HopperHandler,
                               ffi::Ffi::Bind()
@@ -470,4 +511,5 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_hopper, HopperHandler,
                                   .Attr<int32_t>("nterms")
                                   .Attr<float>("dt")
                                   .Attr<float>("resolution")
-                                  .Attr<int32_t>("metallic_edges"));
+                                  .Attr<int32_t>("metallic_edges")
+                                  .Attr<int32_t>("metric_kind"));

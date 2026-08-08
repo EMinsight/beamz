@@ -770,12 +770,19 @@ def compile_program(
         ("x", "y", "z") if simulation.is_3d else ("x", "y")
     )
     material_grid = simulation._material_grid(progress=progress)
-    cuda_grid_supported = simulation.is_3d and metric_kind == "isotropic_uniform"
+    cuda_grid_supported = simulation.is_3d and (
+        requested_backend != "cuda_hopper" or metric_kind == "isotropic_uniform"
+    )
     cuda_material_supported = not material_grid.uses_full_permittivity
     if requested_backend not in {"auto", "jax"} and not cuda_grid_supported:
+        requirement = (
+            "a 3D simulation"
+            if not simulation.is_3d
+            else "isotropic uniform metrics for the Hopper-specific kernel"
+        )
         raise CudaBackendUnavailable(
-            "CUDA execution currently requires an isotropic uniform 3D grid; "
-            f"this simulation requires {metric_kind!r} metrics. Use backend='jax'."
+            f"CUDA execution currently requires {requirement}; this simulation "
+            f"requires {metric_kind!r} metrics. Use backend='jax'."
         )
     if requested_backend not in {"auto", "jax"} and not cuda_material_supported:
         raise CudaBackendUnavailable(

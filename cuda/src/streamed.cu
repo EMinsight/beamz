@@ -87,9 +87,24 @@ __device__ __forceinline__ float Read3D(const BeamzBuffer& value, int z, int y,
   return static_cast<const float*>(value.data)[offset];
 }
 
+template <int MetricKind>
+__device__ __forceinline__ float MetricScale(const BeamzLaunch& launch,
+                                             int axis, int coordinate) {
+  if constexpr (MetricKind == 0) {
+    return launch.inv_resolution;
+  } else if constexpr (MetricKind == 1) {
+    return static_cast<const float*>(launch.metrics[axis].data)[0];
+  } else {
+    return static_cast<const float*>(launch.metrics[axis].data)[coordinate];
+  }
+}
+
+template <int MetricKind>
 __device__ __forceinline__ float ForwardDifference(const BeamzBuffer& value,
                                                    int axis, int z, int y,
-                                                   int x, float inv_dx) {
+                                                   int x,
+                                                   const BeamzLaunch& launch) {
+  const int coordinate = axis == 0 ? z : (axis == 1 ? y : x);
   int next_z = z, next_y = y, next_x = x;
   if (axis == 0) {
     if (z + 1 >= value.dims[0]) return 0.0f;
@@ -102,14 +117,16 @@ __device__ __forceinline__ float ForwardDifference(const BeamzBuffer& value,
     ++next_x;
   }
   return (Read3D(value, next_z, next_y, next_x) - Read3D(value, z, y, x)) *
-         inv_dx;
+         MetricScale<MetricKind>(launch, axis, coordinate);
 }
 
+template <int MetricKind>
 __device__ __forceinline__ float BoundaryDifference(const BeamzBuffer& value,
                                                     int axis, int z, int y,
                                                     int x, int edge_mask,
-                                                    float inv_dx) {
+                                                    const BeamzLaunch& launch) {
   const int coordinate = axis == 0 ? z : (axis == 1 ? y : x);
+  const float inv_dx = MetricScale<MetricKind>(launch, axis, coordinate);
   const int size = static_cast<int>(value.dims[axis]);
   if (coordinate == 0) {
     const bool metallic = edge_mask & (1 << (2 * axis));
@@ -168,7 +185,7 @@ __device__ __forceinline__ float CorrectCpml(float derivative, int term, int z,
           next_psi);
 }
 
-template <int Phase, int Component, bool Cpml>
+template <int Phase, int Component, bool Cpml, int MetricKind>
 __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
                                                 int z, int y, int x) {
   const BeamzBuffer& input = launch.inputs[Component];
@@ -205,8 +222,6 @@ __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
       }
     }
   }
-  const float inv_dx = launch.inv_resolution;
-
   constexpr int first_source[3] = {2, 0, 1};
   constexpr int second_source[3] = {1, 2, 0};
   constexpr int first_axis[3] = {1, 0, 2};
@@ -217,14 +232,16 @@ __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
   float derivative1;
   if constexpr (Phase == 0) {
     derivative0 =
-        ForwardDifference(first, first_axis[Component], z, y, x, inv_dx);
+        ForwardDifference<MetricKind>(first, first_axis[Component], z, y, x,
+                                      launch);
     derivative1 =
-        ForwardDifference(second, second_axis[Component], z, y, x, inv_dx);
+        ForwardDifference<MetricKind>(second, second_axis[Component], z, y, x,
+                                      launch);
   } else {
-    derivative0 = BoundaryDifference(first, first_axis[Component], z, y, x,
-                                     launch.metallic_edges, inv_dx);
-    derivative1 = BoundaryDifference(second, second_axis[Component], z, y, x,
-                                     launch.metallic_edges, inv_dx);
+    derivative0 = BoundaryDifference<MetricKind>(
+        first, first_axis[Component], z, y, x, launch.metallic_edges, launch);
+    derivative1 = BoundaryDifference<MetricKind>(
+        second, second_axis[Component], z, y, x, launch.metallic_edges, launch);
   }
   float curl;
   if constexpr (Cpml) {
@@ -246,19 +263,19 @@ __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
   }
 }
 
-template <int Phase, bool Cpml>
+template <int Phase, bool Cpml, int MetricKind>
 __global__ void UpdateAllComponents(BeamzLaunch launch, int y_blocks) {
   const int x = blockIdx.x * blockDim.x + threadIdx.x;
   const int z = blockIdx.z * blockDim.z + threadIdx.z;
   if (blockIdx.y < y_blocks) {
     const int y = blockIdx.y * blockDim.y + threadIdx.y;
-    UpdateComponent<Phase, 0, Cpml>(launch, z, y, x);
+    UpdateComponent<Phase, 0, Cpml, MetricKind>(launch, z, y, x);
   } else if (blockIdx.y < 2 * y_blocks) {
     const int y = (blockIdx.y - y_blocks) * blockDim.y + threadIdx.y;
-    UpdateComponent<Phase, 1, Cpml>(launch, z, y, x);
+    UpdateComponent<Phase, 1, Cpml, MetricKind>(launch, z, y, x);
   } else {
     const int y = (blockIdx.y - 2 * y_blocks) * blockDim.y + threadIdx.y;
-    UpdateComponent<Phase, 2, Cpml>(launch, z, y, x);
+    UpdateComponent<Phase, 2, Cpml, MetricKind>(launch, z, y, x);
   }
 }
 
@@ -336,6 +353,24 @@ __global__ void UpdateAllFullPecScalarComponents(BeamzLaunch launch,
   } else {
     const int y = (blockIdx.y - 2 * y_blocks) * blockDim.y + threadIdx.y;
     UpdateFullPecScalarComponent<Phase, 2>(launch, z, y, x);
+  }
+}
+
+template <int MetricKind>
+void LaunchGenericUpdate(cudaStream_t stream, const BeamzLaunch& launch,
+                         dim3 blocks, dim3 threads, int y_blocks) {
+  if (launch.phase == 0 && launch.nterms == 0) {
+    UpdateAllComponents<0, false, MetricKind>
+        <<<blocks, threads, 0, stream>>>(launch, y_blocks);
+  } else if (launch.phase == 0) {
+    UpdateAllComponents<0, true, MetricKind>
+        <<<blocks, threads, 0, stream>>>(launch, y_blocks);
+  } else if (launch.nterms == 0) {
+    UpdateAllComponents<1, false, MetricKind>
+        <<<blocks, threads, 0, stream>>>(launch, y_blocks);
+  } else {
+    UpdateAllComponents<1, true, MetricKind>
+        <<<blocks, threads, 0, stream>>>(launch, y_blocks);
   }
 }
 
@@ -425,6 +460,9 @@ __global__ void AccumulatePlaneDft(BeamzLaunch h_launch,
 }  // namespace
 
 int BeamzLaunchStreamed(void* raw_stream, const BeamzLaunch& launch) {
+  if (launch.metric_kind < 0 || launch.metric_kind > 2) {
+    return cudaErrorInvalidValue;
+  }
   const int input_count = launch.nterms == 0 ? 12 : 13 + 4 * launch.nterms;
   const int output_count = 3 + launch.nterms;
   for (int index = 0; index < input_count; ++index) {
@@ -432,6 +470,15 @@ int BeamzLaunchStreamed(void* raw_stream, const BeamzLaunch& launch) {
   }
   for (int index = 0; index < output_count; ++index) {
     if (!FitsIntOffsets(launch.outputs[index])) return cudaErrorInvalidValue;
+  }
+  for (int axis = 0; axis < 3; ++axis) {
+    const BeamzBuffer& metric = launch.metrics[axis];
+    if (!FitsIntOffsets(metric)) return cudaErrorInvalidValue;
+    if ((launch.metric_kind == 1 && metric.rank != 0) ||
+        (launch.metric_kind == 2 &&
+         (metric.rank != 1 || metric.dims[0] < 1))) {
+      return cudaErrorInvalidValue;
+    }
   }
   auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
   int64_t max_x = 0, max_y = 0, max_z = 0;
@@ -450,7 +497,8 @@ int BeamzLaunchStreamed(void* raw_stream, const BeamzLaunch& launch) {
       launch.inputs[7].rank == 0 && launch.inputs[8].rank == 0 &&
       launch.inputs[9].rank == 0 && launch.inputs[10].rank == 0 &&
       launch.inputs[11].rank == 0;
-  if (scalar_coefficients && launch.metallic_edges == 63) {
+  if (launch.metric_kind == 0 && scalar_coefficients &&
+      launch.metallic_edges == 63) {
     if (launch.phase == 0) {
       UpdateAllFullPecScalarComponents<0>
           <<<blocks, threads, 0, stream>>>(launch, y_blocks);
@@ -458,18 +506,12 @@ int BeamzLaunchStreamed(void* raw_stream, const BeamzLaunch& launch) {
       UpdateAllFullPecScalarComponents<1>
           <<<blocks, threads, 0, stream>>>(launch, y_blocks);
     }
-  } else if (launch.phase == 0 && launch.nterms == 0) {
-    UpdateAllComponents<0, false>
-        <<<blocks, threads, 0, stream>>>(launch, y_blocks);
-  } else if (launch.phase == 0) {
-    UpdateAllComponents<0, true>
-        <<<blocks, threads, 0, stream>>>(launch, y_blocks);
-  } else if (launch.nterms == 0) {
-    UpdateAllComponents<1, false>
-        <<<blocks, threads, 0, stream>>>(launch, y_blocks);
+  } else if (launch.metric_kind == 0) {
+    LaunchGenericUpdate<0>(stream, launch, blocks, threads, y_blocks);
+  } else if (launch.metric_kind == 1) {
+    LaunchGenericUpdate<1>(stream, launch, blocks, threads, y_blocks);
   } else {
-    UpdateAllComponents<1, true>
-        <<<blocks, threads, 0, stream>>>(launch, y_blocks);
+    LaunchGenericUpdate<2>(stream, launch, blocks, threads, y_blocks);
   }
   return static_cast<int>(cudaPeekAtLastError());
 }

@@ -52,7 +52,7 @@ The host FFI decoder deliberately has no CUDA-header dependency and can be check
 on developer machines with the JAX headers alone:
 
 ```console
-clang++ -std=c++17 -DBEAMZ_CUDA_ABI_VERSION=1 \
+clang++ -std=c++17 -DBEAMZ_CUDA_ABI_VERSION=2 \
   -I"$(python -c 'import jax; print(jax.ffi.include_dir())')" -Icuda/src \
   -fsyntax-only cuda/src/ffi_handler.cc
 ```

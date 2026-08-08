@@ -6,6 +6,9 @@ import jax
 import numpy as np
 import pytest
 
+import beamz as bz
+from beamz.design import MaterialGrid
+from beamz.design.raster import Grid, Material, Scene, rasterize
 from beamz.simulation.backend import cuda_backend_status
 from beamz.simulation.execute import initial_program_state
 from tests.performance.h100_workloads import H100Workload
@@ -56,6 +59,45 @@ def _simulation_and_seed(
 
 def _copy_state(state):
     return jax.tree_util.tree_map(lambda value: np.array(value, copy=True), state)
+
+
+def _nonuniform_simulation(*, metric_kind: str, cpml: bool):
+    if metric_kind == "axis_uniform":
+        grid = Grid.from_spacing((18, 14, 12), (80e-9, 100e-9, 120e-9))
+    else:
+        def graded_edges(count, base, growth):
+            widths = base * np.linspace(1.0, growth, count, dtype=np.float64)
+            return np.concatenate(([0.0], np.cumsum(widths)))
+
+        grid = Grid(
+            graded_edges(18, 72e-9, 1.22),
+            graded_edges(14, 88e-9, 1.18),
+            graded_edges(12, 104e-9, 1.15),
+        )
+    material_grid = MaterialGrid.from_raster_result(
+        rasterize(Scene((Material(epsilon_r=2.25),)), grid), dimensions=3
+    )
+    boundaries = (
+        [bz.PML(thickness=240e-9, formulation="cpml")]
+        if cpml
+        else [bz.PEC(edges="all")]
+    )
+    simulation = bz.Simulation(
+        material_grid=material_grid,
+        boundaries=boundaries,
+        time=np.arange(16, dtype=np.float64) * 4e-17,
+    )
+    state = simulation.initial_state()
+    rng = np.random.default_rng(20260812)
+    return simulation, state._replace(
+        **{
+            name: rng.normal(size=np.asarray(getattr(state, name)).shape).astype(
+                np.float32
+            )
+            * 1e-5
+            for name in ("ex", "ey", "ez", "hx", "hy", "hz")
+        }
+    )
 
 
 def _assert_state_close(reference, actual):
@@ -152,6 +194,25 @@ def test_streamed_cuda_source_graph_continues_from_nonzero_step():
         state=_copy_state(prefix), num_steps=25, backend="cuda_streamed"
     ).state
 
+    _assert_state_close(reference, actual)
+
+
+@pytest.mark.parametrize("metric_kind", ["axis_uniform", "rectilinear"])
+@pytest.mark.parametrize("cpml", [False, True], ids=["pec", "cpml"])
+def test_streamed_cuda_matches_jax_on_nonuniform_grids(metric_kind, cpml):
+    simulation, state = _nonuniform_simulation(
+        metric_kind=metric_kind, cpml=cpml
+    )
+    reference = simulation.advance(
+        state=_copy_state(state), num_steps=simulation.num_steps, backend="jax"
+    ).state
+    actual = simulation.advance(
+        state=_copy_state(state),
+        num_steps=simulation.num_steps,
+        backend="cuda_streamed",
+    ).state
+
+    assert simulation.compile(backend="cuda_streamed").config.metric_kind == metric_kind
     _assert_state_close(reference, actual)
 
 

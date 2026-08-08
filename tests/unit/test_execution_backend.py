@@ -67,7 +67,7 @@ def _rectilinear_3d_simulation():
     return bz.Simulation(material_grid=materials, time=np.arange(3) * 1e-17)
 
 
-def test_auto_preserves_jax_for_rectilinear_3d_simulations(monkeypatch):
+def test_auto_selects_streamed_cuda_for_rectilinear_3d_simulations(monkeypatch):
     monkeypatch.setattr(
         backend_runtime,
         "resolve_backend",
@@ -76,14 +76,27 @@ def test_auto_preserves_jax_for_rectilinear_3d_simulations(monkeypatch):
 
     program = _rectilinear_3d_simulation().compile(backend="auto")
 
-    assert program.config.backend == "jax"
+    assert program.config.backend == "cuda_streamed"
 
 
-def test_explicit_cuda_rejects_rectilinear_3d_simulations():
+def test_explicit_streamed_cuda_accepts_rectilinear_3d_simulations(monkeypatch):
+    monkeypatch.setattr(
+        backend_runtime,
+        "resolve_backend",
+        lambda backend: "cuda_streamed" if backend == "cuda_streamed" else backend,
+    )
+
+    program = _rectilinear_3d_simulation().compile(backend="cuda_streamed")
+
+    assert program.config.backend == "cuda_streamed"
+    assert program.config.metric_kind == "rectilinear"
+
+
+def test_hopper_cuda_rejects_rectilinear_3d_simulations():
     with pytest.raises(
-        backend_runtime.CudaBackendUnavailable, match="isotropic uniform 3D"
+        backend_runtime.CudaBackendUnavailable, match="Hopper-specific kernel"
     ):
-        _rectilinear_3d_simulation().compile(backend="cuda_streamed")
+        _rectilinear_3d_simulation().compile(backend="cuda_hopper")
 
 
 def _full_tensor_3d_simulation():

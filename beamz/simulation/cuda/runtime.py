@@ -8,12 +8,17 @@ import numpy as np
 
 from beamz.simulation.model import SimulationState
 
-CUDA_ABI_VERSION = 1
+CUDA_ABI_VERSION = 2
 _PHASE_H = 0
 _PHASE_E = 1
 _COMPONENT_CODE = {name: index for index, name in enumerate(("Hx", "Hy", "Hz"))}
 _COMPONENT_CODE.update({name: index for index, name in enumerate(("Ex", "Ey", "Ez"))})
 _EMPTY = jnp.empty((0,), dtype=jnp.float32)
+_METRIC_KIND_CODE = {
+    "isotropic_uniform": 0,
+    "axis_uniform": 1,
+    "rectilinear": 2,
+}
 
 
 def _metallic_edge_mask(edges: frozenset[str]) -> int:
@@ -41,6 +46,23 @@ def _shape(value):
     return jax.ShapeDtypeStruct(value.shape, value.dtype)
 
 
+def _phase_metrics(ctx, phase: int):
+    """Return CUDA-axis-ordered derivative metrics for one Yee phase."""
+    metrics = ctx.metrics
+    if phase == _PHASE_H:
+        return (metrics.e_to_h_z, metrics.e_to_h_y, metrics.e_to_h_x)
+    return (metrics.h_to_e_z, metrics.h_to_e_y, metrics.h_to_e_x)
+
+
+def _metric_kind_code(ctx) -> np.int32:
+    try:
+        return np.int32(_METRIC_KIND_CODE[ctx.config.metric_kind])
+    except KeyError as exc:
+        raise ValueError(
+            f"Unsupported CUDA derivative metric kind: {ctx.config.metric_kind!r}"
+        ) from exc
+
+
 def _ffi_phase(
     target: str,
     phase: int,
@@ -49,7 +71,9 @@ def _ffi_phase(
     materials,
     terms,
     psi_terms,
+    metrics,
     *,
+    metric_kind,
     dt,
     resolution,
     metallic_edges,
@@ -71,6 +95,7 @@ def _ffi_phase(
         metadata,
         *term_arrays,
         *psi_terms,
+        *metrics,
     )
     result_metadata = tuple(_shape(value) for value in (*targets, *psi_terms))
     psi_start = 13 + 3 * len(terms)
@@ -90,6 +115,7 @@ def _ffi_phase(
         dt=np.float32(dt),
         resolution=np.float32(resolution),
         metallic_edges=np.int32(_metallic_edge_mask(metallic_edges)),
+        metric_kind=np.int32(metric_kind),
     )
     return tuple(outputs)
 
@@ -129,6 +155,8 @@ def update_h(state, ctx, coeffs) -> SimulationState:
         materials,
         terms,
         state.cpml_psi_h_terms,
+        _phase_metrics(ctx, _PHASE_H),
+        metric_kind=_metric_kind_code(ctx),
         dt=ctx.dt,
         resolution=ctx.resolution,
         metallic_edges=ctx.boundary.cpml.metallic_edges,
@@ -176,6 +204,8 @@ def update_e(state, ctx, coeffs) -> SimulationState:
         materials,
         terms,
         state.cpml_psi_e_terms,
+        _phase_metrics(ctx, _PHASE_E),
+        metric_kind=_metric_kind_code(ctx),
         dt=ctx.dt,
         resolution=ctx.resolution,
         metallic_edges=ctx.boundary.cpml.metallic_edges,
@@ -220,7 +250,13 @@ def _cpml_graph_io(state, ctx, coeffs):
         *(value for term in e_terms for value in (term.a, term.b, term.inv_kappa)),
         *state.cpml_psi_e_terms,
     )
-    arguments = (*fields, *h_payload, *e_payload)
+    arguments = (
+        *fields,
+        *h_payload,
+        *e_payload,
+        *_phase_metrics(ctx, _PHASE_H),
+        *_phase_metrics(ctx, _PHASE_E),
+    )
     result_values = (*fields, *state.cpml_psi_h_terms, *state.cpml_psi_e_terms)
     aliases = {index: index for index in range(6)}
     aliases.update({31 + index: 6 + index for index in range(6)})
@@ -273,6 +309,7 @@ def run_source_steps(state, ctx, coeffs, source, nsteps: int) -> SimulationState
         dt=np.float32(ctx.dt),
         resolution=np.float32(ctx.resolution),
         metallic_edges=np.int32(_metallic_edge_mask(ctx.boundary.cpml.metallic_edges)),
+        metric_kind=_metric_kind_code(ctx),
         source_component=np.int32(_COMPONENT_CODE[source.component]),
         source_start_z=np.int32(source.slab_starts[0]),
         source_start_y=np.int32(source.slab_starts[1]),
@@ -306,9 +343,9 @@ def run_source_monitor_steps(
     )
     aliases = {
         **aliases,
-        85: 18,
-        86: 19,
-        87: 20,
+        91: 18,
+        92: 19,
+        93: 20,
     }
     call = jax.ffi.ffi_call(
         "beamz_cuda_streamed_source_monitor_cpml_steps",
@@ -334,6 +371,7 @@ def run_source_monitor_steps(
         dt=np.float32(ctx.dt),
         resolution=np.float32(ctx.resolution),
         metallic_edges=np.int32(_metallic_edge_mask(ctx.boundary.cpml.metallic_edges)),
+        metric_kind=_metric_kind_code(ctx),
         source_component=np.int32(_COMPONENT_CODE[source.component]),
         source_start_z=np.int32(source.slab_starts[0]),
         source_start_y=np.int32(source.slab_starts[1]),
@@ -370,6 +408,7 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
             metallic_edges=np.int32(
                 _metallic_edge_mask(ctx.boundary.cpml.metallic_edges)
             ),
+            metric_kind=_metric_kind_code(ctx),
         )
         return _replace_graph_outputs(state, outputs)
     materials = (
@@ -395,11 +434,14 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
     outputs = call(
         *fields,
         *materials,
+        *_phase_metrics(ctx, _PHASE_H),
+        *_phase_metrics(ctx, _PHASE_E),
         abi_version=np.int32(CUDA_ABI_VERSION),
         nsteps=np.int32(nsteps),
         dt=np.float32(ctx.dt),
         resolution=np.float32(ctx.resolution),
         metallic_edges=np.int32(_metallic_edge_mask(ctx.boundary.cpml.metallic_edges)),
+        metric_kind=_metric_kind_code(ctx),
     )
     return state._replace(
         hx=outputs[0],

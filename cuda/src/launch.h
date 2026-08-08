@@ -13,6 +13,7 @@ struct BeamzLaunch {
   int32_t abi_version;
   int32_t phase;
   int32_t nterms;
+  int32_t metric_kind;
   float dt;
   float resolution;
   float inv_resolution;
@@ -20,6 +21,7 @@ struct BeamzLaunch {
   float dt_over_mu;
   int32_t metallic_edges;
   BeamzBuffer inputs[37];
+  BeamzBuffer metrics[3];
   BeamzBuffer outputs[9];
 };
 

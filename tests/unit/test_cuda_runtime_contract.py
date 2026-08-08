@@ -66,14 +66,15 @@ def test_cuda_ffi_phase_packs_cpml_and_aliases_state(monkeypatch):
     target, results, options, arguments, attributes = captured[0]
     assert target == "beamz_cuda_streamed"
     assert len(results) == 9
-    assert len(arguments) == 37
+    assert len(arguments) == 40
     assert attributes == {
-        "abi_version": np.int32(1),
+        "abi_version": np.int32(2),
         "phase": np.int32(0),
         "nterms": np.int32(6),
         "dt": np.float32(context.dt),
         "resolution": np.float32(context.resolution),
         "metallic_edges": np.int32(0),
+        "metric_kind": np.int32(0),
     }
     assert options["input_output_aliases"] == {
         0: 0,
@@ -106,7 +107,7 @@ def test_cuda_ffi_phase_supports_non_cpml_yee_update(monkeypatch):
 
     _, results, options, arguments, attributes = captured[0]
     assert len(results) == 3
-    assert len(arguments) == 13
+    assert len(arguments) == 16
     assert attributes["phase"] == 1
     assert attributes["nterms"] == 0
     assert options["input_output_aliases"] == {0: 0, 1: 1, 2: 2}
@@ -131,14 +132,15 @@ def test_cuda_multi_step_ffi_aliases_all_fields(monkeypatch):
     target, results, options, arguments, attributes = captured[0]
     assert target == "beamz_cuda_streamed_steps"
     assert len(results) == 6
-    assert len(arguments) == 18
+    assert len(arguments) == 24
     assert options["input_output_aliases"] == {index: index for index in range(6)}
     assert attributes == {
-        "abi_version": np.int32(1),
+        "abi_version": np.int32(2),
         "nsteps": np.int32(7),
         "dt": np.float32(context.dt),
         "resolution": np.float32(context.resolution),
         "metallic_edges": np.int32(63),
+        "metric_kind": np.int32(0),
     }
     assert next_state.hx is state.hx
     assert next_state.ez is state.ez
@@ -162,7 +164,7 @@ def test_cuda_cpml_multi_step_ffi_aliases_fields_and_psi(monkeypatch):
     target, results, options, arguments, attributes = captured[0]
     assert target == "beamz_cuda_streamed_cpml_steps"
     assert len(results) == 18
-    assert len(arguments) == 68
+    assert len(arguments) == 74
     assert options["input_output_aliases"] == {
         **{index: index for index in range(6)},
         **{31 + index: 6 + index for index in range(6)},
@@ -193,7 +195,7 @@ def test_cuda_source_cpml_graph_packs_source_and_aliases_state(monkeypatch):
     target, results, options, arguments, attributes = captured[0]
     assert target == "beamz_cuda_streamed_source_cpml_steps"
     assert len(results) == 18
-    assert len(arguments) == 71
+    assert len(arguments) == 77
     assert options["input_output_aliases"] == {
         **{index: index for index in range(6)},
         **{31 + index: 6 + index for index in range(6)},
@@ -214,7 +216,7 @@ def test_cuda_source_monitor_graph_aliases_dft_accumulators(monkeypatch):
                 *arguments[:6],
                 *arguments[31:37],
                 *arguments[62:68],
-                *arguments[85:88],
+                *arguments[91:94],
             )
 
         return call
@@ -233,10 +235,10 @@ def test_cuda_source_monitor_graph_aliases_dft_accumulators(monkeypatch):
     target, results, options, arguments, attributes = captured[0]
     assert target == "beamz_cuda_streamed_source_monitor_cpml_steps"
     assert len(results) == 21
-    assert len(arguments) == 89
-    assert options["input_output_aliases"][85] == 18
-    assert options["input_output_aliases"][86] == 19
-    assert options["input_output_aliases"][87] == 20
+    assert len(arguments) == 95
+    assert options["input_output_aliases"][91] == 18
+    assert options["input_output_aliases"][92] == 19
+    assert options["input_output_aliases"][93] == 20
     assert attributes["frequency_count"] == np.int32(3)
     assert next_state.dft_vec_re is state.dft_vec_re
 
