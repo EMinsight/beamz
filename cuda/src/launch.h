@@ -15,6 +15,9 @@ struct BeamzLaunch {
   int32_t nterms;
   float dt;
   float resolution;
+  float inv_resolution;
+  float dt_over_eps;
+  float dt_over_mu;
   int32_t metallic_edges;
   BeamzBuffer inputs[37];
   BeamzBuffer outputs[9];

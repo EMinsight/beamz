@@ -29,7 +29,7 @@ intrinsics are available only for controlled experiments with
 `-DBEAMZ_CUDA_FAST_MATH=ON`; they must pass the same hardware parity suite before a
 result can be used for promotion.
 
-The wheel compiles SASS for SM80, SM89, and SM90. `backend="auto"` detects and
+The wheel compiles SASS for SM80, SM86, SM89, and SM90. `backend="auto"` detects and
 registers it lazily; `backend="cuda_streamed"` requests it explicitly and
 `backend="cuda_hopper"` requests the tiled target. The first
 release supports one GPU and float32 3D grids. Multi-GPU and 2D simulations retain

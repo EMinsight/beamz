@@ -102,11 +102,7 @@ def update_h(state, ctx, coeffs) -> SimulationState:
         else "beamz_cuda_streamed"
     )
     terms = ctx.boundary.cpml.h_terms
-    outputs = _ffi_phase(
-        target,
-        _PHASE_H,
-        (state.hx, state.hy, state.hz),
-        (state.ex, state.ey, state.ez),
+    materials = (
         (
             coeffs.h_sigma_m_x,
             coeffs.h_sigma_m_y,
@@ -114,7 +110,23 @@ def update_h(state, ctx, coeffs) -> SimulationState:
             _EMPTY,
             _EMPTY,
             _EMPTY,
-        ),
+        )
+        if ctx.config.backend == "cuda_hopper"
+        else (
+            coeffs.h_decay_x,
+            coeffs.h_decay_y,
+            coeffs.h_decay_z,
+            coeffs.h_source_x,
+            coeffs.h_source_y,
+            coeffs.h_source_z,
+        )
+    )
+    outputs = _ffi_phase(
+        target,
+        _PHASE_H,
+        (state.hx, state.hy, state.hz),
+        (state.ex, state.ey, state.ez),
+        materials,
         terms,
         state.cpml_psi_h_terms,
         dt=ctx.dt,
@@ -137,11 +149,7 @@ def update_e(state, ctx, coeffs) -> SimulationState:
         else "beamz_cuda_streamed"
     )
     terms = ctx.boundary.cpml.e_terms
-    outputs = _ffi_phase(
-        target,
-        _PHASE_E,
-        (state.ex, state.ey, state.ez),
-        (state.hx, state.hy, state.hz),
+    materials = (
         (
             coeffs.e_conductivity_x,
             coeffs.e_conductivity_y,
@@ -149,7 +157,23 @@ def update_e(state, ctx, coeffs) -> SimulationState:
             coeffs.e_permittivity_x,
             coeffs.e_permittivity_y,
             coeffs.e_permittivity_z,
-        ),
+        )
+        if ctx.config.backend == "cuda_hopper"
+        else (
+            coeffs.e_decay_x,
+            coeffs.e_decay_y,
+            coeffs.e_decay_z,
+            coeffs.e_source_x,
+            coeffs.e_source_y,
+            coeffs.e_source_z,
+        )
+    )
+    outputs = _ffi_phase(
+        target,
+        _PHASE_E,
+        (state.ex, state.ey, state.ez),
+        (state.hx, state.hy, state.hz),
+        materials,
         terms,
         state.cpml_psi_e_terms,
         dt=ctx.dt,

@@ -510,8 +510,19 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
 
     empty3 = jnp.zeros((0, 0, 0), dtype=jnp.float32)
     if use_3d_material_coefficients:
-        h_decay_x = h_source_x = h_decay_y = h_source_y = empty3
-        h_decay_z = h_source_z = empty3
+        if request.run.backend == "cuda_streamed":
+            (
+                (h_decay_x, h_source_x),
+                (h_decay_y, h_source_y),
+                (h_decay_z, h_source_z),
+            ) = (
+                ops.precompute_h_update_coefficients(fields.sigma_m_hx, dt),
+                ops.precompute_h_update_coefficients(fields.sigma_m_hy, dt),
+                ops.precompute_h_update_coefficients(fields.sigma_m_hz, dt),
+            )
+        else:
+            h_decay_x = h_source_x = h_decay_y = h_source_y = empty3
+            h_decay_z = h_source_z = empty3
         h_sigma_m_x = _elide_zero_conductivity_grid(fields.sigma_m_hx)
         h_sigma_m_y = _elide_zero_conductivity_grid(fields.sigma_m_hy)
         h_sigma_m_z = _elide_zero_conductivity_grid(fields.sigma_m_hz)
@@ -528,8 +539,37 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
         h_sigma_m_x = h_sigma_m_y = h_sigma_m_z = empty3
 
     if use_3d_material_coefficients:
-        e_decay_x = e_source_x = e_decay_y = e_source_y = empty3
-        e_decay_z = e_source_z = empty3
+        if request.run.backend == "cuda_streamed":
+            (
+                (e_decay_x, e_source_x),
+                (e_decay_y, e_source_y),
+                (e_decay_z, e_source_z),
+            ) = (
+                ops.precompute_e_update_coefficients(
+                    shape=fields.Ex.shape,
+                    conductivity=fields.sig_x,
+                    permittivity=fields.eps_x,
+                    dt=dt,
+                    region=fields.region_x,
+                ),
+                ops.precompute_e_update_coefficients(
+                    shape=fields.Ey.shape,
+                    conductivity=fields.sig_y,
+                    permittivity=fields.eps_y,
+                    dt=dt,
+                    region=fields.region_y,
+                ),
+                ops.precompute_e_update_coefficients(
+                    shape=fields.Ez.shape,
+                    conductivity=fields.sig_z,
+                    permittivity=fields.eps_z,
+                    dt=dt,
+                    region=fields.region_z,
+                ),
+            )
+        else:
+            e_decay_x = e_source_x = e_decay_y = e_source_y = empty3
+            e_decay_z = e_source_z = empty3
         e_conductivity_x = _elide_zero_conductivity_grid(fields.sig_x)
         e_conductivity_y = _elide_zero_conductivity_grid(fields.sig_y)
         e_conductivity_z = _elide_zero_conductivity_grid(fields.sig_z)
