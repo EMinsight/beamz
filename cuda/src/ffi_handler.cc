@@ -435,6 +435,124 @@ ffi::Error StreamedSourceGroupsCpmlStepsHandler(
                    std::to_string(error));
 }
 
+ffi::Error StreamedProgramCpmlStepsHandler(
+    void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
+    int32_t abi_version, int32_t nsteps, float dt, float resolution,
+    int32_t metallic_edges, int32_t metric_kind, int32_t cpml_enabled,
+    int32_t monitor_count) {
+  constexpr int32_t kSourceGroupCount = 9;
+  if (abi_version != BEAMZ_CUDA_ABI_VERSION || nsteps < 1 ||
+      metric_kind < 0 || metric_kind > 2 || cpml_enabled < 0 ||
+      cpml_enabled > 1 || monitor_count < 1) {
+    return ffi::Error::InvalidArgument(
+        "invalid BeamZ CUDA program graph attributes");
+  }
+  BeamzBuffer inputs[113]{};
+  BeamzBuffer outputs[21]{};
+  const size_t graph_input_count = cpml_enabled ? 74 : 24;
+  const size_t graph_output_count = cpml_enabled ? 18 : 6;
+  constexpr size_t source_input_count = 3 * kSourceGroupCount;
+  constexpr size_t monitor_input_count = 12;
+  for (size_t index = 0;
+       index < graph_input_count + source_input_count + monitor_input_count;
+       ++index) {
+    auto decoded = args.get<ffi::AnyBuffer>(index);
+    if (!decoded) return decoded.error();
+    if (auto error = DecodeBuffer(*decoded, &inputs[index]); error.failure()) {
+      return error;
+    }
+  }
+  for (size_t index = 0; index < graph_output_count + 3; ++index) {
+    auto decoded = rets.get<ffi::AnyBuffer>(index);
+    if (!decoded) return decoded.error();
+    if (auto error = DecodeBuffer(**decoded, &outputs[index]); error.failure()) {
+      return error;
+    }
+  }
+
+  auto initialize = [&](int32_t phase) {
+    BeamzLaunch launch{};
+    launch.abi_version = abi_version;
+    launch.phase = phase;
+    launch.nterms = cpml_enabled ? 6 : 0;
+    launch.metric_kind = metric_kind;
+    launch.dt = dt;
+    launch.resolution = resolution;
+    launch.inv_resolution = 1.0f / resolution;
+    launch.dt_over_eps = dt / kEps0;
+    launch.dt_over_mu = dt / kMu0;
+    launch.metallic_edges = metallic_edges;
+    return launch;
+  };
+  BeamzLaunch h_launch = initialize(0);
+  BeamzLaunch e_launch = initialize(1);
+  for (int component = 0; component < 3; ++component) {
+    h_launch.inputs[component] = inputs[component];
+    h_launch.inputs[3 + component] = inputs[3 + component];
+    h_launch.outputs[component] = outputs[component];
+    e_launch.inputs[component] = inputs[3 + component];
+    e_launch.inputs[3 + component] = outputs[component];
+    e_launch.outputs[component] = outputs[3 + component];
+  }
+  if (cpml_enabled) {
+    for (int index = 0; index < 31; ++index) {
+      h_launch.inputs[6 + index] = inputs[6 + index];
+      e_launch.inputs[6 + index] = inputs[37 + index];
+    }
+    for (int term = 0; term < 6; ++term) {
+      h_launch.outputs[3 + term] = outputs[6 + term];
+      e_launch.outputs[3 + term] = outputs[12 + term];
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+      h_launch.metrics[axis] = inputs[68 + axis];
+      e_launch.metrics[axis] = inputs[71 + axis];
+    }
+  } else {
+    for (int material = 0; material < 6; ++material) {
+      h_launch.inputs[6 + material] = inputs[6 + material];
+      e_launch.inputs[6 + material] = inputs[12 + material];
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+      h_launch.metrics[axis] = inputs[18 + axis];
+      e_launch.metrics[axis] = inputs[21 + axis];
+    }
+  }
+
+  const size_t monitor_start = graph_input_count + source_input_count;
+  const BeamzBuffer& current_step = inputs[monitor_start + 11];
+  BeamzSourceGroupLaunch groups[kSourceGroupCount]{};
+  for (int32_t index = 0; index < kSourceGroupCount; ++index) {
+    groups[index].coefficients = inputs[graph_input_count + 3 * index];
+    groups[index].waveforms = inputs[graph_input_count + 3 * index + 1];
+    groups[index].starts = inputs[graph_input_count + 3 * index + 2];
+    groups[index].current_step = current_step;
+    groups[index].timing = index / 3;
+    groups[index].component = index % 3;
+  }
+  BeamzDftGroupLaunch monitors{};
+  monitors.indices = inputs[monitor_start];
+  monitors.weights = inputs[monitor_start + 1];
+  monitors.frequencies = inputs[monitor_start + 2];
+  monitors.component_masks = inputs[monitor_start + 3];
+  monitors.counts = inputs[monitor_start + 4];
+  monitors.codes = inputs[monitor_start + 5];
+  monitors.windows = inputs[monitor_start + 6];
+  monitors.dft_re = inputs[monitor_start + 7];
+  monitors.dft_im = inputs[monitor_start + 8];
+  monitors.dft_weight = inputs[monitor_start + 9];
+  monitors.time = inputs[monitor_start + 10];
+  monitors.current_step = current_step;
+  monitors.monitor_count = monitor_count;
+
+  const int error = BeamzLaunchStreamedProgramSteps(
+      stream, h_launch, e_launch, groups, kSourceGroupCount, monitors, nsteps);
+  return error == 0
+             ? ffi::Error::Success()
+             : ffi::Error::Internal(
+                   "BeamZ CUDA program graph launch failed: " +
+                   std::to_string(error));
+}
+
 ffi::Error StreamedSourceMonitorCpmlStepsHandler(
     void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
     int32_t abi_version, int32_t nsteps, float dt, float resolution,
@@ -624,6 +742,21 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<int32_t>("metallic_edges")
         .Attr<int32_t>("metric_kind")
         .Attr<int32_t>("cpml_enabled"));
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    beamz_cuda_streamed_program_cpml_steps, StreamedProgramCpmlStepsHandler,
+    ffi::Ffi::Bind()
+        .Ctx<ffi::PlatformStream<void*>>()
+        .RemainingArgs()
+        .RemainingRets()
+        .Attr<int32_t>("abi_version")
+        .Attr<int32_t>("nsteps")
+        .Attr<float>("dt")
+        .Attr<float>("resolution")
+        .Attr<int32_t>("metallic_edges")
+        .Attr<int32_t>("metric_kind")
+        .Attr<int32_t>("cpml_enabled")
+        .Attr<int32_t>("monitor_count"));
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     beamz_cuda_streamed_source_monitor_cpml_steps,

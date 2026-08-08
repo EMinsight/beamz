@@ -55,6 +55,22 @@ struct BeamzDftLaunch {
   int32_t point_count;
 };
 
+struct BeamzDftGroupLaunch {
+  BeamzBuffer indices;
+  BeamzBuffer weights;
+  BeamzBuffer frequencies;
+  BeamzBuffer component_masks;
+  BeamzBuffer counts;
+  BeamzBuffer codes;
+  BeamzBuffer windows;
+  BeamzBuffer dft_re;
+  BeamzBuffer dft_im;
+  BeamzBuffer dft_weight;
+  BeamzBuffer time;
+  BeamzBuffer current_step;
+  int32_t monitor_count;
+};
+
 // Returns zero after enqueueing all work, otherwise a CUDA runtime error code.
 int BeamzLaunchStreamed(void* stream, const BeamzLaunch& launch);
 int BeamzLaunchStreamedSteps(void* stream, const BeamzLaunch& h_launch,
@@ -67,6 +83,10 @@ int BeamzLaunchStreamedSourceGroupSteps(
     void* stream, const BeamzLaunch& h_launch, const BeamzLaunch& e_launch,
     const BeamzSourceGroupLaunch* source_groups, int32_t source_group_count,
     int32_t nsteps);
+int BeamzLaunchStreamedProgramSteps(
+    void* stream, const BeamzLaunch& h_launch, const BeamzLaunch& e_launch,
+    const BeamzSourceGroupLaunch* source_groups, int32_t source_group_count,
+    const BeamzDftGroupLaunch& monitors, int32_t nsteps);
 int BeamzLaunchStreamedSourceMonitorSteps(
     void* stream, const BeamzLaunch& h_launch, const BeamzLaunch& e_launch,
     const BeamzSourceLaunch& source, const BeamzDftLaunch& monitor,

@@ -40,7 +40,8 @@ std::string GraphKey(void* stream, const BeamzLaunch& h_launch,
                      const BeamzSourceLaunch* source = nullptr,
                      const BeamzSourceGroupLaunch* source_groups = nullptr,
                      int32_t source_group_count = 0,
-                     const BeamzDftLaunch* monitor = nullptr) {
+                     const BeamzDftLaunch* monitor = nullptr,
+                     const BeamzDftGroupLaunch* monitor_groups = nullptr) {
   std::string key;
   key.reserve(sizeof(stream) + sizeof(nsteps) + 2 * sizeof(BeamzLaunch));
   key.append(reinterpret_cast<const char*>(&stream), sizeof(stream));
@@ -58,6 +59,10 @@ std::string GraphKey(void* stream, const BeamzLaunch& h_launch,
   }
   if (monitor != nullptr) {
     key.append(reinterpret_cast<const char*>(monitor), sizeof(*monitor));
+  }
+  if (monitor_groups != nullptr) {
+    key.append(reinterpret_cast<const char*>(monitor_groups),
+               sizeof(*monitor_groups));
   }
   return key;
 }
@@ -545,6 +550,89 @@ __global__ void AccumulatePlaneDft(BeamzLaunch h_launch,
       sample * phase_sin;
 }
 
+__global__ void AccumulateDftGroups(BeamzLaunch h_launch,
+                                    BeamzLaunch e_launch,
+                                    BeamzDftGroupLaunch monitors,
+                                    int step_offset) {
+  const int point = blockIdx.x * blockDim.x + threadIdx.x;
+  const int frequency = blockIdx.y * blockDim.y + threadIdx.y;
+  const int lane = blockIdx.z * blockDim.z + threadIdx.z;
+  const int monitor = lane / 6;
+  const int component = lane % 6;
+  if (monitor >= monitors.monitor_count) return;
+
+  const auto* counts = static_cast<const int32_t*>(monitors.counts.data);
+  const int frequency_count = counts[3 * monitor];
+  const int point_count = counts[3 * monitor + 1];
+  const int interval = counts[3 * monitor + 2] > 0
+                           ? counts[3 * monitor + 2]
+                           : 1;
+  if (point >= point_count || frequency >= frequency_count) return;
+
+  const int absolute_step =
+      static_cast<const int32_t*>(monitors.current_step.data)[0] + step_offset;
+  if (absolute_step % interval != 0) return;
+  const float time = static_cast<const float*>(monitors.time.data)[0] +
+                     static_cast<float>(step_offset + 1) * e_launch.dt;
+  const auto* windows = static_cast<const float*>(monitors.windows.data);
+  const float start = windows[3 * monitor];
+  const float end = windows[3 * monitor + 1];
+  if (time < start || time > end) return;
+
+  const auto* codes = static_cast<const int32_t*>(monitors.codes.data);
+  float window = 1.0f;
+  if (codes[2 * monitor] == 1 && isfinite(end) && end > start) {
+    const float tau = fminf(fmaxf((time - start) / (end - start), 0.0f), 1.0f);
+    window = 0.5f * (1.0f - cosf(6.2831853071795864769f * tau));
+  }
+  const int max_frequency_count = static_cast<int>(monitors.frequencies.dims[1]);
+  if (component == 0 && point == 0) {
+    static_cast<float*>(monitors.dft_weight.data)
+        [monitor * static_cast<int>(monitors.dft_weight.dims[1]) + frequency] +=
+        window;
+  }
+  const float mask = static_cast<const float*>(monitors.component_masks.data)
+      [monitor * 6 + component];
+  if (mask == 0.0f) return;
+
+  const int max_points = static_cast<int>(monitors.indices.dims[2]);
+  const int neighbors = static_cast<int>(monitors.indices.dims[3]);
+  const int plan_base = ((monitor * 6 + component) * max_points + point) *
+                        neighbors;
+  const BeamzBuffer& field = component < 3 ? e_launch.outputs[component]
+                                           : h_launch.outputs[component - 3];
+  float sample = 0.0f;
+  for (int neighbor = 0; neighbor < neighbors; ++neighbor) {
+    const int gather_offset = plan_base + neighbor;
+    const int field_offset =
+        static_cast<const int32_t*>(monitors.indices.data)[gather_offset];
+    sample += static_cast<const float*>(field.data)[field_offset] *
+              static_cast<const float*>(monitors.weights.data)[gather_offset];
+  }
+
+  float scale = window;
+  if (codes[2 * monitor + 1] == 1) {
+    const float length_unit = windows[3 * monitor + 2];
+    scale *= e_launch.dt * static_cast<float>(interval) * 299792458.0f /
+             length_unit / sqrtf(6.2831853071795864769f);
+  }
+  const float frequency_hz =
+      static_cast<const float*>(monitors.frequencies.data)
+          [monitor * max_frequency_count + frequency];
+  float phase_sin, phase_cos;
+  sincosf(6.2831853071795864769f * frequency_hz * time, &phase_sin,
+          &phase_cos);
+  const int accumulator_offset =
+      ((monitor * 6 + component) * static_cast<int>(monitors.dft_re.dims[2]) +
+       frequency) *
+          static_cast<int>(monitors.dft_re.dims[3]) +
+      point;
+  static_cast<float*>(monitors.dft_re.data)[accumulator_offset] +=
+      scale * sample * phase_cos;
+  static_cast<float*>(monitors.dft_im.data)[accumulator_offset] +=
+      scale * sample * phase_sin;
+}
+
 }  // namespace
 
 int BeamzLaunchStreamed(void* raw_stream, const BeamzLaunch& launch) {
@@ -611,7 +699,9 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
                         const BeamzSourceLaunch* source,
                         const BeamzSourceGroupLaunch* source_groups,
                         int32_t source_group_count,
-                        const BeamzDftLaunch* monitor, int32_t nsteps) {
+                        const BeamzDftLaunch* monitor,
+                        const BeamzDftGroupLaunch* monitor_groups,
+                        int32_t nsteps) {
   if (nsteps < 1 || h_launch.phase != 0 || e_launch.phase != 1 ||
       h_launch.nterms != e_launch.nterms ||
       (h_launch.nterms != 0 && h_launch.nterms != 6)) {
@@ -620,7 +710,7 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
   auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
   const std::string graph_key =
       GraphKey(raw_stream, h_launch, e_launch, nsteps, source, source_groups,
-               source_group_count, monitor);
+               source_group_count, monitor, monitor_groups);
   GraphCache& cache = CachedGraphs();
   const bool cache_enabled = GraphCacheEnabled();
   if (cache_enabled) {
@@ -695,6 +785,20 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
         launch_error = cudaPeekAtLastError();
         if (launch_error != cudaSuccess) break;
       }
+      if (monitor_groups != nullptr) {
+        const dim3 monitor_threads(32, 2, 2);
+        const dim3 monitor_blocks(
+            (monitor_groups->indices.dims[2] + monitor_threads.x - 1) /
+                monitor_threads.x,
+            (monitor_groups->frequencies.dims[1] + monitor_threads.y - 1) /
+                monitor_threads.y,
+            (monitor_groups->monitor_count * 6 + monitor_threads.z - 1) /
+                monitor_threads.z);
+        AccumulateDftGroups<<<monitor_blocks, monitor_threads, 0, stream>>>(
+            h_launch, e_launch, *monitor_groups, step);
+        launch_error = cudaPeekAtLastError();
+        if (launch_error != cudaSuccess) break;
+      }
     }
     return launch_error;
   };
@@ -743,7 +847,7 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
 int BeamzLaunchStreamedSteps(void* raw_stream, const BeamzLaunch& h_launch,
                              const BeamzLaunch& e_launch, int32_t nsteps) {
   return LaunchStreamedGraph(raw_stream, h_launch, e_launch, nullptr, nullptr,
-                             0, nullptr, nsteps);
+                             0, nullptr, nullptr, nsteps);
 }
 
 int BeamzLaunchStreamedSourceSteps(void* raw_stream,
@@ -766,7 +870,7 @@ int BeamzLaunchStreamedSourceSteps(void* raw_stream,
     }
   }
   return LaunchStreamedGraph(raw_stream, h_launch, e_launch, &source, nullptr,
-                             0, nullptr, nsteps);
+                             0, nullptr, nullptr, nsteps);
 }
 
 int BeamzLaunchStreamedSourceGroupSteps(
@@ -793,7 +897,74 @@ int BeamzLaunchStreamedSourceGroupSteps(
   }
   return LaunchStreamedGraph(raw_stream, h_launch, e_launch, nullptr,
                              source_groups, source_group_count, nullptr,
-                             nsteps);
+                             nullptr, nsteps);
+}
+
+int BeamzLaunchStreamedProgramSteps(
+    void* raw_stream, const BeamzLaunch& h_launch,
+    const BeamzLaunch& e_launch,
+    const BeamzSourceGroupLaunch* source_groups, int32_t source_group_count,
+    const BeamzDftGroupLaunch& monitors, int32_t nsteps) {
+  if (source_groups == nullptr || source_group_count != 9 ||
+      monitors.monitor_count < 1 || monitors.indices.rank != 4 ||
+      monitors.weights.rank != 4 || monitors.frequencies.rank != 2 ||
+      monitors.component_masks.rank != 2 || monitors.counts.rank != 2 ||
+      monitors.codes.rank != 2 || monitors.windows.rank != 2 ||
+      monitors.dft_re.rank != 4 || monitors.dft_im.rank != 4 ||
+      monitors.dft_weight.rank != 2 || monitors.time.rank != 0 ||
+      monitors.current_step.rank != 0 ||
+      monitors.indices.dims[0] < monitors.monitor_count ||
+      monitors.indices.dims[1] != 6 ||
+      monitors.weights.dims[0] != monitors.indices.dims[0] ||
+      monitors.weights.dims[1] != monitors.indices.dims[1] ||
+      monitors.weights.dims[2] != monitors.indices.dims[2] ||
+      monitors.weights.dims[3] != monitors.indices.dims[3] ||
+      monitors.frequencies.dims[0] < monitors.monitor_count ||
+      monitors.component_masks.dims[0] < monitors.monitor_count ||
+      monitors.component_masks.dims[1] != 6 ||
+      monitors.counts.dims[0] < monitors.monitor_count ||
+      monitors.counts.dims[1] != 3 ||
+      monitors.codes.dims[0] < monitors.monitor_count ||
+      monitors.codes.dims[1] != 2 ||
+      monitors.windows.dims[0] < monitors.monitor_count ||
+      monitors.windows.dims[1] != 3 ||
+      monitors.dft_re.dims[0] < monitors.monitor_count ||
+      monitors.dft_re.dims[1] != 6 ||
+      monitors.dft_re.dims[2] < monitors.frequencies.dims[1] ||
+      monitors.dft_re.dims[3] < monitors.indices.dims[2] ||
+      monitors.dft_im.dims[0] != monitors.dft_re.dims[0] ||
+      monitors.dft_im.dims[1] != monitors.dft_re.dims[1] ||
+      monitors.dft_im.dims[2] != monitors.dft_re.dims[2] ||
+      monitors.dft_im.dims[3] != monitors.dft_re.dims[3] ||
+      monitors.dft_weight.dims[0] < monitors.monitor_count ||
+      monitors.dft_weight.dims[1] < monitors.frequencies.dims[1]) {
+    return cudaErrorInvalidValue;
+  }
+  for (int32_t index = 0; index < source_group_count; ++index) {
+    const BeamzSourceGroupLaunch& group = source_groups[index];
+    if (group.component < 0 || group.component > 2 || group.timing < 0 ||
+        group.timing > 2 || group.coefficients.rank != 4 ||
+        group.waveforms.rank != 2 || group.starts.rank != 2 ||
+        group.current_step.rank != 0 ||
+        group.coefficients.dims[0] != group.waveforms.dims[0] ||
+        group.coefficients.dims[0] != group.starts.dims[0] ||
+        group.starts.dims[1] != 3 || group.waveforms.dims[1] < 1 ||
+        !FitsIntOffsets(group.coefficients) ||
+        !FitsIntOffsets(group.waveforms) || !FitsIntOffsets(group.starts)) {
+      return cudaErrorInvalidValue;
+    }
+  }
+  const BeamzBuffer monitor_buffers[] = {
+      monitors.indices,         monitors.weights, monitors.frequencies,
+      monitors.component_masks, monitors.counts,  monitors.codes,
+      monitors.windows,         monitors.dft_re,   monitors.dft_im,
+      monitors.dft_weight};
+  for (const BeamzBuffer& buffer : monitor_buffers) {
+    if (!FitsIntOffsets(buffer)) return cudaErrorInvalidValue;
+  }
+  return LaunchStreamedGraph(raw_stream, h_launch, e_launch, nullptr,
+                             source_groups, source_group_count, nullptr,
+                             &monitors, nsteps);
 }
 
 int BeamzLaunchStreamedSourceMonitorSteps(
@@ -830,5 +1001,5 @@ int BeamzLaunchStreamedSourceMonitorSteps(
     }
   }
   return LaunchStreamedGraph(raw_stream, h_launch, e_launch, &source, nullptr,
-                             0, &monitor, nsteps);
+                             0, &monitor, nullptr, nsteps);
 }

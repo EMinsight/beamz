@@ -406,6 +406,173 @@ def run_source_group_steps(state, ctx, coeffs, groups, nsteps: int) -> Simulatio
     )
 
 
+def pack_dft_monitors(monitors):
+    """Pack heterogeneous DFT gather plans into one rectangular CUDA batch."""
+    if not monitors:
+        raise ValueError("CUDA DFT graph requires at least one monitor")
+    max_points = max(int(monitor.dft_point_count) for monitor in monitors)
+    max_frequencies = max(int(monitor.freq_count) for monitor in monitors)
+    max_neighbors = max(
+        int(indices.shape[1])
+        for monitor in monitors
+        for indices in monitor.dft_flat_idx
+    )
+
+    def pad_plan(value, points, neighbors, *, fill=0):
+        return jnp.pad(
+            value,
+            ((0, points - value.shape[0]), (0, neighbors - value.shape[1])),
+            constant_values=fill,
+        )
+
+    indices = jnp.stack(
+        tuple(
+            jnp.stack(
+                tuple(
+                    pad_plan(value, max_points, max_neighbors)
+                    for value in monitor.dft_flat_idx
+                )
+            )
+            for monitor in monitors
+        )
+    ).astype(jnp.int32)
+    weights = jnp.stack(
+        tuple(
+            jnp.stack(
+                tuple(
+                    pad_plan(value, max_points, max_neighbors)
+                    for value in monitor.dft_weights
+                )
+            )
+            for monitor in monitors
+        )
+    ).astype(jnp.float32)
+    frequencies = jnp.stack(
+        tuple(
+            jnp.pad(
+                monitor.freq_hz,
+                (0, max_frequencies - monitor.freq_count),
+            )
+            for monitor in monitors
+        )
+    ).astype(jnp.float32)
+    component_masks = jnp.stack(
+        tuple(monitor.dft_component_mask for monitor in monitors)
+    ).astype(jnp.float32)
+    counts = jnp.asarray(
+        tuple(
+            (
+                monitor.freq_count,
+                monitor.dft_point_count,
+                monitor.dft_record_interval,
+            )
+            for monitor in monitors
+        ),
+        dtype=jnp.int32,
+    )
+    codes = jnp.asarray(
+        tuple(
+            (monitor.dft_window_code, monitor.dft_normalization_code)
+            for monitor in monitors
+        ),
+        dtype=jnp.int32,
+    )
+    windows = jnp.asarray(
+        tuple(
+            (monitor.dft_t_start, monitor.dft_t_end, monitor.dft_length_unit)
+            for monitor in monitors
+        ),
+        dtype=jnp.float32,
+    )
+    return (
+        indices,
+        weights,
+        frequencies,
+        component_masks,
+        counts,
+        codes,
+        windows,
+    )
+
+
+def run_program_steps(
+    state, ctx, coeffs, groups, packed_monitors, nsteps: int
+) -> SimulationState:
+    """Advance arbitrary slab sources and packed vector DFTs in one CUDA graph."""
+    if nsteps < 1:
+        raise ValueError("CUDA step count must be positive")
+    if len(groups) != 9:
+        raise ValueError("CUDA program graph requires nine source groups")
+    if state.dft_vec_re.dtype != jnp.float32:
+        raise ValueError("CUDA program graph requires float32 DFT accumulators")
+    empty_coefficients = jnp.zeros((0, 1, 1, 1), dtype=jnp.float32)
+    empty_waveforms = jnp.zeros((0, 1), dtype=jnp.float32)
+    empty_starts = jnp.zeros((0, 3), dtype=jnp.int32)
+    source_arguments = []
+    for group in groups:
+        source_arguments.extend(
+            (empty_coefficients, empty_waveforms, empty_starts)
+            if group is None
+            else (group.coeffs, group.waveforms, group.starts)
+        )
+    arguments, result_values, aliases = _graph_io(state, ctx, coeffs)
+    state_output_count = len(result_values)
+    result_values = (
+        *result_values,
+        state.dft_vec_re,
+        state.dft_vec_im,
+        state.dft_weight_sum,
+    )
+    monitor_output_start = len(arguments) + len(source_arguments) + 7
+    aliases = {
+        **aliases,
+        monitor_output_start: state_output_count,
+        monitor_output_start + 1: state_output_count + 1,
+        monitor_output_start + 2: state_output_count + 2,
+    }
+    call = jax.ffi.ffi_call(
+        "beamz_cuda_streamed_program_cpml_steps",
+        tuple(_shape(value) for value in result_values),
+        input_output_aliases=aliases,
+        vmap_method="sequential",
+    )
+    outputs = call(
+        *arguments,
+        *source_arguments,
+        *packed_monitors,
+        state.dft_vec_re,
+        state.dft_vec_im,
+        state.dft_weight_sum,
+        state.t,
+        state.current_step,
+        abi_version=np.int32(CUDA_ABI_VERSION),
+        nsteps=np.int32(nsteps),
+        dt=np.float32(ctx.dt),
+        resolution=np.float32(ctx.resolution),
+        metallic_edges=np.int32(_metallic_edge_mask(ctx.boundary.cpml.metallic_edges)),
+        metric_kind=_metric_kind_code(ctx),
+        cpml_enabled=np.int32(ctx.boundary.cpml.enabled),
+        monitor_count=np.int32(packed_monitors[0].shape[0]),
+    )
+    next_state = (
+        _replace_graph_outputs(state, outputs)
+        if ctx.boundary.cpml.enabled
+        else state._replace(
+            hx=outputs[0],
+            hy=outputs[1],
+            hz=outputs[2],
+            ex=outputs[3],
+            ey=outputs[4],
+            ez=outputs[5],
+        )
+    )
+    return next_state._replace(
+        dft_vec_re=outputs[state_output_count],
+        dft_vec_im=outputs[state_output_count + 1],
+        dft_weight_sum=outputs[state_output_count + 2],
+    )
+
+
 def run_source_monitor_steps(
     state, ctx, coeffs, source, monitor, nsteps: int
 ) -> SimulationState:

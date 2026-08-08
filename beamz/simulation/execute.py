@@ -557,35 +557,6 @@ def build_scan(program, *, donate_state: bool = False):
         is_3d=is_3d,
     )
     update_kernel = update_runtime.select_update_kernel(step_context)
-    graph_source = (
-        program.sources[0]
-        if cfg.backend == "cuda_streamed"
-        and len(program.sources) == 1
-        and program.sources[0].timing == "pre_e"
-        and program.sources[0].component in {"Ex", "Ey", "Ez"}
-        and program.sources[0].is_slab
-        and program.sources[0].slab_starts is not None
-        and program.sources[0].slab_sizes is not None
-        else None
-    )
-    graph_monitor = (
-        program.monitors[0]
-        if graph_source is not None
-        and len(program.monitors) == 1
-        and program.monitors[0].recorder_index < 0
-        and not program.monitors[0].accumulate_power
-        and not program.monitors[0].accumulate_frequency
-        and program.monitors[0].dft_enabled
-        and program.monitors[0].dft_record_interval == 1
-        and program.monitors[0].dft_t_start == 0.0
-        and not np.isfinite(program.monitors[0].dft_t_end)
-        and program.monitors[0].dft_window_code == 0
-        and program.monitors[0].dft_normalization_code == 0
-        and program.monitors[0].freq_count > 0
-        and program.monitors[0].dft_point_count > 0
-        and not bool(jax.config.read("jax_enable_x64"))
-        else None
-    )
     graph_source_groups = tuple(
         source_batches[(timing, component)][0]
         for timing, components in SOURCE_PHASE_COMPONENTS.items()
@@ -594,9 +565,27 @@ def build_scan(program, *, donate_state: bool = False):
     source_groups_supported = bool(program.sources) and all(
         not rest for _group, rest in source_batches.values()
     )
+    graph_monitors_supported = bool(program.monitors) and all(
+        monitor.recorder_index < 0
+        and not monitor.accumulate_power
+        and not monitor.accumulate_frequency
+        and monitor.dft_enabled
+        and monitor.freq_count > 0
+        and monitor.dft_point_count > 0
+        for monitor in program.monitors
+    )
+    packed_graph_monitors = None
+    if (
+        cfg.backend == "cuda_streamed"
+        and graph_monitors_supported
+        and not bool(jax.config.read("jax_enable_x64"))
+    ):
+        from beamz.simulation.cuda import pack_dft_monitors
+
+        packed_graph_monitors = pack_dft_monitors(program.monitors)
     cuda_multi_step = (
         cfg.backend == "cuda_streamed"
-        and (not program.monitors or graph_monitor is not None)
+        and (not program.monitors or packed_graph_monitors is not None)
         and (not program.sources or source_groups_supported)
     )
 
@@ -608,23 +597,23 @@ def build_scan(program, *, donate_state: bool = False):
         # lowering strategy, not timestep semantics.
         if cuda_multi_step:
             from beamz.simulation.cuda import (
+                run_program_steps,
                 run_source_group_steps,
-                run_source_monitor_steps,
                 run_steps,
             )
 
             scan_out = (
                 run_steps(state, step_context, coeffs, cfg.num_steps)
-                if not program.sources
-                else run_source_monitor_steps(
+                if not program.sources and not program.monitors
+                else run_program_steps(
                     state,
                     step_context,
                     coeffs,
-                    graph_source,
-                    graph_monitor,
+                    graph_source_groups,
+                    packed_graph_monitors,
                     cfg.num_steps,
                 )
-                if graph_monitor is not None
+                if program.monitors
                 else run_source_group_steps(
                     state,
                     step_context,

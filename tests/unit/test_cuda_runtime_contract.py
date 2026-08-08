@@ -257,6 +257,47 @@ def test_cuda_source_group_graph_requires_all_phase_component_slots():
         )
 
 
+def test_cuda_program_graph_packs_monitor_batch_and_aliases_accumulators(monkeypatch):
+    program, state, context = _program_and_state(cpml=True, source=True, monitor=True)
+    captured = []
+
+    def fake_ffi_call(target, result_metadata, **options):
+        def call(*arguments, **attributes):
+            captured.append((target, result_metadata, options, arguments, attributes))
+            return (
+                *arguments[:6],
+                *arguments[31:37],
+                *arguments[62:68],
+                *arguments[108:111],
+            )
+
+        return call
+
+    monkeypatch.setattr(cuda_runtime.jax.ffi, "ffi_call", fake_ffi_call)
+    source_group = SimpleNamespace(
+        coeffs=jnp.ones((1, 2, 3, 4), dtype=jnp.float32),
+        waveforms=jnp.ones((1, 8), dtype=jnp.float32),
+        starts=jnp.zeros((1, 3), dtype=jnp.int32),
+    )
+    groups = (source_group, None, None, None, None, None, None, None, None)
+    packed = cuda_runtime.pack_dft_monitors(program.monitors)
+
+    next_state = cuda_runtime.run_program_steps(
+        state, context, program.coefficients, groups, packed, 3
+    )
+
+    target, results, options, arguments, attributes = captured[0]
+    assert target == "beamz_cuda_streamed_program_cpml_steps"
+    assert len(results) == 21
+    assert len(arguments) == 113
+    assert packed[0].shape[:2] == (1, 6)
+    assert options["input_output_aliases"][108] == 18
+    assert options["input_output_aliases"][109] == 19
+    assert options["input_output_aliases"][110] == 20
+    assert attributes["monitor_count"] == np.int32(1)
+    assert next_state.dft_vec_re is state.dft_vec_re
+
+
 def test_cuda_source_graph_supports_pec_without_cpml(monkeypatch):
     program, state, context = _program_and_state(cpml=False, source=True)
     captured = []
