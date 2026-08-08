@@ -301,7 +301,12 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
             )
         ]
     sources = []
-    if args.profile in {"cpml_source", "cpml_source_monitor"}:
+    if args.profile in {
+        "pec_source",
+        "pec_source_monitor",
+        "cpml_source",
+        "cpml_source_monitor",
+    }:
         omega = 2.0 * np.pi * 193.414e12
         steps = np.arange(args.timesteps)
         envelope = np.exp(-(((steps - 24.0) / 8.0) ** 2))
@@ -313,7 +318,7 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
             )
         ]
     monitors = []
-    if args.profile == "cpml_source_monitor":
+    if args.profile in {"pec_source_monitor", "cpml_source_monitor"}:
         clear_y = max(resolution, size_xyz[1] - 2 * pml_cells * resolution)
         clear_z = max(resolution, size_xyz[2] - 2 * pml_cells * resolution)
         monitors = [
@@ -398,6 +403,8 @@ def _parser() -> argparse.ArgumentParser:
             "uniform_pec",
             "heterogeneous_pec",
             "heterogeneous_cpml",
+            "pec_source",
+            "pec_source_monitor",
             "cpml_source",
             "cpml_source_monitor",
             "axis_uniform_pec",
