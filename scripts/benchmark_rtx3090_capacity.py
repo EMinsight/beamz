@@ -519,7 +519,43 @@ def run_sweep(args: argparse.Namespace) -> tuple[CapacitySweep, dict[str, Path]]
             flush=True,
         )
 
-    for index, resolution_nm in enumerate(args.resolutions_nm, start=1):
+    if args.finalize_checkpoint:
+        measured_resolutions = {
+            item.resolution_nm
+            for item in measurements
+            if item.workload == MODAL_WORKLOAD
+        }
+        first_unmeasured = next(
+            (
+                resolution
+                for resolution in args.resolutions_nm
+                if resolution not in measured_resolutions
+            ),
+            None,
+        )
+        if first_unmeasured is not None and not any(
+            failure.kind in {"gpu_oom", "shared_gpu_safety_stop"}
+            and failure.workload == MODAL_WORKLOAD
+            for failure in failures
+        ):
+            failures.append(
+                CapacityFailure(
+                    workload=MODAL_WORKLOAD,
+                    resolution_nm=first_unmeasured,
+                    kind="shared_gpu_safety_stop",
+                    returncode=-1,
+                    detail=(
+                        "The T3/Chromium GPU process closed twice when the sweep "
+                        "crossed the 16 GiB JAX pool transition. The user requested "
+                        "continuation without destabilizing the shared desktop, so "
+                        "the allocation was not repeated."
+                    ),
+                )
+            )
+            _write_checkpoint(args, measurements, failures)
+
+    resolutions_to_run = () if args.finalize_checkpoint else args.resolutions_nm
+    for index, resolution_nm in enumerate(resolutions_to_run, start=1):
         existing_modal_oom = next(
             (
                 failure
@@ -702,6 +738,11 @@ def _parser() -> argparse.ArgumentParser:
         default=True,
         help="resume a matching per-point checkpoint in the output directory",
     )
+    parser.add_argument(
+        "--finalize-checkpoint",
+        action="store_true",
+        help="write artifacts from saved points and record a shared-GPU safety stop",
+    )
     parser.add_argument("--allow-other-gpu", action="store_true")
     parser.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
@@ -733,6 +774,8 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise SystemExit("--resolutions-nm must be strictly decreasing")
     if args.child and args.workload is None:
         raise SystemExit("--child requires --workload")
+    if args.child and args.finalize_checkpoint:
+        raise SystemExit("--finalize-checkpoint is a parent-process option")
 
 
 def main() -> None:
@@ -750,11 +793,18 @@ def main() -> None:
     for label, path in paths.items():
         print(f"{label}: {path}")
     if not any(failure.kind == "gpu_oom" for failure in sweep.failures):
-        print(
-            "warning: resolution list ended before a GPU OOM; capacity is only "
-            "lower-bounded",
-            file=sys.stderr,
-        )
+        if any(failure.kind == "shared_gpu_safety_stop" for failure in sweep.failures):
+            print(
+                "note: capacity is a safe shared-desktop lower bound; no further "
+                "full-VRAM allocation was attempted",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "warning: resolution list ended before a GPU OOM; capacity is only "
+                "lower-bounded",
+                file=sys.stderr,
+            )
 
 
 if __name__ == "__main__":

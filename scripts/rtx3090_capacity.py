@@ -104,6 +104,14 @@ class CapacityMeasurement:
         return self.peak_bytes_in_use / 2**30
 
     @property
+    def peak_pool_gib(self) -> float:
+        return self.peak_pool_bytes / 2**30
+
+    @property
+    def process_memory_gib(self) -> float:
+        return self.process_memory_bytes / 2**30
+
+    @property
     def allocator_utilization(self) -> float:
         return self.peak_pool_bytes / self.allocator_limit_bytes
 
@@ -121,6 +129,8 @@ class CapacityMeasurement:
                 "gcups_ci95": self.gcups_ci95,
                 "milliseconds_per_step": self.milliseconds_per_step,
                 "peak_memory_gib": self.peak_memory_gib,
+                "peak_pool_gib": self.peak_pool_gib,
+                "process_memory_gib": self.process_memory_gib,
                 "allocator_utilization": self.allocator_utilization,
             }
         )
@@ -290,6 +300,8 @@ class CapacitySweep:
                 "largest_successful_resolution_nm": largest.resolution_nm,
                 "largest_successful_cells": largest.cells,
                 "largest_successful_peak_memory_gib": largest.peak_memory_gib,
+                "largest_successful_peak_pool_gib": largest.peak_pool_gib,
+                "largest_successful_process_memory_gib": largest.process_memory_gib,
                 "largest_successful_allocator_utilization": (
                     largest.allocator_utilization
                 ),
@@ -298,6 +310,15 @@ class CapacitySweep:
                         failure.resolution_nm
                         for failure in self.failures
                         if failure.kind == "gpu_oom"
+                        and failure.workload == MODAL_WORKLOAD
+                    ),
+                    None,
+                ),
+                "shared_gpu_safety_stop_resolution_nm": next(
+                    (
+                        failure.resolution_nm
+                        for failure in self.failures
+                        if failure.kind == "shared_gpu_safety_stop"
                         and failure.workload == MODAL_WORKLOAD
                     ),
                     None,
@@ -318,6 +339,22 @@ class CapacitySweep:
                     result["capacity"]["fitted_allocator_capacity_cells"] = max(
                         0, int(available / memory_fit["slope"])
                     )
+                    physical_available = (
+                        self.total_gpu_memory_bytes
+                        - self.baseline_gpu_memory_bytes
+                        - memory_fit["intercept"]
+                    )
+                    fitted_physical_cells = max(
+                        0, int(physical_available / memory_fit["slope"])
+                    )
+                    result["capacity"]["fitted_shared_gpu_capacity_cells"] = (
+                        fitted_physical_cells
+                    )
+                    if fitted_physical_cells > 0:
+                        result["capacity"]["fitted_shared_gpu_resolution_nm"] = (
+                            largest.resolution_nm
+                            * (largest.cells / fitted_physical_cells) ** (1.0 / 3.0)
+                        )
         if modal_summary and bare_summary:
             result["bare_to_modal_best_gcups_ratio"] = (
                 bare_summary["best_median_gcups"] / modal_summary["best_median_gcups"]
@@ -446,16 +483,28 @@ def _markdown_report(sweep: CapacitySweep) -> str:
             "peak."
         )
     lines.append(
-        f"- Largest successful realistic domain: "
+        f"- Largest safely measured realistic domain: "
         f"**{_format_cells(capacity['largest_successful_cells'])} cells** at "
         f"{capacity['largest_successful_resolution_nm']:.3g} nm, using "
-        f"{capacity['largest_successful_peak_memory_gib']:.2f} GiB of peak active "
-        "allocator memory."
+        f"{capacity['largest_successful_peak_memory_gib']:.2f} GiB active, "
+        f"{capacity['largest_successful_peak_pool_gib']:.2f} GiB pooled, and "
+        f"{capacity['largest_successful_process_memory_gib']:.2f} GiB of process "
+        "VRAM."
     )
     if capacity["first_gpu_oom_resolution_nm"] is not None:
         lines.append(
             f"- First GPU OOM: **{capacity['first_gpu_oom_resolution_nm']:.3g} nm**, "
             "which supplies the upper capacity bracket."
+        )
+    elif capacity["shared_gpu_safety_stop_resolution_nm"] is not None:
+        lines.append(
+            f"- Shared-GPU safety stop: **"
+            f"{capacity['shared_gpu_safety_stop_resolution_nm']:.3g} nm** was not "
+            "re-run after the allocation transition closed the T3/Chromium GPU "
+            "process twice. The active-memory fit projects "
+            f"**{_format_cells(capacity['fitted_shared_gpu_capacity_cells'])} "
+            "cells** on nominal free VRAM, but that projection is not a measured "
+            "capacity point."
         )
     lines.extend(
         [
@@ -563,6 +612,27 @@ def _plot_sweep(sweep: CapacitySweep, output_path: Path) -> None:
             label=labels[workload],
         )
 
+    if sweep.modal:
+        modal_cells = [item.cells for item in sweep.modal]
+        axes[1, 0].plot(
+            modal_cells,
+            [item.peak_pool_gib for item in sweep.modal],
+            color="#1f77b4",
+            marker=".",
+            linestyle=":",
+            linewidth=1.7,
+            label="Modal allocator pool",
+        )
+        axes[1, 0].plot(
+            modal_cells,
+            [item.process_memory_gib for item in sweep.modal],
+            color="#4b5563",
+            marker=".",
+            linestyle="-.",
+            linewidth=1.5,
+            label="Modal process VRAM",
+        )
+
     best = max(sweep.modal, key=lambda item: item.median_gcups)
     axes[0, 0].annotate(
         f"realistic peak {best.median_gcups:.2f} GCUPS",
@@ -582,12 +652,20 @@ def _plot_sweep(sweep: CapacitySweep, output_path: Path) -> None:
         linewidth=1.4,
         label=f"JAX allocator limit ({allocator_limit_gib:.1f} GiB)",
     )
+    total_memory_gib = sweep.total_gpu_memory_bytes / 2**30
+    axes[1, 0].axhline(
+        total_memory_gib,
+        color="#111827",
+        linestyle="--",
+        linewidth=1.2,
+        label=f"Physical VRAM ({total_memory_gib:.1f} GiB)",
+    )
 
     axes[0, 0].set_title("FDTD throughput by domain size")
     axes[0, 0].set_ylabel("GCUPS (median, 95% bootstrap CI)")
     axes[0, 1].set_title("Warm time per full timestep")
     axes[0, 1].set_ylabel("milliseconds per timestep")
-    axes[1, 0].set_title("Peak active GPU allocation")
+    axes[1, 0].set_title("Active, pooled, and process GPU memory")
     axes[1, 0].set_ylabel("GiB")
     axes[1, 1].set_title("Warm-run timing variability")
     axes[1, 1].set_ylabel("coefficient of variation (%)")
@@ -637,6 +715,8 @@ def _report_rows(
                     f"{prefix}_gcups_ci_high": high,
                     f"{prefix}_ms_per_step": item.milliseconds_per_step,
                     f"{prefix}_peak_memory_gib": item.peak_memory_gib,
+                    f"{prefix}_peak_pool_gib": item.peak_pool_gib,
+                    f"{prefix}_process_memory_gib": item.process_memory_gib,
                     f"{prefix}_allocator_utilization": item.allocator_utilization,
                     f"{prefix}_cv": item.timing.coefficient_of_variation,
                 }
@@ -673,6 +753,8 @@ def _report_artifact(sweep: CapacitySweep) -> dict[str, Any]:
                     "gcups_ci_low": row[f"{prefix}_gcups_ci_low"],
                     "gcups_ci_high": row[f"{prefix}_gcups_ci_high"],
                     "peak_memory_gib": row[f"{prefix}_peak_memory_gib"],
+                    "peak_pool_gib": row[f"{prefix}_peak_pool_gib"],
+                    "process_memory_gib": row[f"{prefix}_process_memory_gib"],
                     "allocator_utilization": row[f"{prefix}_allocator_utilization"],
                     "runtime_cv": row[f"{prefix}_cv"],
                 }
@@ -680,15 +762,48 @@ def _report_artifact(sweep: CapacitySweep) -> dict[str, Any]:
     modal_chart_rows = [
         row for row in chart_rows if row["workload"] == workload_labels["modal"]
     ]
+    modal_memory_rows = [
+        {
+            **{
+                key: row[key]
+                for key in (
+                    "resolution_nm",
+                    "domain_cells",
+                    "log10_domain_cells",
+                    "grid",
+                )
+            },
+            "memory_kind": kind,
+            "memory_gib": row[field],
+        }
+        for row in modal_chart_rows
+        for kind, field in (
+            ("Active arrays", "peak_memory_gib"),
+            ("JAX allocator pool", "peak_pool_gib"),
+            ("Process VRAM", "process_memory_gib"),
+        )
+    ]
     generated_at = sweep.completed_at
     source_id = "rtx3090_capacity_sweep"
     title = "RTX 3090 CUDA FDTD capacity and throughput"
-    oom_text = (
-        f" The first GPU OOM occurred at "
-        f"{capacity['first_gpu_oom_resolution_nm']:.3g} nm."
-        if capacity["first_gpu_oom_resolution_nm"] is not None
-        else " The sweep ended before observing a GPU OOM, so capacity is lower-bounded only."
-    )
+    if capacity["first_gpu_oom_resolution_nm"] is not None:
+        capacity_text = (
+            f" The first GPU OOM occurred at "
+            f"{capacity['first_gpu_oom_resolution_nm']:.3g} nm."
+        )
+    elif capacity["shared_gpu_safety_stop_resolution_nm"] is not None:
+        capacity_text = (
+            " The next allocation transition destabilized the shared T3/Chromium "
+            "GPU process twice, so the measured capacity is a safe lower bound; "
+            f"the active-memory fit projects about "
+            f"{_format_cells(capacity['fitted_shared_gpu_capacity_cells'])} cells "
+            "against nominal free VRAM."
+        )
+    else:
+        capacity_text = (
+            " The sweep ended before observing a GPU OOM, so capacity is "
+            "lower-bounded only."
+        )
     cards = [
         {
             "id": "modal_peak",
@@ -731,7 +846,7 @@ def _report_artifact(sweep: CapacitySweep) -> dict[str, Any]:
         },
         {
             "id": "capacity",
-            "description": "Largest realistic domain completed before the first failed allocation.",
+            "description": "Largest realistic domain measured without destabilizing the shared display GPU.",
             "dataset": "summary",
             "sourceId": source_id,
             "metrics": [
@@ -813,14 +928,14 @@ def _report_artifact(sweep: CapacitySweep) -> dict[str, Any]:
         },
         {
             "id": "memory_curve",
-            "title": "Peak active GPU allocation by domain cells",
-            "subtitle": "JAX allocator peak after warm execution; x-axis is log10(cell count).",
+            "title": "Realistic active, pooled, and process GPU memory",
+            "subtitle": "The allocator pool grows in bins and can materially exceed live FDTD arrays.",
             "showDescription": True,
             "intent": "trend",
             "question": "How quickly does each workload consume the available GPU memory?",
             "rationale": "The ordered memory curve reveals fixed overhead and bytes-per-cell scaling.",
             "type": "line",
-            "dataset": "chart_curves",
+            "dataset": "modal_memory_curves",
             "sourceId": source_id,
             "encodings": {
                 "x": {
@@ -829,20 +944,20 @@ def _report_artifact(sweep: CapacitySweep) -> dict[str, Any]:
                     "label": "log10(domain cells)",
                 },
                 "y": {
-                    "field": "peak_memory_gib",
+                    "field": "memory_gib",
                     "type": "quantitative",
-                    "label": "Peak active memory",
+                    "label": "GPU memory",
                     "unit": "GiB",
                 },
                 "color": {
-                    "field": "workload",
+                    "field": "memory_kind",
                     "type": "nominal",
-                    "label": "Workload",
+                    "label": "Memory counter",
                 },
                 "lineStyle": {
-                    "field": "workload",
+                    "field": "memory_kind",
                     "type": "nominal",
-                    "label": "Workload",
+                    "label": "Memory counter",
                 },
                 "tooltip": [
                     {
@@ -861,6 +976,25 @@ def _report_artifact(sweep: CapacitySweep) -> dict[str, Any]:
             },
             "palette": {"kind": "categorical"},
             "legend": {"position": "bottom", "sort": "spec"},
+            "referenceLines": [
+                {
+                    "axis": "y",
+                    "value": sweep.total_gpu_memory_bytes / 2**30,
+                    "label": "Physical VRAM",
+                    "color": "neutral",
+                    "lineStyle": "dashed",
+                },
+                {
+                    "axis": "y",
+                    "value": max(
+                        item.allocator_limit_bytes for item in sweep.measurements
+                    )
+                    / 2**30,
+                    "label": "Configured allocator limit",
+                    "color": "neutral",
+                    "lineStyle": "dotted",
+                },
+            ],
             "layout": "full",
             "surface": {"surface": "card", "viewMode": "both"},
         },
@@ -994,7 +1128,7 @@ def _report_artifact(sweep: CapacitySweep) -> dict[str, Any]:
         f"half of successful domain sizes. The matched bare PEC path peaked at "
         f"**{bare.get('best_median_gcups', 0.0):.3f} GCUPS**. The largest realistic "
         f"success was **{_format_cells(capacity['largest_successful_cells'])} cells** "
-        f"at {capacity['largest_successful_resolution_nm']:.3g} nm.{oom_text}"
+        f"at {capacity['largest_successful_resolution_nm']:.3g} nm.{capacity_text}"
     )
     blocks = [
         {"id": "title", "type": "markdown", "body": f"# {title}"},
@@ -1031,8 +1165,10 @@ def _report_artifact(sweep: CapacitySweep) -> dict[str, Any]:
             "body": (
                 "## Memory growth defines the usable domain limit\n\n"
                 f"The largest completed realistic point held {_format_cells(capacity['largest_successful_cells'])} cells with "
-                f"{capacity['largest_successful_peak_memory_gib']:.2f} GiB of peak active allocations. "
-                "The curve distinguishes the realistic CPML state footprint from the lean bare-update footprint; the first OOM supplies a measured bracket rather than a projection alone."
+                f"{capacity['largest_successful_peak_memory_gib']:.2f} GiB active, "
+                f"a {capacity['largest_successful_peak_pool_gib']:.2f} GiB JAX pool, and "
+                f"{capacity['largest_successful_process_memory_gib']:.2f} GiB of process VRAM. "
+                "The stepwise pool is why a nominally feasible next array footprint can still destabilize another GPU client on a shared display card."
             ),
         },
         {
@@ -1086,7 +1222,7 @@ def _report_artifact(sweep: CapacitySweep) -> dict[str, Any]:
                 "## Isolated-process methodology\n\n"
                 f"Each point ran in a fresh process with XLA preallocation disabled and a {sweep.allocator_fraction:.0%} allocator limit. "
                 f"After mode solving, lowering, and compilation, {sweep.warmups} launches primed clocks and allocations; the next {sweep.samples} full {sweep.timesteps}-step launches were synchronized and timed. "
-                "Rasterization, mode solving, lowering, compilation, and result decoding are reported separately and excluded from GCUPS. Resolutions decrease until the first GPU OOM."
+                "Rasterization, mode solving, lowering, compilation, and result decoding are reported separately and excluded from GCUPS. The sweep stopped at the shared-desktop safety boundary rather than forcing another allocation transition."
             ),
         },
         {
@@ -1094,7 +1230,7 @@ def _report_artifact(sweep: CapacitySweep) -> dict[str, Any]:
             "type": "markdown",
             "body": (
                 "## Limitations and robustness checks\n\n"
-                "This is a single-card, single-session measurement, so driver, temperature, display load, and clock policy can move absolute values. Bootstrap intervals quantify repeat timing noise, not machine-to-machine uncertainty. The allocator counters cover JAX-managed live and pool bytes; process memory from `nvidia-smi` is retained in the raw data as a cross-check. The bare ceiling deliberately omits source and absorbing-boundary physics and must not be presented as realistic application GCUPS."
+                "This is a single-card, single-session measurement, so driver, temperature, display load, and clock policy can move absolute values. Bootstrap intervals quantify repeat timing noise, not machine-to-machine uncertainty. The capacity projection comes from a linear active-memory fit and does not model allocator-bin growth or fragmentation; it is not a measured maximum. The allocator counters cover JAX-managed live and pool bytes; process memory from `nvidia-smi` is retained as a cross-check. The bare ceiling deliberately omits source and absorbing-boundary physics and must not be presented as realistic application GCUPS."
             ),
         },
         {
@@ -1141,6 +1277,7 @@ def _report_artifact(sweep: CapacitySweep) -> dict[str, Any]:
                 "curves": curve_rows,
                 "chart_curves": chart_rows,
                 "modal_curves": modal_chart_rows,
+                "modal_memory_curves": modal_memory_rows,
                 "detail": detail_rows,
             },
             **(
@@ -1151,7 +1288,7 @@ def _report_artifact(sweep: CapacitySweep) -> dict[str, Any]:
                         {
                             "id": "capacity_not_bounded",
                             "dataset": "curves",
-                            "message": "The requested resolution list ended before a GPU OOM bounded capacity.",
+                            "message": "Capacity is a safe shared-desktop lower bound; the next allocator transition closed the T3/Chromium GPU process twice, so no destructive full-VRAM attempt was repeated.",
                         }
                     ]
                 }
