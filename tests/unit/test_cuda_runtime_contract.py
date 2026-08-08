@@ -117,24 +117,43 @@ def test_cuda_ffi_phase_supports_non_cpml_yee_update(monkeypatch):
 
 def test_cuda_multi_step_ffi_aliases_all_fields(monkeypatch):
     program, state, context = _program_and_state(cpml=False)
+    coefficients = program.coefficients._replace(
+        **{
+            name: jnp.asarray(1.0, dtype=jnp.float32)
+            for name in (
+                "h_decay_x",
+                "h_decay_y",
+                "h_decay_z",
+                "h_source_x",
+                "h_source_y",
+                "h_source_z",
+                "e_decay_x",
+                "e_decay_y",
+                "e_decay_z",
+                "e_source_x",
+                "e_source_y",
+                "e_source_z",
+            )
+        }
+    )
     captured = []
 
     def fake_ffi_call(target, result_metadata, **options):
         def call(*arguments, **attributes):
             captured.append((target, result_metadata, options, arguments, attributes))
-            return arguments[:6]
+            return arguments[:12]
 
         return call
 
     monkeypatch.setattr(cuda_runtime.jax.ffi, "ffi_call", fake_ffi_call)
 
-    next_state = cuda_runtime.run_steps(state, context, program.coefficients, 7)
+    next_state = cuda_runtime.run_steps(state, context, coefficients, 7)
 
     target, results, options, arguments, attributes = captured[0]
-    assert target == "beamz_cuda_streamed_steps"
-    assert len(results) == 6
-    assert len(arguments) == 24
-    assert options["input_output_aliases"] == {index: index for index in range(6)}
+    assert target == "beamz_cuda_temporal_steps"
+    assert len(results) == 12
+    assert len(arguments) == 30
+    assert options["input_output_aliases"] == {index: index for index in range(12)}
     assert attributes == {
         "abi_version": np.int32(2),
         "nsteps": np.int32(7),

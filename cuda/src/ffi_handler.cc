@@ -214,26 +214,37 @@ ffi::Error TemporalStepsHandler(void* stream, ffi::RemainingArgs args,
     launch.metallic_edges = metallic_edges;
     return launch;
   };
-  BeamzLaunch h_launch = initialize(0);
-  BeamzLaunch e_launch = initialize(1);
+  BeamzLaunch h_ab = initialize(0);
+  BeamzLaunch e_ab = initialize(1);
+  BeamzLaunch h_ba = initialize(0);
+  BeamzLaunch e_ba = initialize(1);
   for (int component = 0; component < 3; ++component) {
-    h_launch.inputs[component] = inputs[component];
-    h_launch.inputs[3 + component] = inputs[3 + component];
-    h_launch.outputs[component] = outputs[component];
-    e_launch.inputs[component] = inputs[3 + component];
-    e_launch.inputs[3 + component] = outputs[component];
-    e_launch.outputs[component] = outputs[3 + component];
+    h_ab.inputs[component] = inputs[component];
+    h_ab.inputs[3 + component] = inputs[3 + component];
+    h_ab.outputs[component] = outputs[6 + component];
+    e_ab.inputs[component] = inputs[3 + component];
+    e_ab.inputs[3 + component] = outputs[6 + component];
+    e_ab.outputs[component] = outputs[9 + component];
+
+    h_ba.inputs[component] = outputs[6 + component];
+    h_ba.inputs[3 + component] = outputs[9 + component];
+    h_ba.outputs[component] = outputs[component];
+    e_ba.inputs[component] = outputs[9 + component];
+    e_ba.inputs[3 + component] = outputs[component];
+    e_ba.outputs[component] = outputs[3 + component];
   }
   for (int material = 0; material < 6; ++material) {
-    h_launch.inputs[6 + material] = inputs[12 + material];
-    e_launch.inputs[6 + material] = inputs[18 + material];
+    h_ab.inputs[6 + material] = inputs[12 + material];
+    h_ba.inputs[6 + material] = inputs[12 + material];
+    e_ab.inputs[6 + material] = inputs[18 + material];
+    e_ba.inputs[6 + material] = inputs[18 + material];
   }
   for (int axis = 0; axis < 3; ++axis) {
-    h_launch.metrics[axis] = inputs[24 + axis];
-    e_launch.metrics[axis] = inputs[27 + axis];
+    h_ab.metrics[axis] = h_ba.metrics[axis] = inputs[24 + axis];
+    e_ab.metrics[axis] = e_ba.metrics[axis] = inputs[27 + axis];
   }
-  const int error =
-      BeamzLaunchStreamedSteps(stream, h_launch, e_launch, nsteps);
+  const int error = BeamzLaunchTemporalSteps(stream, h_ab, e_ab, h_ba, e_ba,
+                                             nsteps);
   return error == 0 ? ffi::Error::Success()
                     : ffi::Error::Internal(
                           "BeamZ CUDA temporal workspace launch failed: " +

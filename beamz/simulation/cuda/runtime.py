@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -694,6 +696,46 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
         coeffs.e_source_y,
         coeffs.e_source_z,
     )
+    temporal_enabled = os.environ.get("BEAMZ_CUDA_DISABLE_TEMPORAL", "0") in {
+        "",
+        "0",
+    }
+    temporal_eligible = (
+        temporal_enabled
+        and nsteps >= 4
+        and ctx.config.metric_kind == "isotropic_uniform"
+        and _metallic_edge_mask(ctx.boundary.cpml.metallic_edges) == 63
+        and all(value.ndim == 0 for value in materials)
+    )
+    if temporal_eligible:
+        workspace = tuple(jnp.empty_like(value) for value in fields)
+        call = jax.ffi.ffi_call(
+            "beamz_cuda_temporal_steps",
+            tuple(_shape(value) for value in (*fields, *workspace)),
+            input_output_aliases={index: index for index in range(12)},
+            vmap_method="sequential",
+        )
+        outputs = call(
+            *fields,
+            *workspace,
+            *materials,
+            *_phase_metrics(ctx, _PHASE_H),
+            *_phase_metrics(ctx, _PHASE_E),
+            abi_version=np.int32(CUDA_ABI_VERSION),
+            nsteps=np.int32(nsteps),
+            dt=np.float32(ctx.dt),
+            resolution=np.float32(ctx.resolution),
+            metallic_edges=np.int32(63),
+            metric_kind=np.int32(0),
+        )
+        return state._replace(
+            hx=outputs[0],
+            hy=outputs[1],
+            hz=outputs[2],
+            ex=outputs[3],
+            ey=outputs[4],
+            ez=outputs[5],
+        )
     call = jax.ffi.ffi_call(
         "beamz_cuda_streamed_steps",
         tuple(_shape(value) for value in fields),

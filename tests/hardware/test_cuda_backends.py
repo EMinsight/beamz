@@ -306,6 +306,24 @@ def test_streamed_cuda_owns_source_free_constraints(cpml):
     _assert_state_close(reference, actual)
 
 
+@pytest.mark.parametrize("num_steps", [4, 5, 6, 7, 8])
+def test_streamed_cuda_fused_workspace_and_tails_match_jax(num_steps):
+    simulation, state = _simulation_and_seed(
+        cpml=False,
+        source=False,
+        monitor=False,
+        heterogeneous=False,
+    )
+    reference = simulation.advance(
+        state=_copy_state(state), num_steps=num_steps, backend="jax"
+    ).state
+    actual = simulation.advance(
+        state=_copy_state(state), num_steps=num_steps, backend="cuda_streamed"
+    ).state
+
+    _assert_state_close(reference, actual)
+
+
 def test_streamed_cuda_graphs_one_packed_cpml_source():
     simulation, state = _simulation_and_seed(
         cpml=True,

@@ -75,6 +75,10 @@ struct BeamzDftGroupLaunch {
 int BeamzLaunchStreamed(void* stream, const BeamzLaunch& launch);
 int BeamzLaunchStreamedSteps(void* stream, const BeamzLaunch& h_launch,
                              const BeamzLaunch& e_launch, int32_t nsteps);
+int BeamzLaunchTemporalSteps(void* stream, const BeamzLaunch& h_ab,
+                             const BeamzLaunch& e_ab,
+                             const BeamzLaunch& h_ba,
+                             const BeamzLaunch& e_ba, int32_t nsteps);
 int BeamzLaunchStreamedSourceSteps(void* stream, const BeamzLaunch& h_launch,
                                    const BeamzLaunch& e_launch,
                                    const BeamzSourceLaunch& source,

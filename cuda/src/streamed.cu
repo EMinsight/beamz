@@ -16,6 +16,14 @@ constexpr int kTileX = 32;
 constexpr int kTileY = 4;
 constexpr int kTileZ = 2;
 constexpr int kPressureTileZ = 1;
+constexpr int kFusedCoreX = 32;
+constexpr int kFusedCoreY = 8;
+constexpr int kFusedCoreZ = 4;
+constexpr int kFusedSharedX = kFusedCoreX + 1;
+constexpr int kFusedSharedY = kFusedCoreY + 1;
+constexpr int kFusedSharedZ = kFusedCoreZ + 1;
+constexpr int kFusedVolume = kFusedSharedX * kFusedSharedY * kFusedSharedZ;
+constexpr size_t kFusedSharedBytes = 3 * kFusedVolume * sizeof(float);
 constexpr size_t kMaxCachedGraphs = 32;
 
 struct GraphCache {
@@ -355,6 +363,159 @@ __global__ void UpdateFusedFullPecScalarComponents(BeamzLaunch launch) {
   UpdateFullPecScalarComponent<Phase, 0>(launch, z, y, x);
   UpdateFullPecScalarComponent<Phase, 1>(launch, z, y, x);
   UpdateFullPecScalarComponent<Phase, 2>(launch, z, y, x);
+}
+
+
+__device__ __forceinline__ int FusedOffset(int z, int y, int x) {
+  return (z * kFusedSharedY + y) * kFusedSharedX + x;
+}
+
+__device__ __forceinline__ bool BufferContains(const BeamzBuffer& value, int z,
+                                                int y, int x) {
+  return z >= 0 && y >= 0 && x >= 0 && z < value.dims[0] &&
+         y < value.dims[1] && x < value.dims[2];
+}
+
+template <int Component>
+__device__ __forceinline__ float FusedHValue(const BeamzLaunch& launch,
+                                             int z, int y, int x) {
+  const BeamzBuffer& output = launch.outputs[Component];
+  if (!BufferContains(output, z, y, x)) return 0.0f;
+  constexpr int normal_axis = 2 - Component;
+  const int coordinate = normal_axis == 0 ? z : (normal_axis == 1 ? y : x);
+  if (coordinate == 0 || coordinate == output.dims[normal_axis] - 1) {
+    return 0.0f;
+  }
+  constexpr int first_source[3] = {2, 0, 1};
+  constexpr int second_source[3] = {1, 2, 0};
+  constexpr int first_axis[3] = {1, 0, 2};
+  constexpr int second_axis[3] = {0, 2, 1};
+  const float derivative0 = UncheckedDifference<0>(
+      launch.inputs[3 + first_source[Component]], first_axis[Component], z, y,
+      x, launch.inv_resolution);
+  const float derivative1 = UncheckedDifference<0>(
+      launch.inputs[3 + second_source[Component]], second_axis[Component], z,
+      y, x, launch.inv_resolution);
+  const int linear = (z * static_cast<int>(output.dims[1]) + y) *
+                         static_cast<int>(output.dims[2]) +
+                     x;
+  const float old_field =
+      static_cast<const float*>(launch.inputs[Component].data)[linear];
+  const float decay =
+      static_cast<const float*>(launch.inputs[6 + Component].data)[0];
+  const float source =
+      static_cast<const float*>(launch.inputs[9 + Component].data)[0];
+  return decay * old_field - source * (derivative0 - derivative1);
+}
+
+template <int Component>
+__device__ __forceinline__ float FusedEValue(const BeamzLaunch& launch,
+                                             const float* h_fields,
+                                             int local_z, int local_y,
+                                             int local_x, int z, int y, int x) {
+  const BeamzBuffer& output = launch.outputs[Component];
+  if (!BufferContains(output, z, y, x)) return 0.0f;
+  constexpr int normal_axis = 2 - Component;
+  const int coordinates[3] = {z, y, x};
+  for (int axis = 0; axis < 3; ++axis) {
+    if (axis != normal_axis &&
+        (coordinates[axis] == 0 ||
+         coordinates[axis] == output.dims[axis] - 1)) {
+      return 0.0f;
+    }
+  }
+  constexpr int first_source[3] = {2, 0, 1};
+  constexpr int second_source[3] = {1, 2, 0};
+  constexpr int first_axis[3] = {1, 0, 2};
+  constexpr int second_axis[3] = {0, 2, 1};
+  auto difference = [&](int source_component, int axis) {
+    int neighbor_z = local_z;
+    int neighbor_y = local_y;
+    int neighbor_x = local_x;
+    if (axis == 0) --neighbor_z;
+    if (axis == 1) --neighbor_y;
+    if (axis == 2) --neighbor_x;
+    const float center = h_fields[source_component * kFusedVolume +
+                                  FusedOffset(local_z, local_y, local_x)];
+    const float neighbor = h_fields[source_component * kFusedVolume +
+                                    FusedOffset(neighbor_z, neighbor_y,
+                                                neighbor_x)];
+    return (center - neighbor) * launch.inv_resolution;
+  };
+  const float curl = difference(first_source[Component], first_axis[Component]) -
+                     difference(second_source[Component],
+                                second_axis[Component]);
+  const int linear = (z * static_cast<int>(output.dims[1]) + y) *
+                         static_cast<int>(output.dims[2]) +
+                     x;
+  const float old_field =
+      static_cast<const float*>(launch.inputs[Component].data)[linear];
+  const float decay =
+      static_cast<const float*>(launch.inputs[6 + Component].data)[0];
+  const float source =
+      static_cast<const float*>(launch.inputs[9 + Component].data)[0];
+  return decay * old_field + source * curl;
+}
+
+// Fuse a complete leapfrog timestep without a device-wide barrier.  Each block
+// redundantly computes the one-cell low halo of H in shared memory, then uses it
+// to update its disjoint E/H core into a frozen out-of-place destination.
+__global__ void FusedFullStepPecScalar(BeamzLaunch h_launch,
+                                       BeamzLaunch e_launch) {
+  extern __shared__ float h_fields[];
+  const int thread = threadIdx.y * blockDim.x + threadIdx.x;
+  const int threads = blockDim.x * blockDim.y;
+  const int origin_x = blockIdx.x * kFusedCoreX - 1;
+  const int origin_y = blockIdx.y * kFusedCoreY - 1;
+  const int origin_z = blockIdx.z * kFusedCoreZ - 1;
+  for (int index = thread; index < kFusedVolume; index += threads) {
+    const int local_x = index % kFusedSharedX;
+    const int local_y = (index / kFusedSharedX) % kFusedSharedY;
+    const int local_z = index / (kFusedSharedX * kFusedSharedY);
+    const int x = origin_x + local_x;
+    const int y = origin_y + local_y;
+    const int z = origin_z + local_z;
+    h_fields[index] = FusedHValue<0>(h_launch, z, y, x);
+    h_fields[kFusedVolume + index] = FusedHValue<1>(h_launch, z, y, x);
+    h_fields[2 * kFusedVolume + index] = FusedHValue<2>(h_launch, z, y, x);
+  }
+  __syncthreads();
+
+  const int local_x = threadIdx.x + 1;
+  const int local_y = threadIdx.y + 1;
+  const int x = origin_x + local_x;
+  const int y = origin_y + local_y;
+  for (int core_z = 0; core_z < kFusedCoreZ; ++core_z) {
+    const int local_z = core_z + 1;
+    const int z = origin_z + local_z;
+    const int center = FusedOffset(local_z, local_y, local_x);
+    for (int component = 0; component < 3; ++component) {
+      const BeamzBuffer& h_output = h_launch.outputs[component];
+      if (BufferContains(h_output, z, y, x)) {
+        const int linear = (z * static_cast<int>(h_output.dims[1]) + y) *
+                               static_cast<int>(h_output.dims[2]) +
+                           x;
+        static_cast<float*>(h_output.data)[linear] =
+            h_fields[component * kFusedVolume + center];
+      }
+    }
+    const float e0 =
+        FusedEValue<0>(e_launch, h_fields, local_z, local_y, local_x, z, y, x);
+    const float e1 =
+        FusedEValue<1>(e_launch, h_fields, local_z, local_y, local_x, z, y, x);
+    const float e2 =
+        FusedEValue<2>(e_launch, h_fields, local_z, local_y, local_x, z, y, x);
+    const float values[3] = {e0, e1, e2};
+    for (int component = 0; component < 3; ++component) {
+      const BeamzBuffer& e_output = e_launch.outputs[component];
+      if (BufferContains(e_output, z, y, x)) {
+        const int linear = (z * static_cast<int>(e_output.dims[1]) + y) *
+                               static_cast<int>(e_output.dims[2]) +
+                           x;
+        static_cast<float*>(e_output.data)[linear] = values[component];
+      }
+    }
+  }
 }
 
 template <int MetricKind>
@@ -844,6 +1005,128 @@ int BeamzLaunchStreamedSteps(void* raw_stream, const BeamzLaunch& h_launch,
                              const BeamzLaunch& e_launch, int32_t nsteps) {
   return LaunchStreamedGraph(raw_stream, h_launch, e_launch, nullptr, nullptr,
                              0, nullptr, nullptr, nsteps);
+}
+
+int BeamzLaunchTemporalSteps(void* raw_stream, const BeamzLaunch& h_ab,
+                             const BeamzLaunch& e_ab,
+                             const BeamzLaunch& h_ba,
+                             const BeamzLaunch& e_ba, int32_t nsteps) {
+  if (nsteps < 4 || h_ab.phase != 0 || e_ab.phase != 1 || h_ba.phase != 0 ||
+      e_ba.phase != 1 || h_ab.nterms != 0 || e_ab.nterms != 0 ||
+      h_ba.nterms != 0 || e_ba.nterms != 0 || h_ab.metric_kind != 0 ||
+      e_ab.metric_kind != 0 || h_ba.metric_kind != 0 ||
+      e_ba.metric_kind != 0 || h_ab.metallic_edges != 63 ||
+      e_ab.metallic_edges != 63 || h_ba.metallic_edges != 63 ||
+      e_ba.metallic_edges != 63) {
+    return cudaErrorInvalidValue;
+  }
+  for (int material = 0; material < 6; ++material) {
+    if (h_ab.inputs[6 + material].rank != 0 ||
+        e_ab.inputs[6 + material].rank != 0) {
+      return cudaErrorInvalidValue;
+    }
+  }
+
+  auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
+  cudaError_t error = cudaSuccess;
+
+  int64_t max_x = 0, max_y = 0, max_z = 0;
+  for (int component = 0; component < 3; ++component) {
+    const BeamzBuffer& h = h_ab.outputs[component];
+    const BeamzBuffer& e = e_ab.outputs[component];
+    max_x = h.dims[2] > max_x ? h.dims[2] : max_x;
+    max_y = h.dims[1] > max_y ? h.dims[1] : max_y;
+    max_z = h.dims[0] > max_z ? h.dims[0] : max_z;
+    max_x = e.dims[2] > max_x ? e.dims[2] : max_x;
+    max_y = e.dims[1] > max_y ? e.dims[1] : max_y;
+    max_z = e.dims[0] > max_z ? e.dims[0] : max_z;
+  }
+  const dim3 threads(kFusedCoreX, kFusedCoreY);
+  const dim3 blocks((max_x + kFusedCoreX - 1) / kFusedCoreX,
+                    (max_y + kFusedCoreY - 1) / kFusedCoreY,
+                    (max_z + kFusedCoreZ - 1) / kFusedCoreZ);
+
+  BeamzLaunch h_tail = h_ab;
+  BeamzLaunch e_tail = e_ab;
+  for (int component = 0; component < 3; ++component) {
+    h_tail.outputs[component] = h_ba.outputs[component];
+    e_tail.inputs[3 + component] = h_tail.outputs[component];
+    e_tail.outputs[component] = e_ba.outputs[component];
+  }
+
+  std::string graph_key = "fused-full-step";
+  graph_key += GraphKey(raw_stream, h_ab, e_ab, nsteps);
+  graph_key.append(reinterpret_cast<const char*>(&h_ba), sizeof(h_ba));
+  graph_key.append(reinterpret_cast<const char*>(&e_ba), sizeof(e_ba));
+  GraphCache& cache = CachedGraphs();
+  const bool cache_enabled = GraphCacheEnabled();
+  if (cache_enabled) {
+    std::lock_guard<std::mutex> lock(cache.mutex);
+    const auto cached = cache.entries.find(graph_key);
+    if (cached != cache.entries.end()) {
+      return static_cast<int>(cudaGraphLaunch(cached->second, stream));
+    }
+  }
+
+  auto launch_steps = [&]() {
+    cudaError_t launch_error = cudaSuccess;
+    const int32_t step_pairs = nsteps / 2;
+    for (int32_t pair = 0; pair < step_pairs; ++pair) {
+      FusedFullStepPecScalar<<<blocks, threads, kFusedSharedBytes, stream>>>(
+          h_ab, e_ab);
+      launch_error = cudaPeekAtLastError();
+      if (launch_error != cudaSuccess) return launch_error;
+      FusedFullStepPecScalar<<<blocks, threads, kFusedSharedBytes, stream>>>(
+          h_ba, e_ba);
+      launch_error = cudaPeekAtLastError();
+      if (launch_error != cudaSuccess) return launch_error;
+    }
+    for (int32_t step = 2 * step_pairs; step < nsteps; ++step) {
+      launch_error =
+          static_cast<cudaError_t>(BeamzLaunchStreamed(raw_stream, h_tail));
+      if (launch_error != cudaSuccess) return launch_error;
+      launch_error =
+          static_cast<cudaError_t>(BeamzLaunchStreamed(raw_stream, e_tail));
+      if (launch_error != cudaSuccess) return launch_error;
+    }
+    return launch_error;
+  };
+
+  cudaGraph_t graph = nullptr;
+  cudaGraphExec_t executable = nullptr;
+  error = cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal);
+  if (error != cudaSuccess) {
+    (void)cudaGetLastError();
+    return static_cast<int>(launch_steps());
+  }
+  error = launch_steps();
+  const cudaError_t end_error = cudaStreamEndCapture(stream, &graph);
+  if (error == cudaSuccess) error = end_error;
+  if (error == cudaSuccess) error = cudaGraphInstantiate(&executable, graph, 0);
+  if (error == cudaSuccess && cache_enabled) {
+    std::lock_guard<std::mutex> lock(cache.mutex);
+    if (cache.entries.size() >= kMaxCachedGraphs) {
+      for (const auto& [unused_key, cached] : cache.entries) {
+        (void)unused_key;
+        cudaGraphExecDestroy(cached);
+      }
+      cache.entries.clear();
+    }
+    const auto [entry, inserted] = cache.entries.emplace(graph_key, executable);
+    if (!inserted) {
+      cudaGraphExecDestroy(executable);
+      executable = entry->second;
+    }
+    error = cudaGraphLaunch(executable, stream);
+  }
+  if (error == cudaSuccess && !cache_enabled) {
+    error = cudaGraphLaunch(executable, stream);
+  }
+  if (!cache_enabled && executable != nullptr) {
+    cudaGraphExecDestroy(executable);
+  }
+  if (graph != nullptr) cudaGraphDestroy(graph);
+  return static_cast<int>(error);
 }
 
 int BeamzLaunchStreamedSourceSteps(void* raw_stream,
