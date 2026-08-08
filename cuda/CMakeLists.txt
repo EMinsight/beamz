@@ -40,7 +40,7 @@ set_target_properties(
 target_compile_options(
   beamz_cuda
   PRIVATE
-    $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr;--lineinfo>
+    $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr;-lineinfo>
 )
 if(BEAMZ_CUDA_FAST_MATH)
   target_compile_options(beamz_cuda PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>)
