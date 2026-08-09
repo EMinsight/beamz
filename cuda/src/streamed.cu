@@ -697,13 +697,16 @@ __global__ void UpdateCpmlCore(BeamzLaunch launch) {
 }
 
 template <int Phase, int PsiType, bool PackedLosslessMaterial,
-          bool HasMetallicEdges, bool WarpTile = false>
+          bool HasMetallicEdges, bool WarpTile = false, int TileX = 64,
+          int TileY = 4, int CoreTileX = TileX, int CoreTileY = TileY>
 __device__ __forceinline__ void UpdateCombinedCpmlQueueBlock(
     const BeamzLaunch& launch, int max_z, int max_y, int max_x, int high_z,
     int high_y, int high_x, int z_region_blocks, int y_region_blocks,
     int shell_blocks, int core_x_blocks, int core_y_blocks, int block) {
-  constexpr int tile_x = WarpTile ? 32 : 64;
-  constexpr int tile_y = WarpTile ? 1 : kTileY;
+  constexpr int tile_x = WarpTile ? 32 : TileX;
+  constexpr int tile_y = WarpTile ? 1 : TileY;
+  constexpr int core_tile_x = WarpTile ? 32 : CoreTileX;
+  constexpr int core_tile_y = WarpTile ? 1 : CoreTileY;
   const int local_x_thread = WarpTile ? (threadIdx.x & 31) : threadIdx.x;
   const int local_y_thread = WarpTile ? 0 : threadIdx.y;
   const int low = launch.uniform_cpml_thickness;
@@ -764,9 +767,14 @@ __device__ __forceinline__ void UpdateCombinedCpmlQueueBlock(
   block -= block_z * core_x_blocks * core_y_blocks;
   const int block_y = block / core_x_blocks;
   const int block_x = block - block_y * core_x_blocks;
+  const int linear_thread = threadIdx.y * blockDim.x + threadIdx.x;
+  const int core_x_thread =
+      WarpTile ? local_x_thread : linear_thread % core_tile_x;
+  const int core_y_thread =
+      WarpTile ? local_y_thread : linear_thread / core_tile_x;
   z = low + block_z;
-  y = low + block_y * tile_y + local_y_thread;
-  x = low + block_x * tile_x + local_x_thread;
+  y = low + block_y * core_tile_y + core_y_thread;
+  x = low + block_x * core_tile_x + core_x_thread;
   if (z >= high_z || y >= high_y || x >= high_x) return;
   UpdateComponent<Phase, 0, false, 0, HasMetallicEdges, false, -1,
                   PackedLosslessMaterial>(launch, z, y, x);
@@ -777,13 +785,15 @@ __device__ __forceinline__ void UpdateCombinedCpmlQueueBlock(
 }
 
 template <int Phase, int PsiType, bool PackedLosslessMaterial,
-          bool HasMetallicEdges>
+          bool HasMetallicEdges, int TileX, int TileY, int CoreTileX,
+          int CoreTileY>
 __global__ void UpdateCombinedCpmlQueue(
     BeamzLaunch launch, int max_z, int max_y, int max_x, int high_z,
     int high_y, int high_x, int z_region_blocks, int y_region_blocks,
     int shell_blocks, int core_x_blocks, int core_y_blocks) {
   UpdateCombinedCpmlQueueBlock<Phase, PsiType, PackedLosslessMaterial,
-                               HasMetallicEdges>(
+                               HasMetallicEdges, false, TileX, TileY,
+                               CoreTileX, CoreTileY>(
       launch, max_z, max_y, max_x, high_z, high_y, high_x, z_region_blocks,
       y_region_blocks, shell_blocks, core_x_blocks, core_y_blocks, blockIdx.x);
 }
@@ -1839,32 +1849,40 @@ void LaunchCombinedCpmlQueueForType(cudaStream_t stream,
                                     const BeamzLaunch& launch, int max_z,
                                     int max_y, int max_x, int high_z,
                                     int high_y, int high_x) {
-  constexpr int tile_x = 64;
+  constexpr int tile_x = PsiType == kBeamzBF16 ? 32 : 64;
+  constexpr int tile_y = 4;
+  constexpr int core_tile_x = PsiType == kBeamzBF16 ? 64 : tile_x;
+  constexpr int core_tile_y = PsiType == kBeamzBF16 ? 2 : tile_y;
+  static_assert(tile_x * tile_y == core_tile_x * core_tile_y);
   const int low = launch.uniform_cpml_thickness;
   const int x_blocks = (max_x + tile_x - 1) / tile_x;
   const int z_region_blocks =
-      x_blocks * ((max_y + kTileY - 1) / kTileY) *
+      x_blocks * ((max_y + tile_y - 1) / tile_y) *
       (low + max_z - high_z);
   const int y_region_blocks =
-      x_blocks * ((low + max_y - high_y + kTileY - 1) / kTileY) *
+      x_blocks * ((low + max_y - high_y + tile_y - 1) / tile_y) *
       (high_z - low);
   const int x_region_blocks =
       ((low + max_x - high_x + tile_x - 1) / tile_x) *
-      ((high_y - low + kTileY - 1) / kTileY) * (high_z - low);
+      ((high_y - low + tile_y - 1) / tile_y) * (high_z - low);
   const int shell_blocks =
       z_region_blocks + y_region_blocks + x_region_blocks;
-  const int core_x_blocks = (high_x - low + tile_x - 1) / tile_x;
-  const int core_y_blocks = (high_y - low + kTileY - 1) / kTileY;
+  const int core_x_blocks =
+      (high_x - low + core_tile_x - 1) / core_tile_x;
+  const int core_y_blocks =
+      (high_y - low + core_tile_y - 1) / core_tile_y;
   const int core_blocks = core_x_blocks * core_y_blocks * (high_z - low);
-  const dim3 threads(tile_x, kTileY, 1);
+  const dim3 threads(tile_x, tile_y, 1);
   if (launch.metallic_edges == 0) {
-    UpdateCombinedCpmlQueue<Phase, PsiType, PackedLosslessMaterial, false>
+    UpdateCombinedCpmlQueue<Phase, PsiType, PackedLosslessMaterial, false,
+                            tile_x, tile_y, core_tile_x, core_tile_y>
         <<<shell_blocks + core_blocks, threads, 0, stream>>>(
             launch, max_z, max_y, max_x, high_z, high_y, high_x,
             z_region_blocks, y_region_blocks, shell_blocks, core_x_blocks,
             core_y_blocks);
   } else {
-    UpdateCombinedCpmlQueue<Phase, PsiType, PackedLosslessMaterial, true>
+    UpdateCombinedCpmlQueue<Phase, PsiType, PackedLosslessMaterial, true,
+                            tile_x, tile_y, core_tile_x, core_tile_y>
         <<<shell_blocks + core_blocks, threads, 0, stream>>>(
             launch, max_z, max_y, max_x, high_z, high_y, high_x,
             z_region_blocks, y_region_blocks, shell_blocks, core_x_blocks,

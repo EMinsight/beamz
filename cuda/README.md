@@ -51,7 +51,10 @@ legacy in-place schedule.
 For memory-constrained CPML runs,
 `BEAMZ_CUDA_CPML_PSI_PRECISION=bf16` stores only absorber recurrence state in
 BF16 while fields and recurrence arithmetic remain FP32. The default is `fp32`;
-use BF16 only after validating application-level accuracy.
+use BF16 only after validating application-level accuracy. On GA102 the combined
+queue uses a precision-specific `32 × 4` absorber tile and remaps the same 128
+threads to a `64 × 2` recurrence-free core tile; FP32 retains its measured-optimal
+`64 × 4` queue.
 
 The exact cooperative persistent CPML scheduler remains available as an
 experimental diagnostic with `BEAMZ_CUDA_ENABLE_PERSISTENT_CPML=1`. Its

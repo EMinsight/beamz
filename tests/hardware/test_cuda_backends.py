@@ -354,6 +354,46 @@ def test_persistent_cpml_covers_every_cell_and_matches_graph(monkeypatch):
     _assert_state_close(graph, persistent, dynamic_atol_scale=1e-7)
 
 
+def test_bf16_cpml_hybrid_queue_matches_split_schedule(monkeypatch):
+    simulation, seeded = _simulation_and_seed(
+        cpml=True,
+        source=True,
+        monitor=True,
+        heterogeneous=False,
+        timesteps=24,
+    )
+    program = simulation.compile(num_steps=24, backend="cuda_streamed")
+    monkeypatch.setenv("BEAMZ_CUDA_CPML_PSI_PRECISION", "bf16")
+    monkeypatch.setenv("BEAMZ_CUDA_DISABLE_GRAPH_CACHE", "1")
+    state = initial_program_state(
+        program,
+        t=float(simulation.time[0]),
+        current_step=0,
+        continuation=seeded,
+        monitor_steps=24,
+    )
+    # Geometry regressions must remain visible even when physical source scaling
+    # would otherwise put a skipped row below the normal absolute tolerance.
+    state = state._replace(
+        **{
+            name: np.asarray(getattr(state, name), dtype=np.float32)
+            * np.float32(1e5)
+            for name in ("ex", "ey", "ez", "hx", "hy", "hz")
+        }
+    )
+    scan = build_scan(program)
+
+    monkeypatch.delenv("BEAMZ_CUDA_DISABLE_COMBINED_CPML_QUEUE", raising=False)
+    hybrid = scan(_copy_state(state), program.coefficients)
+    hybrid.ez.block_until_ready()
+
+    monkeypatch.setenv("BEAMZ_CUDA_DISABLE_COMBINED_CPML_QUEUE", "1")
+    split = scan(_copy_state(state), program.coefficients)
+    split.ez.block_until_ready()
+
+    _assert_state_close(split, hybrid, dynamic_atol_scale=1e-7)
+
+
 @pytest.mark.parametrize("cpml", [False, True], ids=["pec_graph", "cpml_graph"])
 def test_streamed_cuda_owns_source_free_constraints(cpml):
     simulation, state = _simulation_and_seed(
