@@ -286,7 +286,7 @@ __device__ __forceinline__ float CorrectCpml(float derivative, int z, int y,
 
 template <int Phase, int Component, bool Cpml, int MetricKind,
           bool HasMetallicEdges = true, bool UniformCpml = false,
-          int PsiType = -1>
+          int PsiType = -1, bool PackedLosslessMaterial = false>
 __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
                                                 int z, int y, int x) {
   const BeamzBuffer& input = launch.inputs[Component];
@@ -367,8 +367,19 @@ __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
   }
 
   const float old_field = static_cast<const float*>(input.data)[linear];
-  const float decay = Read(launch.inputs[6 + Component], z, y, x);
-  const float source = Read(launch.inputs[9 + Component], z, y, x);
+  float decay;
+  float source;
+  if constexpr (PackedLosslessMaterial) {
+    decay = 1.0f;
+    const auto* packed =
+        static_cast<const uint32_t*>(launch.inputs[9 + Component].data);
+    const uint32_t word = packed[linear >> 2];
+    const uint32_t code = (word >> (8 * (linear & 3))) & 0xffu;
+    source = static_cast<const float*>(launch.inputs[6 + Component].data)[code];
+  } else {
+    decay = Read(launch.inputs[6 + Component], z, y, x);
+    source = Read(launch.inputs[9 + Component], z, y, x);
+  }
   if constexpr (Phase == 0) {
     static_cast<float*>(output.data)[linear] =
         decay * old_field - source * curl;
@@ -379,17 +390,18 @@ __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
 }
 
 template <int Phase, bool Cpml, int MetricKind, bool HasMetallicEdges = true,
-          bool UniformCpml = false, int PsiType = -1>
+          bool UniformCpml = false, int PsiType = -1,
+          bool PackedLosslessMaterial = false>
 __global__ void UpdateFusedComponents(BeamzLaunch launch) {
   const int x = blockIdx.x * blockDim.x + threadIdx.x;
   const int y = blockIdx.y * blockDim.y + threadIdx.y;
   const int z = blockIdx.z * blockDim.z + threadIdx.z;
   UpdateComponent<Phase, 0, Cpml, MetricKind, HasMetallicEdges, UniformCpml,
-                  PsiType>(launch, z, y, x);
+                  PsiType, PackedLosslessMaterial>(launch, z, y, x);
   UpdateComponent<Phase, 1, Cpml, MetricKind, HasMetallicEdges, UniformCpml,
-                  PsiType>(launch, z, y, x);
+                  PsiType, PackedLosslessMaterial>(launch, z, y, x);
   UpdateComponent<Phase, 2, Cpml, MetricKind, HasMetallicEdges, UniformCpml,
-                  PsiType>(launch, z, y, x);
+                  PsiType, PackedLosslessMaterial>(launch, z, y, x);
 }
 
 template <int Phase>
@@ -647,6 +659,14 @@ void LaunchFusedUpdate(cudaStream_t stream, const BeamzLaunch& launch,
       }
     }
   }
+  const bool packed_lossless_material =
+      launch.phase == 1 && launch.inputs[6].rank == 1 &&
+      launch.inputs[7].rank == 1 && launch.inputs[8].rank == 1 &&
+      launch.inputs[9].rank == 1 && launch.inputs[10].rank == 1 &&
+      launch.inputs[11].rank == 1 &&
+      launch.inputs[9].element_type == kBeamzS32 &&
+      launch.inputs[10].element_type == kBeamzS32 &&
+      launch.inputs[11].element_type == kBeamzS32;
   if (launch.phase == 0 && launch.nterms == 0) {
     UpdateFusedComponents<0, false, MetricKind, HasMetallicEdges, UniformCpml>
         <<<blocks, threads, 0, stream>>>(launch);
@@ -664,10 +684,26 @@ void LaunchFusedUpdate(cudaStream_t stream, const BeamzLaunch& launch,
           <<<blocks, threads, 0, stream>>>(launch);
     }
   } else if (launch.nterms == 0) {
-    UpdateFusedComponents<1, false, MetricKind, HasMetallicEdges, UniformCpml>
-        <<<blocks, threads, 0, stream>>>(launch);
+    if (packed_lossless_material) {
+      UpdateFusedComponents<1, false, MetricKind, HasMetallicEdges, UniformCpml,
+                            -1, true><<<blocks, threads, 0, stream>>>(launch);
+    } else {
+      UpdateFusedComponents<1, false, MetricKind, HasMetallicEdges, UniformCpml>
+          <<<blocks, threads, 0, stream>>>(launch);
+    }
   } else {
-    if (psi_type == kBeamzBF16) {
+    if (psi_type == kBeamzBF16 && packed_lossless_material) {
+      UpdateFusedComponents<1, true, MetricKind, HasMetallicEdges, UniformCpml,
+                            kBeamzBF16, true>
+          <<<blocks, threads, 0, stream>>>(launch);
+    } else if (psi_type == kBeamzF32 && packed_lossless_material) {
+      UpdateFusedComponents<1, true, MetricKind, HasMetallicEdges, UniformCpml,
+                            kBeamzF32, true>
+          <<<blocks, threads, 0, stream>>>(launch);
+    } else if (packed_lossless_material) {
+      UpdateFusedComponents<1, true, MetricKind, HasMetallicEdges, UniformCpml,
+                            -1, true><<<blocks, threads, 0, stream>>>(launch);
+    } else if (psi_type == kBeamzBF16) {
       UpdateFusedComponents<1, true, MetricKind, HasMetallicEdges, UniformCpml,
                             kBeamzBF16>
           <<<blocks, threads, 0, stream>>>(launch);

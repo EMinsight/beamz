@@ -141,6 +141,56 @@ def _elide_uniform_grid(value):
     return value
 
 
+def _pack_cuda_coefficient_ids(value, *, max_values: int = 256):
+    """Pack four low-cardinality FP32 coefficient IDs into each int32 word.
+
+    The CUDA streamed kernel recognizes the resulting one-dimensional S32 array
+    and uses the returned exact FP32 table for lookup.  Keeping this transform at
+    compile time avoids carrying three dense material coefficient grids through
+    DRAM on every electric update.
+    """
+
+    array = np.asarray(value, dtype=np.float32)
+    if array.ndim != 3 or array.size == 0:
+        return None
+    table, ids = np.unique(array, return_inverse=True)
+    if table.size > max_values:
+        return None
+    flat_ids = ids.astype(np.uint32, copy=False).ravel()
+    padded_size = (flat_ids.size + 3) & ~3
+    padded = np.zeros(padded_size, dtype=np.uint32)
+    padded[: flat_ids.size] = flat_ids
+    packed = (
+        padded[0::4]
+        | (padded[1::4] << np.uint32(8))
+        | (padded[2::4] << np.uint32(16))
+        | (padded[3::4] << np.uint32(24))
+    ).view(np.int32)
+    return jnp.asarray(table, dtype=jnp.float32), jnp.asarray(packed)
+
+
+def _pack_cuda_lossless_e_coefficients(decays, sources):
+    """Return table/ID material buffers for a lossless low-cardinality E update."""
+
+    if os.environ.get("BEAMZ_CUDA_DISABLE_MATERIAL_CODEBOOK", "0") in {
+        "1",
+        "true",
+        "yes",
+    }:
+        return None
+    decay_arrays = tuple(np.asarray(value) for value in decays)
+    if not all(
+        value.ndim == 0 and np.float32(value) == np.float32(1.0)
+        for value in decay_arrays
+    ):
+        return None
+    packed = tuple(_pack_cuda_coefficient_ids(value) for value in sources)
+    if any(value is None for value in packed):
+        return None
+    values = tuple(value for value in packed if value is not None)
+    return tuple(value[0] for value in values), tuple(value[1] for value in values)
+
+
 def _inverse_permittivity_components(values):
     """Invert a packed symmetric tensor field into six trailing components."""
 
@@ -598,6 +648,19 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
                     e_source_z,
                 )
             )
+            packed_e = _pack_cuda_lossless_e_coefficients(
+                (e_decay_x, e_decay_y, e_decay_z),
+                (e_source_x, e_source_y, e_source_z),
+            )
+            if packed_e is not None:
+                (
+                    (e_decay_x, e_decay_y, e_decay_z),
+                    (
+                        e_source_x,
+                        e_source_y,
+                        e_source_z,
+                    ),
+                ) = packed_e
         else:
             e_decay_x = e_source_x = e_decay_y = e_source_y = empty3
             e_decay_z = e_source_z = empty3
