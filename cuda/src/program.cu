@@ -3,11 +3,14 @@
 #include <cstdint>
 #include <limits>
 
+#include "abi_layout.h"
 #include "graph.h"
 #include "kernels.h"
 #include "launch.h"
 
 namespace {
+
+using namespace beamz::cuda::abi;
 
 bool FlagEnabled(const BeamzLaunch& launch, BeamzCudaFlag flag) {
   return (launch.cuda_flags & flag) != 0;
@@ -26,7 +29,7 @@ bool FitsIntOffsets(const BeamzBuffer& value) {
 cudaError_t ValidateSourceGroups(const BeamzSourceGroupLaunch* groups,
                                  int32_t count) {
   if (groups == nullptr) return count == 0 ? cudaSuccess : cudaErrorInvalidValue;
-  if (count != 9) return cudaErrorInvalidValue;
+  if (count != kSourceGroupCount) return cudaErrorInvalidValue;
   for (int32_t index = 0; index < count; ++index) {
     const BeamzSourceGroupLaunch& group = groups[index];
     if (group.component < 0 || group.component > 2 || group.timing < 0 ||
@@ -133,8 +136,8 @@ cudaError_t ValidateProgram(const BeamzProgramLaunch& program) {
           return cudaErrorInvalidValue;
         }
       }
-    } else if (program.h_ab.nterms != 6 ||
-               program.source_group_count != 9) {
+    } else if (program.h_ab.nterms != kCpmlTermCount ||
+               program.source_group_count != kSourceGroupCount) {
       return cudaErrorInvalidValue;
     }
   }

@@ -3,12 +3,26 @@
 This directory builds the optional `beamz-cuda` wheel. It registers typed JAX FFI
 targets while the main `beamz` package remains usable with JAX alone.
 
-The streamed backend replaces the six large 3D Yee/CPML array programs with fused
+The streamed backend replaces JAX's elementwise 3D Yee/CPML programs with fused
 magnetic and electric CUDA launches. Bounded multi-step CUDA graphs own complete
 3D runs, and one grouped program path covers arbitrary source batches and DFT
 monitor schedules. JAX still owns tracing, buffers, and orchestration around that
 small native interface, preserving BeamZ's public numerical semantics and JAX
 fallback without duplicating configuration-specific FFI targets.
+
+The native boundary has three typed FFI targets: one phase update, one complete
+multi-step program, and the explicit Hopper experiment. The implementation is
+split by responsibility:
+
+- `ffi_handler.cc` decodes JAX buffers into a validated `BeamzProgramLaunch`;
+- `program.cu` owns timestep order and selects the in-place or temporal schedule;
+- `graph.cu` owns bounded capture, semantic cache keys, and replay;
+- `update.cu` owns Yee and CPML kernels;
+- `io.cu` owns source injection and DFT monitor accumulation.
+
+`abi_layout.json` is the source of truth for target names, layout selectors, and
+positional buffer constants. After editing it, regenerate both language bindings
+with `python scripts/generate_cuda_abi.py`; CI uses `--check` to reject drift.
 
 On SM90, the experimental `beamz_cuda_hopper` target uses the same ABI and arithmetic
 but maps each component to `32 × 4 × 2` spatial tiles. Each derivative input stages
@@ -37,8 +51,8 @@ release supports one GPU and float32 3D grids. Multi-GPU and 2D simulations reta
 the JAX backend; only the explicitly selected CPML recurrence state may use BF16.
 
 BeamZ validates the extension's explicit ABI version and complete streamed-target
-manifest before registering any FFI handler. ABI v10 is distributed as
-`beamz-cuda==0.10.0`; an older or partial wheel makes `auto` fall back to JAX and
+manifest before registering any FFI handler. ABI v11 is distributed as
+`beamz-cuda==0.11.0`; an older or partial wheel makes `auto` fall back to JAX and
 causes explicit CUDA requests to fail with a compatibility diagnostic.
 
 Regular-grid, lossless CPML simulations with packed source groups use two
@@ -72,7 +86,7 @@ The host FFI decoder deliberately has no CUDA-header dependency and can be check
 on developer machines with the JAX headers alone:
 
 ```console
-clang++ -std=c++17 -DBEAMZ_CUDA_ABI_VERSION=10 \
+clang++ -std=c++17 \
   -I"$(python -c 'import jax; print(jax.ffi.include_dir())')" -Icuda/src \
   -fsyntax-only cuda/src/ffi_handler.cc
 ```

@@ -144,7 +144,7 @@ def test_cuda_ffi_phase_packs_cpml_and_aliases_state(monkeypatch):
         "dt": np.float32(context.dt),
         "resolution": np.float32(context.resolution),
         # Low six bits encode PEC faces; high bits carry the uniform CPML width.
-        "metallic_edges": np.int32(2 << 8),
+        "boundary_code": np.int32(2 << 8),
         "metric_kind": np.int32(0),
     }
     assert options["input_output_aliases"] == {
@@ -230,7 +230,7 @@ def test_cuda_multi_step_ffi_aliases_all_fields(monkeypatch):
         "nsteps": np.int32(7),
         "dt": np.float32(context.dt),
         "resolution": np.float32(context.resolution),
-        "metallic_edges": np.int32(63),
+        "boundary_code": np.int32(63),
         "metric_kind": np.int32(0),
         "program_layout": np.int32(abi.PROGRAM_LAYOUT_YEE_TEMPORAL),
         "cpml_enabled": np.int32(0),

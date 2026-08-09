@@ -122,7 +122,7 @@ def _program_attributes(
         "nsteps": np.int32(nsteps),
         "dt": np.float32(ctx.dt),
         "resolution": np.float32(ctx.resolution),
-        "metallic_edges": np.int32(
+        "boundary_code": np.int32(
             _boundary_code(ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms)
         ),
         "metric_kind": _metric_kind_code(ctx),
@@ -180,7 +180,7 @@ def _ffi_phase(
         nterms=np.int32(len(terms)),
         dt=np.float32(dt),
         resolution=np.float32(resolution),
-        metallic_edges=np.int32(_boundary_code(metallic_edges, terms)),
+        boundary_code=np.int32(_boundary_code(metallic_edges, terms)),
         metric_kind=np.int32(metric_kind),
     )
     return tuple(outputs)
@@ -700,7 +700,9 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
         # The source-group target's empty groups add no graph nodes. Reusing it
         # gives plain CPML runs the same frozen-input field banks without
         # maintaining a second native handler for an identical update graph.
-        return run_source_group_steps(state, ctx, coeffs, (None,) * 9, nsteps)
+        return run_source_group_steps(
+            state, ctx, coeffs, (None,) * _SOURCE_GROUP_COUNT, nsteps
+        )
     fields = _fields(state)
     if ctx.boundary.cpml.enabled:
         arguments, result_values, aliases = _cpml_graph_io(state, ctx, coeffs)
