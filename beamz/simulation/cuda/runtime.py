@@ -19,11 +19,25 @@ _PHASE_E = 1
 _COMPONENT_CODE = {name: index for index, name in enumerate(("Hx", "Hy", "Hz"))}
 _COMPONENT_CODE.update({name: index for index, name in enumerate(("Ex", "Ey", "Ez"))})
 _EMPTY = jnp.empty((0,), dtype=jnp.float32)
+_EMPTY_SOURCE_GROUP = (
+    jnp.zeros((0, 1, 1, 1), dtype=jnp.float32),
+    jnp.zeros((0, 1), dtype=jnp.float32),
+    jnp.zeros((0, 3), dtype=jnp.int32),
+)
 _METRIC_KIND_CODE = {
     "isotropic_uniform": 0,
     "axis_uniform": 1,
     "rectilinear": 2,
 }
+
+_FIELD_COUNT = 6
+_CPML_TERM_COUNT = 6
+_SOURCE_GROUP_COUNT = 9
+_CPML_H_PSI_INPUT = 31
+_CPML_E_PSI_INPUT = 62
+_CPML_GRAPH_INPUT_COUNT = 74
+_TEMPORAL_FIELD_WORKSPACE_INPUT = _CPML_GRAPH_INPUT_COUNT
+_TEMPORAL_PSI_WORKSPACE_INPUT = _TEMPORAL_FIELD_WORKSPACE_INPUT + _FIELD_COUNT
 
 
 def _metallic_edge_mask(edges: frozenset[str]) -> int:
@@ -64,6 +78,19 @@ def _shape(value):
     return jax.ShapeDtypeStruct(value.shape, value.dtype)
 
 
+def _fields(state):
+    return (state.hx, state.hy, state.hz, state.ex, state.ey, state.ez)
+
+
+def _ffi_call(target, result_values, aliases):
+    return jax.ffi.ffi_call(
+        target,
+        tuple(_shape(value) for value in result_values),
+        input_output_aliases=aliases,
+        vmap_method="sequential",
+    )
+
+
 def _phase_metrics(ctx, phase: int):
     """Return CUDA-axis-ordered derivative metrics for one Yee phase."""
     metrics = ctx.metrics
@@ -79,6 +106,20 @@ def _metric_kind_code(ctx) -> np.int32:
         raise ValueError(
             f"Unsupported CUDA derivative metric kind: {ctx.config.metric_kind!r}"
         ) from exc
+
+
+def _step_attributes(ctx, nsteps: int):
+    return {
+        "abi_version": np.int32(CUDA_ABI_VERSION),
+        "cuda_flags": np.int32(ctx.config.cuda_flags),
+        "nsteps": np.int32(nsteps),
+        "dt": np.float32(ctx.dt),
+        "resolution": np.float32(ctx.resolution),
+        "metallic_edges": np.int32(
+            _boundary_code(ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms)
+        ),
+        "metric_kind": _metric_kind_code(ctx),
+    }
 
 
 def _ffi_phase(
@@ -116,16 +157,10 @@ def _ffi_phase(
         *psi_terms,
         *metrics,
     )
-    result_metadata = tuple(_shape(value) for value in (*targets, *psi_terms))
     psi_start = 13 + 3 * len(terms)
     aliases = {0: 0, 1: 1, 2: 2}
     aliases.update({psi_start + index: 3 + index for index in range(len(psi_terms))})
-    call = jax.ffi.ffi_call(
-        target,
-        result_metadata,
-        input_output_aliases=aliases,
-        vmap_method="sequential",
-    )
+    call = _ffi_call(target, (*targets, *psi_terms), aliases)
     outputs = call(
         *arguments,
         abi_version=np.int32(CUDA_ABI_VERSION),
@@ -241,7 +276,7 @@ def update_e(state, ctx, coeffs) -> SimulationState:
 
 
 def _cpml_graph_io(state, ctx, coeffs):
-    fields = (state.hx, state.hy, state.hz, state.ex, state.ey, state.ez)
+    fields = _fields(state)
     h_terms = ctx.boundary.cpml.h_terms
     e_terms = ctx.boundary.cpml.e_terms
     h_materials = (
@@ -280,14 +315,24 @@ def _cpml_graph_io(state, ctx, coeffs):
         *_phase_metrics(ctx, _PHASE_E),
     )
     result_values = (*fields, *state.cpml_psi_h_terms, *state.cpml_psi_e_terms)
-    aliases = {index: index for index in range(6)}
-    aliases.update({31 + index: 6 + index for index in range(6)})
-    aliases.update({62 + index: 12 + index for index in range(6)})
+    aliases = {index: index for index in range(_FIELD_COUNT)}
+    aliases.update(
+        {
+            _CPML_H_PSI_INPUT + index: _FIELD_COUNT + index
+            for index in range(_CPML_TERM_COUNT)
+        }
+    )
+    aliases.update(
+        {
+            _CPML_E_PSI_INPUT + index: _FIELD_COUNT + _CPML_TERM_COUNT + index
+            for index in range(_CPML_TERM_COUNT)
+        }
+    )
     return arguments, result_values, aliases
 
 
 def _yee_graph_io(state, ctx, coeffs):
-    fields = (state.hx, state.hy, state.hz, state.ex, state.ey, state.ez)
+    fields = _fields(state)
     materials = (
         coeffs.h_decay_x,
         coeffs.h_decay_y,
@@ -308,7 +353,7 @@ def _yee_graph_io(state, ctx, coeffs):
         *_phase_metrics(ctx, _PHASE_H),
         *_phase_metrics(ctx, _PHASE_E),
     )
-    return arguments, fields, {index: index for index in range(6)}
+    return arguments, fields, {index: index for index in range(_FIELD_COUNT)}
 
 
 def _graph_io(state, ctx, coeffs):
@@ -319,16 +364,87 @@ def _graph_io(state, ctx, coeffs):
     )
 
 
-def _replace_graph_outputs(state, outputs) -> SimulationState:
+def _replace_fields(state, outputs, start=0) -> SimulationState:
     return state._replace(
-        hx=outputs[0],
-        hy=outputs[1],
-        hz=outputs[2],
-        ex=outputs[3],
-        ey=outputs[4],
-        ez=outputs[5],
-        cpml_psi_h_terms=outputs[6:12],
-        cpml_psi_e_terms=outputs[12:18],
+        hx=outputs[start],
+        hy=outputs[start + 1],
+        hz=outputs[start + 2],
+        ex=outputs[start + 3],
+        ey=outputs[start + 4],
+        ez=outputs[start + 5],
+    )
+
+
+def _replace_graph_outputs(state, outputs) -> SimulationState:
+    return _replace_fields(state, outputs)._replace(
+        cpml_psi_h_terms=outputs[_FIELD_COUNT : _FIELD_COUNT + _CPML_TERM_COUNT],
+        cpml_psi_e_terms=outputs[
+            _FIELD_COUNT + _CPML_TERM_COUNT : _FIELD_COUNT + 2 * _CPML_TERM_COUNT
+        ],
+    )
+
+
+def _temporal_cpml_graph_io(state, ctx, coeffs):
+    arguments, _, _ = _cpml_graph_io(state, ctx, coeffs)
+    fields = _fields(state)
+    workspace = tuple(jnp.empty_like(value) for value in fields)
+    psi = (*state.cpml_psi_h_terms, *state.cpml_psi_e_terms)
+    psi_workspace = tuple(jnp.empty_like(value) for value in psi)
+    result_values = (*fields, *workspace, *psi, *psi_workspace)
+    aliases = {index: index for index in range(_FIELD_COUNT)}
+    aliases.update(
+        {
+            _TEMPORAL_FIELD_WORKSPACE_INPUT + index: _FIELD_COUNT + index
+            for index in range(_FIELD_COUNT)
+        }
+    )
+    aliases.update(
+        {
+            _CPML_H_PSI_INPUT + index: 2 * _FIELD_COUNT + index
+            for index in range(_CPML_TERM_COUNT)
+        }
+    )
+    aliases.update(
+        {
+            _CPML_E_PSI_INPUT + index: 2 * _FIELD_COUNT + _CPML_TERM_COUNT + index
+            for index in range(_CPML_TERM_COUNT)
+        }
+    )
+    aliases.update(
+        {
+            _TEMPORAL_PSI_WORKSPACE_INPUT + index: 2 * _FIELD_COUNT
+            + 2 * _CPML_TERM_COUNT
+            + index
+            for index in range(2 * _CPML_TERM_COUNT)
+        }
+    )
+    return (*arguments, *workspace, *psi_workspace), result_values, aliases
+
+
+def _replace_temporal_cpml_outputs(state, outputs, nsteps, cuda_flags):
+    field_start = 0 if nsteps % 2 == 0 else _FIELD_COUNT
+    psi_start = 2 * _FIELD_COUNT
+    if nsteps % 2 and cuda_flags & CUDA_TEMPORAL_PSI:
+        psi_start += 2 * _CPML_TERM_COUNT
+    return _replace_fields(state, outputs, field_start)._replace(
+        cpml_psi_h_terms=outputs[psi_start : psi_start + _CPML_TERM_COUNT],
+        cpml_psi_e_terms=outputs[
+            psi_start + _CPML_TERM_COUNT : psi_start + 2 * _CPML_TERM_COUNT
+        ],
+    )
+
+
+def _source_group_arguments(groups):
+    if len(groups) != _SOURCE_GROUP_COUNT:
+        raise ValueError("CUDA source graph requires nine phase/component groups")
+    return tuple(
+        value
+        for group in groups
+        for value in (
+            _EMPTY_SOURCE_GROUP
+            if group is None
+            else (group.coeffs, group.waveforms, group.starts)
+        )
     )
 
 
@@ -386,26 +502,13 @@ def run_source_steps(state, ctx, coeffs, source, nsteps: int) -> SimulationState
     ):
         raise ValueError("CUDA source graph requires one packed pre-E slab source")
     arguments, result_values, aliases = _graph_io(state, ctx, coeffs)
-    call = jax.ffi.ffi_call(
-        "beamz_cuda_streamed_source_cpml_steps",
-        tuple(_shape(value) for value in result_values),
-        input_output_aliases=aliases,
-        vmap_method="sequential",
-    )
+    call = _ffi_call("beamz_cuda_streamed_source_cpml_steps", result_values, aliases)
     outputs = call(
         *arguments,
         source.coeff,
         source.waveform,
         state.current_step,
-        abi_version=np.int32(CUDA_ABI_VERSION),
-        cuda_flags=np.int32(ctx.config.cuda_flags),
-        nsteps=np.int32(nsteps),
-        dt=np.float32(ctx.dt),
-        resolution=np.float32(ctx.resolution),
-        metallic_edges=np.int32(
-            _boundary_code(ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms)
-        ),
-        metric_kind=_metric_kind_code(ctx),
+        **_step_attributes(ctx, nsteps),
         cpml_enabled=np.int32(ctx.boundary.cpml.enabled),
         source_component=np.int32(_COMPONENT_CODE[source.component]),
         source_start_z=np.int32(source.slab_starts[0]),
@@ -414,74 +517,34 @@ def run_source_steps(state, ctx, coeffs, source, nsteps: int) -> SimulationState
     )
     if ctx.boundary.cpml.enabled:
         return _replace_graph_outputs(state, outputs)
-    return state._replace(
-        hx=outputs[0],
-        hy=outputs[1],
-        hz=outputs[2],
-        ex=outputs[3],
-        ey=outputs[4],
-        ez=outputs[5],
-    )
+    return _replace_fields(state, outputs)
 
 
 def run_source_group_steps(state, ctx, coeffs, groups, nsteps: int) -> SimulationState:
     """Advance packed slab-source groups in every leapfrog phase on CUDA."""
     if nsteps < 1:
         raise ValueError("CUDA step count must be positive")
-    if len(groups) != 9:
-        raise ValueError("CUDA source graph requires nine phase/component groups")
-    empty_coefficients = jnp.zeros((0, 1, 1, 1), dtype=jnp.float32)
-    empty_waveforms = jnp.zeros((0, 1), dtype=jnp.float32)
-    empty_starts = jnp.zeros((0, 3), dtype=jnp.int32)
-    source_arguments = []
-    for group in groups:
-        source_arguments.extend(
-            (empty_coefficients, empty_waveforms, empty_starts)
-            if group is None
-            else (group.coeffs, group.waveforms, group.starts)
-        )
-    arguments, result_values, aliases = _graph_io(state, ctx, coeffs)
+    source_arguments = _source_group_arguments(groups)
     use_temporal_cpml = _temporal_cpml_source_groups_supported(ctx, coeffs, nsteps)
-    if use_temporal_cpml:
-        fields = (state.hx, state.hy, state.hz, state.ex, state.ey, state.ez)
-        workspace = tuple(jnp.empty_like(value) for value in fields)
-        psi = (*state.cpml_psi_h_terms, *state.cpml_psi_e_terms)
-        psi_workspace = tuple(jnp.empty_like(value) for value in psi)
-        arguments = (*arguments, *workspace, *psi_workspace)
-        result_values = (
-            *fields,
-            *workspace,
-            *psi,
-            *psi_workspace,
-        )
-        aliases = {index: index for index in range(6)}
-        aliases.update({74 + index: 6 + index for index in range(6)})
-        aliases.update({31 + index: 12 + index for index in range(6)})
-        aliases.update({62 + index: 18 + index for index in range(6)})
-        aliases.update({80 + index: 24 + index for index in range(12)})
-    call = jax.ffi.ffi_call(
+    arguments, result_values, aliases = (
+        _temporal_cpml_graph_io(state, ctx, coeffs)
+        if use_temporal_cpml
+        else _graph_io(state, ctx, coeffs)
+    )
+    call = _ffi_call(
         (
             "beamz_cuda_temporal_source_groups_cpml_steps"
             if use_temporal_cpml
             else "beamz_cuda_streamed_source_groups_cpml_steps"
         ),
-        tuple(_shape(value) for value in result_values),
-        input_output_aliases=aliases,
-        vmap_method="sequential",
+        result_values,
+        aliases,
     )
     outputs = call(
         *arguments,
         *source_arguments,
         state.current_step,
-        abi_version=np.int32(CUDA_ABI_VERSION),
-        cuda_flags=np.int32(ctx.config.cuda_flags),
-        nsteps=np.int32(nsteps),
-        dt=np.float32(ctx.dt),
-        resolution=np.float32(ctx.resolution),
-        metallic_edges=np.int32(
-            _boundary_code(ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms)
-        ),
-        metric_kind=_metric_kind_code(ctx),
+        **_step_attributes(ctx, nsteps),
         coincident_source_group_mask=np.int32(_coincident_source_group_mask(groups)),
         **(
             {}
@@ -490,29 +553,12 @@ def run_source_group_steps(state, ctx, coeffs, groups, nsteps: int) -> Simulatio
         ),
     )
     if use_temporal_cpml:
-        field_start = 0 if nsteps % 2 == 0 else 6
-        temporal_psi = bool(ctx.config.cuda_flags & CUDA_TEMPORAL_PSI)
-        psi_start = 12 if nsteps % 2 == 0 or not temporal_psi else 24
-        return state._replace(
-            hx=outputs[field_start],
-            hy=outputs[field_start + 1],
-            hz=outputs[field_start + 2],
-            ex=outputs[field_start + 3],
-            ey=outputs[field_start + 4],
-            ez=outputs[field_start + 5],
-            cpml_psi_h_terms=outputs[psi_start : psi_start + 6],
-            cpml_psi_e_terms=outputs[psi_start + 6 : psi_start + 12],
+        return _replace_temporal_cpml_outputs(
+            state, outputs, nsteps, ctx.config.cuda_flags
         )
     if ctx.boundary.cpml.enabled:
         return _replace_graph_outputs(state, outputs)
-    return state._replace(
-        hx=outputs[0],
-        hy=outputs[1],
-        hz=outputs[2],
-        ex=outputs[3],
-        ey=outputs[4],
-        ez=outputs[5],
-    )
+    return _replace_fields(state, outputs)
 
 
 def pack_dft_monitors(monitors):
@@ -612,39 +658,15 @@ def run_program_steps(
     """Advance arbitrary slab sources and packed vector DFTs in one CUDA graph."""
     if nsteps < 1:
         raise ValueError("CUDA step count must be positive")
-    if len(groups) != 9:
-        raise ValueError("CUDA program graph requires nine source groups")
     if state.dft_vec_re.dtype != jnp.float32:
         raise ValueError("CUDA program graph requires float32 DFT accumulators")
-    empty_coefficients = jnp.zeros((0, 1, 1, 1), dtype=jnp.float32)
-    empty_waveforms = jnp.zeros((0, 1), dtype=jnp.float32)
-    empty_starts = jnp.zeros((0, 3), dtype=jnp.int32)
-    source_arguments = []
-    for group in groups:
-        source_arguments.extend(
-            (empty_coefficients, empty_waveforms, empty_starts)
-            if group is None
-            else (group.coeffs, group.waveforms, group.starts)
-        )
-    arguments, result_values, aliases = _graph_io(state, ctx, coeffs)
+    source_arguments = _source_group_arguments(groups)
     use_temporal_cpml = _temporal_cpml_source_groups_supported(ctx, coeffs, nsteps)
-    if use_temporal_cpml:
-        fields = (state.hx, state.hy, state.hz, state.ex, state.ey, state.ez)
-        workspace = tuple(jnp.empty_like(value) for value in fields)
-        psi = (*state.cpml_psi_h_terms, *state.cpml_psi_e_terms)
-        psi_workspace = tuple(jnp.empty_like(value) for value in psi)
-        arguments = (*arguments, *workspace, *psi_workspace)
-        result_values = (
-            *fields,
-            *workspace,
-            *psi,
-            *psi_workspace,
-        )
-        aliases = {index: index for index in range(6)}
-        aliases.update({74 + index: 6 + index for index in range(6)})
-        aliases.update({31 + index: 12 + index for index in range(6)})
-        aliases.update({62 + index: 18 + index for index in range(6)})
-        aliases.update({80 + index: 24 + index for index in range(12)})
+    arguments, result_values, aliases = (
+        _temporal_cpml_graph_io(state, ctx, coeffs)
+        if use_temporal_cpml
+        else _graph_io(state, ctx, coeffs)
+    )
     state_output_count = len(result_values)
     result_values = (
         *result_values,
@@ -652,22 +674,21 @@ def run_program_steps(
         state.dft_vec_im,
         state.dft_weight_sum,
     )
-    monitor_output_start = len(arguments) + len(source_arguments) + 7
+    monitor_output_start = len(arguments) + len(source_arguments) + len(packed_monitors)
     aliases = {
         **aliases,
         monitor_output_start: state_output_count,
         monitor_output_start + 1: state_output_count + 1,
         monitor_output_start + 2: state_output_count + 2,
     }
-    call = jax.ffi.ffi_call(
+    call = _ffi_call(
         (
             "beamz_cuda_temporal_program_cpml_steps"
             if use_temporal_cpml
             else "beamz_cuda_streamed_program_cpml_steps"
         ),
-        tuple(_shape(value) for value in result_values),
-        input_output_aliases=aliases,
-        vmap_method="sequential",
+        result_values,
+        aliases,
     )
     outputs = call(
         *arguments,
@@ -678,15 +699,7 @@ def run_program_steps(
         state.dft_weight_sum,
         state.t,
         state.current_step,
-        abi_version=np.int32(CUDA_ABI_VERSION),
-        cuda_flags=np.int32(ctx.config.cuda_flags),
-        nsteps=np.int32(nsteps),
-        dt=np.float32(ctx.dt),
-        resolution=np.float32(ctx.resolution),
-        metallic_edges=np.int32(
-            _boundary_code(ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms)
-        ),
-        metric_kind=_metric_kind_code(ctx),
+        **_step_attributes(ctx, nsteps),
         monitor_count=np.int32(packed_monitors[0].shape[0]),
         coincident_source_group_mask=np.int32(_coincident_source_group_mask(groups)),
         **(
@@ -696,30 +709,13 @@ def run_program_steps(
         ),
     )
     if use_temporal_cpml:
-        field_start = 0 if nsteps % 2 == 0 else 6
-        temporal_psi = bool(ctx.config.cuda_flags & CUDA_TEMPORAL_PSI)
-        psi_start = 12 if nsteps % 2 == 0 or not temporal_psi else 24
-        next_state = state._replace(
-            hx=outputs[field_start],
-            hy=outputs[field_start + 1],
-            hz=outputs[field_start + 2],
-            ex=outputs[field_start + 3],
-            ey=outputs[field_start + 4],
-            ez=outputs[field_start + 5],
-            cpml_psi_h_terms=outputs[psi_start : psi_start + 6],
-            cpml_psi_e_terms=outputs[psi_start + 6 : psi_start + 12],
+        next_state = _replace_temporal_cpml_outputs(
+            state, outputs, nsteps, ctx.config.cuda_flags
         )
     elif ctx.boundary.cpml.enabled:
         next_state = _replace_graph_outputs(state, outputs)
     else:
-        next_state = state._replace(
-            hx=outputs[0],
-            hy=outputs[1],
-            hz=outputs[2],
-            ex=outputs[3],
-            ey=outputs[4],
-            ez=outputs[5],
-        )
+        next_state = _replace_fields(state, outputs)
     return next_state._replace(
         dft_vec_re=outputs[state_output_count],
         dft_vec_im=outputs[state_output_count + 1],
@@ -778,11 +774,10 @@ def run_source_monitor_steps(
         len(arguments) + 21: state_output_count + 3,
         len(arguments) + 22: state_output_count + 4,
     }
-    call = jax.ffi.ffi_call(
+    call = _ffi_call(
         "beamz_cuda_streamed_source_monitor_cpml_steps",
-        tuple(_shape(value) for value in result_values),
-        input_output_aliases=aliases,
-        vmap_method="sequential",
+        result_values,
+        aliases,
     )
     outputs = call(
         *arguments,
@@ -799,15 +794,7 @@ def run_source_monitor_steps(
         state.t,
         phase_cos,
         phase_sin,
-        abi_version=np.int32(CUDA_ABI_VERSION),
-        cuda_flags=np.int32(ctx.config.cuda_flags),
-        nsteps=np.int32(nsteps),
-        dt=np.float32(ctx.dt),
-        resolution=np.float32(ctx.resolution),
-        metallic_edges=np.int32(
-            _boundary_code(ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms)
-        ),
-        metric_kind=_metric_kind_code(ctx),
+        **_step_attributes(ctx, nsteps),
         cpml_enabled=np.int32(ctx.boundary.cpml.enabled),
         source_component=np.int32(_COMPONENT_CODE[source.component]),
         source_start_z=np.int32(source.slab_starts[0]),
@@ -819,14 +806,7 @@ def run_source_monitor_steps(
     next_state = (
         _replace_graph_outputs(state, outputs)
         if ctx.boundary.cpml.enabled
-        else state._replace(
-            hx=outputs[0],
-            hy=outputs[1],
-            hz=outputs[2],
-            ex=outputs[3],
-            ey=outputs[4],
-            ez=outputs[5],
-        )
+        else _replace_fields(state, outputs)
     )
     return next_state._replace(
         dft_vec_re=outputs[state_output_count].reshape(-1),
@@ -844,28 +824,13 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
         # gives plain CPML runs the same frozen-input field banks without
         # maintaining a second native handler for an identical update graph.
         return run_source_group_steps(state, ctx, coeffs, (None,) * 9, nsteps)
-    fields = (state.hx, state.hy, state.hz, state.ex, state.ey, state.ez)
+    fields = _fields(state)
     if ctx.boundary.cpml.enabled:
         arguments, result_values, aliases = _cpml_graph_io(state, ctx, coeffs)
-        call = jax.ffi.ffi_call(
-            "beamz_cuda_streamed_cpml_steps",
-            tuple(_shape(value) for value in result_values),
-            input_output_aliases=aliases,
-            vmap_method="sequential",
-        )
+        call = _ffi_call("beamz_cuda_streamed_cpml_steps", result_values, aliases)
         outputs = call(
             *arguments,
-            abi_version=np.int32(CUDA_ABI_VERSION),
-            cuda_flags=np.int32(ctx.config.cuda_flags),
-            nsteps=np.int32(nsteps),
-            dt=np.float32(ctx.dt),
-            resolution=np.float32(ctx.resolution),
-            metallic_edges=np.int32(
-                _boundary_code(
-                    ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms
-                )
-            ),
-            metric_kind=_metric_kind_code(ctx),
+            **_step_attributes(ctx, nsteps),
         )
         return _replace_graph_outputs(state, outputs)
     materials = (
@@ -889,11 +854,10 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
     )
     if temporal_eligible:
         workspace = tuple(jnp.empty_like(value) for value in fields)
-        call = jax.ffi.ffi_call(
+        call = _ffi_call(
             "beamz_cuda_temporal_steps",
-            tuple(_shape(value) for value in (*fields, *workspace)),
-            input_output_aliases={index: index for index in range(12)},
-            vmap_method="sequential",
+            (*fields, *workspace),
+            {index: index for index in range(2 * _FIELD_COUNT)},
         )
         outputs = call(
             *fields,
@@ -901,46 +865,19 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
             *materials,
             *_phase_metrics(ctx, _PHASE_H),
             *_phase_metrics(ctx, _PHASE_E),
-            abi_version=np.int32(CUDA_ABI_VERSION),
-            cuda_flags=np.int32(ctx.config.cuda_flags),
-            nsteps=np.int32(nsteps),
-            dt=np.float32(ctx.dt),
-            resolution=np.float32(ctx.resolution),
-            metallic_edges=np.int32(63),
-            metric_kind=_metric_kind_code(ctx),
+            **_step_attributes(ctx, nsteps),
         )
-        return state._replace(
-            hx=outputs[0],
-            hy=outputs[1],
-            hz=outputs[2],
-            ex=outputs[3],
-            ey=outputs[4],
-            ez=outputs[5],
-        )
-    call = jax.ffi.ffi_call(
+        return _replace_fields(state, outputs)
+    call = _ffi_call(
         "beamz_cuda_streamed_steps",
-        tuple(_shape(value) for value in fields),
-        input_output_aliases={index: index for index in range(6)},
-        vmap_method="sequential",
+        fields,
+        {index: index for index in range(_FIELD_COUNT)},
     )
     outputs = call(
         *fields,
         *materials,
         *_phase_metrics(ctx, _PHASE_H),
         *_phase_metrics(ctx, _PHASE_E),
-        abi_version=np.int32(CUDA_ABI_VERSION),
-        cuda_flags=np.int32(ctx.config.cuda_flags),
-        nsteps=np.int32(nsteps),
-        dt=np.float32(ctx.dt),
-        resolution=np.float32(ctx.resolution),
-        metallic_edges=np.int32(_metallic_edge_mask(ctx.boundary.cpml.metallic_edges)),
-        metric_kind=_metric_kind_code(ctx),
+        **_step_attributes(ctx, nsteps),
     )
-    return state._replace(
-        hx=outputs[0],
-        hy=outputs[1],
-        hz=outputs[2],
-        ex=outputs[3],
-        ey=outputs[4],
-        ez=outputs[5],
-    )
+    return _replace_fields(state, outputs)
