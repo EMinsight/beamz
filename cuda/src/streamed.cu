@@ -733,6 +733,7 @@ __device__ __forceinline__ bool SourceCellConstrained(
   return false;
 }
 
+template <bool Atomic>
 __device__ __forceinline__ void ApplySourceGroupCell(
     BeamzBuffer target, BeamzSourceGroupLaunch group, int source_index,
     int step_offset, int metallic_edges, int z, int y, int x) {
@@ -779,9 +780,14 @@ __device__ __forceinline__ void ApplySourceGroupCell(
       (target_z * static_cast<int>(target.dims[1]) + target_y) *
           static_cast<int>(target.dims[2]) +
       target_x;
-  static_cast<float*>(target.data)[target_offset] +=
+  const float contribution =
       static_cast<const float*>(group.coefficients.data)[coefficient_offset] *
       static_cast<const float*>(group.waveforms.data)[waveform_offset];
+  if constexpr (Atomic) {
+    atomicAdd(static_cast<float*>(target.data) + target_offset, contribution);
+  } else {
+    static_cast<float*>(target.data)[target_offset] += contribution;
+  }
 }
 
 __global__ void ApplySourceGroup(BeamzBuffer target,
@@ -791,8 +797,8 @@ __global__ void ApplySourceGroup(BeamzBuffer target,
   const int x = blockIdx.x * blockDim.x + threadIdx.x;
   const int y = blockIdx.y * blockDim.y + threadIdx.y;
   const int z = blockIdx.z * blockDim.z + threadIdx.z;
-  ApplySourceGroupCell(target, group, source_index, step_offset,
-                       metallic_edges, z, y, x);
+  ApplySourceGroupCell<false>(target, group, source_index, step_offset,
+                              metallic_edges, z, y, x);
 }
 
 __global__ void ApplySourceGroupBatched(BeamzBuffer target,
@@ -804,8 +810,10 @@ __global__ void ApplySourceGroupBatched(BeamzBuffer target,
   const int x = blockIdx.x * blockDim.x + threadIdx.x;
   const int y = blockIdx.y * blockDim.y + threadIdx.y;
   const int z = source_block_z * blockDim.z + threadIdx.z;
-  ApplySourceGroupCell(target, group, source_index, step_offset,
-                       metallic_edges, z, y, x);
+  // Sources within a group may overlap. A single batched launch must preserve
+  // their additive semantics instead of racing read-modify-write operations.
+  ApplySourceGroupCell<true>(target, group, source_index, step_offset,
+                             metallic_edges, z, y, x);
 }
 
 __global__ void PreparePlaneDftPhases(BeamzLaunch e_launch,

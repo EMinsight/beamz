@@ -176,6 +176,7 @@ def _feature_simulation(profile: str):
     sources = []
     if profile in {
         "multiple_sources",
+        "overlapping_sources",
         "multiple_monitors",
         "scheduled_windowed_monitor",
     }:
@@ -185,7 +186,9 @@ def _feature_simulation(profile: str):
                 width=2.5 * resolution,
                 signal=waveform if index == 0 else 0.6 * waveform,
             )
-            for index, fraction in enumerate((0.3, 0.45))
+            for index, fraction in enumerate(
+                (0.38, 0.38) if profile == "overlapping_sources" else (0.3, 0.45)
+            )
         ]
     elif profile == "h_source":
         probe = bz.Simulation(material_grid=material_grid, time=time)
@@ -250,6 +253,7 @@ def _feature_program_state(simulation, backend: str, profile: str, state):
         "mixed_faces",
         "asymmetric_cpml",
         "multiple_sources",
+        "overlapping_sources",
         "h_source",
         "multiple_monitors",
         "scheduled_windowed_monitor",
