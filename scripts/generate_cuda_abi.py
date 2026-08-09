@@ -32,6 +32,9 @@ def _render_python(schema: dict) -> str:
         f"    CUDA_{name.upper()}_TARGET," for name in schema["streamed_targets"]
     )
     lines.extend(["))", ""])
+    for name, value in schema["program_layouts"].items():
+        lines.append(f"PROGRAM_LAYOUT_{name.upper()} = {value}")
+    lines.append("")
     for name, value in schema["layout"].items():
         lines.append(f"{name.upper()} = {value}")
     lines.append("")
@@ -58,6 +61,11 @@ def _render_cpp(schema: dict) -> str:
     for name, target in schema["targets"].items():
         lines.append(
             f'inline constexpr char k{_pascal_case(name)}Target[] = "{target}";'
+        )
+    lines.append("")
+    for name, value in schema["program_layouts"].items():
+        lines.append(
+            f"inline constexpr int32_t kProgramLayout{_pascal_case(name)} = {value};"
         )
     lines.append("")
     for name, value in schema["layout"].items():

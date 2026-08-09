@@ -1,27 +1,24 @@
 {
-  "abi_version": 10,
-  "package_version": "0.10.0",
+  "abi_version": 11,
+  "package_version": "0.11.0",
   "targets": {
     "streamed": "beamz_cuda_streamed",
-    "streamed_steps": "beamz_cuda_streamed_steps",
-    "temporal_steps": "beamz_cuda_temporal_steps",
-    "streamed_cpml_steps": "beamz_cuda_streamed_cpml_steps",
-    "streamed_source_groups_cpml_steps": "beamz_cuda_streamed_source_groups_cpml_steps",
-    "temporal_source_groups_cpml_steps": "beamz_cuda_temporal_source_groups_cpml_steps",
-    "temporal_program_cpml_steps": "beamz_cuda_temporal_program_cpml_steps",
-    "streamed_program_cpml_steps": "beamz_cuda_streamed_program_cpml_steps",
+    "program": "beamz_cuda_program",
     "hopper": "beamz_cuda_hopper"
   },
   "streamed_targets": [
     "streamed",
-    "streamed_steps",
-    "temporal_steps",
-    "streamed_cpml_steps",
-    "streamed_source_groups_cpml_steps",
-    "temporal_source_groups_cpml_steps",
-    "temporal_program_cpml_steps",
-    "streamed_program_cpml_steps"
+    "program"
   ],
+  "program_layouts": {
+    "yee_in_place": 0,
+    "yee_temporal": 1,
+    "cpml_in_place": 2,
+    "source_in_place": 3,
+    "source_temporal_cpml": 4,
+    "monitor_in_place": 5,
+    "monitor_temporal_cpml": 6
+  },
   "layout": {
     "field_count": 6,
     "cpml_term_count": 6,

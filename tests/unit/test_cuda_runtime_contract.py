@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from beamz.simulation import _cuda_abi as abi
 from beamz.simulation import backend as backend_runtime
 from beamz.simulation import kernels
 from beamz.simulation.compile import _elide_uniform_grid
@@ -219,7 +220,7 @@ def test_cuda_multi_step_ffi_aliases_all_fields(monkeypatch):
     next_state = cuda_runtime.run_steps(state, context, coefficients, 7)
 
     target, results, options, arguments, attributes = captured[0]
-    assert target == "beamz_cuda_temporal_steps"
+    assert target == abi.CUDA_PROGRAM_TARGET
     assert len(results) == 12
     assert len(arguments) == 30
     assert options["input_output_aliases"] == {index: index for index in range(12)}
@@ -231,6 +232,10 @@ def test_cuda_multi_step_ffi_aliases_all_fields(monkeypatch):
         "resolution": np.float32(context.resolution),
         "metallic_edges": np.int32(63),
         "metric_kind": np.int32(0),
+        "program_layout": np.int32(abi.PROGRAM_LAYOUT_YEE_TEMPORAL),
+        "cpml_enabled": np.int32(0),
+        "monitor_count": np.int32(0),
+        "coincident_source_group_mask": np.int32(0),
     }
     assert next_state.hx is state.hx
     assert next_state.ez is state.ez
@@ -341,7 +346,7 @@ def test_cuda_cpml_multi_step_ffi_aliases_fields_and_psi(monkeypatch):
     next_state = cuda_runtime.run_steps(state, context, program.coefficients, 7)
 
     target, results, options, arguments, attributes = captured[0]
-    assert target == "beamz_cuda_streamed_cpml_steps"
+    assert target == abi.CUDA_PROGRAM_TARGET
     assert len(results) == 18
     assert len(arguments) == 74
     assert options["input_output_aliases"] == {
@@ -350,6 +355,9 @@ def test_cuda_cpml_multi_step_ffi_aliases_fields_and_psi(monkeypatch):
         **{62 + index: 12 + index for index in range(6)},
     }
     assert attributes["nsteps"] == np.int32(7)
+    assert attributes["program_layout"] == np.int32(
+        abi.PROGRAM_LAYOUT_CPML_IN_PLACE
+    )
     assert next_state.cpml_psi_h_terms == state.cpml_psi_h_terms
     assert next_state.cpml_psi_e_terms == state.cpml_psi_e_terms
 
@@ -387,12 +395,15 @@ def test_cuda_cpml_multi_step_reuses_temporal_empty_source_graph(monkeypatch):
     next_state = cuda_runtime.run_steps(state, context, coefficients, 3)
 
     target, results, options, arguments, attributes = captured[0]
-    assert target == "beamz_cuda_temporal_source_groups_cpml_steps"
+    assert target == abi.CUDA_PROGRAM_TARGET
     assert len(results) == 36
     assert len(arguments) == 120
     assert all(arguments[index].shape[0] == 0 for index in range(92, 119, 3))
     assert options["input_output_aliases"][74] == 6
     assert attributes["coincident_source_group_mask"] == np.int32(0)
+    assert attributes["program_layout"] == np.int32(
+        abi.PROGRAM_LAYOUT_SOURCE_TEMPORAL_CPML
+    )
     assert next_state.hx is arguments[74]
 
 
@@ -421,7 +432,7 @@ def test_cuda_source_group_graph_packs_all_phases_and_aliases_state(monkeypatch)
     )
 
     target, results, options, arguments, attributes = captured[0]
-    assert target == "beamz_cuda_streamed_source_groups_cpml_steps"
+    assert target == abi.CUDA_PROGRAM_TARGET
     assert len(results) == 18
     assert len(arguments) == 102
     assert arguments[74] is source_group.coeffs
@@ -435,6 +446,9 @@ def test_cuda_source_group_graph_packs_all_phases_and_aliases_state(monkeypatch)
     }
     assert attributes["nsteps"] == np.int32(3)
     assert attributes["cpml_enabled"] == np.int32(1)
+    assert attributes["program_layout"] == np.int32(
+        abi.PROGRAM_LAYOUT_SOURCE_IN_PLACE
+    )
     assert attributes["coincident_source_group_mask"] == np.int32(1)
     assert next_state.cpml_psi_h_terms == state.cpml_psi_h_terms
 
@@ -474,7 +488,7 @@ def test_cuda_source_group_graph_uses_temporal_cpml_field_banks(monkeypatch):
     )
 
     target, results, options, arguments, attributes = captured[0]
-    assert target == "beamz_cuda_temporal_source_groups_cpml_steps"
+    assert target == abi.CUDA_PROGRAM_TARGET
     assert len(results) == 36
     assert len(arguments) == 120
     assert arguments[119] is state.current_step
@@ -485,7 +499,10 @@ def test_cuda_source_group_graph_uses_temporal_cpml_field_banks(monkeypatch):
         **{62 + index: 18 + index for index in range(6)},
         **{80 + index: 24 + index for index in range(12)},
     }
-    assert "cpml_enabled" not in attributes
+    assert attributes["cpml_enabled"] == np.int32(1)
+    assert attributes["program_layout"] == np.int32(
+        abi.PROGRAM_LAYOUT_SOURCE_TEMPORAL_CPML
+    )
     assert attributes["nsteps"] == np.int32(3)
     assert next_state.hx is arguments[74]
     assert next_state.cpml_psi_h_terms == arguments[80:86]
@@ -531,7 +548,7 @@ def test_cuda_program_graph_packs_monitor_batch_and_aliases_accumulators(monkeyp
     )
 
     target, results, options, arguments, attributes = captured[0]
-    assert target == "beamz_cuda_streamed_program_cpml_steps"
+    assert target == abi.CUDA_PROGRAM_TARGET
     assert len(results) == 21
     assert len(arguments) == 113
     assert packed[0].shape[:2] == (1, 6)
@@ -539,6 +556,9 @@ def test_cuda_program_graph_packs_monitor_batch_and_aliases_accumulators(monkeyp
     assert options["input_output_aliases"][109] == 19
     assert options["input_output_aliases"][110] == 20
     assert attributes["monitor_count"] == np.int32(1)
+    assert attributes["program_layout"] == np.int32(
+        abi.PROGRAM_LAYOUT_MONITOR_IN_PLACE
+    )
     assert attributes["coincident_source_group_mask"] == np.int32(1)
     np.testing.assert_array_equal(next_state.dft_vec_re, state.dft_vec_re)
 
@@ -587,7 +607,7 @@ def test_cuda_program_graph_uses_temporal_cpml_field_banks(monkeypatch):
     )
 
     target, results, options, arguments, attributes = captured[0]
-    assert target == "beamz_cuda_temporal_program_cpml_steps"
+    assert target == abi.CUDA_PROGRAM_TARGET
     assert len(results) == 39
     assert len(arguments) == 131
     assert arguments[130] is state.current_step
@@ -601,8 +621,11 @@ def test_cuda_program_graph_uses_temporal_cpml_field_banks(monkeypatch):
         127: 37,
         128: 38,
     }
-    assert "cpml_enabled" not in attributes
+    assert attributes["cpml_enabled"] == np.int32(1)
     assert attributes["monitor_count"] == np.int32(1)
+    assert attributes["program_layout"] == np.int32(
+        abi.PROGRAM_LAYOUT_MONITOR_TEMPORAL_CPML
+    )
     assert next_state.hx is arguments[74]
     np.testing.assert_array_equal(next_state.dft_vec_re, state.dft_vec_re)
 

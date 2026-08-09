@@ -643,6 +643,50 @@ ffi::Error StreamedProgramCpmlStepsHandler(
                    std::to_string(error));
 }
 
+ffi::Error ProgramHandler(
+    void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
+    int32_t abi_version, int32_t cuda_flags, int32_t nsteps, float dt,
+    float resolution, int32_t metallic_edges, int32_t metric_kind,
+    int32_t program_layout, int32_t cpml_enabled, int32_t monitor_count,
+    int32_t coincident_source_group_mask) {
+  switch (program_layout) {
+    case kProgramLayoutYeeInPlace:
+      return StreamedStepsHandler(stream, args, rets, abi_version, cuda_flags,
+                                  nsteps, dt, resolution, metallic_edges,
+                                  metric_kind);
+    case kProgramLayoutYeeTemporal:
+      return TemporalStepsHandler(stream, args, rets, abi_version, cuda_flags,
+                                  nsteps, dt, resolution, metallic_edges,
+                                  metric_kind);
+    case kProgramLayoutCpmlInPlace:
+      return StreamedCpmlStepsHandler(stream, args, rets, abi_version,
+                                      cuda_flags, nsteps, dt, resolution,
+                                      metallic_edges, metric_kind);
+    case kProgramLayoutSourceInPlace:
+      return StreamedSourceGroupsCpmlStepsHandler(
+          stream, args, rets, abi_version, cuda_flags, nsteps, dt, resolution,
+          metallic_edges, metric_kind, cpml_enabled,
+          coincident_source_group_mask);
+    case kProgramLayoutSourceTemporalCpml:
+      return TemporalSourceGroupsCpmlStepsHandler(
+          stream, args, rets, abi_version, cuda_flags, nsteps, dt, resolution,
+          metallic_edges, metric_kind, coincident_source_group_mask);
+    case kProgramLayoutMonitorInPlace:
+      return StreamedProgramCpmlStepsHandler(
+          stream, args, rets, abi_version, cuda_flags, nsteps, dt, resolution,
+          metallic_edges, metric_kind, cpml_enabled, monitor_count,
+          coincident_source_group_mask);
+    case kProgramLayoutMonitorTemporalCpml:
+      return TemporalProgramCpmlStepsHandler(
+          stream, args, rets, abi_version, cuda_flags, nsteps, dt, resolution,
+          metallic_edges, metric_kind, monitor_count,
+          coincident_source_group_mask);
+    default:
+      return ffi::Error::InvalidArgument(
+          "unknown BeamZ CUDA program buffer layout");
+  }
+}
+
 ffi::Error HopperHandler(void* stream, ffi::RemainingArgs args,
                          ffi::RemainingRets rets, int32_t abi_version,
                          int32_t cuda_flags, int32_t phase, int32_t nterms,
@@ -669,49 +713,8 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_streamed, StreamedHandler,
                                   .Attr<int32_t>("metallic_edges")
                                   .Attr<int32_t>("metric_kind"));
 
-XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_streamed_steps, StreamedStepsHandler,
-                              ffi::Ffi::Bind()
-                                  .Ctx<ffi::PlatformStream<void*>>()
-                                  .RemainingArgs()
-                                  .RemainingRets()
-                                  .Attr<int32_t>("abi_version")
-                                  .Attr<int32_t>("cuda_flags")
-                                  .Attr<int32_t>("nsteps")
-                                  .Attr<float>("dt")
-                                  .Attr<float>("resolution")
-                                  .Attr<int32_t>("metallic_edges")
-                                  .Attr<int32_t>("metric_kind"));
-
-XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_temporal_steps, TemporalStepsHandler,
-                              ffi::Ffi::Bind()
-                                  .Ctx<ffi::PlatformStream<void*>>()
-                                  .RemainingArgs()
-                                  .RemainingRets()
-                                  .Attr<int32_t>("abi_version")
-                                  .Attr<int32_t>("cuda_flags")
-                                  .Attr<int32_t>("nsteps")
-                                  .Attr<float>("dt")
-                                  .Attr<float>("resolution")
-                                  .Attr<int32_t>("metallic_edges")
-                                  .Attr<int32_t>("metric_kind"));
-
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
-    beamz_cuda_streamed_cpml_steps, StreamedCpmlStepsHandler,
-    ffi::Ffi::Bind()
-        .Ctx<ffi::PlatformStream<void*>>()
-        .RemainingArgs()
-        .RemainingRets()
-        .Attr<int32_t>("abi_version")
-        .Attr<int32_t>("cuda_flags")
-        .Attr<int32_t>("nsteps")
-        .Attr<float>("dt")
-        .Attr<float>("resolution")
-        .Attr<int32_t>("metallic_edges")
-        .Attr<int32_t>("metric_kind"));
-
-XLA_FFI_DEFINE_HANDLER_SYMBOL(
-    beamz_cuda_streamed_source_groups_cpml_steps,
-    StreamedSourceGroupsCpmlStepsHandler,
+    beamz_cuda_program, ProgramHandler,
     ffi::Ffi::Bind()
         .Ctx<ffi::PlatformStream<void*>>()
         .RemainingArgs()
@@ -723,58 +726,10 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<float>("resolution")
         .Attr<int32_t>("metallic_edges")
         .Attr<int32_t>("metric_kind")
-        .Attr<int32_t>("cpml_enabled")
-        .Attr<int32_t>("coincident_source_group_mask"));
-
-XLA_FFI_DEFINE_HANDLER_SYMBOL(
-    beamz_cuda_temporal_source_groups_cpml_steps,
-    TemporalSourceGroupsCpmlStepsHandler,
-    ffi::Ffi::Bind()
-        .Ctx<ffi::PlatformStream<void*>>()
-        .RemainingArgs()
-        .RemainingRets()
-        .Attr<int32_t>("abi_version")
-        .Attr<int32_t>("cuda_flags")
-        .Attr<int32_t>("nsteps")
-        .Attr<float>("dt")
-        .Attr<float>("resolution")
-        .Attr<int32_t>("metallic_edges")
-        .Attr<int32_t>("metric_kind")
-        .Attr<int32_t>("coincident_source_group_mask"));
-
-XLA_FFI_DEFINE_HANDLER_SYMBOL(
-    beamz_cuda_temporal_program_cpml_steps, TemporalProgramCpmlStepsHandler,
-    ffi::Ffi::Bind()
-        .Ctx<ffi::PlatformStream<void*>>()
-        .RemainingArgs()
-        .RemainingRets()
-        .Attr<int32_t>("abi_version")
-        .Attr<int32_t>("cuda_flags")
-        .Attr<int32_t>("nsteps")
-        .Attr<float>("dt")
-        .Attr<float>("resolution")
-        .Attr<int32_t>("metallic_edges")
-        .Attr<int32_t>("metric_kind")
-        .Attr<int32_t>("monitor_count")
-        .Attr<int32_t>("coincident_source_group_mask"));
-
-XLA_FFI_DEFINE_HANDLER_SYMBOL(
-    beamz_cuda_streamed_program_cpml_steps, StreamedProgramCpmlStepsHandler,
-    ffi::Ffi::Bind()
-        .Ctx<ffi::PlatformStream<void*>>()
-        .RemainingArgs()
-        .RemainingRets()
-        .Attr<int32_t>("abi_version")
-        .Attr<int32_t>("cuda_flags")
-        .Attr<int32_t>("nsteps")
-        .Attr<float>("dt")
-        .Attr<float>("resolution")
-        .Attr<int32_t>("metallic_edges")
-        .Attr<int32_t>("metric_kind")
+        .Attr<int32_t>("program_layout")
         .Attr<int32_t>("cpml_enabled")
         .Attr<int32_t>("monitor_count")
         .Attr<int32_t>("coincident_source_group_mask"));
-
 XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_hopper, HopperHandler,
                               ffi::Ffi::Bind()
                                   .Ctx<ffi::PlatformStream<void*>>()

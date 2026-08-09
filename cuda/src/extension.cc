@@ -14,22 +14,8 @@ NB_MODULE(beamz_cuda, module) {
     nb::dict registrations;
     registrations[kStreamedTarget] =
         nb::capsule(reinterpret_cast<void*>(beamz_cuda_streamed));
-    registrations[kStreamedStepsTarget] =
-        nb::capsule(reinterpret_cast<void*>(beamz_cuda_streamed_steps));
-    registrations[kTemporalStepsTarget] =
-        nb::capsule(reinterpret_cast<void*>(beamz_cuda_temporal_steps));
-    registrations[kStreamedCpmlStepsTarget] =
-        nb::capsule(reinterpret_cast<void*>(beamz_cuda_streamed_cpml_steps));
-    registrations[kStreamedSourceGroupsCpmlStepsTarget] = nb::capsule(
-        reinterpret_cast<void*>(
-            beamz_cuda_streamed_source_groups_cpml_steps));
-    registrations[kTemporalSourceGroupsCpmlStepsTarget] = nb::capsule(
-        reinterpret_cast<void*>(
-            beamz_cuda_temporal_source_groups_cpml_steps));
-    registrations[kTemporalProgramCpmlStepsTarget] = nb::capsule(
-        reinterpret_cast<void*>(beamz_cuda_temporal_program_cpml_steps));
-    registrations[kStreamedProgramCpmlStepsTarget] = nb::capsule(
-        reinterpret_cast<void*>(beamz_cuda_streamed_program_cpml_steps));
+    registrations[kProgramTarget] =
+        nb::capsule(reinterpret_cast<void*>(beamz_cuda_program));
     registrations[kHopperTarget] =
         nb::capsule(reinterpret_cast<void*>(beamz_cuda_hopper));
     return registrations;

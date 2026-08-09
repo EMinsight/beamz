@@ -7,17 +7,19 @@
 
 namespace beamz::cuda::abi {
 
-inline constexpr int32_t kAbiVersion = 10;
-inline constexpr char kPackageVersion[] = "0.10.0";
+inline constexpr int32_t kAbiVersion = 11;
+inline constexpr char kPackageVersion[] = "0.11.0";
 inline constexpr char kStreamedTarget[] = "beamz_cuda_streamed";
-inline constexpr char kStreamedStepsTarget[] = "beamz_cuda_streamed_steps";
-inline constexpr char kTemporalStepsTarget[] = "beamz_cuda_temporal_steps";
-inline constexpr char kStreamedCpmlStepsTarget[] = "beamz_cuda_streamed_cpml_steps";
-inline constexpr char kStreamedSourceGroupsCpmlStepsTarget[] = "beamz_cuda_streamed_source_groups_cpml_steps";
-inline constexpr char kTemporalSourceGroupsCpmlStepsTarget[] = "beamz_cuda_temporal_source_groups_cpml_steps";
-inline constexpr char kTemporalProgramCpmlStepsTarget[] = "beamz_cuda_temporal_program_cpml_steps";
-inline constexpr char kStreamedProgramCpmlStepsTarget[] = "beamz_cuda_streamed_program_cpml_steps";
+inline constexpr char kProgramTarget[] = "beamz_cuda_program";
 inline constexpr char kHopperTarget[] = "beamz_cuda_hopper";
+
+inline constexpr int32_t kProgramLayoutYeeInPlace = 0;
+inline constexpr int32_t kProgramLayoutYeeTemporal = 1;
+inline constexpr int32_t kProgramLayoutCpmlInPlace = 2;
+inline constexpr int32_t kProgramLayoutSourceInPlace = 3;
+inline constexpr int32_t kProgramLayoutSourceTemporalCpml = 4;
+inline constexpr int32_t kProgramLayoutMonitorInPlace = 5;
+inline constexpr int32_t kProgramLayoutMonitorTemporalCpml = 6;
 
 inline constexpr size_t kFieldCount = 6;
 inline constexpr size_t kCpmlTermCount = 6;

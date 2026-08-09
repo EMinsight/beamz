@@ -4,20 +4,7 @@
 #include "xla/ffi/api/c_api.h"
 
 extern "C" XLA_FFI_Error* beamz_cuda_streamed(XLA_FFI_CallFrame* call_frame);
-extern "C" XLA_FFI_Error* beamz_cuda_streamed_steps(
-    XLA_FFI_CallFrame* call_frame);
-extern "C" XLA_FFI_Error* beamz_cuda_temporal_steps(
-    XLA_FFI_CallFrame* call_frame);
-extern "C" XLA_FFI_Error* beamz_cuda_streamed_cpml_steps(
-    XLA_FFI_CallFrame* call_frame);
-extern "C" XLA_FFI_Error* beamz_cuda_streamed_source_groups_cpml_steps(
-    XLA_FFI_CallFrame* call_frame);
-extern "C" XLA_FFI_Error* beamz_cuda_temporal_source_groups_cpml_steps(
-    XLA_FFI_CallFrame* call_frame);
-extern "C" XLA_FFI_Error* beamz_cuda_temporal_program_cpml_steps(
-    XLA_FFI_CallFrame* call_frame);
-extern "C" XLA_FFI_Error* beamz_cuda_streamed_program_cpml_steps(
-    XLA_FFI_CallFrame* call_frame);
+extern "C" XLA_FFI_Error* beamz_cuda_program(XLA_FFI_CallFrame* call_frame);
 extern "C" XLA_FFI_Error* beamz_cuda_hopper(XLA_FFI_CallFrame* call_frame);
 
 #endif  // BEAMZ_CUDA_FFI_HANDLER_H_

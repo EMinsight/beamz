@@ -108,7 +108,14 @@ def _metric_kind_code(ctx) -> np.int32:
         ) from exc
 
 
-def _step_attributes(ctx, nsteps: int):
+def _program_attributes(
+    ctx,
+    nsteps: int,
+    layout: int,
+    *,
+    monitor_count: int = 0,
+    coincident_source_group_mask: int = 0,
+):
     return {
         "abi_version": np.int32(CUDA_ABI_VERSION),
         "cuda_flags": np.int32(ctx.config.cuda_flags),
@@ -119,6 +126,10 @@ def _step_attributes(ctx, nsteps: int):
             _boundary_code(ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms)
         ),
         "metric_kind": _metric_kind_code(ctx),
+        "program_layout": np.int32(layout),
+        "cpml_enabled": np.int32(ctx.boundary.cpml.enabled),
+        "monitor_count": np.int32(monitor_count),
+        "coincident_source_group_mask": np.int32(coincident_source_group_mask),
     }
 
 
@@ -499,25 +510,20 @@ def run_source_group_steps(state, ctx, coeffs, groups, nsteps: int) -> Simulatio
         if use_temporal_cpml
         else _graph_io(state, ctx, coeffs)
     )
-    call = _ffi_call(
-        (
-            abi.CUDA_TEMPORAL_SOURCE_GROUPS_CPML_STEPS_TARGET
-            if use_temporal_cpml
-            else abi.CUDA_STREAMED_SOURCE_GROUPS_CPML_STEPS_TARGET
-        ),
-        result_values,
-        aliases,
-    )
+    call = _ffi_call(abi.CUDA_PROGRAM_TARGET, result_values, aliases)
     outputs = call(
         *arguments,
         *source_arguments,
         state.current_step,
-        **_step_attributes(ctx, nsteps),
-        coincident_source_group_mask=np.int32(_coincident_source_group_mask(groups)),
-        **(
-            {}
-            if use_temporal_cpml
-            else {"cpml_enabled": np.int32(ctx.boundary.cpml.enabled)}
+        **_program_attributes(
+            ctx,
+            nsteps,
+            (
+                abi.PROGRAM_LAYOUT_SOURCE_TEMPORAL_CPML
+                if use_temporal_cpml
+                else abi.PROGRAM_LAYOUT_SOURCE_IN_PLACE
+            ),
+            coincident_source_group_mask=_coincident_source_group_mask(groups),
         ),
     )
     if use_temporal_cpml:
@@ -649,15 +655,7 @@ def run_program_steps(
         monitor_output_start + 1: state_output_count + 1,
         monitor_output_start + 2: state_output_count + 2,
     }
-    call = _ffi_call(
-        (
-            abi.CUDA_TEMPORAL_PROGRAM_CPML_STEPS_TARGET
-            if use_temporal_cpml
-            else abi.CUDA_STREAMED_PROGRAM_CPML_STEPS_TARGET
-        ),
-        result_values,
-        aliases,
-    )
+    call = _ffi_call(abi.CUDA_PROGRAM_TARGET, result_values, aliases)
     outputs = call(
         *arguments,
         *source_arguments,
@@ -667,13 +665,16 @@ def run_program_steps(
         state.dft_weight_sum,
         state.t,
         state.current_step,
-        **_step_attributes(ctx, nsteps),
-        monitor_count=np.int32(packed_monitors[0].shape[0]),
-        coincident_source_group_mask=np.int32(_coincident_source_group_mask(groups)),
-        **(
-            {}
-            if use_temporal_cpml
-            else {"cpml_enabled": np.int32(ctx.boundary.cpml.enabled)}
+        **_program_attributes(
+            ctx,
+            nsteps,
+            (
+                abi.PROGRAM_LAYOUT_MONITOR_TEMPORAL_CPML
+                if use_temporal_cpml
+                else abi.PROGRAM_LAYOUT_MONITOR_IN_PLACE
+            ),
+            monitor_count=int(packed_monitors[0].shape[0]),
+            coincident_source_group_mask=_coincident_source_group_mask(groups),
         ),
     )
     if use_temporal_cpml:
@@ -703,10 +704,10 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
     fields = _fields(state)
     if ctx.boundary.cpml.enabled:
         arguments, result_values, aliases = _cpml_graph_io(state, ctx, coeffs)
-        call = _ffi_call(abi.CUDA_STREAMED_CPML_STEPS_TARGET, result_values, aliases)
+        call = _ffi_call(abi.CUDA_PROGRAM_TARGET, result_values, aliases)
         outputs = call(
             *arguments,
-            **_step_attributes(ctx, nsteps),
+            **_program_attributes(ctx, nsteps, abi.PROGRAM_LAYOUT_CPML_IN_PLACE),
         )
         return _replace_graph_outputs(state, outputs)
     materials = (
@@ -731,7 +732,7 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
     if temporal_eligible:
         workspace = tuple(jnp.empty_like(value) for value in fields)
         call = _ffi_call(
-            abi.CUDA_TEMPORAL_STEPS_TARGET,
+            abi.CUDA_PROGRAM_TARGET,
             (*fields, *workspace),
             {index: index for index in range(2 * _FIELD_COUNT)},
         )
@@ -741,11 +742,11 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
             *materials,
             *_phase_metrics(ctx, _PHASE_H),
             *_phase_metrics(ctx, _PHASE_E),
-            **_step_attributes(ctx, nsteps),
+            **_program_attributes(ctx, nsteps, abi.PROGRAM_LAYOUT_YEE_TEMPORAL),
         )
         return _replace_fields(state, outputs)
     call = _ffi_call(
-        abi.CUDA_STREAMED_STEPS_TARGET,
+        abi.CUDA_PROGRAM_TARGET,
         fields,
         {index: index for index in range(_FIELD_COUNT)},
     )
@@ -754,6 +755,6 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
         *materials,
         *_phase_metrics(ctx, _PHASE_H),
         *_phase_metrics(ctx, _PHASE_E),
-        **_step_attributes(ctx, nsteps),
+        **_program_attributes(ctx, nsteps, abi.PROGRAM_LAYOUT_YEE_IN_PLACE),
     )
     return _replace_fields(state, outputs)

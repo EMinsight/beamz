@@ -285,12 +285,7 @@ def test_hopper_only_extension_is_rejected_as_incomplete(monkeypatch):
 def test_typed_ffi_registrations_use_cuda_api_v1(monkeypatch):
     extension = _extension(
         "beamz_cuda_streamed",
-        "beamz_cuda_streamed_steps",
-        "beamz_cuda_temporal_steps",
-        "beamz_cuda_streamed_cpml_steps",
-        "beamz_cuda_streamed_source_groups_cpml_steps",
-        "beamz_cuda_temporal_program_cpml_steps",
-        "beamz_cuda_streamed_program_cpml_steps",
+        "beamz_cuda_program",
         "beamz_cuda_hopper",
     )
     registrations = []
@@ -305,14 +300,8 @@ def test_typed_ffi_registrations_use_cuda_api_v1(monkeypatch):
 
     assert targets == (
         "beamz_cuda_hopper",
+        "beamz_cuda_program",
         "beamz_cuda_streamed",
-        "beamz_cuda_streamed_cpml_steps",
-        "beamz_cuda_streamed_program_cpml_steps",
-        "beamz_cuda_streamed_source_groups_cpml_steps",
-        "beamz_cuda_streamed_steps",
-        "beamz_cuda_temporal_program_cpml_steps",
-        "beamz_cuda_temporal_source_groups_cpml_steps",
-        "beamz_cuda_temporal_steps",
     )
     assert {name for name, _, _ in registrations} == set(targets)
     assert all(
