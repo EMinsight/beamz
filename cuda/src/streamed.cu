@@ -853,10 +853,117 @@ __device__ __forceinline__ void ApplyPersistentSourceTiming(
 }
 
 template <int PsiType>
+__device__ __forceinline__ void AccumulatePersistentDftGroups(
+    const BeamzLaunch& h_launch, const BeamzLaunch& e_launch,
+    const BeamzDftGroupLaunch& monitors, int step_offset) {
+  const int lane = threadIdx.x & 31;
+  const int warp = (blockIdx.x * blockDim.x + threadIdx.x) >> 5;
+  const int warp_count = (gridDim.x * blockDim.x) >> 5;
+  const int max_points = static_cast<int>(monitors.indices.dims[2]);
+  const int max_frequency_count =
+      static_cast<int>(monitors.frequencies.dims[1]);
+  const int point_tiles = (max_points + 31) / 32;
+  const int work_count =
+      monitors.monitor_count * 6 * max_frequency_count * point_tiles;
+  const auto* counts = static_cast<const int32_t*>(monitors.counts.data);
+  const auto* codes = static_cast<const int32_t*>(monitors.codes.data);
+  const auto* windows = static_cast<const float*>(monitors.windows.data);
+
+  for (int work = warp; work < work_count; work += warp_count) {
+    int coordinate = work;
+    const int point_tile = coordinate % point_tiles;
+    coordinate /= point_tiles;
+    const int frequency = coordinate % max_frequency_count;
+    coordinate /= max_frequency_count;
+    const int component = coordinate % 6;
+    const int monitor = coordinate / 6;
+    const int frequency_count = counts[5 * monitor];
+    const int point_count = counts[5 * monitor + 1];
+    const int interval = counts[5 * monitor + 2] > 0
+                             ? counts[5 * monitor + 2]
+                             : 1;
+    const int value_offset = counts[5 * monitor + 3];
+    const int weight_offset = counts[5 * monitor + 4];
+    if (frequency >= frequency_count) continue;
+
+    const int absolute_step =
+        static_cast<const int32_t*>(monitors.current_step.data)[0] +
+        step_offset;
+    if (absolute_step % interval != 0) continue;
+    const float time = static_cast<const float*>(monitors.time.data)[0] +
+                       static_cast<float>(step_offset + 1) * e_launch.dt;
+    const float start = windows[3 * monitor];
+    const float end = windows[3 * monitor + 1];
+    if (time < start || time > end) continue;
+
+    float window = 0.0f;
+    float phase_sin = 0.0f;
+    float phase_cos = 0.0f;
+    if (lane == 0) {
+      window = 1.0f;
+      if (codes[2 * monitor] == 1 && isfinite(end) && end > start) {
+        const float tau =
+            fminf(fmaxf((time - start) / (end - start), 0.0f), 1.0f);
+        window = 0.5f * (1.0f - cosf(6.2831853071795864769f * tau));
+      }
+      const float frequency_hz =
+          static_cast<const float*>(monitors.frequencies.data)
+              [monitor * max_frequency_count + frequency];
+      sincosf(6.2831853071795864769f * frequency_hz * time, &phase_sin,
+              &phase_cos);
+    }
+    window = __shfl_sync(0xffffffff, window, 0);
+    phase_sin = __shfl_sync(0xffffffff, phase_sin, 0);
+    phase_cos = __shfl_sync(0xffffffff, phase_cos, 0);
+
+    const int point = point_tile * 32 + lane;
+    if (point >= point_count) continue;
+    if (component == 0 && point == 0) {
+      static_cast<float*>(monitors.dft_weight.data)
+          [weight_offset + frequency] += window;
+    }
+    const float mask =
+        static_cast<const float*>(monitors.component_masks.data)
+            [monitor * 6 + component];
+    if (mask == 0.0f) continue;
+
+    const int neighbors = static_cast<int>(monitors.indices.dims[3]);
+    const int plan_base =
+        ((monitor * 6 + component) * max_points + point) * neighbors;
+    const BeamzBuffer& field = component < 3
+                                   ? e_launch.outputs[component]
+                                   : h_launch.outputs[component - 3];
+    float sample = 0.0f;
+    for (int neighbor = 0; neighbor < neighbors; ++neighbor) {
+      const int gather_offset = plan_base + neighbor;
+      const int field_offset =
+          static_cast<const int32_t*>(monitors.indices.data)[gather_offset];
+      sample += static_cast<const float*>(field.data)[field_offset] *
+                static_cast<const float*>(monitors.weights.data)[gather_offset];
+    }
+
+    float scale = window;
+    if (codes[2 * monitor + 1] == 1) {
+      const float length_unit = windows[3 * monitor + 2];
+      scale *= e_launch.dt * static_cast<float>(interval) * 299792458.0f /
+               length_unit / sqrtf(6.2831853071795864769f);
+    }
+    const int accumulator_offset =
+        value_offset +
+        (component * frequency_count + frequency) * point_count + point;
+    static_cast<float*>(monitors.dft_re.data)[accumulator_offset] +=
+        scale * sample * phase_cos;
+    static_cast<float*>(monitors.dft_im.data)[accumulator_offset] +=
+        scale * sample * phase_sin;
+  }
+}
+
+template <int PsiType, bool HasMonitors>
 __global__ void PersistentCpmlSteps(BeamzLaunch h_ab, BeamzLaunch e_ab,
                                     BeamzLaunch h_ba, BeamzLaunch e_ba,
                                     CpmlQueueGeometry geometry,
                                     PersistentSourceGroups source_groups,
+                                    BeamzDftGroupLaunch monitor_groups,
                                     int32_t nsteps) {
   cooperative_groups::grid_group grid = cooperative_groups::this_grid();
   for (int32_t step = 0; step < nsteps; ++step) {
@@ -918,6 +1025,16 @@ __global__ void PersistentCpmlSteps(BeamzLaunch h_ab, BeamzLaunch e_ab,
       ApplyPersistentSourceTiming(source_groups, h_ba, e_ba, 2, step);
     }
     grid.sync();
+    if constexpr (HasMonitors) {
+      if ((step & 1) == 0) {
+        AccumulatePersistentDftGroups<PsiType>(h_ab, e_ab, monitor_groups,
+                                               step);
+      } else {
+        AccumulatePersistentDftGroups<PsiType>(h_ba, e_ba, monitor_groups,
+                                               step);
+      }
+      grid.sync();
+    }
   }
 }
 
@@ -1859,6 +1976,7 @@ cudaError_t LaunchPersistentCpml(cudaStream_t stream,
                                  const BeamzLaunch& h_ba,
                                  const BeamzLaunch& e_ba,
                                  const BeamzSourceGroupLaunch* source_groups,
+                                 const BeamzDftGroupLaunch* monitor_groups,
                                  int32_t nsteps) {
   if (!PersistentCpmlEnabled() || h_ab.metallic_edges != 0 ||
       e_ab.metallic_edges != 0 || UniformPsiType(h_ab) != kBeamzF32 ||
@@ -1878,9 +1996,15 @@ cudaError_t LaunchPersistentCpml(cudaStream_t stream,
                                  cudaDevAttrMultiProcessorCount, device);
   if (error != cudaSuccess) return error;
   constexpr int threads = 256;
+  const void* persistent_kernel =
+      monitor_groups == nullptr
+          ? reinterpret_cast<const void*>(
+                PersistentCpmlSteps<kBeamzF32, false>)
+          : reinterpret_cast<const void*>(
+                PersistentCpmlSteps<kBeamzF32, true>);
   int blocks_per_sm = 0;
   error = cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-      &blocks_per_sm, PersistentCpmlSteps<kBeamzF32>, threads, 0);
+      &blocks_per_sm, persistent_kernel, threads, 0);
   if (error != cudaSuccess || blocks_per_sm < 1) return cudaErrorNotSupported;
   CpmlQueueGeometry geometry = MakeCpmlQueueGeometry(h_ab);
   constexpr int64_t kPersistentCellLimit = 10000000;
@@ -1895,6 +2019,8 @@ cudaError_t LaunchPersistentCpml(cudaStream_t stream,
   for (int index = 0; index < 9; ++index) {
     persistent_sources.values[index] = source_groups[index];
   }
+  BeamzDftGroupLaunch persistent_monitors{};
+  if (monitor_groups != nullptr) persistent_monitors = *monitor_groups;
   const int blocks =
       geometry.total_blocks < blocks_per_sm * multiprocessors
           ? geometry.total_blocks
@@ -1903,10 +2029,10 @@ cudaError_t LaunchPersistentCpml(cudaStream_t stream,
                        const_cast<BeamzLaunch*>(&e_ab),
                        const_cast<BeamzLaunch*>(&h_ba),
                        const_cast<BeamzLaunch*>(&e_ba), &geometry,
-                       &persistent_sources, &nsteps};
+                       &persistent_sources, &persistent_monitors, &nsteps};
   return cudaLaunchCooperativeKernel(
-      reinterpret_cast<void*>(PersistentCpmlSteps<kBeamzF32>), blocks,
-      threads, arguments, 0, stream);
+      const_cast<void*>(persistent_kernel), blocks, threads, arguments, 0,
+      stream);
 }
 
 cudaError_t LaunchCpmlShellAndCorePhase(cudaStream_t stream,
@@ -2399,9 +2525,10 @@ int BeamzLaunchTemporalCpmlSourceGroupSteps(
     }
   }
   auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
-  if (monitor_groups == nullptr && PersistentCpmlEnabled()) {
+  if (PersistentCpmlEnabled()) {
     const cudaError_t persistent_error = LaunchPersistentCpml(
-        stream, h_ab, e_ab, h_ba, e_ba, source_groups, nsteps);
+        stream, h_ab, e_ab, h_ba, e_ba, source_groups, monitor_groups,
+        nsteps);
     if (persistent_error != cudaErrorNotSupported) {
       return static_cast<int>(persistent_error);
     }
