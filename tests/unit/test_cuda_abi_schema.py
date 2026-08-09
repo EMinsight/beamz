@@ -61,3 +61,16 @@ def test_private_cuda_component_version_matches_abi_schema():
     assert re.search(r"nanobind_add_module\(\s*_cuda\b", cmake_config)
     assert "install(TARGETS _cuda LIBRARY DESTINATION beamz)" in cmake_config
     assert schema["abi_version"] == abi.CUDA_ABI_VERSION
+
+
+def test_beamz_sdist_owns_the_optional_cuda_sources():
+    package_config = (ROOT / "pyproject.toml").read_text()
+
+    for path in (
+        "cuda/CMakeLists.txt",
+        "cuda/README.md",
+        "cuda/abi_layout.json",
+        "cuda/pyproject.toml",
+        "cuda/src/**/*",
+    ):
+        assert f'{{ path = "{path}", format = "sdist" }}' in package_config

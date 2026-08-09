@@ -115,3 +115,10 @@ manifest-path = "rust/fdtd-raster-py/Cargo.toml"
 python-source = "."
 module-name = "beamz.design.raster._native"
 features = ["pyo3/extension-module"]
+include = [
+    { path = "cuda/CMakeLists.txt", format = "sdist" },
+    { path = "cuda/README.md", format = "sdist" },
+    { path = "cuda/abi_layout.json", format = "sdist" },
+    { path = "cuda/pyproject.toml", format = "sdist" },
+    { path = "cuda/src/**/*", format = "sdist" },
+]
