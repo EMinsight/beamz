@@ -21,6 +21,29 @@ constexpr int kFusedSharedY = kFusedCoreY + 1;
 constexpr int kFusedSharedZ = kFusedCoreZ + 1;
 constexpr int kFusedVolume = kFusedSharedX * kFusedSharedY * kFusedSharedZ;
 constexpr size_t kFusedSharedBytes = 3 * kFusedVolume * sizeof(float);
+
+// The temporal Yee kernel needs only the phase payload, not the full ABI
+// descriptor (versioning, CPML slots, or unused result slots).
+struct FusedYeePhase {
+  float inv_resolution;
+  BeamzBuffer inputs[12];
+  BeamzBuffer metrics[3];
+  BeamzBuffer outputs[3];
+};
+
+FusedYeePhase MakeFusedYeePhase(const BeamzLaunch& launch) {
+  FusedYeePhase phase{};
+  phase.inv_resolution = launch.inv_resolution;
+  for (int index = 0; index < 12; ++index) {
+    phase.inputs[index] = launch.inputs[index];
+  }
+  for (int axis = 0; axis < 3; ++axis) {
+    phase.metrics[axis] = launch.metrics[axis];
+    phase.outputs[axis] = launch.outputs[axis];
+  }
+  return phase;
+}
+
 bool FlagEnabled(const BeamzLaunch& launch, BeamzCudaFlag flag) {
   return (launch.cuda_flags & flag) != 0;
 }
@@ -84,9 +107,9 @@ __device__ __forceinline__ float Read3D(const BeamzBuffer& value, int z, int y,
   return static_cast<const float*>(value.data)[offset];
 }
 
-template <int MetricKind>
-__device__ __forceinline__ float MetricScale(const BeamzLaunch& launch,
-                                             int axis, int coordinate) {
+template <int MetricKind, typename Launch>
+__device__ __forceinline__ float MetricScale(const Launch& launch, int axis,
+                                             int coordinate) {
   if constexpr (MetricKind == 0) {
     return launch.inv_resolution;
   } else if constexpr (MetricKind == 1) {
@@ -96,11 +119,11 @@ __device__ __forceinline__ float MetricScale(const BeamzLaunch& launch,
   }
 }
 
-template <int MetricKind>
+template <int MetricKind, typename Launch>
 __device__ __forceinline__ float ForwardDifference(const BeamzBuffer& value,
                                                    int axis, int z, int y,
                                                    int x,
-                                                   const BeamzLaunch& launch) {
+                                                   const Launch& launch) {
   const int coordinate = axis == 0 ? z : (axis == 1 ? y : x);
   int next_z = z, next_y = y, next_x = x;
   if (axis == 0) {
@@ -500,7 +523,7 @@ __device__ __forceinline__ bool InCpmlDeepCore(const BeamzLaunch& launch,
 }
 
 template <bool ScalarCoefficients, int MetricKind, int Component>
-__device__ __forceinline__ float FusedHValue(const BeamzLaunch& launch,
+__device__ __forceinline__ float FusedHValue(const FusedYeePhase& launch,
                                              int z, int y, int x) {
   const BeamzBuffer& output = launch.outputs[Component];
   if (!BufferContains(output, z, y, x)) return 0.0f;
@@ -536,7 +559,7 @@ __device__ __forceinline__ float FusedHValue(const BeamzLaunch& launch,
 }
 
 template <bool ScalarCoefficients, int MetricKind, int Component>
-__device__ __forceinline__ float FusedEValue(const BeamzLaunch& launch,
+__device__ __forceinline__ float FusedEValue(const FusedYeePhase& launch,
                                              const float* h_fields,
                                              int local_z, int local_y,
                                              int local_x, int z, int y, int x) {
@@ -771,8 +794,8 @@ __global__ void UpdateCombinedCpmlQueue(
 // redundantly computes the one-cell low halo of H in shared memory, then uses it
 // to update its disjoint E/H core into a frozen out-of-place destination.
 template <bool ScalarCoefficients, int MetricKind>
-__global__ void FusedFullStepPec(BeamzLaunch h_launch,
-                                 BeamzLaunch e_launch) {
+__global__ void FusedFullStepPec(FusedYeePhase h_launch,
+                                 FusedYeePhase e_launch) {
   extern __shared__ float h_fields[];
   const int thread = threadIdx.y * blockDim.x + threadIdx.x;
   const int threads = blockDim.x * blockDim.y;
@@ -1232,6 +1255,8 @@ cudaError_t BeamzEnqueueCpmlPhase(cudaStream_t stream,
 cudaError_t BeamzEnqueueFusedFullStep(cudaStream_t stream,
                                       const BeamzLaunch& h_launch,
                                       const BeamzLaunch& e_launch) {
+  const FusedYeePhase h_phase = MakeFusedYeePhase(h_launch);
+  const FusedYeePhase e_phase = MakeFusedYeePhase(e_launch);
   const bool scalar_coefficients =
       h_launch.inputs[6].rank == 0 && h_launch.inputs[7].rank == 0 &&
       h_launch.inputs[8].rank == 0 && h_launch.inputs[9].rank == 0 &&
@@ -1255,25 +1280,25 @@ cudaError_t BeamzEnqueueFusedFullStep(cudaStream_t stream,
   if (h_launch.metric_kind == 0) {
     if (scalar_coefficients) {
       FusedFullStepPec<true, 0>
-          <<<blocks, threads, kFusedSharedBytes, stream>>>(h_launch, e_launch);
+          <<<blocks, threads, kFusedSharedBytes, stream>>>(h_phase, e_phase);
     } else {
       FusedFullStepPec<false, 0>
-          <<<blocks, threads, kFusedSharedBytes, stream>>>(h_launch, e_launch);
+          <<<blocks, threads, kFusedSharedBytes, stream>>>(h_phase, e_phase);
     }
   } else if (h_launch.metric_kind == 1) {
     if (scalar_coefficients) {
       FusedFullStepPec<true, 1>
-          <<<blocks, threads, kFusedSharedBytes, stream>>>(h_launch, e_launch);
+          <<<blocks, threads, kFusedSharedBytes, stream>>>(h_phase, e_phase);
     } else {
       FusedFullStepPec<false, 1>
-          <<<blocks, threads, kFusedSharedBytes, stream>>>(h_launch, e_launch);
+          <<<blocks, threads, kFusedSharedBytes, stream>>>(h_phase, e_phase);
     }
   } else if (scalar_coefficients) {
     FusedFullStepPec<true, 2>
-        <<<blocks, threads, kFusedSharedBytes, stream>>>(h_launch, e_launch);
+        <<<blocks, threads, kFusedSharedBytes, stream>>>(h_phase, e_phase);
   } else {
     FusedFullStepPec<false, 2>
-        <<<blocks, threads, kFusedSharedBytes, stream>>>(h_launch, e_launch);
+        <<<blocks, threads, kFusedSharedBytes, stream>>>(h_phase, e_phase);
   }
   return cudaPeekAtLastError();
 }
