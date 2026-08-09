@@ -26,6 +26,22 @@ dim3 SourceThreads(const BeamzLaunch& launch, int64_t x_extent) {
   return dim3(16, 4, 2);
 }
 
+struct DftFields {
+  BeamzBuffer values[6];
+  float dt;
+};
+
+DftFields MakeDftFields(const BeamzLaunch& h_launch,
+                        const BeamzLaunch& e_launch) {
+  DftFields fields{};
+  for (int component = 0; component < 3; ++component) {
+    fields.values[component] = e_launch.outputs[component];
+    fields.values[3 + component] = h_launch.outputs[component];
+  }
+  fields.dt = e_launch.dt;
+  return fields;
+}
+
 __device__ __forceinline__ bool SourceCellConstrained(
     const BeamzBuffer& target, int component, int phase, int metallic_edges,
     int z, int y, int x) {
@@ -302,8 +318,7 @@ cudaError_t LaunchSourceGroup(cudaStream_t stream, const BeamzLaunch& launch,
 }
 
 template <bool SingleMonitor>
-__global__ void AccumulateDftGroups(BeamzLaunch h_launch,
-                                    BeamzLaunch e_launch,
+__global__ void AccumulateDftGroups(DftFields fields,
                                     BeamzDftGroupLaunch monitors,
                                     int step_offset) {
   const int point = blockIdx.x * blockDim.x + threadIdx.x;
@@ -329,7 +344,7 @@ __global__ void AccumulateDftGroups(BeamzLaunch h_launch,
       static_cast<const int32_t*>(monitors.current_step.data)[0] + step_offset;
   if (absolute_step % interval != 0) return;
   const float time = static_cast<const float*>(monitors.time.data)[0] +
-                     static_cast<float>(step_offset + 1) * e_launch.dt;
+                     static_cast<float>(step_offset + 1) * fields.dt;
   const auto* windows = static_cast<const float*>(monitors.windows.data);
   const float start = windows[3 * monitor];
   const float end = windows[3 * monitor + 1];
@@ -369,8 +384,7 @@ __global__ void AccumulateDftGroups(BeamzLaunch h_launch,
   const int neighbors = static_cast<int>(monitors.indices.dims[3]);
   const int plan_base = ((monitor * 6 + component) * max_points + point) *
                         neighbors;
-  const BeamzBuffer& field = component < 3 ? e_launch.outputs[component]
-                                           : h_launch.outputs[component - 3];
+  const BeamzBuffer& field = fields.values[component];
   float sample = 0.0f;
   for (int neighbor = 0; neighbor < neighbors; ++neighbor) {
     const int gather_offset = plan_base + neighbor;
@@ -383,7 +397,7 @@ __global__ void AccumulateDftGroups(BeamzLaunch h_launch,
   float scale = window;
   if (codes[2 * monitor + 1] == 1) {
     const float length_unit = windows[3 * monitor + 2];
-    scale *= e_launch.dt * static_cast<float>(interval) * 299792458.0f /
+    scale *= fields.dt * static_cast<float>(interval) * 299792458.0f /
              length_unit / sqrtf(6.2831853071795864769f);
   }
   const int accumulator_offset =
@@ -400,6 +414,7 @@ cudaError_t LaunchDftGroups(cudaStream_t stream, const BeamzLaunch& h_launch,
                             const BeamzLaunch& e_launch,
                             const BeamzDftGroupLaunch& monitors,
                             int32_t step) {
+  const DftFields fields = MakeDftFields(h_launch, e_launch);
   const int frequency_threads =
       monitors.monitor_count == 1 && monitors.frequencies.dims[1] == 3 ? 3 : 2;
   const dim3 threads(32, frequency_threads, 2);
@@ -409,10 +424,10 @@ cudaError_t LaunchDftGroups(cudaStream_t stream, const BeamzLaunch& h_launch,
       (monitors.monitor_count * 6 + threads.z - 1) / threads.z);
   if (monitors.monitor_count == 1) {
     AccumulateDftGroups<true><<<blocks, threads, 0, stream>>>(
-        h_launch, e_launch, monitors, step);
+        fields, monitors, step);
   } else {
     AccumulateDftGroups<false><<<blocks, threads, 0, stream>>>(
-        h_launch, e_launch, monitors, step);
+        fields, monitors, step);
   }
   return cudaPeekAtLastError();
 }
@@ -432,4 +447,3 @@ cudaError_t BeamzEnqueueDftGroups(cudaStream_t stream,
                                   int32_t step) {
   return LaunchDftGroups(stream, h_launch, e_launch, monitors, step);
 }
-
