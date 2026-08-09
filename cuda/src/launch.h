@@ -27,6 +27,7 @@ struct BeamzLaunch {
   float dt_over_eps;
   float dt_over_mu;
   int32_t metallic_edges;
+  int32_t uniform_cpml_thickness;
   BeamzBuffer inputs[37];
   BeamzBuffer metrics[3];
   BeamzBuffer outputs[9];

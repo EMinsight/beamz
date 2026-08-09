@@ -51,6 +51,20 @@ def _program_and_state(*, cpml: bool, source: bool = False, monitor: bool = Fals
     return program, state, context
 
 
+def test_cuda_boundary_code_packs_only_uniform_two_sided_cpml():
+    uniform = tuple(
+        SimpleNamespace(slab=SimpleNamespace(low=4, high=4)) for _ in range(6)
+    )
+    asymmetric = (
+        *uniform[:-1],
+        SimpleNamespace(slab=SimpleNamespace(low=4, high=0)),
+    )
+
+    assert cuda_runtime._boundary_code(frozenset({"front"}), uniform) == (4 << 8) | 1
+    assert cuda_runtime._boundary_code(frozenset({"front"}), asymmetric) == 1
+    assert cuda_runtime._boundary_code(frozenset({"right"})) == 1 << 5
+
+
 def test_cuda_cpml_bf16_state_is_explicit_and_preserves_continuation(monkeypatch):
     program, state, _context = _program_and_state(cpml=True)
     cuda_program = replace(
@@ -118,7 +132,8 @@ def test_cuda_ffi_phase_packs_cpml_and_aliases_state(monkeypatch):
         "nterms": np.int32(6),
         "dt": np.float32(context.dt),
         "resolution": np.float32(context.resolution),
-        "metallic_edges": np.int32(0),
+        # Low six bits encode PEC faces; high bits carry the uniform CPML width.
+        "metallic_edges": np.int32(2 << 8),
         "metric_kind": np.int32(0),
     }
     assert options["input_output_aliases"] == {

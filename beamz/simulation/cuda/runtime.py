@@ -28,6 +28,19 @@ def _metallic_edge_mask(edges: frozenset[str]) -> int:
     return sum(1 << index for index, name in enumerate(order) if name in edges)
 
 
+def _boundary_code(edges: frozenset[str], terms=()) -> int:
+    """Pack PEC faces and an optional uniform two-sided CPML thickness."""
+    thickness = 0
+    if terms:
+        first = int(terms[0].slab.low)
+        if first > 0 and all(
+            int(term.slab.low) == first and int(term.slab.high) == first
+            for term in terms
+        ):
+            thickness = first
+    return _metallic_edge_mask(edges) | (thickness << 8)
+
+
 def _term_metadata(terms) -> jnp.ndarray:
     return jnp.asarray(
         [
@@ -116,7 +129,7 @@ def _ffi_phase(
         nterms=np.int32(len(terms)),
         dt=np.float32(dt),
         resolution=np.float32(resolution),
-        metallic_edges=np.int32(_metallic_edge_mask(metallic_edges)),
+        metallic_edges=np.int32(_boundary_code(metallic_edges, terms)),
         metric_kind=np.int32(metric_kind),
     )
     return tuple(outputs)
@@ -341,7 +354,11 @@ def run_source_steps(state, ctx, coeffs, source, nsteps: int) -> SimulationState
         nsteps=np.int32(nsteps),
         dt=np.float32(ctx.dt),
         resolution=np.float32(ctx.resolution),
-        metallic_edges=np.int32(_metallic_edge_mask(ctx.boundary.cpml.metallic_edges)),
+        metallic_edges=np.int32(
+            _boundary_code(
+                ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms
+            )
+        ),
         metric_kind=_metric_kind_code(ctx),
         cpml_enabled=np.int32(ctx.boundary.cpml.enabled),
         source_component=np.int32(_COMPONENT_CODE[source.component]),
@@ -392,7 +409,11 @@ def run_source_group_steps(state, ctx, coeffs, groups, nsteps: int) -> Simulatio
         nsteps=np.int32(nsteps),
         dt=np.float32(ctx.dt),
         resolution=np.float32(ctx.resolution),
-        metallic_edges=np.int32(_metallic_edge_mask(ctx.boundary.cpml.metallic_edges)),
+        metallic_edges=np.int32(
+            _boundary_code(
+                ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms
+            )
+        ),
         metric_kind=_metric_kind_code(ctx),
         cpml_enabled=np.int32(ctx.boundary.cpml.enabled),
     )
@@ -553,7 +574,11 @@ def run_program_steps(
         nsteps=np.int32(nsteps),
         dt=np.float32(ctx.dt),
         resolution=np.float32(ctx.resolution),
-        metallic_edges=np.int32(_metallic_edge_mask(ctx.boundary.cpml.metallic_edges)),
+        metallic_edges=np.int32(
+            _boundary_code(
+                ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms
+            )
+        ),
         metric_kind=_metric_kind_code(ctx),
         cpml_enabled=np.int32(ctx.boundary.cpml.enabled),
         monitor_count=np.int32(packed_monitors[0].shape[0]),
@@ -645,7 +670,11 @@ def run_source_monitor_steps(
         nsteps=np.int32(nsteps),
         dt=np.float32(ctx.dt),
         resolution=np.float32(ctx.resolution),
-        metallic_edges=np.int32(_metallic_edge_mask(ctx.boundary.cpml.metallic_edges)),
+        metallic_edges=np.int32(
+            _boundary_code(
+                ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms
+            )
+        ),
         metric_kind=_metric_kind_code(ctx),
         cpml_enabled=np.int32(ctx.boundary.cpml.enabled),
         source_component=np.int32(_COMPONENT_CODE[source.component]),
@@ -694,7 +723,9 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
             dt=np.float32(ctx.dt),
             resolution=np.float32(ctx.resolution),
             metallic_edges=np.int32(
-                _metallic_edge_mask(ctx.boundary.cpml.metallic_edges)
+                _boundary_code(
+                    ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms
+                )
             ),
             metric_kind=_metric_kind_code(ctx),
         )

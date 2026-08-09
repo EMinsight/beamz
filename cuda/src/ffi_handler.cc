@@ -13,6 +13,11 @@ namespace {
 constexpr float kEps0 = 8.8541878128e-12f;
 constexpr float kMu0 = 1.25663706212e-6f;
 
+void SetBoundaryCode(BeamzLaunch* launch, int32_t code) {
+  launch->metallic_edges = code & 0x3f;
+  launch->uniform_cpml_thickness = code >> 8;
+}
+
 ffi::Error DecodeBuffer(const ffi::AnyBuffer& value, BeamzBuffer* output) {
   if (value.element_type() != ffi::DataType::F32 &&
       value.element_type() != ffi::DataType::S32 &&
@@ -65,7 +70,7 @@ ffi::Error Dispatch(Launcher launcher, void* stream, ffi::RemainingArgs args,
   launch.inv_resolution = 1.0f / resolution;
   launch.dt_over_eps = dt / kEps0;
   launch.dt_over_mu = dt / kMu0;
-  launch.metallic_edges = metallic_edges;
+  SetBoundaryCode(&launch, metallic_edges);
   for (size_t index = 0; index < payload_count; ++index) {
     auto decoded = args.get<ffi::AnyBuffer>(index);
     if (!decoded) return decoded.error();
@@ -146,7 +151,7 @@ ffi::Error StreamedStepsHandler(void* stream, ffi::RemainingArgs args,
     launch.inv_resolution = 1.0f / resolution;
     launch.dt_over_eps = dt / kEps0;
     launch.dt_over_mu = dt / kMu0;
-    launch.metallic_edges = metallic_edges;
+    SetBoundaryCode(&launch, metallic_edges);
     return launch;
   };
   BeamzLaunch h_launch = initialize(0);
@@ -217,7 +222,7 @@ ffi::Error TemporalStepsHandler(void* stream, ffi::RemainingArgs args,
     launch.inv_resolution = 1.0f / resolution;
     launch.dt_over_eps = dt / kEps0;
     launch.dt_over_mu = dt / kMu0;
-    launch.metallic_edges = metallic_edges;
+    SetBoundaryCode(&launch, metallic_edges);
     return launch;
   };
   BeamzLaunch h_ab = initialize(0);
@@ -295,7 +300,7 @@ ffi::Error StreamedCpmlStepsHandler(
     launch.inv_resolution = 1.0f / resolution;
     launch.dt_over_eps = dt / kEps0;
     launch.dt_over_mu = dt / kMu0;
-    launch.metallic_edges = metallic_edges;
+    SetBoundaryCode(&launch, metallic_edges);
     return launch;
   };
   BeamzLaunch h_launch = initialize(0);
@@ -370,7 +375,7 @@ ffi::Error StreamedSourceCpmlStepsHandler(
     launch.inv_resolution = 1.0f / resolution;
     launch.dt_over_eps = dt / kEps0;
     launch.dt_over_mu = dt / kMu0;
-    launch.metallic_edges = metallic_edges;
+    SetBoundaryCode(&launch, metallic_edges);
     return launch;
   };
   BeamzLaunch h_launch = initialize(0);
@@ -465,7 +470,7 @@ ffi::Error StreamedSourceGroupsCpmlStepsHandler(
     launch.inv_resolution = 1.0f / resolution;
     launch.dt_over_eps = dt / kEps0;
     launch.dt_over_mu = dt / kMu0;
-    launch.metallic_edges = metallic_edges;
+    SetBoundaryCode(&launch, metallic_edges);
     return launch;
   };
   BeamzLaunch h_launch = initialize(0);
@@ -568,7 +573,7 @@ ffi::Error StreamedProgramCpmlStepsHandler(
     launch.inv_resolution = 1.0f / resolution;
     launch.dt_over_eps = dt / kEps0;
     launch.dt_over_mu = dt / kMu0;
-    launch.metallic_edges = metallic_edges;
+    SetBoundaryCode(&launch, metallic_edges);
     return launch;
   };
   BeamzLaunch h_launch = initialize(0);
@@ -683,7 +688,7 @@ ffi::Error StreamedSourceMonitorCpmlStepsHandler(
     launch.inv_resolution = 1.0f / resolution;
     launch.dt_over_eps = dt / kEps0;
     launch.dt_over_mu = dt / kMu0;
-    launch.metallic_edges = metallic_edges;
+    SetBoundaryCode(&launch, metallic_edges);
     return launch;
   };
   BeamzLaunch h_launch = initialize(0);

@@ -173,7 +173,7 @@ __device__ __forceinline__ float BoundaryDifference(const BeamzBuffer& value,
   return (Read3D(value, z, y, x) - Read3D(value, low_z, low_y, low_x)) * inv_dx;
 }
 
-template <int Term>
+template <int Term, bool UniformCpml = false>
 __device__ __forceinline__ float CorrectCpml(float derivative, int z, int y,
                                              int x, const BeamzLaunch& launch) {
   // The 3D compiler emits the six curl terms in this fixed derivative order.
@@ -181,9 +181,16 @@ __device__ __forceinline__ float CorrectCpml(float derivative, int z, int y,
   constexpr int axes[6] = {1, 0, 0, 2, 2, 1};
   constexpr int axis = axes[Term];
   constexpr float sign = Term % 2 == 0 ? 1.0f : -1.0f;
-  const auto* descriptor = static_cast<const int32_t*>(launch.inputs[12].data);
-  const int low = descriptor[Term * 5 + 2];
-  const int high = descriptor[Term * 5 + 3];
+  int low;
+  int high;
+  if constexpr (UniformCpml) {
+    low = high = launch.uniform_cpml_thickness;
+  } else {
+    const auto* descriptor =
+        static_cast<const int32_t*>(launch.inputs[12].data);
+    low = descriptor[Term * 5 + 2];
+    high = descriptor[Term * 5 + 3];
+  }
   const BeamzBuffer& target = launch.outputs[Term / 2];
   const int coordinate = axis == 0 ? z : (axis == 1 ? y : x);
   const int axis_size = static_cast<int>(target.dims[axis]);
@@ -232,7 +239,7 @@ __device__ __forceinline__ float CorrectCpml(float derivative, int z, int y,
 }
 
 template <int Phase, int Component, bool Cpml, int MetricKind,
-          bool HasMetallicEdges = true>
+          bool HasMetallicEdges = true, bool UniformCpml = false>
 __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
                                                 int z, int y, int x) {
   const BeamzBuffer& input = launch.inputs[Component];
@@ -298,8 +305,10 @@ __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
   }
   float curl;
   if constexpr (Cpml) {
-    curl = CorrectCpml<2 * Component>(derivative0, z, y, x, launch) +
-           CorrectCpml<2 * Component + 1>(derivative1, z, y, x, launch);
+    curl = CorrectCpml<2 * Component, UniformCpml>(derivative0, z, y, x,
+                                                   launch) +
+           CorrectCpml<2 * Component + 1, UniformCpml>(derivative1, z, y, x,
+                                                       launch);
   } else {
     curl = derivative0 - derivative1;
   }
@@ -322,17 +331,18 @@ __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
   }
 }
 
-template <int Phase, bool Cpml, int MetricKind, bool HasMetallicEdges = true>
+template <int Phase, bool Cpml, int MetricKind, bool HasMetallicEdges = true,
+          bool UniformCpml = false>
 __global__ void UpdateFusedComponents(BeamzLaunch launch) {
   const int x = blockIdx.x * blockDim.x + threadIdx.x;
   const int y = blockIdx.y * blockDim.y + threadIdx.y;
   const int z = blockIdx.z * blockDim.z + threadIdx.z;
-  UpdateComponent<Phase, 0, Cpml, MetricKind, HasMetallicEdges>(launch, z, y,
-                                                               x);
-  UpdateComponent<Phase, 1, Cpml, MetricKind, HasMetallicEdges>(launch, z, y,
-                                                               x);
-  UpdateComponent<Phase, 2, Cpml, MetricKind, HasMetallicEdges>(launch, z, y,
-                                                               x);
+  UpdateComponent<Phase, 0, Cpml, MetricKind, HasMetallicEdges, UniformCpml>(
+      launch, z, y, x);
+  UpdateComponent<Phase, 1, Cpml, MetricKind, HasMetallicEdges, UniformCpml>(
+      launch, z, y, x);
+  UpdateComponent<Phase, 2, Cpml, MetricKind, HasMetallicEdges, UniformCpml>(
+      launch, z, y, x);
 }
 
 template <int Phase>
@@ -575,21 +585,34 @@ __global__ void FusedFullStepPec(BeamzLaunch h_launch,
   }
 }
 
-template <int MetricKind, bool HasMetallicEdges>
+template <int MetricKind, bool HasMetallicEdges, bool UniformCpml>
 void LaunchFusedUpdate(cudaStream_t stream, const BeamzLaunch& launch,
                        dim3 blocks, dim3 threads) {
   if (launch.phase == 0 && launch.nterms == 0) {
-    UpdateFusedComponents<0, false, MetricKind, HasMetallicEdges>
+    UpdateFusedComponents<0, false, MetricKind, HasMetallicEdges, UniformCpml>
         <<<blocks, threads, 0, stream>>>(launch);
   } else if (launch.phase == 0) {
-    UpdateFusedComponents<0, true, MetricKind, HasMetallicEdges>
+    UpdateFusedComponents<0, true, MetricKind, HasMetallicEdges, UniformCpml>
         <<<blocks, threads, 0, stream>>>(launch);
   } else if (launch.nterms == 0) {
-    UpdateFusedComponents<1, false, MetricKind, HasMetallicEdges>
+    UpdateFusedComponents<1, false, MetricKind, HasMetallicEdges, UniformCpml>
         <<<blocks, threads, 0, stream>>>(launch);
   } else {
-    UpdateFusedComponents<1, true, MetricKind, HasMetallicEdges>
+    UpdateFusedComponents<1, true, MetricKind, HasMetallicEdges, UniformCpml>
         <<<blocks, threads, 0, stream>>>(launch);
+  }
+}
+
+template <int MetricKind, bool HasMetallicEdges>
+void LaunchFusedUpdateForBoundary(cudaStream_t stream,
+                                  const BeamzLaunch& launch, dim3 blocks,
+                                  dim3 threads) {
+  if (launch.nterms != 0 && launch.uniform_cpml_thickness > 0) {
+    LaunchFusedUpdate<MetricKind, HasMetallicEdges, true>(stream, launch,
+                                                          blocks, threads);
+  } else {
+    LaunchFusedUpdate<MetricKind, HasMetallicEdges, false>(stream, launch,
+                                                           blocks, threads);
   }
 }
 
@@ -900,21 +923,27 @@ int BeamzLaunchStreamed(void* raw_stream, const BeamzLaunch& launch) {
     }
   } else if (launch.metric_kind == 0) {
     if (launch.metallic_edges == 0) {
-      LaunchFusedUpdate<0, false>(stream, launch, fused_blocks, threads);
+      LaunchFusedUpdateForBoundary<0, false>(stream, launch, fused_blocks,
+                                              threads);
     } else {
-      LaunchFusedUpdate<0, true>(stream, launch, fused_blocks, threads);
+      LaunchFusedUpdateForBoundary<0, true>(stream, launch, fused_blocks,
+                                             threads);
     }
   } else if (launch.metric_kind == 1) {
     if (launch.metallic_edges == 0) {
-      LaunchFusedUpdate<1, false>(stream, launch, fused_blocks, threads);
+      LaunchFusedUpdateForBoundary<1, false>(stream, launch, fused_blocks,
+                                              threads);
     } else {
-      LaunchFusedUpdate<1, true>(stream, launch, fused_blocks, threads);
+      LaunchFusedUpdateForBoundary<1, true>(stream, launch, fused_blocks,
+                                             threads);
     }
   } else {
     if (launch.metallic_edges == 0) {
-      LaunchFusedUpdate<2, false>(stream, launch, fused_blocks, threads);
+      LaunchFusedUpdateForBoundary<2, false>(stream, launch, fused_blocks,
+                                              threads);
     } else {
-      LaunchFusedUpdate<2, true>(stream, launch, fused_blocks, threads);
+      LaunchFusedUpdateForBoundary<2, true>(stream, launch, fused_blocks,
+                                             threads);
     }
   }
   return static_cast<int>(cudaPeekAtLastError());
