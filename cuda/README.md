@@ -35,12 +35,17 @@ The wheel compiles SASS for SM80, SM86, SM89, and SM90. `backend="auto"` detects
 registers it lazily; `backend="cuda_streamed"` requests it explicitly and
 `backend="cuda_hopper"` requests the tiled target. The first
 release supports one GPU and float32 3D grids. Multi-GPU and 2D simulations retain
-the JAX backend.
+the JAX backend; only the explicitly selected CPML recurrence state may use BF16.
 
 BeamZ validates the extension's explicit ABI version and complete streamed-target
-manifest before registering any FFI handler. ABI v3 is distributed as
-`beamz-cuda==0.3.0`; an older or partial wheel makes `auto` fall back to JAX and
+manifest before registering any FFI handler. ABI v4 is distributed as
+`beamz-cuda==0.4.0`; an older or partial wheel makes `auto` fall back to JAX and
 causes explicit CUDA requests to fail with a compatibility diagnostic.
+
+For memory-constrained CPML runs,
+`BEAMZ_CUDA_CPML_PSI_PRECISION=bf16` stores only absorber recurrence state in
+BF16 while fields and recurrence arithmetic remain FP32. The default is `fp32`;
+use BF16 only after validating application-level accuracy.
 
 No CUDA result is promoted without all of the following on real hardware:
 
@@ -59,7 +64,7 @@ The host FFI decoder deliberately has no CUDA-header dependency and can be check
 on developer machines with the JAX headers alone:
 
 ```console
-clang++ -std=c++17 -DBEAMZ_CUDA_ABI_VERSION=3 \
+clang++ -std=c++17 -DBEAMZ_CUDA_ABI_VERSION=4 \
   -I"$(python -c 'import jax; print(jax.ffi.include_dir())')" -Icuda/src \
   -fsyntax-only cuda/src/ffi_handler.cc
 ```

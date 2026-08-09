@@ -857,6 +857,13 @@ def initial_program_state(
 ) -> SimulationState:
     """Allocate or restore every runtime buffer required by a compiled plan."""
     cpml, layout = program.boundary.cpml, program.sharding.layout
+    psi_dtype = None
+    if program.config.backend == "cuda_streamed" and cpml.enabled:
+        precision = os.environ.get("BEAMZ_CUDA_CPML_PSI_PRECISION", "fp32").lower()
+        if precision in {"bf16", "bfloat16"}:
+            psi_dtype = jnp.bfloat16
+        elif precision not in {"fp32", "float32", ""}:
+            raise ValueError("BEAMZ_CUDA_CPML_PSI_PRECISION must be 'fp32' or 'bf16'")
 
     def field(name):
         # Fresh runs use the compiled lattice; continuations supply evolved canonical
@@ -877,12 +884,16 @@ def initial_program_state(
 
     # Continue compatible packed CPML memories; a changed boundary plan starts clean.
     def restore_psi(old, terms, dtype):
+        dtype = dtype if psi_dtype is None else psi_dtype
         shapes = tuple(term.slab.shape for term in terms)
         if len(old) == len(shapes) and all(
             tuple(value.shape) == shape
             for value, shape in zip(old, shapes, strict=True)
         ):
-            return old
+            if all(np.dtype(value.dtype) == np.dtype(dtype) for value in old):
+                return old
+            converter = np.asarray if layout.enabled else jnp.asarray
+            return tuple(converter(value, dtype=dtype) for value in old)
         return tuple(zeros(shape, dtype) for shape in shapes)
 
     old_h = () if continuation is None else continuation.cpml_psi_h_terms

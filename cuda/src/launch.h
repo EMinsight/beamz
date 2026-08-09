@@ -3,9 +3,16 @@
 
 #include <cstdint>
 
+enum BeamzElementType : int32_t {
+  kBeamzF32 = 0,
+  kBeamzS32 = 1,
+  kBeamzBF16 = 2,
+};
+
 struct BeamzBuffer {
   void* data;
   int32_t rank;
+  int32_t element_type;
   int64_t dims[4];
 };
 

@@ -17,12 +17,14 @@ class _FakeDevice:
     compute_capability = (9, 0)
 
 
-def _extension(*targets, abi_version=3, complete_streamed=True):
+def _extension(
+    *targets, abi_version=backend_runtime.CUDA_ABI_VERSION, complete_streamed=True
+):
     targets = set(targets)
     if complete_streamed and "beamz_cuda_streamed" in targets:
         targets.update(backend_runtime.CUDA_STREAMED_TARGETS)
     return SimpleNamespace(
-        __version__="0.3.0",
+        __version__="0.4.0",
         __abi_version__=abi_version,
         registrations=lambda: {target: object() for target in targets},
     )

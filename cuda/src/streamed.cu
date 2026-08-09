@@ -1,5 +1,7 @@
 #include <cuda_runtime_api.h>
 
+#include <cuda_bf16.h>
+
 #include <cstddef>
 #include <cstdlib>
 #include <cstdint>
@@ -197,11 +199,22 @@ __device__ __forceinline__ float CorrectCpml(float derivative, int term, int z,
   const BeamzBuffer& psi_input = launch.inputs[psi_base + term];
   const BeamzBuffer& psi_output = launch.outputs[3 + term];
   const int psi_offset = Offset(psi_output, pz, py, px);
-  const float old_psi = static_cast<const float*>(psi_input.data)[psi_offset];
+  float old_psi;
+  if (psi_input.element_type == kBeamzBF16) {
+    old_psi = __bfloat162float(
+        static_cast<const __nv_bfloat16*>(psi_input.data)[psi_offset]);
+  } else {
+    old_psi = static_cast<const float*>(psi_input.data)[psi_offset];
+  }
   const float next_psi =
       Read(launch.inputs[coefficient_base + 1], pz, py, px) * old_psi +
       Read(launch.inputs[coefficient_base], pz, py, px) * derivative;
-  static_cast<float*>(psi_output.data)[psi_offset] = next_psi;
+  if (psi_output.element_type == kBeamzBF16) {
+    static_cast<__nv_bfloat16*>(psi_output.data)[psi_offset] =
+        __float2bfloat16_rn(next_psi);
+  } else {
+    static_cast<float*>(psi_output.data)[psi_offset] = next_psi;
+  }
   return sign *
          (derivative * Read(launch.inputs[coefficient_base + 2], pz, py, px) +
           next_psi);

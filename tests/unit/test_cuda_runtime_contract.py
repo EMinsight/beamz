@@ -51,6 +51,46 @@ def _program_and_state(*, cpml: bool, source: bool = False, monitor: bool = Fals
     return program, state, context
 
 
+def test_cuda_cpml_bf16_state_is_explicit_and_preserves_continuation(monkeypatch):
+    program, state, _context = _program_and_state(cpml=True)
+    cuda_program = replace(
+        program, config=replace(program.config, backend="cuda_streamed")
+    )
+    seeded = state._replace(
+        cpml_psi_h_terms=tuple(value + 0.125 for value in state.cpml_psi_h_terms),
+        cpml_psi_e_terms=tuple(value - 0.25 for value in state.cpml_psi_e_terms),
+    )
+    monkeypatch.setenv("BEAMZ_CUDA_CPML_PSI_PRECISION", "bf16")
+
+    converted = initial_program_state(
+        cuda_program,
+        t=float(cuda_program.config.dt),
+        current_step=1,
+        continuation=seeded,
+        monitor_steps=3,
+    )
+
+    assert all(value.dtype == jnp.bfloat16 for value in converted.cpml_psi_h_terms)
+    assert all(value.dtype == jnp.bfloat16 for value in converted.cpml_psi_e_terms)
+    np.testing.assert_allclose(
+        np.asarray(converted.cpml_psi_h_terms[0], dtype=np.float32), 0.125
+    )
+    np.testing.assert_allclose(
+        np.asarray(converted.cpml_psi_e_terms[0], dtype=np.float32), -0.25
+    )
+
+
+def test_cuda_cpml_rejects_unknown_psi_precision(monkeypatch):
+    program, _state, _context = _program_and_state(cpml=True)
+    cuda_program = replace(
+        program, config=replace(program.config, backend="cuda_streamed")
+    )
+    monkeypatch.setenv("BEAMZ_CUDA_CPML_PSI_PRECISION", "fp8")
+
+    with np.testing.assert_raises_regex(ValueError, "must be 'fp32' or 'bf16'"):
+        initial_program_state(cuda_program, t=0.0, current_step=0, monitor_steps=3)
+
+
 def test_cuda_ffi_phase_packs_cpml_and_aliases_state(monkeypatch):
     program, state, context = _program_and_state(cpml=True)
     captured = []
