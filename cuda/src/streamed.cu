@@ -75,11 +75,6 @@ bool CpmlCoreSplitEnabled() {
   return value == nullptr || value[0] == '\0' || value[0] == '0';
 }
 
-bool CompactCpmlShellEnabled() {
-  const char* value = std::getenv("BEAMZ_CUDA_DISABLE_COMPACT_CPML_SHELL");
-  return value == nullptr || value[0] == '\0' || value[0] == '0';
-}
-
 dim3 SourceThreads(int64_t x_extent) {
   if (!AdaptiveSourceTilesEnabled() || x_extent >= 32) {
     return dim3(kTileX, kTileY, kTileZ);
@@ -615,82 +610,56 @@ __device__ __forceinline__ float FusedEValue(const BeamzLaunch& launch,
 
 template <int Phase, int PsiType, bool PackedLosslessMaterial,
           bool HasMetallicEdges>
-__global__ void UpdateCpmlShell(BeamzLaunch launch) {
-  const int x = blockIdx.x * blockDim.x + threadIdx.x;
-  const int y = blockIdx.y * blockDim.y + threadIdx.y;
-  const int z = blockIdx.z * blockDim.z + threadIdx.z;
-  if (InCpmlDeepCore(launch, z, y, x)) return;
-  UpdateComponent<Phase, 0, true, 0, HasMetallicEdges, true, PsiType,
-                  PackedLosslessMaterial>(launch, z, y, x);
-  UpdateComponent<Phase, 1, true, 0, HasMetallicEdges, true, PsiType,
-                  PackedLosslessMaterial>(launch, z, y, x);
-  UpdateComponent<Phase, 2, true, 0, HasMetallicEdges, true, PsiType,
-                  PackedLosslessMaterial>(launch, z, y, x);
-}
-
-template <int Phase, int PsiType, bool PackedLosslessMaterial,
-          bool HasMetallicEdges>
-__global__ void UpdateCpmlShellCompact(BeamzLaunch launch, int max_z,
-                                       int max_y, int max_x, int high_z,
-                                       int high_y, int high_x,
-                                       int shell_cells) {
-  int cell = blockIdx.x * blockDim.x + threadIdx.x;
-  if (cell >= shell_cells) return;
+__global__ void UpdateCpmlShell(BeamzLaunch launch, int max_z, int max_y,
+                                int max_x, int high_z, int high_y, int high_x,
+                                int z_region_blocks, int y_region_blocks) {
   const int low = launch.uniform_cpml_thickness;
-  const int core_z = high_z - low;
-  const int core_y = high_y - low;
+  const int x_blocks = (max_x + kTileX - 1) / kTileX;
+  int block = blockIdx.x;
+  int block_z;
+  int block_y;
+  int block_x;
   int z;
   int y;
   int x;
-
-  // Flatten the six disjoint faces of the bounding box. This keeps x-major
-  // accesses within each face while avoiding a second dispatch of core blocks.
-  const int low_z_end = low * max_y * max_x;
-  const int high_z_end =
-      low_z_end + (max_z - high_z) * max_y * max_x;
-  const int low_y_end = high_z_end + core_z * low * max_x;
-  const int high_y_end =
-      low_y_end + core_z * (max_y - high_y) * max_x;
-  const int low_x_end = high_y_end + core_z * core_y * low;
-  if (cell < low_z_end) {
-    z = cell / (max_y * max_x);
-    const int remainder = cell - z * max_y * max_x;
-    y = remainder / max_x;
-    x = remainder - y * max_x;
-  } else if (cell < high_z_end) {
-    cell -= low_z_end;
-    z = high_z + cell / (max_y * max_x);
-    const int remainder = cell - (z - high_z) * max_y * max_x;
-    y = remainder / max_x;
-    x = remainder - y * max_x;
-  } else if (cell < low_y_end) {
-    cell -= high_z_end;
-    z = low + cell / (low * max_x);
-    const int remainder = cell - (z - low) * low * max_x;
-    y = remainder / max_x;
-    x = remainder - y * max_x;
-  } else if (cell < high_y_end) {
-    cell -= low_y_end;
-    z = low + cell / ((max_y - high_y) * max_x);
-    const int remainder =
-        cell - (z - low) * (max_y - high_y) * max_x;
-    y = high_y + remainder / max_x;
-    x = remainder - (y - high_y) * max_x;
-  } else if (cell < low_x_end) {
-    cell -= high_y_end;
-    z = low + cell / (core_y * low);
-    const int remainder = cell - (z - low) * core_y * low;
-    y = low + remainder / low;
-    x = remainder - (y - low) * low;
+  if (block < z_region_blocks) {
+    const int y_blocks = (max_y + kTileY - 1) / kTileY;
+    block_z = block / (x_blocks * y_blocks);
+    block -= block_z * x_blocks * y_blocks;
+    block_y = block / x_blocks;
+    block_x = block - block_y * x_blocks;
+    z = block_z < low ? block_z : high_z + block_z - low;
+    y = block_y * kTileY + threadIdx.y;
+    x = block_x * kTileX + threadIdx.x;
+    if (y >= max_y || x >= max_x) return;
+  } else if ((block -= z_region_blocks, block < y_region_blocks)) {
+    const int outer_y = low + max_y - high_y;
+    const int y_blocks = (outer_y + kTileY - 1) / kTileY;
+    block_z = block / (x_blocks * y_blocks);
+    block -= block_z * x_blocks * y_blocks;
+    block_y = block / x_blocks;
+    block_x = block - block_y * x_blocks;
+    z = low + block_z;
+    const int local_y = block_y * kTileY + threadIdx.y;
+    y = local_y < low ? local_y : high_y + local_y - low;
+    x = block_x * kTileX + threadIdx.x;
+    if (local_y >= outer_y || x >= max_x) return;
   } else {
-    cell -= low_x_end;
-    const int width = max_x - high_x;
-    z = low + cell / (core_y * width);
-    const int remainder = cell - (z - low) * core_y * width;
-    y = low + remainder / width;
-    x = high_x + remainder - (y - low) * width;
+    block -= y_region_blocks;
+    const int outer_x = low + max_x - high_x;
+    const int inner_y = high_y - low;
+    const int region_x_blocks = (outer_x + kTileX - 1) / kTileX;
+    const int y_blocks = (inner_y + kTileY - 1) / kTileY;
+    block_z = block / (region_x_blocks * y_blocks);
+    block -= block_z * region_x_blocks * y_blocks;
+    block_y = block / region_x_blocks;
+    block_x = block - block_y * region_x_blocks;
+    z = low + block_z;
+    y = low + block_y * kTileY + threadIdx.y;
+    const int local_x = block_x * kTileX + threadIdx.x;
+    x = local_x < low ? local_x : high_x + local_x - low;
+    if (y >= high_y || local_x >= outer_x) return;
   }
-
   UpdateComponent<Phase, 0, true, 0, HasMetallicEdges, true, PsiType,
                   PackedLosslessMaterial>(launch, z, y, x);
   UpdateComponent<Phase, 1, true, 0, HasMetallicEdges, true, PsiType,
@@ -1348,35 +1317,30 @@ int UniformPsiType(const BeamzLaunch& launch) {
 template <int Phase, int PsiType, bool PackedLosslessMaterial>
 void LaunchCpmlShellForType(cudaStream_t stream, const BeamzLaunch& launch,
                             int max_z, int max_y, int max_x, int high_z,
-                            int high_y, int high_x, int64_t shell_cells) {
-  if (CompactCpmlShellEnabled() &&
-      shell_cells <= std::numeric_limits<int>::max()) {
-    constexpr int threads = 256;
-    const int compact_cells = static_cast<int>(shell_cells);
-    const int blocks = (compact_cells + threads - 1) / threads;
-    if (launch.metallic_edges == 0) {
-      UpdateCpmlShellCompact<Phase, PsiType, PackedLosslessMaterial, false>
-          <<<blocks, threads, 0, stream>>>(launch, max_z, max_y, max_x,
-                                           high_z, high_y, high_x,
-                                           compact_cells);
-    } else {
-      UpdateCpmlShellCompact<Phase, PsiType, PackedLosslessMaterial, true>
-          <<<blocks, threads, 0, stream>>>(launch, max_z, max_y, max_x,
-                                           high_z, high_y, high_x,
-                                           compact_cells);
-    }
-    return;
-  }
+                            int high_y, int high_x) {
+  const int low = launch.uniform_cpml_thickness;
+  const int x_blocks = (max_x + kTileX - 1) / kTileX;
+  const int z_region_blocks =
+      x_blocks * ((max_y + kTileY - 1) / kTileY) *
+      (low + max_z - high_z);
+  const int y_region_blocks =
+      x_blocks * ((low + max_y - high_y + kTileY - 1) / kTileY) *
+      (high_z - low);
+  const int x_region_blocks =
+      ((low + max_x - high_x + kTileX - 1) / kTileX) *
+      ((high_y - low + kTileY - 1) / kTileY) * (high_z - low);
+  const int blocks = z_region_blocks + y_region_blocks + x_region_blocks;
   const dim3 threads(kTileX, kTileY, kPressureTileZ);
-  const dim3 blocks((max_x + threads.x - 1) / threads.x,
-                    (max_y + threads.y - 1) / threads.y,
-                    (max_z + threads.z - 1) / threads.z);
   if (launch.metallic_edges == 0) {
     UpdateCpmlShell<Phase, PsiType, PackedLosslessMaterial, false>
-        <<<blocks, threads, 0, stream>>>(launch);
+        <<<blocks, threads, 0, stream>>>(launch, max_z, max_y, max_x, high_z,
+                                         high_y, high_x, z_region_blocks,
+                                         y_region_blocks);
   } else {
     UpdateCpmlShell<Phase, PsiType, PackedLosslessMaterial, true>
-        <<<blocks, threads, 0, stream>>>(launch);
+        <<<blocks, threads, 0, stream>>>(launch, max_z, max_y, max_x, high_z,
+                                         high_y, high_x, z_region_blocks,
+                                         y_region_blocks);
   }
 }
 
@@ -1405,49 +1369,37 @@ cudaError_t LaunchCpmlShellPhase(cudaStream_t stream,
            static_cast<int>(launch.outputs[1].dims[2]),
            static_cast<int>(launch.outputs[2].dims[2])) -
       low;
-  const int64_t shell_cells =
-      static_cast<int64_t>(max_z) * max_y * max_x -
-      static_cast<int64_t>(high_z - low) * (high_y - low) * (high_x - low);
   const int psi_type = UniformPsiType(launch);
   const bool packed = launch.phase == 1 && HasPackedLosslessMaterial(launch);
   if (launch.phase == 0) {
     if (psi_type == kBeamzBF16) {
       LaunchCpmlShellForType<0, kBeamzBF16, false>(
-          stream, launch, max_z, max_y, max_x, high_z, high_y, high_x,
-          shell_cells);
+          stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
     } else if (psi_type == kBeamzF32) {
       LaunchCpmlShellForType<0, kBeamzF32, false>(
-          stream, launch, max_z, max_y, max_x, high_z, high_y, high_x,
-          shell_cells);
+          stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
     } else {
       LaunchCpmlShellForType<0, -1, false>(
-          stream, launch, max_z, max_y, max_x, high_z, high_y, high_x,
-          shell_cells);
+          stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
     }
   } else if (packed && psi_type == kBeamzBF16) {
     LaunchCpmlShellForType<1, kBeamzBF16, true>(
-        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x,
-        shell_cells);
+        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
   } else if (packed && psi_type == kBeamzF32) {
     LaunchCpmlShellForType<1, kBeamzF32, true>(
-        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x,
-        shell_cells);
+        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
   } else if (packed) {
     LaunchCpmlShellForType<1, -1, true>(
-        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x,
-        shell_cells);
+        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
   } else if (psi_type == kBeamzBF16) {
     LaunchCpmlShellForType<1, kBeamzBF16, false>(
-        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x,
-        shell_cells);
+        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
   } else if (psi_type == kBeamzF32) {
     LaunchCpmlShellForType<1, kBeamzF32, false>(
-        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x,
-        shell_cells);
+        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
   } else {
     LaunchCpmlShellForType<1, -1, false>(
-        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x,
-        shell_cells);
+        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
   }
   return cudaPeekAtLastError();
 }
