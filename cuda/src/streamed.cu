@@ -171,15 +171,18 @@ __device__ __forceinline__ float BoundaryDifference(const BeamzBuffer& value,
   return (Read3D(value, z, y, x) - Read3D(value, low_z, low_y, low_x)) * inv_dx;
 }
 
-__device__ __forceinline__ float CorrectCpml(float derivative, int term, int z,
-                                             int y, int x,
-                                             const BeamzLaunch& launch) {
+template <int Term>
+__device__ __forceinline__ float CorrectCpml(float derivative, int z, int y,
+                                             int x, const BeamzLaunch& launch) {
+  // The 3D compiler emits the six curl terms in this fixed derivative order.
+  // CPML coefficient buffers are 1D profiles along their derivative axis.
+  constexpr int axes[6] = {1, 0, 0, 2, 2, 1};
+  constexpr int axis = axes[Term];
+  constexpr float sign = Term % 2 == 0 ? 1.0f : -1.0f;
   const auto* descriptor = static_cast<const int32_t*>(launch.inputs[12].data);
-  const int axis = descriptor[term * 5 + 1];
-  const int low = descriptor[term * 5 + 2];
-  const int high = descriptor[term * 5 + 3];
-  const float sign = static_cast<float>(descriptor[term * 5 + 4]);
-  const BeamzBuffer& target = launch.outputs[term / 2];
+  const int low = descriptor[Term * 5 + 2];
+  const int high = descriptor[Term * 5 + 3];
+  const BeamzBuffer& target = launch.outputs[Term / 2];
   const int coordinate = axis == 0 ? z : (axis == 1 ? y : x);
   const int axis_size = static_cast<int>(target.dims[axis]);
   int packed = -1;
@@ -194,11 +197,13 @@ __device__ __forceinline__ float CorrectCpml(float derivative, int term, int z,
   if (axis == 0) pz = packed;
   if (axis == 1) py = packed;
   if (axis == 2) px = packed;
-  const int coefficient_base = 13 + 3 * term;
+  const int coefficient_base = 13 + 3 * Term;
   const int psi_base = 13 + 3 * launch.nterms;
-  const BeamzBuffer& psi_input = launch.inputs[psi_base + term];
-  const BeamzBuffer& psi_output = launch.outputs[3 + term];
-  const int psi_offset = Offset(psi_output, pz, py, px);
+  const BeamzBuffer& psi_input = launch.inputs[psi_base + Term];
+  const BeamzBuffer& psi_output = launch.outputs[3 + Term];
+  const int psi_offset = (pz * static_cast<int>(psi_output.dims[1]) + py) *
+                             static_cast<int>(psi_output.dims[2]) +
+                         px;
   float old_psi;
   if (psi_input.element_type == kBeamzBF16) {
     old_psi = __bfloat162float(
@@ -207,8 +212,11 @@ __device__ __forceinline__ float CorrectCpml(float derivative, int term, int z,
     old_psi = static_cast<const float*>(psi_input.data)[psi_offset];
   }
   const float next_psi =
-      Read(launch.inputs[coefficient_base + 1], pz, py, px) * old_psi +
-      Read(launch.inputs[coefficient_base], pz, py, px) * derivative;
+      static_cast<const float *>(
+          launch.inputs[coefficient_base + 1].data)[packed] *
+          old_psi +
+      static_cast<const float*>(launch.inputs[coefficient_base].data)[packed] *
+          derivative;
   if (psi_output.element_type == kBeamzBF16) {
     static_cast<__nv_bfloat16*>(psi_output.data)[psi_offset] =
         __float2bfloat16_rn(next_psi);
@@ -216,7 +224,8 @@ __device__ __forceinline__ float CorrectCpml(float derivative, int term, int z,
     static_cast<float*>(psi_output.data)[psi_offset] = next_psi;
   }
   return sign *
-         (derivative * Read(launch.inputs[coefficient_base + 2], pz, py, px) +
+         (derivative * static_cast<const float*>(
+                           launch.inputs[coefficient_base + 2].data)[packed] +
           next_psi);
 }
 
@@ -238,11 +247,9 @@ __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
   const bool on_high_wall =
       coordinate == axis_size - 1 &&
       (launch.metallic_edges & (1 << (2 * normal_axis + 1)));
+  bool zero_on_wall = false;
   if constexpr (constrained) {
-    if (on_low_wall || on_high_wall) {
-      static_cast<float*>(output.data)[linear] = 0.0f;
-      return;
-    }
+    zero_on_wall = on_low_wall || on_high_wall;
   } else {
     for (int axis = 0; axis < 3; ++axis) {
       if (axis == normal_axis) continue;
@@ -252,9 +259,15 @@ __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
            (launch.metallic_edges & (1 << (2 * axis)))) ||
           (axis_coordinate == size - 1 &&
            (launch.metallic_edges & (1 << (2 * axis + 1))))) {
-        static_cast<float*>(output.data)[linear] = 0.0f;
-        return;
+        zero_on_wall = true;
+        break;
       }
+    }
+  }
+  if constexpr (!Cpml) {
+    if (zero_on_wall) {
+      static_cast<float*>(output.data)[linear] = 0.0f;
+      return;
     }
   }
   constexpr int first_source[3] = {2, 0, 1};
@@ -280,10 +293,16 @@ __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
   }
   float curl;
   if constexpr (Cpml) {
-    curl = CorrectCpml(derivative0, 2 * Component, z, y, x, launch) +
-           CorrectCpml(derivative1, 2 * Component + 1, z, y, x, launch);
+    curl = CorrectCpml<2 * Component>(derivative0, z, y, x, launch) +
+           CorrectCpml<2 * Component + 1>(derivative1, z, y, x, launch);
   } else {
     curl = derivative0 - derivative1;
+  }
+  if (zero_on_wall) {
+    // CPML memory still evolves where an absorbing face intersects a PEC face;
+    // only the constrained field value is masked after the recurrence update.
+    static_cast<float*>(output.data)[linear] = 0.0f;
+    return;
   }
 
   const float old_field = static_cast<const float*>(input.data)[linear];

@@ -105,7 +105,7 @@ def _nonuniform_simulation(*, metric_kind: str, cpml: bool):
     )
 
 
-def _assert_state_close(reference, actual):
+def _assert_state_close(reference, actual, *, dynamic_atol_scale=1e-6):
     reference_leaves = jax.tree_util.tree_leaves(reference)
     actual_leaves = jax.tree_util.tree_leaves(actual)
     assert len(reference_leaves) == len(actual_leaves)
@@ -122,7 +122,7 @@ def _assert_state_close(reference, actual):
                 observed,
                 expected,
                 rtol=3e-5,
-                atol=max(3e-6, 1e-6 * scale),
+                atol=max(3e-6, dynamic_atol_scale * scale),
             )
         else:
             np.testing.assert_array_equal(observed, expected)
@@ -153,6 +153,15 @@ def _feature_simulation(profile: str):
                 formulation="sponge",
             ),
             bz.PEC(edges=("front", "back", "bottom", "top")),
+        ]
+    elif profile == "asymmetric_cpml":
+        boundaries = [
+            bz.PML(
+                edges=("back", "top", "left"),
+                thickness=3 * resolution,
+                formulation="cpml",
+            ),
+            bz.PEC(edges=("front", "bottom", "right")),
         ]
     material_grid = MaterialGrid(
         permittivity=permittivity,
@@ -239,6 +248,7 @@ def _feature_program_state(simulation, backend: str, profile: str, state):
         "conductive",
         "sponge",
         "mixed_faces",
+        "asymmetric_cpml",
         "multiple_sources",
         "h_source",
         "multiple_monitors",
@@ -270,7 +280,14 @@ def test_streamed_cuda_matches_jax_for_extended_feature_envelope(profile):
         simulation, "cuda_streamed", profile, _copy_state(state)
     )
 
-    _assert_state_close(reference, actual)
+    # Mixed CPML/PEC intersections accumulate a slightly larger, still sub-2-ppm
+    # absolute error in packed recurrence leaves after the field is constrained.
+    # This remains tight enough to catch a skipped edge recurrence (>8 ppm here).
+    _assert_state_close(
+        reference,
+        actual,
+        dynamic_atol_scale=1.5e-6 if profile == "asymmetric_cpml" else 1e-6,
+    )
 
 
 @pytest.mark.parametrize("cpml", [False, True], ids=["pec", "cpml"])
