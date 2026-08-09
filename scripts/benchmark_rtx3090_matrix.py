@@ -27,6 +27,7 @@ PROFILES = (
     "multiple_sources",
     "h_source",
     "multiple_monitors",
+    "ragged_monitors",
     "scheduled_windowed_monitor",
 )
 

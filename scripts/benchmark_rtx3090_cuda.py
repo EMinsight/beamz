@@ -333,6 +333,7 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
         "cpml_source_monitor",
         "multiple_sources",
         "multiple_monitors",
+        "ragged_monitors",
         "scheduled_windowed_monitor",
     }:
         omega = 2.0 * np.pi * 193.414e12
@@ -379,23 +380,46 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
         "pec_source_monitor",
         "cpml_source_monitor",
         "multiple_monitors",
+        "ragged_monitors",
         "scheduled_windowed_monitor",
     }:
         clear_y = max(resolution, size_xyz[1] - 2 * pml_cells * resolution)
         clear_z = max(resolution, size_xyz[2] - 2 * pml_cells * resolution)
-        monitor_positions = (
-            (0.68, 0.78) if args.profile == "multiple_monitors" else (0.75,)
-        )
+        if args.profile == "ragged_monitors":
+            monitor_plans = (
+                (0.68, clear_y, clear_z, np.asarray((193.414e12,))),
+                (
+                    0.78,
+                    max(resolution, clear_y / 4.0),
+                    max(resolution, clear_z / 4.0),
+                    np.linspace(190e12, 197e12, 12),
+                ),
+            )
+        else:
+            monitor_positions = (
+                (0.68, 0.78) if args.profile == "multiple_monitors" else (0.75,)
+            )
+            monitor_plans = tuple(
+                (
+                    fraction,
+                    clear_y,
+                    clear_z,
+                    np.asarray((190e12, 193.414e12, 196e12)),
+                )
+                for fraction in monitor_positions
+            )
         monitors = [
             bz.FieldMonitor(
                 center=(fraction * size_xyz[0], 0.5 * size_xyz[1], 0.5 * size_xyz[2]),
-                size=(0.0, clear_y, clear_z),
-                freqs=np.asarray((190e12, 193.414e12, 196e12)),
+                size=(0.0, monitor_y, monitor_z),
+                freqs=frequencies,
                 fields=("Ey", "Ez", "Hy", "Hz"),
                 interval=3 if args.profile == "scheduled_windowed_monitor" else 1,
                 name=f"transmission_{index}",
             )
-            for index, fraction in enumerate(monitor_positions)
+            for index, (fraction, monitor_y, monitor_z, frequencies) in enumerate(
+                monitor_plans
+            )
         ]
     simulation = bz.Simulation(
         material_grid=material_grid,
@@ -491,6 +515,7 @@ def _parser() -> argparse.ArgumentParser:
             "multiple_sources",
             "h_source",
             "multiple_monitors",
+            "ragged_monitors",
             "scheduled_windowed_monitor",
         ),
         default="uniform_pec",

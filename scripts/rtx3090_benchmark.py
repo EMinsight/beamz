@@ -309,7 +309,10 @@ def _plot_matrix(matrix: RTX3090Matrix, output_path: Path) -> None:
         )
     )
 
-    figure, axes = plt.subplots(1, 2, figsize=(13.5, 5.8), layout="constrained")
+    figure_height = max(5.8, 0.43 * len(names))
+    figure, axes = plt.subplots(
+        1, 2, figsize=(13.5, figure_height), layout="constrained"
+    )
     base_bars = axes[0].barh(
         positions - height / 2,
         baseline_ms,
