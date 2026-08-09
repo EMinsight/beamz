@@ -21,7 +21,7 @@ ResolvedBackend = Literal["jax", "cuda_streamed", "cuda_hopper"]
 
 _EXTENSION_MODULE = "beamz_cuda"
 _REGISTERED_MODULE: ModuleType | None = None
-CUDA_ABI_VERSION = 7
+CUDA_ABI_VERSION = 8
 CUDA_STREAMED_TARGETS = frozenset(
     {
         "beamz_cuda_streamed",

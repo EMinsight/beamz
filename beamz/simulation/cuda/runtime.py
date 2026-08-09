@@ -441,17 +441,20 @@ def run_source_group_steps(state, ctx, coeffs, groups, nsteps: int) -> Simulatio
     if use_temporal_cpml:
         fields = (state.hx, state.hy, state.hz, state.ex, state.ey, state.ez)
         workspace = tuple(jnp.empty_like(value) for value in fields)
-        arguments = (*arguments, *workspace)
+        psi = (*state.cpml_psi_h_terms, *state.cpml_psi_e_terms)
+        psi_workspace = tuple(jnp.empty_like(value) for value in psi)
+        arguments = (*arguments, *workspace, *psi_workspace)
         result_values = (
             *fields,
             *workspace,
-            *state.cpml_psi_h_terms,
-            *state.cpml_psi_e_terms,
+            *psi,
+            *psi_workspace,
         )
         aliases = {index: index for index in range(6)}
         aliases.update({74 + index: 6 + index for index in range(6)})
         aliases.update({31 + index: 12 + index for index in range(6)})
         aliases.update({62 + index: 18 + index for index in range(6)})
+        aliases.update({80 + index: 24 + index for index in range(12)})
     call = jax.ffi.ffi_call(
         (
             "beamz_cuda_temporal_source_groups_cpml_steps"
@@ -487,6 +490,11 @@ def run_source_group_steps(state, ctx, coeffs, groups, nsteps: int) -> Simulatio
     )
     if use_temporal_cpml:
         field_start = 0 if nsteps % 2 == 0 else 6
+        temporal_psi = os.environ.get("BEAMZ_CUDA_DISABLE_TEMPORAL_PSI", "0") in {
+            "",
+            "0",
+        }
+        psi_start = 12 if nsteps % 2 == 0 or not temporal_psi else 24
         return state._replace(
             hx=outputs[field_start],
             hy=outputs[field_start + 1],
@@ -494,8 +502,8 @@ def run_source_group_steps(state, ctx, coeffs, groups, nsteps: int) -> Simulatio
             ex=outputs[field_start + 3],
             ey=outputs[field_start + 4],
             ez=outputs[field_start + 5],
-            cpml_psi_h_terms=outputs[12:18],
-            cpml_psi_e_terms=outputs[18:24],
+            cpml_psi_h_terms=outputs[psi_start : psi_start + 6],
+            cpml_psi_e_terms=outputs[psi_start + 6 : psi_start + 12],
         )
     if ctx.boundary.cpml.enabled:
         return _replace_graph_outputs(state, outputs)
@@ -625,17 +633,20 @@ def run_program_steps(
     if use_temporal_cpml:
         fields = (state.hx, state.hy, state.hz, state.ex, state.ey, state.ez)
         workspace = tuple(jnp.empty_like(value) for value in fields)
-        arguments = (*arguments, *workspace)
+        psi = (*state.cpml_psi_h_terms, *state.cpml_psi_e_terms)
+        psi_workspace = tuple(jnp.empty_like(value) for value in psi)
+        arguments = (*arguments, *workspace, *psi_workspace)
         result_values = (
             *fields,
             *workspace,
-            *state.cpml_psi_h_terms,
-            *state.cpml_psi_e_terms,
+            *psi,
+            *psi_workspace,
         )
         aliases = {index: index for index in range(6)}
         aliases.update({74 + index: 6 + index for index in range(6)})
         aliases.update({31 + index: 12 + index for index in range(6)})
         aliases.update({62 + index: 18 + index for index in range(6)})
+        aliases.update({80 + index: 24 + index for index in range(12)})
     state_output_count = len(result_values)
     result_values = (
         *result_values,
@@ -691,6 +702,11 @@ def run_program_steps(
     )
     if use_temporal_cpml:
         field_start = 0 if nsteps % 2 == 0 else 6
+        temporal_psi = os.environ.get("BEAMZ_CUDA_DISABLE_TEMPORAL_PSI", "0") in {
+            "",
+            "0",
+        }
+        psi_start = 12 if nsteps % 2 == 0 or not temporal_psi else 24
         next_state = state._replace(
             hx=outputs[field_start],
             hy=outputs[field_start + 1],
@@ -698,8 +714,8 @@ def run_program_steps(
             ex=outputs[field_start + 3],
             ey=outputs[field_start + 4],
             ez=outputs[field_start + 5],
-            cpml_psi_h_terms=outputs[12:18],
-            cpml_psi_e_terms=outputs[18:24],
+            cpml_psi_h_terms=outputs[psi_start : psi_start + 6],
+            cpml_psi_e_terms=outputs[psi_start + 6 : psi_start + 12],
         )
     elif ctx.boundary.cpml.enabled:
         next_state = _replace_graph_outputs(state, outputs)

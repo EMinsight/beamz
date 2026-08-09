@@ -399,6 +399,7 @@ def test_cuda_cpml_multi_step_reuses_temporal_empty_source_graph(monkeypatch):
                 *arguments[74:80],
                 *arguments[31:37],
                 *arguments[62:68],
+                *arguments[80:92],
             )
 
         return call
@@ -409,9 +410,9 @@ def test_cuda_cpml_multi_step_reuses_temporal_empty_source_graph(monkeypatch):
 
     target, results, options, arguments, attributes = captured[0]
     assert target == "beamz_cuda_temporal_source_groups_cpml_steps"
-    assert len(results) == 24
-    assert len(arguments) == 108
-    assert all(arguments[index].shape[0] == 0 for index in range(80, 107, 3))
+    assert len(results) == 36
+    assert len(arguments) == 120
+    assert all(arguments[index].shape[0] == 0 for index in range(92, 119, 3))
     assert options["input_output_aliases"][74] == 6
     assert attributes["coincident_source_group_mask"] == np.int32(0)
     assert next_state.hx is arguments[74]
@@ -514,6 +515,7 @@ def test_cuda_source_group_graph_uses_temporal_cpml_field_banks(monkeypatch):
                 *arguments[74:80],
                 *arguments[31:37],
                 *arguments[62:68],
+                *arguments[80:92],
             )
 
         return call
@@ -526,19 +528,20 @@ def test_cuda_source_group_graph_uses_temporal_cpml_field_banks(monkeypatch):
 
     target, results, options, arguments, attributes = captured[0]
     assert target == "beamz_cuda_temporal_source_groups_cpml_steps"
-    assert len(results) == 24
-    assert len(arguments) == 108
-    assert arguments[107] is state.current_step
+    assert len(results) == 36
+    assert len(arguments) == 120
+    assert arguments[119] is state.current_step
     assert options["input_output_aliases"] == {
         **{index: index for index in range(6)},
         **{74 + index: 6 + index for index in range(6)},
         **{31 + index: 12 + index for index in range(6)},
         **{62 + index: 18 + index for index in range(6)},
+        **{80 + index: 24 + index for index in range(12)},
     }
     assert "cpml_enabled" not in attributes
     assert attributes["nsteps"] == np.int32(3)
     assert next_state.hx is arguments[74]
-    assert next_state.cpml_psi_h_terms == state.cpml_psi_h_terms
+    assert next_state.cpml_psi_h_terms == arguments[80:86]
 
 
 def test_cuda_source_group_graph_requires_all_phase_component_slots():
@@ -616,7 +619,8 @@ def test_cuda_program_graph_uses_temporal_cpml_field_banks(monkeypatch):
                 *arguments[74:80],
                 *arguments[31:37],
                 *arguments[62:68],
-                *arguments[114:117],
+                *arguments[80:92],
+                *arguments[126:129],
             )
 
         return call
@@ -637,17 +641,18 @@ def test_cuda_program_graph_uses_temporal_cpml_field_banks(monkeypatch):
 
     target, results, options, arguments, attributes = captured[0]
     assert target == "beamz_cuda_temporal_program_cpml_steps"
-    assert len(results) == 27
-    assert len(arguments) == 119
-    assert arguments[118] is state.current_step
+    assert len(results) == 39
+    assert len(arguments) == 131
+    assert arguments[130] is state.current_step
     assert options["input_output_aliases"] == {
         **{index: index for index in range(6)},
         **{74 + index: 6 + index for index in range(6)},
         **{31 + index: 12 + index for index in range(6)},
         **{62 + index: 18 + index for index in range(6)},
-        114: 24,
-        115: 25,
-        116: 26,
+        **{80 + index: 24 + index for index in range(12)},
+        126: 36,
+        127: 37,
+        128: 38,
     }
     assert "cpml_enabled" not in attributes
     assert attributes["monitor_count"] == np.int32(1)

@@ -1,5 +1,6 @@
 #include "ffi_handler.h"
 
+#include <cstdlib>
 #include <cstdint>
 #include <string>
 
@@ -12,6 +13,11 @@ namespace {
 
 constexpr float kEps0 = 8.8541878128e-12f;
 constexpr float kMu0 = 1.25663706212e-6f;
+
+bool TemporalPsiEnabled() {
+  const char* value = std::getenv("BEAMZ_CUDA_DISABLE_TEMPORAL_PSI");
+  return value == nullptr || value[0] == '\0' || value[0] == '0';
+}
 
 void SetBoundaryCode(BeamzLaunch* launch, int32_t code) {
   launch->metallic_edges = code & 0x3f;
@@ -541,11 +547,11 @@ ffi::Error TemporalSourceGroupsCpmlStepsHandler(
     int32_t coincident_source_group_mask) {
   constexpr int32_t kSourceGroupCount = 9;
   constexpr size_t kGraphInputCount = 74;
-  constexpr size_t kWorkspaceInputCount = 6;
+  constexpr size_t kWorkspaceInputCount = 18;
   constexpr size_t kSourceInputCount = 3 * kSourceGroupCount + 1;
   constexpr size_t kInputCount =
       kGraphInputCount + kWorkspaceInputCount + kSourceInputCount;
-  constexpr size_t kOutputCount = 24;
+  constexpr size_t kOutputCount = 36;
   if (abi_version != BEAMZ_CUDA_ABI_VERSION || nsteps < 1 ||
       metric_kind < 0 || metric_kind > 2 ||
       coincident_source_group_mask < 0 ||
@@ -609,9 +615,18 @@ ffi::Error TemporalSourceGroupsCpmlStepsHandler(
     h_ab.inputs[6 + index] = h_ba.inputs[6 + index] = inputs[6 + index];
     e_ab.inputs[6 + index] = e_ba.inputs[6 + index] = inputs[37 + index];
   }
+  const bool temporal_psi = TemporalPsiEnabled();
   for (int term = 0; term < 6; ++term) {
-    h_ab.outputs[3 + term] = h_ba.outputs[3 + term] = outputs[12 + term];
-    e_ab.outputs[3 + term] = e_ba.outputs[3 + term] = outputs[18 + term];
+    h_ab.outputs[3 + term] =
+        temporal_psi ? outputs[24 + term] : outputs[12 + term];
+    h_ba.inputs[31 + term] =
+        temporal_psi ? outputs[24 + term] : inputs[31 + term];
+    h_ba.outputs[3 + term] = outputs[12 + term];
+    e_ab.outputs[3 + term] =
+        temporal_psi ? outputs[30 + term] : outputs[18 + term];
+    e_ba.inputs[31 + term] =
+        temporal_psi ? outputs[30 + term] : inputs[62 + term];
+    e_ba.outputs[3 + term] = outputs[18 + term];
   }
   for (int axis = 0; axis < 3; ++axis) {
     h_ab.metrics[axis] = h_ba.metrics[axis] = inputs[68 + axis];
@@ -649,12 +664,12 @@ ffi::Error TemporalProgramCpmlStepsHandler(
     int32_t coincident_source_group_mask) {
   constexpr int32_t kSourceGroupCount = 9;
   constexpr size_t kGraphInputCount = 74;
-  constexpr size_t kWorkspaceInputCount = 6;
+  constexpr size_t kWorkspaceInputCount = 18;
   constexpr size_t kSourceInputCount = 3 * kSourceGroupCount;
   constexpr size_t kMonitorInputCount = 12;
   constexpr size_t kInputCount = kGraphInputCount + kWorkspaceInputCount +
                                  kSourceInputCount + kMonitorInputCount;
-  constexpr size_t kOutputCount = 27;
+  constexpr size_t kOutputCount = 39;
   if (abi_version != BEAMZ_CUDA_ABI_VERSION || nsteps < 1 ||
       metric_kind < 0 || metric_kind > 2 || monitor_count < 1 ||
       coincident_source_group_mask < 0 ||
@@ -716,9 +731,18 @@ ffi::Error TemporalProgramCpmlStepsHandler(
     h_ab.inputs[6 + index] = h_ba.inputs[6 + index] = inputs[6 + index];
     e_ab.inputs[6 + index] = e_ba.inputs[6 + index] = inputs[37 + index];
   }
+  const bool temporal_psi = TemporalPsiEnabled();
   for (int term = 0; term < 6; ++term) {
-    h_ab.outputs[3 + term] = h_ba.outputs[3 + term] = outputs[12 + term];
-    e_ab.outputs[3 + term] = e_ba.outputs[3 + term] = outputs[18 + term];
+    h_ab.outputs[3 + term] =
+        temporal_psi ? outputs[24 + term] : outputs[12 + term];
+    h_ba.inputs[31 + term] =
+        temporal_psi ? outputs[24 + term] : inputs[31 + term];
+    h_ba.outputs[3 + term] = outputs[12 + term];
+    e_ab.outputs[3 + term] =
+        temporal_psi ? outputs[30 + term] : outputs[18 + term];
+    e_ba.inputs[31 + term] =
+        temporal_psi ? outputs[30 + term] : inputs[62 + term];
+    e_ba.outputs[3 + term] = outputs[18 + term];
   }
   for (int axis = 0; axis < 3; ++axis) {
     h_ab.metrics[axis] = h_ba.metrics[axis] = inputs[68 + axis];
@@ -747,9 +771,9 @@ ffi::Error TemporalProgramCpmlStepsHandler(
   monitors.counts = inputs[kMonitorOffset + 4];
   monitors.codes = inputs[kMonitorOffset + 5];
   monitors.windows = inputs[kMonitorOffset + 6];
-  monitors.dft_re = outputs[24];
-  monitors.dft_im = outputs[25];
-  monitors.dft_weight = outputs[26];
+  monitors.dft_re = outputs[36];
+  monitors.dft_im = outputs[37];
+  monitors.dft_weight = outputs[38];
   monitors.time = inputs[kMonitorOffset + 10];
   monitors.current_step = current_step;
   monitors.monitor_count = monitor_count;

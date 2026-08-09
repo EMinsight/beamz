@@ -28,7 +28,7 @@ nanobind_add_module(
 )
 target_compile_features(beamz_cuda PRIVATE cxx_std_17)
 target_include_directories(beamz_cuda PRIVATE "${JAX_FFI_INCLUDE}" src)
-target_compile_definitions(beamz_cuda PRIVATE BEAMZ_CUDA_ABI_VERSION=7)
+target_compile_definitions(beamz_cuda PRIVATE BEAMZ_CUDA_ABI_VERSION=8)
 set_target_properties(
   beamz_cuda
   PROPERTIES
