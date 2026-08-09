@@ -376,6 +376,47 @@ def test_cuda_cpml_multi_step_ffi_aliases_fields_and_psi(monkeypatch):
     assert next_state.cpml_psi_e_terms == state.cpml_psi_e_terms
 
 
+def test_cuda_cpml_multi_step_reuses_temporal_empty_source_graph(monkeypatch):
+    program, state, context = _program_and_state(cpml=True)
+    coefficients = program.coefficients._replace(
+        h_decay_x=jnp.asarray(1.0, dtype=jnp.float32),
+        h_decay_y=jnp.asarray(1.0, dtype=jnp.float32),
+        h_decay_z=jnp.asarray(1.0, dtype=jnp.float32),
+        h_source_x=jnp.asarray(1.0, dtype=jnp.float32),
+        h_source_y=jnp.asarray(1.0, dtype=jnp.float32),
+        h_source_z=jnp.asarray(1.0, dtype=jnp.float32),
+        e_source_x=jnp.zeros((1,), dtype=jnp.int32),
+        e_source_y=jnp.zeros((1,), dtype=jnp.int32),
+        e_source_z=jnp.zeros((1,), dtype=jnp.int32),
+    )
+    captured = []
+
+    def fake_ffi_call(target, result_metadata, **options):
+        def call(*arguments, **attributes):
+            captured.append((target, result_metadata, options, arguments, attributes))
+            return (
+                *arguments[:6],
+                *arguments[74:80],
+                *arguments[31:37],
+                *arguments[62:68],
+            )
+
+        return call
+
+    monkeypatch.setattr(cuda_runtime.jax.ffi, "ffi_call", fake_ffi_call)
+
+    next_state = cuda_runtime.run_steps(state, context, coefficients, 3)
+
+    target, results, options, arguments, attributes = captured[0]
+    assert target == "beamz_cuda_temporal_source_groups_cpml_steps"
+    assert len(results) == 24
+    assert len(arguments) == 108
+    assert all(arguments[index].shape[0] == 0 for index in range(80, 107, 3))
+    assert options["input_output_aliases"][74] == 6
+    assert attributes["coincident_source_group_mask"] == np.int32(0)
+    assert next_state.hx is arguments[74]
+
+
 def test_cuda_source_cpml_graph_packs_source_and_aliases_state(monkeypatch):
     program, state, context = _program_and_state(cpml=True, source=True)
     captured = []

@@ -832,6 +832,11 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
     """Advance a source-free, monitor-free Yee run through one CUDA FFI call."""
     if nsteps < 1:
         raise ValueError("CUDA step count must be positive")
+    if _temporal_cpml_source_groups_supported(ctx, coeffs, nsteps):
+        # The source-group target's empty groups add no graph nodes. Reusing it
+        # gives plain CPML runs the same frozen-input field banks without
+        # maintaining a second native handler for an identical update graph.
+        return run_source_group_steps(state, ctx, coeffs, (None,) * 9, nsteps)
     fields = (state.hx, state.hy, state.hz, state.ex, state.ey, state.ez)
     if ctx.boundary.cpml.enabled:
         arguments, result_values, aliases = _cpml_graph_io(state, ctx, coeffs)
