@@ -65,6 +65,22 @@ bool CoincidentSourceGroupsEnabled() {
   return value == nullptr || value[0] == '\0' || value[0] == '0';
 }
 
+bool AdaptiveSourceTilesEnabled() {
+  const char* value = std::getenv("BEAMZ_CUDA_DISABLE_ADAPTIVE_SOURCE_TILES");
+  return value == nullptr || value[0] == '\0' || value[0] == '0';
+}
+
+dim3 SourceThreads(int64_t x_extent) {
+  if (!AdaptiveSourceTilesEnabled() || x_extent >= 32) {
+    return dim3(kTileX, kTileY, kTileZ);
+  }
+  if (x_extent <= 1) return dim3(1, 64, 2);
+  if (x_extent <= 2) return dim3(2, 16, 4);
+  if (x_extent <= 4) return dim3(4, 16, 2);
+  if (x_extent <= 8) return dim3(8, 8, 2);
+  return dim3(16, 4, 2);
+}
+
 std::string GraphKey(void* stream, const BeamzLaunch& h_launch,
                      const BeamzLaunch& e_launch, int32_t nsteps,
                      const BeamzSourceLaunch* source = nullptr,
@@ -1184,9 +1200,10 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
         if (group.timing != timing || group.coefficients.dims[0] == 0) continue;
         const BeamzLaunch& target_launch = timing == 1 ? h_launch : e_launch;
         const BeamzBuffer& target = target_launch.outputs[group.component];
-        const dim3 source_threads(kTileX, kTileY, kTileZ);
+        const dim3 source_threads = SourceThreads(group.coefficients.dims[3]);
         const int z_blocks =
-            (group.coefficients.dims[1] + kTileZ - 1) / kTileZ;
+            (group.coefficients.dims[1] + source_threads.z - 1) /
+            source_threads.z;
         const bool coincident = group.coincident != 0 &&
                                 CoincidentSourceGroupsEnabled();
         const bool batched = BatchedSourceGroupsEnabled();
@@ -1195,8 +1212,10 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
                 ? z_blocks * group.coefficients.dims[0]
                 : z_blocks;
         const dim3 source_blocks(
-            (group.coefficients.dims[3] + kTileX - 1) / kTileX,
-            (group.coefficients.dims[2] + kTileY - 1) / kTileY,
+            (group.coefficients.dims[3] + source_threads.x - 1) /
+                source_threads.x,
+            (group.coefficients.dims[2] + source_threads.y - 1) /
+                source_threads.y,
             launch_z_blocks);
         if (coincident) {
           ApplyCoincidentSourceGroup<<<source_blocks, source_threads, 0,
@@ -1220,11 +1239,14 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
     };
     for (int32_t step = 0; step < nsteps; ++step) {
       if (source != nullptr) {
-        const dim3 source_threads(kTileX, kTileY, kTileZ);
+        const dim3 source_threads = SourceThreads(source->coefficient.dims[2]);
         const dim3 source_blocks(
-            (source->coefficient.dims[2] + kTileX - 1) / kTileX,
-            (source->coefficient.dims[1] + kTileY - 1) / kTileY,
-            (source->coefficient.dims[0] + kTileZ - 1) / kTileZ);
+            (source->coefficient.dims[2] + source_threads.x - 1) /
+                source_threads.x,
+            (source->coefficient.dims[1] + source_threads.y - 1) /
+                source_threads.y,
+            (source->coefficient.dims[0] + source_threads.z - 1) /
+                source_threads.z);
         ApplySourceSlab<<<source_blocks, source_threads, 0, stream>>>(
             e_launch, *source, step);
         launch_error = cudaPeekAtLastError();
