@@ -10,8 +10,6 @@ extern "C" XLA_FFI_Error* beamz_cuda_temporal_steps(
     XLA_FFI_CallFrame* call_frame);
 extern "C" XLA_FFI_Error* beamz_cuda_streamed_cpml_steps(
     XLA_FFI_CallFrame* call_frame);
-extern "C" XLA_FFI_Error* beamz_cuda_streamed_source_cpml_steps(
-    XLA_FFI_CallFrame* call_frame);
 extern "C" XLA_FFI_Error* beamz_cuda_streamed_source_groups_cpml_steps(
     XLA_FFI_CallFrame* call_frame);
 extern "C" XLA_FFI_Error* beamz_cuda_temporal_source_groups_cpml_steps(
@@ -19,8 +17,6 @@ extern "C" XLA_FFI_Error* beamz_cuda_temporal_source_groups_cpml_steps(
 extern "C" XLA_FFI_Error* beamz_cuda_temporal_program_cpml_steps(
     XLA_FFI_CallFrame* call_frame);
 extern "C" XLA_FFI_Error* beamz_cuda_streamed_program_cpml_steps(
-    XLA_FFI_CallFrame* call_frame);
-extern "C" XLA_FFI_Error* beamz_cuda_streamed_source_monitor_cpml_steps(
     XLA_FFI_CallFrame* call_frame);
 extern "C" XLA_FFI_Error* beamz_cuda_hopper(XLA_FFI_CallFrame* call_frame);
 

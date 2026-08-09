@@ -57,10 +57,8 @@ dim3 SourceThreads(const BeamzLaunch& launch, int64_t x_extent) {
 
 std::string GraphKey(void* stream, const BeamzLaunch& h_launch,
                      const BeamzLaunch& e_launch, int32_t nsteps,
-                     const BeamzSourceLaunch* source = nullptr,
                      const BeamzSourceGroupLaunch* source_groups = nullptr,
                      int32_t source_group_count = 0,
-                     const BeamzDftLaunch* monitor = nullptr,
                      const BeamzDftGroupLaunch* monitor_groups = nullptr) {
   std::string key;
   key.reserve(sizeof(stream) + sizeof(nsteps) + 2 * sizeof(BeamzLaunch));
@@ -68,17 +66,11 @@ std::string GraphKey(void* stream, const BeamzLaunch& h_launch,
   key.append(reinterpret_cast<const char*>(&nsteps), sizeof(nsteps));
   key.append(reinterpret_cast<const char*>(&h_launch), sizeof(h_launch));
   key.append(reinterpret_cast<const char*>(&e_launch), sizeof(e_launch));
-  if (source != nullptr) {
-    key.append(reinterpret_cast<const char*>(source), sizeof(*source));
-  }
   if (source_groups != nullptr && source_group_count > 0) {
     key.append(reinterpret_cast<const char*>(&source_group_count),
                sizeof(source_group_count));
     key.append(reinterpret_cast<const char*>(source_groups),
                sizeof(*source_groups) * source_group_count);
-  }
-  if (monitor != nullptr) {
-    key.append(reinterpret_cast<const char*>(monitor), sizeof(*monitor));
   }
   if (monitor_groups != nullptr) {
     key.append(reinterpret_cast<const char*>(monitor_groups),
@@ -1174,41 +1166,6 @@ void LaunchFusedUpdateForBoundary(cudaStream_t stream,
   }
 }
 
-__global__ void ApplySourceSlab(BeamzLaunch e_launch,
-                                BeamzSourceLaunch source, int step_offset) {
-  const int x = blockIdx.x * blockDim.x + threadIdx.x;
-  const int y = blockIdx.y * blockDim.y + threadIdx.y;
-  const int z = blockIdx.z * blockDim.z + threadIdx.z;
-  if (z >= source.coefficient.dims[0] || y >= source.coefficient.dims[1] ||
-      x >= source.coefficient.dims[2]) {
-    return;
-  }
-  const int target_z = source.starts[0] + z;
-  const int target_y = source.starts[1] + y;
-  const int target_x = source.starts[2] + x;
-  const BeamzBuffer& target = e_launch.outputs[source.component];
-  const int target_offset =
-      (target_z * static_cast<int>(target.dims[1]) + target_y) *
-          static_cast<int>(target.dims[2]) +
-      target_x;
-  const int coefficient_offset =
-      (z * static_cast<int>(source.coefficient.dims[1]) + y) *
-          static_cast<int>(source.coefficient.dims[2]) +
-      x;
-  int waveform_index =
-      static_cast<const int32_t*>(source.current_step.data)[0] + step_offset;
-  waveform_index = waveform_index < 0 ? 0 : waveform_index;
-  waveform_index =
-      waveform_index >= source.waveform.dims[0]
-          ? static_cast<int>(source.waveform.dims[0]) - 1
-          : waveform_index;
-  const float amplitude =
-      static_cast<const float*>(source.waveform.data)[waveform_index];
-  static_cast<float*>(target.data)[target_offset] +=
-      static_cast<const float*>(source.coefficient.data)[coefficient_offset] *
-      amplitude;
-}
-
 __device__ __forceinline__ bool SourceCellConstrained(
     const BeamzBuffer& target, int component, int phase, int metallic_edges,
     int z, int y, int x) {
@@ -1288,6 +1245,54 @@ __device__ __forceinline__ void ApplySourceGroupCell(
   } else {
     static_cast<float*>(target.data)[target_offset] += contribution;
   }
+}
+
+template <int Timing>
+__global__ void ApplySingleSourceGroup(BeamzBuffer target,
+                                       BeamzSourceGroupLaunch group,
+                                       int step_offset,
+                                       int metallic_edges) {
+  const int x = blockIdx.x * blockDim.x + threadIdx.x;
+  const int y = blockIdx.y * blockDim.y + threadIdx.y;
+  const int z = blockIdx.z * blockDim.z + threadIdx.z;
+  if (z >= group.coefficients.dims[1] ||
+      y >= group.coefficients.dims[2] ||
+      x >= group.coefficients.dims[3]) {
+    return;
+  }
+  const auto* starts = static_cast<const int32_t*>(group.starts.data);
+  const int target_z = starts[0] + z;
+  const int target_y = starts[1] + y;
+  const int target_x = starts[2] + x;
+  if (target_z < 0 || target_z >= target.dims[0] || target_y < 0 ||
+      target_y >= target.dims[1] || target_x < 0 ||
+      target_x >= target.dims[2]) {
+    return;
+  }
+  if constexpr (Timing != 0) {
+    if (SourceCellConstrained(target, group.component, Timing == 1 ? 0 : 1,
+                              metallic_edges, target_z, target_y, target_x)) {
+      return;
+    }
+  }
+  int waveform_index =
+      static_cast<const int32_t*>(group.current_step.data)[0] + step_offset;
+  waveform_index = waveform_index < 0 ? 0 : waveform_index;
+  waveform_index =
+      waveform_index >= group.waveforms.dims[1]
+          ? static_cast<int>(group.waveforms.dims[1]) - 1
+          : waveform_index;
+  const int coefficient_offset =
+      (z * static_cast<int>(group.coefficients.dims[2]) + y) *
+          static_cast<int>(group.coefficients.dims[3]) +
+      x;
+  const int target_offset =
+      (target_z * static_cast<int>(target.dims[1]) + target_y) *
+          static_cast<int>(target.dims[2]) +
+      target_x;
+  static_cast<float*>(target.data)[target_offset] +=
+      static_cast<const float*>(group.coefficients.data)[coefficient_offset] *
+      static_cast<const float*>(group.waveforms.data)[waveform_index];
 }
 
 __global__ void ApplySourceGroup(BeamzBuffer target,
@@ -1381,82 +1386,62 @@ __global__ void ApplyCoincidentSourceGroup(BeamzBuffer target,
                                  y, x);
 }
 
-__global__ void PreparePlaneDftPhases(BeamzLaunch e_launch,
-                                      BeamzDftLaunch monitor,
-                                      int nsteps) {
-  const int linear = blockIdx.x * blockDim.x + threadIdx.x;
-  const int count = nsteps * monitor.frequency_count;
-  if (linear >= count) return;
-  const int step = linear / monitor.frequency_count;
-  const int frequency = linear - step * monitor.frequency_count;
-  const float time = static_cast<const float*>(monitor.time.data)[0] +
-                     static_cast<float>(step + 1) * e_launch.dt;
-  const float theta =
-      6.2831853071795864769f *
-      static_cast<const float*>(monitor.frequencies.data)[frequency] * time;
-  float phase_sin;
-  float phase_cos;
-  sincosf(theta, &phase_sin, &phase_cos);
-  static_cast<float*>(monitor.phase_cos.data)[linear] = phase_cos;
-  static_cast<float*>(monitor.phase_sin.data)[linear] = phase_sin;
+cudaError_t LaunchSourceGroup(cudaStream_t stream, const BeamzLaunch& launch,
+                              const BeamzBuffer& target,
+                              const BeamzSourceGroupLaunch& group,
+                              int32_t step) {
+  const dim3 threads = SourceThreads(launch, group.coefficients.dims[3]);
+  const int z_blocks =
+      (group.coefficients.dims[1] + threads.z - 1) / threads.z;
+  const bool single = group.coefficients.dims[0] == 1;
+  const bool coincident =
+      !single && group.coincident != 0 &&
+      FlagEnabled(launch, kBeamzCoincidentSourceGroups);
+  const bool batched = FlagEnabled(launch, kBeamzBatchedSourceGroups);
+  const int launch_z_blocks =
+      !single && !coincident && batched
+          ? z_blocks * group.coefficients.dims[0]
+          : z_blocks;
+  const dim3 blocks(
+      (group.coefficients.dims[3] + threads.x - 1) / threads.x,
+      (group.coefficients.dims[2] + threads.y - 1) / threads.y,
+      launch_z_blocks);
+  if (single) {
+    if (group.timing == 0) {
+      ApplySingleSourceGroup<0><<<blocks, threads, 0, stream>>>(
+          target, group, step, launch.metallic_edges);
+    } else if (group.timing == 1) {
+      ApplySingleSourceGroup<1><<<blocks, threads, 0, stream>>>(
+          target, group, step, launch.metallic_edges);
+    } else {
+      ApplySingleSourceGroup<2><<<blocks, threads, 0, stream>>>(
+          target, group, step, launch.metallic_edges);
+    }
+    return cudaPeekAtLastError();
+  }
+  if (coincident) {
+    ApplyCoincidentSourceGroup<<<blocks, threads, 0, stream>>>(
+        target, group, step, launch.metallic_edges);
+    return cudaPeekAtLastError();
+  }
+  if (batched) {
+    ApplySourceGroupBatched<<<blocks, threads, 0, stream>>>(
+        target, group, z_blocks, step, launch.metallic_edges);
+    return cudaPeekAtLastError();
+  }
+  for (int32_t source_index = 0;
+       source_index < group.coefficients.dims[0]; ++source_index) {
+    ApplySourceGroup<<<blocks, threads, 0, stream>>>(
+        target, group, source_index, step, launch.metallic_edges);
+    if (const cudaError_t error = cudaPeekAtLastError();
+        error != cudaSuccess) {
+      return error;
+    }
+  }
+  return cudaSuccess;
 }
 
-__global__ void AccumulatePlaneDft(BeamzLaunch h_launch,
-                                   BeamzLaunch e_launch,
-                                   BeamzDftLaunch monitor, int step_offset,
-                                   bool precomputed_phase) {
-  const int point = blockIdx.x * blockDim.x + threadIdx.x;
-  const int frequency = blockIdx.y * blockDim.y + threadIdx.y;
-  const int component = blockIdx.z * blockDim.z + threadIdx.z;
-  if (point >= monitor.point_count || frequency >= monitor.frequency_count ||
-      component >= 6) {
-    return;
-  }
-  if (component == 0 && point == 0) {
-    static_cast<float*>(monitor.dft_weight.data)[frequency] += 1.0f;
-  }
-  const float mask =
-      static_cast<const float*>(monitor.component_mask.data)[component];
-  if (mask == 0.0f) return;
-
-  const BeamzBuffer& indices = monitor.indices[component];
-  const BeamzBuffer& weights = monitor.weights[component];
-  const BeamzBuffer& field = component < 3 ? e_launch.outputs[component]
-                                           : h_launch.outputs[component - 3];
-  float sample = 0.0f;
-  const int neighbors = static_cast<int>(indices.dims[1]);
-  for (int neighbor = 0; neighbor < neighbors; ++neighbor) {
-    const int gather_offset = point * neighbors + neighbor;
-    const int field_offset =
-        static_cast<const int32_t*>(indices.data)[gather_offset];
-    sample += static_cast<const float*>(field.data)[field_offset] *
-              static_cast<const float*>(weights.data)[gather_offset];
-  }
-
-  float phase_sin;
-  float phase_cos;
-  if (precomputed_phase) {
-    const int phase_offset = step_offset * monitor.frequency_count + frequency;
-    phase_cos = static_cast<const float*>(monitor.phase_cos.data)[phase_offset];
-    phase_sin = static_cast<const float*>(monitor.phase_sin.data)[phase_offset];
-  } else {
-    const float t = static_cast<const float*>(monitor.time.data)[0] +
-                    static_cast<float>(step_offset + 1) * e_launch.dt;
-    const float theta =
-        6.2831853071795864769f *
-        static_cast<const float*>(monitor.frequencies.data)[frequency] * t;
-    sincosf(theta, &phase_sin, &phase_cos);
-  }
-  const int accumulator_offset =
-      (component * static_cast<int>(monitor.dft_re.dims[2]) + frequency) *
-          static_cast<int>(monitor.dft_re.dims[3]) +
-      point;
-  static_cast<float*>(monitor.dft_re.data)[accumulator_offset] +=
-      sample * phase_cos;
-  static_cast<float*>(monitor.dft_im.data)[accumulator_offset] +=
-      sample * phase_sin;
-}
-
+template <bool SingleMonitor>
 __global__ void AccumulateDftGroups(BeamzLaunch h_launch,
                                     BeamzLaunch e_launch,
                                     BeamzDftGroupLaunch monitors,
@@ -1464,9 +1449,11 @@ __global__ void AccumulateDftGroups(BeamzLaunch h_launch,
   const int point = blockIdx.x * blockDim.x + threadIdx.x;
   const int frequency = blockIdx.y * blockDim.y + threadIdx.y;
   const int lane = blockIdx.z * blockDim.z + threadIdx.z;
-  const int monitor = lane / 6;
-  const int component = lane % 6;
-  if (monitor >= monitors.monitor_count) return;
+  const int monitor = SingleMonitor ? 0 : lane / 6;
+  const int component = SingleMonitor ? lane : lane % 6;
+  if constexpr (!SingleMonitor) {
+    if (monitor >= monitors.monitor_count) return;
+  }
 
   const auto* counts = static_cast<const int32_t*>(monitors.counts.data);
   const int frequency_count = counts[5 * monitor];
@@ -1547,6 +1534,27 @@ __global__ void AccumulateDftGroups(BeamzLaunch h_launch,
       scale * sample * phase_cos;
   static_cast<float*>(monitors.dft_im.data)[accumulator_offset] +=
       scale * sample * phase_sin;
+}
+
+cudaError_t LaunchDftGroups(cudaStream_t stream, const BeamzLaunch& h_launch,
+                            const BeamzLaunch& e_launch,
+                            const BeamzDftGroupLaunch& monitors,
+                            int32_t step) {
+  const int frequency_threads =
+      monitors.monitor_count == 1 && monitors.frequencies.dims[1] == 3 ? 3 : 2;
+  const dim3 threads(32, frequency_threads, 2);
+  const dim3 blocks(
+      (monitors.indices.dims[2] + threads.x - 1) / threads.x,
+      (monitors.frequencies.dims[1] + threads.y - 1) / threads.y,
+      (monitors.monitor_count * 6 + threads.z - 1) / threads.z);
+  if (monitors.monitor_count == 1) {
+    AccumulateDftGroups<true><<<blocks, threads, 0, stream>>>(
+        h_launch, e_launch, monitors, step);
+  } else {
+    AccumulateDftGroups<false><<<blocks, threads, 0, stream>>>(
+        h_launch, e_launch, monitors, step);
+  }
+  return cudaPeekAtLastError();
 }
 
 }  // namespace
@@ -2049,10 +2057,8 @@ cudaError_t LaunchCpmlShellAndCorePhase(cudaStream_t stream,
 
 int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
                         const BeamzLaunch& e_launch,
-                        const BeamzSourceLaunch* source,
                         const BeamzSourceGroupLaunch* source_groups,
                         int32_t source_group_count,
-                        const BeamzDftLaunch* monitor,
                         const BeamzDftGroupLaunch* monitor_groups,
                         int32_t nsteps) {
   if (nsteps < 1 || h_launch.phase != 0 || e_launch.phase != 1 ||
@@ -2061,9 +2067,9 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
     return cudaErrorInvalidValue;
   }
   auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
-  const std::string graph_key =
-      GraphKey(raw_stream, h_launch, e_launch, nsteps, source, source_groups,
-               source_group_count, monitor, monitor_groups);
+  const std::string graph_key = GraphKey(
+      raw_stream, h_launch, e_launch, nsteps, source_groups,
+      source_group_count, monitor_groups);
   GraphCache& cache = CachedGraphs();
   const bool cache_enabled = FlagEnabled(h_launch, kBeamzGraphCache);
   if (cache_enabled) {
@@ -2077,22 +2083,6 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
     cudaError_t launch_error = cudaSuccess;
     const bool use_cpml_core =
         CpmlCoreScheduleSupported(h_launch, e_launch);
-    const bool precomputed_monitor_phase =
-        monitor != nullptr && FlagEnabled(h_launch, kBeamzPrecomputedDftPhases) &&
-        monitor->phase_cos.rank == 2 && monitor->phase_sin.rank == 2 &&
-        monitor->phase_cos.dims[0] >= nsteps &&
-        monitor->phase_sin.dims[0] >= nsteps &&
-        monitor->phase_cos.dims[1] >= monitor->frequency_count &&
-        monitor->phase_sin.dims[1] >= monitor->frequency_count;
-    if (precomputed_monitor_phase) {
-      constexpr int phase_threads = 128;
-      const int phase_count = nsteps * monitor->frequency_count;
-      PreparePlaneDftPhases<<<
-          (phase_count + phase_threads - 1) / phase_threads, phase_threads, 0,
-          stream>>>(e_launch, *monitor, nsteps);
-      launch_error = cudaPeekAtLastError();
-      if (launch_error != cudaSuccess) return launch_error;
-    }
     auto launch_source_groups = [&](int timing, int32_t step) {
       for (int32_t group_index = 0; group_index < source_group_count;
            ++group_index) {
@@ -2100,62 +2090,12 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
         if (group.timing != timing || group.coefficients.dims[0] == 0) continue;
         const BeamzLaunch& target_launch = timing == 1 ? h_launch : e_launch;
         const BeamzBuffer& target = target_launch.outputs[group.component];
-        const dim3 source_threads =
-            SourceThreads(h_launch, group.coefficients.dims[3]);
-        const int z_blocks =
-            (group.coefficients.dims[1] + source_threads.z - 1) /
-            source_threads.z;
-        const bool coincident =
-            group.coincident != 0 &&
-            FlagEnabled(h_launch, kBeamzCoincidentSourceGroups);
-        const bool batched =
-            FlagEnabled(h_launch, kBeamzBatchedSourceGroups);
-        const int launch_z_blocks =
-            !coincident && batched
-                ? z_blocks * group.coefficients.dims[0]
-                : z_blocks;
-        const dim3 source_blocks(
-            (group.coefficients.dims[3] + source_threads.x - 1) /
-                source_threads.x,
-            (group.coefficients.dims[2] + source_threads.y - 1) /
-                source_threads.y,
-            launch_z_blocks);
-        if (coincident) {
-          ApplyCoincidentSourceGroup<<<source_blocks, source_threads, 0,
-                                       stream>>>(target, group, step,
-                                                 h_launch.metallic_edges);
-          launch_error = cudaPeekAtLastError();
-        } else if (batched) {
-          ApplySourceGroupBatched<<<source_blocks, source_threads, 0, stream>>>(
-              target, group, z_blocks, step, h_launch.metallic_edges);
-          launch_error = cudaPeekAtLastError();
-        } else {
-          for (int32_t source_index = 0;
-               source_index < group.coefficients.dims[0]; ++source_index) {
-            ApplySourceGroup<<<source_blocks, source_threads, 0, stream>>>(
-                target, group, source_index, step, h_launch.metallic_edges);
-            launch_error = cudaPeekAtLastError();
-            if (launch_error != cudaSuccess) return;
-          }
-        }
+        launch_error =
+            LaunchSourceGroup(stream, h_launch, target, group, step);
+        if (launch_error != cudaSuccess) return;
       }
     };
     for (int32_t step = 0; step < nsteps; ++step) {
-      if (source != nullptr) {
-        const dim3 source_threads =
-            SourceThreads(h_launch, source->coefficient.dims[2]);
-        const dim3 source_blocks(
-            (source->coefficient.dims[2] + source_threads.x - 1) /
-                source_threads.x,
-            (source->coefficient.dims[1] + source_threads.y - 1) /
-                source_threads.y,
-            (source->coefficient.dims[0] + source_threads.z - 1) /
-                source_threads.z);
-        ApplySourceSlab<<<source_blocks, source_threads, 0, stream>>>(
-            e_launch, *source, step);
-        launch_error = cudaPeekAtLastError();
-        if (launch_error != cudaSuccess) break;
-      }
       if (source_groups != nullptr) {
         launch_source_groups(0, step);
         if (launch_error != cudaSuccess) break;
@@ -2187,30 +2127,9 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
         launch_source_groups(2, step);
         if (launch_error != cudaSuccess) break;
       }
-      if (monitor != nullptr) {
-        const dim3 monitor_threads(32, 3, 2);
-        const dim3 monitor_blocks(
-            (monitor->point_count + monitor_threads.x - 1) / monitor_threads.x,
-            (monitor->frequency_count + monitor_threads.y - 1) /
-                monitor_threads.y,
-            (6 + monitor_threads.z - 1) / monitor_threads.z);
-        AccumulatePlaneDft<<<monitor_blocks, monitor_threads, 0, stream>>>(
-            h_launch, e_launch, *monitor, step, precomputed_monitor_phase);
-        launch_error = cudaPeekAtLastError();
-        if (launch_error != cudaSuccess) break;
-      }
       if (monitor_groups != nullptr) {
-        const dim3 monitor_threads(32, 2, 2);
-        const dim3 monitor_blocks(
-            (monitor_groups->indices.dims[2] + monitor_threads.x - 1) /
-                monitor_threads.x,
-            (monitor_groups->frequencies.dims[1] + monitor_threads.y - 1) /
-                monitor_threads.y,
-            (monitor_groups->monitor_count * 6 + monitor_threads.z - 1) /
-                monitor_threads.z);
-        AccumulateDftGroups<<<monitor_blocks, monitor_threads, 0, stream>>>(
-            h_launch, e_launch, *monitor_groups, step);
-        launch_error = cudaPeekAtLastError();
+        launch_error =
+            LaunchDftGroups(stream, h_launch, e_launch, *monitor_groups, step);
         if (launch_error != cudaSuccess) break;
       }
     }
@@ -2260,8 +2179,8 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
 
 int BeamzLaunchStreamedSteps(void* raw_stream, const BeamzLaunch& h_launch,
                              const BeamzLaunch& e_launch, int32_t nsteps) {
-  return LaunchStreamedGraph(raw_stream, h_launch, e_launch, nullptr, nullptr,
-                             0, nullptr, nullptr, nsteps);
+  return LaunchStreamedGraph(raw_stream, h_launch, e_launch, nullptr, 0,
+                             nullptr, nsteps);
 }
 
 int BeamzLaunchTemporalSteps(void* raw_stream, const BeamzLaunch& h_ab,
@@ -2419,29 +2338,6 @@ int BeamzLaunchTemporalSteps(void* raw_stream, const BeamzLaunch& h_ab,
   return static_cast<int>(error);
 }
 
-int BeamzLaunchStreamedSourceSteps(void* raw_stream,
-                                   const BeamzLaunch& h_launch,
-                                   const BeamzLaunch& e_launch,
-                                   const BeamzSourceLaunch& source,
-                                   int32_t nsteps) {
-  if (source.coefficient.rank != 3 || source.waveform.rank != 1 ||
-      source.current_step.rank != 0 || source.component < 0 ||
-      source.component > 2 || source.waveform.dims[0] < 1 ||
-      !FitsIntOffsets(source.coefficient) || !FitsIntOffsets(source.waveform)) {
-    return cudaErrorInvalidValue;
-  }
-  const BeamzBuffer& target = e_launch.outputs[source.component];
-  for (int axis = 0; axis < 3; ++axis) {
-    if (source.starts[axis] < 0 ||
-        source.starts[axis] + source.coefficient.dims[axis] >
-            target.dims[axis]) {
-      return cudaErrorInvalidValue;
-    }
-  }
-  return LaunchStreamedGraph(raw_stream, h_launch, e_launch, &source, nullptr,
-                             0, nullptr, nullptr, nsteps);
-}
-
 int BeamzLaunchStreamedSourceGroupSteps(
     void* raw_stream, const BeamzLaunch& h_launch,
     const BeamzLaunch& e_launch,
@@ -2464,9 +2360,8 @@ int BeamzLaunchStreamedSourceGroupSteps(
       return cudaErrorInvalidValue;
     }
   }
-  return LaunchStreamedGraph(raw_stream, h_launch, e_launch, nullptr,
-                             source_groups, source_group_count, nullptr,
-                             nullptr, nsteps);
+  return LaunchStreamedGraph(raw_stream, h_launch, e_launch, source_groups,
+                             source_group_count, nullptr, nsteps);
 }
 
 int BeamzLaunchTemporalCpmlSourceGroupSteps(
@@ -2541,8 +2436,8 @@ int BeamzLaunchTemporalCpmlSourceGroupSteps(
     }
   }
   std::string graph_key = "temporal-cpml-source-groups";
-  graph_key += GraphKey(raw_stream, h_ab, e_ab, nsteps, nullptr, source_groups,
-                        source_group_count, nullptr, monitor_groups);
+  graph_key += GraphKey(raw_stream, h_ab, e_ab, nsteps, source_groups,
+                        source_group_count, monitor_groups);
   graph_key.append(reinterpret_cast<const char*>(&h_ba), sizeof(h_ba));
   graph_key.append(reinterpret_cast<const char*>(&e_ba), sizeof(e_ba));
   GraphCache& cache = CachedGraphs();
@@ -2568,44 +2463,9 @@ int BeamzLaunchTemporalCpmlSourceGroupSteps(
             timing == 0 ? e_launch.inputs[group.component]
                         : (timing == 1 ? h_launch.outputs[group.component]
                                        : e_launch.outputs[group.component]);
-        const dim3 source_threads =
-            SourceThreads(h_launch, group.coefficients.dims[3]);
-        const int z_blocks =
-            (group.coefficients.dims[1] + source_threads.z - 1) /
-            source_threads.z;
-        const bool coincident =
-            group.coincident != 0 &&
-            FlagEnabled(h_launch, kBeamzCoincidentSourceGroups);
-        const bool batched =
-            FlagEnabled(h_launch, kBeamzBatchedSourceGroups);
-        const int launch_z_blocks =
-            !coincident && batched
-                ? z_blocks * group.coefficients.dims[0]
-                : z_blocks;
-        const dim3 source_blocks(
-            (group.coefficients.dims[3] + source_threads.x - 1) /
-                source_threads.x,
-            (group.coefficients.dims[2] + source_threads.y - 1) /
-                source_threads.y,
-            launch_z_blocks);
-        if (coincident) {
-          ApplyCoincidentSourceGroup<<<source_blocks, source_threads, 0,
-                                       stream>>>(target, group, step,
-                                                 h_launch.metallic_edges);
-          launch_error = cudaPeekAtLastError();
-        } else if (batched) {
-          ApplySourceGroupBatched<<<source_blocks, source_threads, 0, stream>>>(
-              target, group, z_blocks, step, h_launch.metallic_edges);
-          launch_error = cudaPeekAtLastError();
-        } else {
-          for (int32_t source_index = 0;
-               source_index < group.coefficients.dims[0]; ++source_index) {
-            ApplySourceGroup<<<source_blocks, source_threads, 0, stream>>>(
-                target, group, source_index, step, h_launch.metallic_edges);
-            launch_error = cudaPeekAtLastError();
-            if (launch_error != cudaSuccess) return;
-          }
-        }
+        launch_error =
+            LaunchSourceGroup(stream, h_launch, target, group, step);
+        if (launch_error != cudaSuccess) return;
       }
     };
     for (int32_t step = 0; step < nsteps; ++step) {
@@ -2633,17 +2493,8 @@ int BeamzLaunchTemporalCpmlSourceGroupSteps(
       launch_source_groups(h_launch, e_launch, 2, step);
       if (launch_error != cudaSuccess) return launch_error;
       if (monitor_groups != nullptr) {
-        const dim3 monitor_threads(32, 2, 2);
-        const dim3 monitor_blocks(
-            (monitor_groups->indices.dims[2] + monitor_threads.x - 1) /
-                monitor_threads.x,
-            (monitor_groups->frequencies.dims[1] + monitor_threads.y - 1) /
-                monitor_threads.y,
-            (monitor_groups->monitor_count * 6 + monitor_threads.z - 1) /
-                monitor_threads.z);
-        AccumulateDftGroups<<<monitor_blocks, monitor_threads, 0, stream>>>(
-            h_launch, e_launch, *monitor_groups, step);
-        launch_error = cudaPeekAtLastError();
+        launch_error =
+            LaunchDftGroups(stream, h_launch, e_launch, *monitor_groups, step);
         if (launch_error != cudaSuccess) return launch_error;
       }
     }
@@ -2743,51 +2594,6 @@ int BeamzLaunchStreamedProgramSteps(
   for (const BeamzBuffer& buffer : monitor_buffers) {
     if (!FitsIntOffsets(buffer)) return cudaErrorInvalidValue;
   }
-  return LaunchStreamedGraph(raw_stream, h_launch, e_launch, nullptr,
-                             source_groups, source_group_count, nullptr,
-                             &monitors, nsteps);
-}
-
-int BeamzLaunchStreamedSourceMonitorSteps(
-    void* raw_stream, const BeamzLaunch& h_launch,
-    const BeamzLaunch& e_launch, const BeamzSourceLaunch& source,
-    const BeamzDftLaunch& monitor, int32_t nsteps) {
-  if (monitor.frequency_count < 1 || monitor.point_count < 1 ||
-      monitor.frequencies.rank != 1 || monitor.component_mask.rank != 1 ||
-      monitor.dft_re.rank != 4 || monitor.dft_im.rank != 4 ||
-      monitor.dft_weight.rank != 2 || monitor.time.rank != 0 ||
-      monitor.phase_cos.rank != 2 || monitor.phase_sin.rank != 2 ||
-      monitor.phase_cos.dims[0] < nsteps ||
-      monitor.phase_sin.dims[0] < nsteps ||
-      monitor.phase_cos.dims[1] < monitor.frequency_count ||
-      monitor.phase_sin.dims[1] < monitor.frequency_count ||
-      !FitsIntOffsets(monitor.phase_cos) ||
-      !FitsIntOffsets(monitor.phase_sin)) {
-    return cudaErrorInvalidValue;
-  }
-  for (int component = 0; component < 6; ++component) {
-    if (monitor.indices[component].rank != 2 ||
-        monitor.weights[component].rank != 2 ||
-        monitor.indices[component].dims[0] < monitor.point_count ||
-        monitor.weights[component].dims[0] < monitor.point_count ||
-        monitor.indices[component].dims[1] !=
-            monitor.weights[component].dims[1]) {
-      return cudaErrorInvalidValue;
-    }
-  }
-  if (source.coefficient.rank != 3 || source.waveform.rank != 1 ||
-      source.current_step.rank != 0 || source.component < 0 ||
-      source.component > 2 || source.waveform.dims[0] < 1) {
-    return cudaErrorInvalidValue;
-  }
-  const BeamzBuffer& target = e_launch.outputs[source.component];
-  for (int axis = 0; axis < 3; ++axis) {
-    if (source.starts[axis] < 0 ||
-        source.starts[axis] + source.coefficient.dims[axis] >
-            target.dims[axis]) {
-      return cudaErrorInvalidValue;
-    }
-  }
-  return LaunchStreamedGraph(raw_stream, h_launch, e_launch, &source, nullptr,
-                             0, &monitor, nullptr, nsteps);
+  return LaunchStreamedGraph(raw_stream, h_launch, e_launch, source_groups,
+                             source_group_count, &monitors, nsteps);
 }

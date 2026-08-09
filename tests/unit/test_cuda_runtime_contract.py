@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from beamz.simulation import backend as backend_runtime
 from beamz.simulation import kernels
@@ -268,7 +269,7 @@ def test_cuda_scan_replays_one_bounded_graph_and_advances_chunk_clocks(monkeypat
     np.testing.assert_allclose(next_state.ex, state.ex + np.float32(requested_steps))
 
 
-def test_cuda_scan_routes_one_slab_source_to_narrow_graph(monkeypatch):
+def test_cuda_scan_routes_sources_to_grouped_graph(monkeypatch):
     program, state, _context = _program_and_state(cpml=True, source=True)
     program = replace(
         program,
@@ -276,61 +277,33 @@ def test_cuda_scan_routes_one_slab_source_to_narrow_graph(monkeypatch):
     )
     calls = []
 
-    def fake_run_source_steps(chunk_state, _context, _coefficients, source, nsteps):
-        calls.append((source, nsteps))
+    def fake_run_source_group_steps(
+        chunk_state, _context, _coefficients, groups, nsteps
+    ):
+        calls.append((groups, nsteps))
         return chunk_state
 
-    monkeypatch.setattr("beamz.simulation.cuda.run_source_steps", fake_run_source_steps)
     monkeypatch.setattr(
         "beamz.simulation.cuda.run_source_group_steps",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("general source graph should not be selected")
-        ),
+        fake_run_source_group_steps,
     )
 
     build_scan(program)(state, program.coefficients)
 
-    assert calls == [(program.sources[0], program.config.num_steps)]
+    assert len(calls) == 1
+    assert sum(group is not None for group in calls[0][0]) == 1
+    assert calls[0][1] == program.config.num_steps
 
 
-def test_cuda_scan_routes_simple_source_monitor_to_narrow_graph(monkeypatch):
+@pytest.mark.parametrize("record_interval", [1, 2])
+def test_cuda_scan_routes_monitors_to_general_program_graph(
+    monkeypatch, record_interval
+):
     program, state, _context = _program_and_state(cpml=True, source=True, monitor=True)
     program = replace(
         program,
         config=replace(program.config, backend="cuda_streamed"),
-    )
-    calls = []
-
-    def fake_run_source_monitor_steps(
-        chunk_state, _context, _coefficients, source, monitor, nsteps
-    ):
-        calls.append((source, monitor, nsteps))
-        return chunk_state
-
-    monkeypatch.setattr(
-        "beamz.simulation.cuda.run_source_monitor_steps",
-        fake_run_source_monitor_steps,
-    )
-    monkeypatch.setattr(
-        "beamz.simulation.cuda.run_program_steps",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("general program graph should not be selected")
-        ),
-    )
-
-    build_scan(program)(state, program.coefficients)
-
-    assert calls == [
-        (program.sources[0], program.monitors[0], program.config.num_steps)
-    ]
-
-
-def test_cuda_scan_keeps_scheduled_monitor_on_general_graph(monkeypatch):
-    program, state, _context = _program_and_state(cpml=True, source=True, monitor=True)
-    program = replace(
-        program,
-        config=replace(program.config, backend="cuda_streamed"),
-        monitors=(replace(program.monitors[0], dft_record_interval=2),),
+        monitors=(replace(program.monitors[0], dft_record_interval=record_interval),),
     )
     calls = []
 
@@ -341,13 +314,8 @@ def test_cuda_scan_keeps_scheduled_monitor_on_general_graph(monkeypatch):
         return chunk_state
 
     monkeypatch.setattr(
-        "beamz.simulation.cuda.run_program_steps", fake_run_program_steps
-    )
-    monkeypatch.setattr(
-        "beamz.simulation.cuda.run_source_monitor_steps",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("narrow monitor graph should not be selected")
-        ),
+        "beamz.simulation.cuda.run_program_steps",
+        fake_run_program_steps,
     )
 
     build_scan(program)(state, program.coefficients)
@@ -426,37 +394,6 @@ def test_cuda_cpml_multi_step_reuses_temporal_empty_source_graph(monkeypatch):
     assert options["input_output_aliases"][74] == 6
     assert attributes["coincident_source_group_mask"] == np.int32(0)
     assert next_state.hx is arguments[74]
-
-
-def test_cuda_source_cpml_graph_packs_source_and_aliases_state(monkeypatch):
-    program, state, context = _program_and_state(cpml=True, source=True)
-    captured = []
-
-    def fake_ffi_call(target, result_metadata, **options):
-        def call(*arguments, **attributes):
-            captured.append((target, result_metadata, options, arguments, attributes))
-            return (*arguments[:6], *arguments[31:37], *arguments[62:68])
-
-        return call
-
-    monkeypatch.setattr(cuda_runtime.jax.ffi, "ffi_call", fake_ffi_call)
-
-    next_state = cuda_runtime.run_source_steps(
-        state, context, program.coefficients, program.sources[0], 3
-    )
-
-    target, results, options, arguments, attributes = captured[0]
-    assert target == "beamz_cuda_streamed_source_cpml_steps"
-    assert len(results) == 18
-    assert len(arguments) == 77
-    assert options["input_output_aliases"] == {
-        **{index: index for index in range(6)},
-        **{31 + index: 6 + index for index in range(6)},
-        **{62 + index: 12 + index for index in range(6)},
-    }
-    assert attributes["source_component"] == np.int32(2)
-    assert attributes["cpml_enabled"] == np.int32(1)
-    assert next_state.cpml_psi_h_terms == state.cpml_psi_h_terms
 
 
 def test_cuda_source_group_graph_packs_all_phases_and_aliases_state(monkeypatch):
@@ -667,108 +604,6 @@ def test_cuda_program_graph_uses_temporal_cpml_field_banks(monkeypatch):
     assert "cpml_enabled" not in attributes
     assert attributes["monitor_count"] == np.int32(1)
     assert next_state.hx is arguments[74]
-    np.testing.assert_array_equal(next_state.dft_vec_re, state.dft_vec_re)
-
-
-def test_cuda_source_graph_supports_pec_without_cpml(monkeypatch):
-    program, state, context = _program_and_state(cpml=False, source=True)
-    captured = []
-
-    def fake_ffi_call(target, result_metadata, **options):
-        def call(*arguments, **attributes):
-            captured.append((target, result_metadata, options, arguments, attributes))
-            return arguments[:6]
-
-        return call
-
-    monkeypatch.setattr(cuda_runtime.jax.ffi, "ffi_call", fake_ffi_call)
-
-    next_state = cuda_runtime.run_source_steps(
-        state, context, program.coefficients, program.sources[0], 3
-    )
-
-    target, results, options, arguments, attributes = captured[0]
-    assert target == "beamz_cuda_streamed_source_cpml_steps"
-    assert len(results) == 6
-    assert len(arguments) == 27
-    assert options["input_output_aliases"] == {index: index for index in range(6)}
-    assert attributes["cpml_enabled"] == np.int32(0)
-    assert next_state.ez is state.ez
-
-
-def test_cuda_source_monitor_graph_aliases_dft_accumulators(monkeypatch):
-    program, state, context = _program_and_state(cpml=True, source=True, monitor=True)
-    captured = []
-
-    def fake_ffi_call(target, result_metadata, **options):
-        def call(*arguments, **attributes):
-            captured.append((target, result_metadata, options, arguments, attributes))
-            return (
-                *arguments[:6],
-                *arguments[31:37],
-                *arguments[62:68],
-                *arguments[91:94],
-                *arguments[95:97],
-            )
-
-        return call
-
-    monkeypatch.setattr(cuda_runtime.jax.ffi, "ffi_call", fake_ffi_call)
-
-    next_state = cuda_runtime.run_source_monitor_steps(
-        state,
-        context,
-        program.coefficients,
-        program.sources[0],
-        program.monitors[0],
-        3,
-    )
-
-    target, results, options, arguments, attributes = captured[0]
-    assert target == "beamz_cuda_streamed_source_monitor_cpml_steps"
-    assert len(results) == 23
-    assert len(arguments) == 97
-    assert options["input_output_aliases"][91] == 18
-    assert options["input_output_aliases"][92] == 19
-    assert options["input_output_aliases"][93] == 20
-    assert options["input_output_aliases"][95] == 21
-    assert options["input_output_aliases"][96] == 22
-    assert attributes["frequency_count"] == np.int32(3)
-    assert attributes["cpml_enabled"] == np.int32(1)
-    np.testing.assert_array_equal(next_state.dft_vec_re, state.dft_vec_re)
-
-
-def test_cuda_source_monitor_graph_supports_pec_without_cpml(monkeypatch):
-    program, state, context = _program_and_state(cpml=False, source=True, monitor=True)
-    captured = []
-
-    def fake_ffi_call(target, result_metadata, **options):
-        def call(*arguments, **attributes):
-            captured.append((target, result_metadata, options, arguments, attributes))
-            return (*arguments[:6], *arguments[41:44], *arguments[45:47])
-
-        return call
-
-    monkeypatch.setattr(cuda_runtime.jax.ffi, "ffi_call", fake_ffi_call)
-
-    next_state = cuda_runtime.run_source_monitor_steps(
-        state,
-        context,
-        program.coefficients,
-        program.sources[0],
-        program.monitors[0],
-        3,
-    )
-
-    _target, results, options, arguments, attributes = captured[0]
-    assert len(results) == 11
-    assert len(arguments) == 47
-    assert options["input_output_aliases"][41] == 6
-    assert options["input_output_aliases"][42] == 7
-    assert options["input_output_aliases"][43] == 8
-    assert options["input_output_aliases"][45] == 9
-    assert options["input_output_aliases"][46] == 10
-    assert attributes["cpml_enabled"] == np.int32(0)
     np.testing.assert_array_equal(next_state.dft_vec_re, state.dft_vec_re)
 
 

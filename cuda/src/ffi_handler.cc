@@ -190,20 +190,6 @@ void InitializeSourceGroups(
   }
 }
 
-BeamzSourceLaunch InitializeSource(const BeamzBuffer* inputs, size_t offset,
-                                   int32_t component, int32_t start_z,
-                                   int32_t start_y, int32_t start_x) {
-  BeamzSourceLaunch source{};
-  source.coefficient = inputs[offset];
-  source.waveform = inputs[offset + 1];
-  source.current_step = inputs[offset + 2];
-  source.component = component;
-  source.starts[0] = start_z;
-  source.starts[1] = start_y;
-  source.starts[2] = start_x;
-  return source;
-}
-
 BeamzDftGroupLaunch InitializeDftGroups(
     const BeamzBuffer* inputs, size_t offset, const BeamzBuffer& dft_re,
     const BeamzBuffer& dft_im, const BeamzBuffer& dft_weight,
@@ -447,45 +433,6 @@ ffi::Error StreamedCpmlStepsHandler(
                           std::to_string(error));
 }
 
-ffi::Error StreamedSourceCpmlStepsHandler(
-    void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
-    int32_t abi_version, int32_t cuda_flags, int32_t nsteps, float dt,
-    float resolution, int32_t metallic_edges, int32_t source_component,
-    int32_t source_start_z, int32_t source_start_y, int32_t source_start_x,
-    int32_t metric_kind, int32_t cpml_enabled) {
-  if (abi_version != BEAMZ_CUDA_ABI_VERSION || nsteps < 1 ||
-      source_component < 0 || source_component > 2 || metric_kind < 0 ||
-      metric_kind > 2 || cpml_enabled < 0 || cpml_enabled > 1) {
-    return ffi::Error::InvalidArgument(
-        "invalid BeamZ CUDA source-graph attributes");
-  }
-  BeamzBuffer inputs[77]{};
-  BeamzBuffer outputs[18]{};
-  const size_t graph_input_count =
-      cpml_enabled ? kCpmlGraphInputCount : kYeeGraphInputCount;
-  const size_t graph_output_count =
-      cpml_enabled ? kCpmlGraphOutputCount : kYeeGraphOutputCount;
-  if (auto error = DecodeArgs(args, inputs, graph_input_count + 3);
-      error.failure()) return error;
-  if (auto error = DecodeRets(rets, outputs, graph_output_count);
-      error.failure()) return error;
-
-  GraphLaunches launches = InitializeGraphLaunches(
-      abi_version, cuda_flags, dt, resolution, metallic_edges, metric_kind,
-      cpml_enabled != 0, inputs, outputs);
-  BeamzLaunch& h_launch = launches.h;
-  BeamzLaunch& e_launch = launches.e;
-  BeamzSourceLaunch source = InitializeSource(
-      inputs, graph_input_count, source_component, source_start_z,
-      source_start_y, source_start_x);
-  const int error = BeamzLaunchStreamedSourceSteps(
-      stream, h_launch, e_launch, source, nsteps);
-  return error == 0 ? ffi::Error::Success()
-                    : ffi::Error::Internal(
-                          "BeamZ CUDA source CPML graph launch failed: " +
-                          std::to_string(error));
-}
-
 ffi::Error StreamedSourceGroupsCpmlStepsHandler(
     void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
     int32_t abi_version, int32_t cuda_flags, int32_t nsteps, float dt,
@@ -678,62 +625,6 @@ ffi::Error StreamedProgramCpmlStepsHandler(
                    std::to_string(error));
 }
 
-ffi::Error StreamedSourceMonitorCpmlStepsHandler(
-    void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
-    int32_t abi_version, int32_t cuda_flags, int32_t nsteps, float dt,
-    float resolution, int32_t metallic_edges, int32_t source_component,
-    int32_t source_start_z, int32_t source_start_y, int32_t source_start_x,
-    int32_t frequency_count, int32_t point_count, int32_t metric_kind,
-    int32_t cpml_enabled) {
-  if (abi_version != BEAMZ_CUDA_ABI_VERSION || nsteps < 1 ||
-      source_component < 0 || source_component > 2 || frequency_count < 1 ||
-      point_count < 1 || metric_kind < 0 || metric_kind > 2 ||
-      cpml_enabled < 0 || cpml_enabled > 1) {
-    return ffi::Error::InvalidArgument(
-        "invalid BeamZ CUDA source-monitor graph attributes");
-  }
-  BeamzBuffer inputs[97]{};
-  BeamzBuffer outputs[23]{};
-  const size_t graph_input_count =
-      cpml_enabled ? kCpmlGraphInputCount : kYeeGraphInputCount;
-  const size_t graph_output_count =
-      cpml_enabled ? kCpmlGraphOutputCount : kYeeGraphOutputCount;
-  if (auto error = DecodeArgs(args, inputs, graph_input_count + 23);
-      error.failure()) return error;
-  if (auto error = DecodeRets(rets, outputs, graph_output_count + 5);
-      error.failure()) return error;
-
-  GraphLaunches launches = InitializeGraphLaunches(
-      abi_version, cuda_flags, dt, resolution, metallic_edges, metric_kind,
-      cpml_enabled != 0, inputs, outputs);
-  BeamzLaunch& h_launch = launches.h;
-  BeamzLaunch& e_launch = launches.e;
-  BeamzSourceLaunch source = InitializeSource(
-      inputs, graph_input_count, source_component, source_start_z,
-      source_start_y, source_start_x);
-  BeamzDftLaunch monitor{};
-  for (int component = 0; component < 6; ++component) {
-    monitor.indices[component] = inputs[graph_input_count + 3 + component];
-    monitor.weights[component] = inputs[graph_input_count + 9 + component];
-  }
-  monitor.frequencies = inputs[graph_input_count + 15];
-  monitor.component_mask = inputs[graph_input_count + 16];
-  monitor.dft_re = outputs[graph_output_count];
-  monitor.dft_im = outputs[graph_output_count + 1];
-  monitor.dft_weight = outputs[graph_output_count + 2];
-  monitor.time = inputs[graph_input_count + 20];
-  monitor.phase_cos = outputs[graph_output_count + 3];
-  monitor.phase_sin = outputs[graph_output_count + 4];
-  monitor.frequency_count = frequency_count;
-  monitor.point_count = point_count;
-  const int error = BeamzLaunchStreamedSourceMonitorSteps(
-      stream, h_launch, e_launch, source, monitor, nsteps);
-  return error == 0 ? ffi::Error::Success()
-                    : ffi::Error::Internal(
-                          "BeamZ CUDA source-monitor graph launch failed: " +
-                          std::to_string(error));
-}
-
 ffi::Error HopperHandler(void* stream, ffi::RemainingArgs args,
                          ffi::RemainingRets rets, int32_t abi_version,
                          int32_t cuda_flags, int32_t phase, int32_t nterms,
@@ -801,25 +692,6 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<int32_t>("metric_kind"));
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
-    beamz_cuda_streamed_source_cpml_steps, StreamedSourceCpmlStepsHandler,
-    ffi::Ffi::Bind()
-        .Ctx<ffi::PlatformStream<void*>>()
-        .RemainingArgs()
-        .RemainingRets()
-        .Attr<int32_t>("abi_version")
-        .Attr<int32_t>("cuda_flags")
-        .Attr<int32_t>("nsteps")
-        .Attr<float>("dt")
-        .Attr<float>("resolution")
-        .Attr<int32_t>("metallic_edges")
-        .Attr<int32_t>("source_component")
-        .Attr<int32_t>("source_start_z")
-        .Attr<int32_t>("source_start_y")
-        .Attr<int32_t>("source_start_x")
-        .Attr<int32_t>("metric_kind")
-        .Attr<int32_t>("cpml_enabled"));
-
-XLA_FFI_DEFINE_HANDLER_SYMBOL(
     beamz_cuda_streamed_source_groups_cpml_steps,
     StreamedSourceGroupsCpmlStepsHandler,
     ffi::Ffi::Bind()
@@ -884,28 +756,6 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<int32_t>("cpml_enabled")
         .Attr<int32_t>("monitor_count")
         .Attr<int32_t>("coincident_source_group_mask"));
-
-XLA_FFI_DEFINE_HANDLER_SYMBOL(
-    beamz_cuda_streamed_source_monitor_cpml_steps,
-    StreamedSourceMonitorCpmlStepsHandler,
-    ffi::Ffi::Bind()
-        .Ctx<ffi::PlatformStream<void*>>()
-        .RemainingArgs()
-        .RemainingRets()
-        .Attr<int32_t>("abi_version")
-        .Attr<int32_t>("cuda_flags")
-        .Attr<int32_t>("nsteps")
-        .Attr<float>("dt")
-        .Attr<float>("resolution")
-        .Attr<int32_t>("metallic_edges")
-        .Attr<int32_t>("source_component")
-        .Attr<int32_t>("source_start_z")
-        .Attr<int32_t>("source_start_y")
-        .Attr<int32_t>("source_start_x")
-        .Attr<int32_t>("frequency_count")
-        .Attr<int32_t>("point_count")
-        .Attr<int32_t>("metric_kind")
-        .Attr<int32_t>("cpml_enabled"));
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_hopper, HopperHandler,
                               ffi::Ffi::Bind()

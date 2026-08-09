@@ -11,19 +11,18 @@ enum BeamzElementType : int32_t {
 
 enum BeamzCudaFlag : int32_t {
   kBeamzTypedPsi = 1 << 0,
-  kBeamzPrecomputedDftPhases = 1 << 1,
-  kBeamzBatchedSourceGroups = 1 << 2,
-  kBeamzCoincidentSourceGroups = 1 << 3,
-  kBeamzAdaptiveSourceTiles = 1 << 4,
-  kBeamzCpmlCoreSplit = 1 << 5,
-  kBeamzCombinedCpmlQueue = 1 << 6,
-  kBeamzPersistentCpml = 1 << 7,
-  kBeamzGraphCache = 1 << 8,
-  kBeamzTemporalPsi = 1 << 9,
-  kBeamzTemporalCpml = 1 << 10,
-  kBeamzTemporalYee = 1 << 11,
-  kBeamzMaterialCodebook = 1 << 12,
-  kBeamzBf16Psi = 1 << 13,
+  kBeamzBatchedSourceGroups = 1 << 1,
+  kBeamzCoincidentSourceGroups = 1 << 2,
+  kBeamzAdaptiveSourceTiles = 1 << 3,
+  kBeamzCpmlCoreSplit = 1 << 4,
+  kBeamzCombinedCpmlQueue = 1 << 5,
+  kBeamzPersistentCpml = 1 << 6,
+  kBeamzGraphCache = 1 << 7,
+  kBeamzTemporalPsi = 1 << 8,
+  kBeamzTemporalCpml = 1 << 9,
+  kBeamzTemporalYee = 1 << 10,
+  kBeamzMaterialCodebook = 1 << 11,
+  kBeamzBf16Psi = 1 << 12,
 };
 
 struct BeamzBuffer {
@@ -51,14 +50,6 @@ struct BeamzLaunch {
   BeamzBuffer outputs[9];
 };
 
-struct BeamzSourceLaunch {
-  BeamzBuffer coefficient;
-  BeamzBuffer waveform;
-  BeamzBuffer current_step;
-  int32_t component;
-  int32_t starts[3];
-};
-
 struct BeamzSourceGroupLaunch {
   BeamzBuffer coefficients;
   BeamzBuffer waveforms;
@@ -67,21 +58,6 @@ struct BeamzSourceGroupLaunch {
   int32_t component;
   int32_t timing;
   int32_t coincident;
-};
-
-struct BeamzDftLaunch {
-  BeamzBuffer indices[6];
-  BeamzBuffer weights[6];
-  BeamzBuffer frequencies;
-  BeamzBuffer component_mask;
-  BeamzBuffer dft_re;
-  BeamzBuffer dft_im;
-  BeamzBuffer dft_weight;
-  BeamzBuffer time;
-  BeamzBuffer phase_cos;
-  BeamzBuffer phase_sin;
-  int32_t frequency_count;
-  int32_t point_count;
 };
 
 struct BeamzDftGroupLaunch {
@@ -108,10 +84,6 @@ int BeamzLaunchTemporalSteps(void* stream, const BeamzLaunch& h_ab,
                              const BeamzLaunch& e_ab,
                              const BeamzLaunch& h_ba,
                              const BeamzLaunch& e_ba, int32_t nsteps);
-int BeamzLaunchStreamedSourceSteps(void* stream, const BeamzLaunch& h_launch,
-                                   const BeamzLaunch& e_launch,
-                                   const BeamzSourceLaunch& source,
-                                   int32_t nsteps);
 int BeamzLaunchStreamedSourceGroupSteps(
     void* stream, const BeamzLaunch& h_launch, const BeamzLaunch& e_launch,
     const BeamzSourceGroupLaunch* source_groups, int32_t source_group_count,
@@ -125,10 +97,6 @@ int BeamzLaunchStreamedProgramSteps(
     void* stream, const BeamzLaunch& h_launch, const BeamzLaunch& e_launch,
     const BeamzSourceGroupLaunch* source_groups, int32_t source_group_count,
     const BeamzDftGroupLaunch& monitors, int32_t nsteps);
-int BeamzLaunchStreamedSourceMonitorSteps(
-    void* stream, const BeamzLaunch& h_launch, const BeamzLaunch& e_launch,
-    const BeamzSourceLaunch& source, const BeamzDftLaunch& monitor,
-    int32_t nsteps);
 int BeamzLaunchHopper(void* stream, const BeamzLaunch& launch);
 
 #endif  // BEAMZ_CUDA_LAUNCH_H_

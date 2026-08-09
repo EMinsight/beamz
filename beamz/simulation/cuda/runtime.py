@@ -488,38 +488,6 @@ def _temporal_cpml_source_groups_supported(ctx, coeffs, nsteps: int) -> bool:
     )
 
 
-def run_source_steps(state, ctx, coeffs, source, nsteps: int) -> SimulationState:
-    """Advance one packed pre-E source through one CUDA graph call."""
-    if nsteps < 1:
-        raise ValueError("CUDA step count must be positive")
-    if (
-        source.timing != "pre_e"
-        or source.component not in {"Ex", "Ey", "Ez"}
-        or not source.is_slab
-        or source.slab_starts is None
-        or source.slab_sizes is None
-        or tuple(source.coeff.shape) != tuple(source.slab_sizes)
-    ):
-        raise ValueError("CUDA source graph requires one packed pre-E slab source")
-    arguments, result_values, aliases = _graph_io(state, ctx, coeffs)
-    call = _ffi_call("beamz_cuda_streamed_source_cpml_steps", result_values, aliases)
-    outputs = call(
-        *arguments,
-        source.coeff,
-        source.waveform,
-        state.current_step,
-        **_step_attributes(ctx, nsteps),
-        cpml_enabled=np.int32(ctx.boundary.cpml.enabled),
-        source_component=np.int32(_COMPONENT_CODE[source.component]),
-        source_start_z=np.int32(source.slab_starts[0]),
-        source_start_y=np.int32(source.slab_starts[1]),
-        source_start_x=np.int32(source.slab_starts[2]),
-    )
-    if ctx.boundary.cpml.enabled:
-        return _replace_graph_outputs(state, outputs)
-    return _replace_fields(state, outputs)
-
-
 def run_source_group_steps(state, ctx, coeffs, groups, nsteps: int) -> SimulationState:
     """Advance packed slab-source groups in every leapfrog phase on CUDA."""
     if nsteps < 1:
@@ -720,98 +688,6 @@ def run_program_steps(
         dft_vec_re=outputs[state_output_count],
         dft_vec_im=outputs[state_output_count + 1],
         dft_weight_sum=outputs[state_output_count + 2],
-    )
-
-
-def run_source_monitor_steps(
-    state, ctx, coeffs, source, monitor, nsteps: int
-) -> SimulationState:
-    """Advance one packed source and one rectangular plane DFT in a CUDA graph."""
-    if (
-        not monitor.dft_enabled
-        or monitor.dft_record_interval != 1
-        or monitor.dft_t_start != 0.0
-        or np.isfinite(monitor.dft_t_end)
-        or monitor.dft_window_code != 0
-        or monitor.dft_normalization_code != 0
-        or monitor.freq_count < 1
-        or monitor.dft_point_count < 1
-        or state.dft_vec_re.dtype != jnp.float32
-    ):
-        raise ValueError("CUDA monitor graph requires a full-time float32 plane DFT")
-    value_count = 6 * int(monitor.freq_count) * int(monitor.dft_point_count)
-    if (
-        int(monitor.dft_value_offset) != 0
-        or int(monitor.dft_weight_offset) != 0
-        or state.dft_vec_re.size != value_count
-        or state.dft_weight_sum.size != int(monitor.freq_count)
-    ):
-        raise ValueError("CUDA single-monitor graph requires one complete DFT arena")
-    dft_vec_re = state.dft_vec_re.reshape(
-        (1, 6, monitor.freq_count, monitor.dft_point_count)
-    )
-    dft_vec_im = state.dft_vec_im.reshape(
-        (1, 6, monitor.freq_count, monitor.dft_point_count)
-    )
-    dft_weight_sum = state.dft_weight_sum.reshape((1, monitor.freq_count))
-    phase_cos = jnp.empty((nsteps, monitor.freq_count), dtype=jnp.float32)
-    phase_sin = jnp.empty((nsteps, monitor.freq_count), dtype=jnp.float32)
-    arguments, result_values, aliases = _graph_io(state, ctx, coeffs)
-    state_output_count = len(result_values)
-    result_values = (
-        *result_values,
-        dft_vec_re,
-        dft_vec_im,
-        dft_weight_sum,
-        phase_cos,
-        phase_sin,
-    )
-    aliases = {
-        **aliases,
-        len(arguments) + 17: state_output_count,
-        len(arguments) + 18: state_output_count + 1,
-        len(arguments) + 19: state_output_count + 2,
-        len(arguments) + 21: state_output_count + 3,
-        len(arguments) + 22: state_output_count + 4,
-    }
-    call = _ffi_call(
-        "beamz_cuda_streamed_source_monitor_cpml_steps",
-        result_values,
-        aliases,
-    )
-    outputs = call(
-        *arguments,
-        source.coeff,
-        source.waveform,
-        state.current_step,
-        *monitor.dft_flat_idx,
-        *monitor.dft_weights,
-        monitor.freq_hz,
-        monitor.dft_component_mask,
-        dft_vec_re,
-        dft_vec_im,
-        dft_weight_sum,
-        state.t,
-        phase_cos,
-        phase_sin,
-        **_step_attributes(ctx, nsteps),
-        cpml_enabled=np.int32(ctx.boundary.cpml.enabled),
-        source_component=np.int32(_COMPONENT_CODE[source.component]),
-        source_start_z=np.int32(source.slab_starts[0]),
-        source_start_y=np.int32(source.slab_starts[1]),
-        source_start_x=np.int32(source.slab_starts[2]),
-        frequency_count=np.int32(monitor.freq_count),
-        point_count=np.int32(monitor.dft_point_count),
-    )
-    next_state = (
-        _replace_graph_outputs(state, outputs)
-        if ctx.boundary.cpml.enabled
-        else _replace_fields(state, outputs)
-    )
-    return next_state._replace(
-        dft_vec_re=outputs[state_output_count].reshape(-1),
-        dft_vec_im=outputs[state_output_count + 1].reshape(-1),
-        dft_weight_sum=outputs[state_output_count + 2].reshape(-1),
     )
 
 

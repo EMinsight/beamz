@@ -21,30 +21,28 @@ ResolvedBackend = Literal["jax", "cuda_streamed", "cuda_hopper"]
 
 _EXTENSION_MODULE = "beamz_cuda"
 _REGISTERED_MODULE: ModuleType | None = None
-CUDA_ABI_VERSION = 9
+CUDA_ABI_VERSION = 10
 
 # One immutable bitset travels from program compilation through XLA FFI into every
 # native launch. Environment variables remain useful for controlled experiments,
 # but they are sampled exactly once and therefore cannot change a cached program's
 # numerical or scheduling meaning underneath JAX.
 CUDA_TYPED_PSI = 1 << 0
-CUDA_PRECOMPUTED_DFT_PHASES = 1 << 1
-CUDA_BATCHED_SOURCE_GROUPS = 1 << 2
-CUDA_COINCIDENT_SOURCE_GROUPS = 1 << 3
-CUDA_ADAPTIVE_SOURCE_TILES = 1 << 4
-CUDA_CPML_CORE_SPLIT = 1 << 5
-CUDA_COMBINED_CPML_QUEUE = 1 << 6
-CUDA_PERSISTENT_CPML = 1 << 7
-CUDA_GRAPH_CACHE = 1 << 8
-CUDA_TEMPORAL_PSI = 1 << 9
-CUDA_TEMPORAL_CPML = 1 << 10
-CUDA_TEMPORAL_YEE = 1 << 11
-CUDA_MATERIAL_CODEBOOK = 1 << 12
-CUDA_BF16_PSI = 1 << 13
+CUDA_BATCHED_SOURCE_GROUPS = 1 << 1
+CUDA_COINCIDENT_SOURCE_GROUPS = 1 << 2
+CUDA_ADAPTIVE_SOURCE_TILES = 1 << 3
+CUDA_CPML_CORE_SPLIT = 1 << 4
+CUDA_COMBINED_CPML_QUEUE = 1 << 5
+CUDA_PERSISTENT_CPML = 1 << 6
+CUDA_GRAPH_CACHE = 1 << 7
+CUDA_TEMPORAL_PSI = 1 << 8
+CUDA_TEMPORAL_CPML = 1 << 9
+CUDA_TEMPORAL_YEE = 1 << 10
+CUDA_MATERIAL_CODEBOOK = 1 << 11
+CUDA_BF16_PSI = 1 << 12
 
 CUDA_DEFAULT_FLAGS = (
     CUDA_TYPED_PSI
-    | CUDA_PRECOMPUTED_DFT_PHASES
     | CUDA_BATCHED_SOURCE_GROUPS
     | CUDA_COINCIDENT_SOURCE_GROUPS
     | CUDA_ADAPTIVE_SOURCE_TILES
@@ -62,12 +60,10 @@ CUDA_STREAMED_TARGETS = frozenset(
         "beamz_cuda_streamed_steps",
         "beamz_cuda_temporal_steps",
         "beamz_cuda_streamed_cpml_steps",
-        "beamz_cuda_streamed_source_cpml_steps",
         "beamz_cuda_streamed_source_groups_cpml_steps",
         "beamz_cuda_temporal_source_groups_cpml_steps",
         "beamz_cuda_temporal_program_cpml_steps",
         "beamz_cuda_streamed_program_cpml_steps",
-        "beamz_cuda_streamed_source_monitor_cpml_steps",
     }
 )
 CUDA_HOPPER_TARGET = "beamz_cuda_hopper"
@@ -89,7 +85,6 @@ def cuda_flags_from_env() -> int:
     flags = CUDA_DEFAULT_FLAGS
     disable_flags = {
         "BEAMZ_CUDA_DISABLE_TYPED_PSI": CUDA_TYPED_PSI,
-        "BEAMZ_CUDA_DISABLE_PRECOMPUTED_DFT_PHASES": CUDA_PRECOMPUTED_DFT_PHASES,
         "BEAMZ_CUDA_DISABLE_BATCHED_SOURCE_GROUPS": CUDA_BATCHED_SOURCE_GROUPS,
         "BEAMZ_CUDA_DISABLE_COINCIDENT_SOURCE_GROUPS": CUDA_COINCIDENT_SOURCE_GROUPS,
         "BEAMZ_CUDA_DISABLE_ADAPTIVE_SOURCE_TILES": CUDA_ADAPTIVE_SOURCE_TILES,

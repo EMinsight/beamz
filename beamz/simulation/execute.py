@@ -563,37 +563,6 @@ def build_scan(program, *, donate_state: bool = False):
         is_3d=is_3d,
     )
     update_kernel = update_runtime.select_update_kernel(step_context)
-    graph_source = (
-        program.sources[0]
-        if cfg.backend == "cuda_streamed"
-        and len(program.sources) == 1
-        and program.sources[0].timing == "pre_e"
-        and program.sources[0].component in {"Ex", "Ey", "Ez"}
-        and program.sources[0].is_slab
-        and program.sources[0].slab_starts is not None
-        and program.sources[0].slab_sizes is not None
-        and tuple(program.sources[0].coeff.shape)
-        == tuple(program.sources[0].slab_sizes)
-        else None
-    )
-    graph_monitor = (
-        program.monitors[0]
-        if graph_source is not None
-        and len(program.monitors) == 1
-        and program.monitors[0].recorder_index < 0
-        and not program.monitors[0].accumulate_power
-        and not program.monitors[0].accumulate_frequency
-        and program.monitors[0].dft_enabled
-        and program.monitors[0].dft_record_interval == 1
-        and program.monitors[0].dft_t_start == 0.0
-        and not np.isfinite(program.monitors[0].dft_t_end)
-        and program.monitors[0].dft_window_code == 0
-        and program.monitors[0].dft_normalization_code == 0
-        and program.monitors[0].freq_count > 0
-        and program.monitors[0].dft_point_count > 0
-        and not bool(jax.config.read("jax_enable_x64"))
-        else None
-    )
     graph_source_groups = tuple(
         source_batches[(timing, component)][0]
         for timing, components in SOURCE_PHASE_COMPONENTS.items()
@@ -636,8 +605,6 @@ def build_scan(program, *, donate_state: bool = False):
             from beamz.simulation.cuda import (
                 run_program_steps,
                 run_source_group_steps,
-                run_source_monitor_steps,
-                run_source_steps,
                 run_steps,
             )
 
@@ -653,23 +620,6 @@ def build_scan(program, *, donate_state: bool = False):
                 chunk_out = (
                     run_steps(chunk_state, step_context, coeffs, chunk_steps)
                     if not program.sources and not program.monitors
-                    else run_source_monitor_steps(
-                        chunk_state,
-                        step_context,
-                        coeffs,
-                        graph_source,
-                        graph_monitor,
-                        chunk_steps,
-                    )
-                    if graph_monitor is not None
-                    else run_source_steps(
-                        chunk_state,
-                        step_context,
-                        coeffs,
-                        graph_source,
-                        chunk_steps,
-                    )
-                    if graph_source is not None and not program.monitors
                     else run_program_steps(
                         chunk_state,
                         step_context,
