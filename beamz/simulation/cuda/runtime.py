@@ -409,7 +409,7 @@ def run_source_group_steps(state, ctx, coeffs, groups, nsteps: int) -> Simulatio
 
 
 def pack_dft_monitors(monitors):
-    """Pack heterogeneous DFT gather plans into one rectangular CUDA batch."""
+    """Pack DFT gather plans with offsets into ragged accumulator arenas."""
     if not monitors:
         raise ValueError("CUDA DFT graph requires at least one monitor")
     max_points = max(int(monitor.dft_point_count) for monitor in monitors)
@@ -467,6 +467,8 @@ def pack_dft_monitors(monitors):
                 monitor.freq_count,
                 monitor.dft_point_count,
                 monitor.dft_record_interval,
+                monitor.dft_value_offset,
+                monitor.dft_weight_offset,
             )
             for monitor in monitors
         ),
@@ -591,13 +593,28 @@ def run_source_monitor_steps(
         or state.dft_vec_re.dtype != jnp.float32
     ):
         raise ValueError("CUDA monitor graph requires a full-time float32 plane DFT")
+    value_count = 6 * int(monitor.freq_count) * int(monitor.dft_point_count)
+    if (
+        int(monitor.dft_value_offset) != 0
+        or int(monitor.dft_weight_offset) != 0
+        or state.dft_vec_re.size != value_count
+        or state.dft_weight_sum.size != int(monitor.freq_count)
+    ):
+        raise ValueError("CUDA single-monitor graph requires one complete DFT arena")
+    dft_vec_re = state.dft_vec_re.reshape(
+        (1, 6, monitor.freq_count, monitor.dft_point_count)
+    )
+    dft_vec_im = state.dft_vec_im.reshape(
+        (1, 6, monitor.freq_count, monitor.dft_point_count)
+    )
+    dft_weight_sum = state.dft_weight_sum.reshape((1, monitor.freq_count))
     arguments, result_values, aliases = _graph_io(state, ctx, coeffs)
     state_output_count = len(result_values)
     result_values = (
         *result_values,
-        state.dft_vec_re,
-        state.dft_vec_im,
-        state.dft_weight_sum,
+        dft_vec_re,
+        dft_vec_im,
+        dft_weight_sum,
     )
     aliases = {
         **aliases,
@@ -620,9 +637,9 @@ def run_source_monitor_steps(
         *monitor.dft_weights,
         monitor.freq_hz,
         monitor.dft_component_mask,
-        state.dft_vec_re,
-        state.dft_vec_im,
-        state.dft_weight_sum,
+        dft_vec_re,
+        dft_vec_im,
+        dft_weight_sum,
         state.t,
         abi_version=np.int32(CUDA_ABI_VERSION),
         nsteps=np.int32(nsteps),
@@ -651,9 +668,9 @@ def run_source_monitor_steps(
         )
     )
     return next_state._replace(
-        dft_vec_re=outputs[state_output_count],
-        dft_vec_im=outputs[state_output_count + 1],
-        dft_weight_sum=outputs[state_output_count + 2],
+        dft_vec_re=outputs[state_output_count].reshape(-1),
+        dft_vec_im=outputs[state_output_count + 1].reshape(-1),
+        dft_weight_sum=outputs[state_output_count + 2].reshape(-1),
     )
 
 

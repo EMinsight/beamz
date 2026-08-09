@@ -727,11 +727,13 @@ __global__ void AccumulateDftGroups(BeamzLaunch h_launch,
   if (monitor >= monitors.monitor_count) return;
 
   const auto* counts = static_cast<const int32_t*>(monitors.counts.data);
-  const int frequency_count = counts[3 * monitor];
-  const int point_count = counts[3 * monitor + 1];
-  const int interval = counts[3 * monitor + 2] > 0
-                           ? counts[3 * monitor + 2]
+  const int frequency_count = counts[5 * monitor];
+  const int point_count = counts[5 * monitor + 1];
+  const int interval = counts[5 * monitor + 2] > 0
+                           ? counts[5 * monitor + 2]
                            : 1;
+  const int value_offset = counts[5 * monitor + 3];
+  const int weight_offset = counts[5 * monitor + 4];
   if (frequency >= frequency_count) return;
 
   const int absolute_step =
@@ -768,8 +770,7 @@ __global__ void AccumulateDftGroups(BeamzLaunch h_launch,
   if (point >= point_count) return;
   if (component == 0 && point == 0) {
     static_cast<float*>(monitors.dft_weight.data)
-        [monitor * static_cast<int>(monitors.dft_weight.dims[1]) + frequency] +=
-        window;
+        [weight_offset + frequency] += window;
   }
   const float mask = static_cast<const float*>(monitors.component_masks.data)
       [monitor * 6 + component];
@@ -797,9 +798,8 @@ __global__ void AccumulateDftGroups(BeamzLaunch h_launch,
              length_unit / sqrtf(6.2831853071795864769f);
   }
   const int accumulator_offset =
-      ((monitor * 6 + component) * static_cast<int>(monitors.dft_re.dims[2]) +
-       frequency) *
-          static_cast<int>(monitors.dft_re.dims[3]) +
+      value_offset +
+      (component * frequency_count + frequency) * point_count +
       point;
   static_cast<float*>(monitors.dft_re.data)[accumulator_offset] +=
       scale * sample * phase_cos;
@@ -1239,8 +1239,8 @@ int BeamzLaunchStreamedProgramSteps(
       monitors.weights.rank != 4 || monitors.frequencies.rank != 2 ||
       monitors.component_masks.rank != 2 || monitors.counts.rank != 2 ||
       monitors.codes.rank != 2 || monitors.windows.rank != 2 ||
-      monitors.dft_re.rank != 4 || monitors.dft_im.rank != 4 ||
-      monitors.dft_weight.rank != 2 || monitors.time.rank != 0 ||
+      monitors.dft_re.rank != 1 || monitors.dft_im.rank != 1 ||
+      monitors.dft_weight.rank != 1 || monitors.time.rank != 0 ||
       monitors.current_step.rank != 0 ||
       monitors.indices.dims[0] < monitors.monitor_count ||
       monitors.indices.dims[1] != 6 ||
@@ -1252,21 +1252,14 @@ int BeamzLaunchStreamedProgramSteps(
       monitors.component_masks.dims[0] < monitors.monitor_count ||
       monitors.component_masks.dims[1] != 6 ||
       monitors.counts.dims[0] < monitors.monitor_count ||
-      monitors.counts.dims[1] != 3 ||
+      monitors.counts.dims[1] != 5 ||
       monitors.codes.dims[0] < monitors.monitor_count ||
       monitors.codes.dims[1] != 2 ||
       monitors.windows.dims[0] < monitors.monitor_count ||
       monitors.windows.dims[1] != 3 ||
-      monitors.dft_re.dims[0] < monitors.monitor_count ||
-      monitors.dft_re.dims[1] != 6 ||
-      monitors.dft_re.dims[2] < monitors.frequencies.dims[1] ||
-      monitors.dft_re.dims[3] < monitors.indices.dims[2] ||
+      monitors.dft_re.dims[0] < 1 ||
       monitors.dft_im.dims[0] != monitors.dft_re.dims[0] ||
-      monitors.dft_im.dims[1] != monitors.dft_re.dims[1] ||
-      monitors.dft_im.dims[2] != monitors.dft_re.dims[2] ||
-      monitors.dft_im.dims[3] != monitors.dft_re.dims[3] ||
-      monitors.dft_weight.dims[0] < monitors.monitor_count ||
-      monitors.dft_weight.dims[1] < monitors.frequencies.dims[1]) {
+      monitors.dft_weight.dims[0] < 1) {
     return cudaErrorInvalidValue;
   }
   for (int32_t index = 0; index < source_group_count; ++index) {

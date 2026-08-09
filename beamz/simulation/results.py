@@ -815,12 +815,22 @@ class MonitorResults:
         if spec.dft_enabled and fc > 0 and pc > 0:
             from beamz.lattice import public_component_2d
 
+            value_offset = int(spec.dft_value_offset)
+            value_count = 6 * fc * pc
+            packed_re = np.asarray(
+                state.dft_vec_re[value_offset : value_offset + value_count],
+                dtype=np.float64,
+            ).reshape(6, fc, pc)
+            packed_im = np.asarray(
+                state.dft_vec_im[value_offset : value_offset + value_count],
+                dtype=np.float64,
+            ).reshape(6, fc, pc)
             comp_mask_arr = np.asarray(spec.dft_component_mask, dtype=np.float32)
             for comp_i, comp_name in enumerate(("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")):
                 if comp_mask_arr[comp_i] <= 0.0:
                     continue
-                re = np.asarray(state.dft_vec_re[i, comp_i, :fc, :pc], dtype=np.float64)
-                im = np.asarray(state.dft_vec_im[i, comp_i, :fc, :pc], dtype=np.float64)
+                re = packed_re[comp_i]
+                im = packed_im[comp_i]
                 if not bool(config.is_3d) and comp_name in (
                     {"Ez", "Hx", "Hy"}
                     if config.polarization_2d == "tm"
@@ -855,7 +865,10 @@ class MonitorResults:
             dft_fields=dft_fields,
             dft_frequencies=dft_frequencies.copy(),
             dft_weight_sum=np.asarray(
-                state.dft_weight_sum[i, :fc], dtype=np.float64
+                state.dft_weight_sum[
+                    spec.dft_weight_offset : spec.dft_weight_offset + fc
+                ],
+                dtype=np.float64,
             ).copy(),
             dft_base_dt=float(config.dt),
             resolution=float(config.resolution),

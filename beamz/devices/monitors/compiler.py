@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import jax.numpy as jnp
@@ -83,6 +83,8 @@ class CompiledMonitorSpec:
     dft_normalization_code: int = 0  # 0=native, 1=physical
     dft_length_unit: float = 1e-6
     dft_point_count: int = 0
+    dft_value_offset: int = 0
+    dft_weight_offset: int = 0
     dft_component_mask: jnp.ndarray = field(default_factory=_empty_array)
     sample_flat_idx: tuple[jnp.ndarray, ...] = ()
     sample_weights: tuple[jnp.ndarray, ...] = ()
@@ -614,4 +616,21 @@ def compile_monitor_specs(
                 )
             )
 
-    return tuple(specs), max_records
+    # DFT state is a pair of ragged one-dimensional arenas. Prefix offsets avoid the
+    # former monitor × max-frequency × max-point Cartesian padding while remaining
+    # static values in the compiled acquisition plan.
+    dft_value_offset = 0
+    dft_weight_offset = 0
+    packed_specs = []
+    for spec in specs:
+        packed_specs.append(
+            replace(
+                spec,
+                dft_value_offset=dft_value_offset,
+                dft_weight_offset=dft_weight_offset,
+            )
+        )
+        dft_value_offset += 6 * int(spec.freq_count) * int(spec.dft_point_count)
+        dft_weight_offset += int(spec.freq_count)
+
+    return tuple(packed_specs), max_records

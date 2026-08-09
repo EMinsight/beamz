@@ -17,12 +17,12 @@ class _FakeDevice:
     compute_capability = (9, 0)
 
 
-def _extension(*targets, abi_version=2, complete_streamed=True):
+def _extension(*targets, abi_version=3, complete_streamed=True):
     targets = set(targets)
     if complete_streamed and "beamz_cuda_streamed" in targets:
         targets.update(backend_runtime.CUDA_STREAMED_TARGETS)
     return SimpleNamespace(
-        __version__="0.2.0",
+        __version__="0.3.0",
         __abi_version__=abi_version,
         registrations=lambda: {target: object() for target in targets},
     )
@@ -160,8 +160,8 @@ def test_explicit_cuda_rejects_full_tensor_permittivity():
 def test_cuda_status_exposes_complete_diagnostics():
     status = backend_runtime.CudaBackendStatus(
         available=True,
-        extension_version="0.2.0",
-        abi_version=2,
+        extension_version="0.3.0",
+        abi_version=3,
         targets=("beamz_cuda_streamed",),
         gpu_devices=("NVIDIA H100 80GB HBM3",),
         compute_capabilities=(90,),
@@ -169,8 +169,8 @@ def test_cuda_status_exposes_complete_diagnostics():
 
     assert status.as_dict() == {
         "available": True,
-        "extension_version": "0.2.0",
-        "abi_version": 2,
+        "extension_version": "0.3.0",
+        "abi_version": 3,
         "targets": ("beamz_cuda_streamed",),
         "gpu_devices": ("NVIDIA H100 80GB HBM3",),
         "compute_capabilities": (90,),

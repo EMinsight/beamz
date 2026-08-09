@@ -38,8 +38,8 @@ release supports one GPU and float32 3D grids. Multi-GPU and 2D simulations reta
 the JAX backend.
 
 BeamZ validates the extension's explicit ABI version and complete streamed-target
-manifest before registering any FFI handler. ABI v2 is distributed as
-`beamz-cuda==0.2.0`; an older or partial wheel makes `auto` fall back to JAX and
+manifest before registering any FFI handler. ABI v3 is distributed as
+`beamz-cuda==0.3.0`; an older or partial wheel makes `auto` fall back to JAX and
 causes explicit CUDA requests to fail with a compatibility diagnostic.
 
 No CUDA result is promoted without all of the following on real hardware:
@@ -59,7 +59,7 @@ The host FFI decoder deliberately has no CUDA-header dependency and can be check
 on developer machines with the JAX headers alone:
 
 ```console
-clang++ -std=c++17 -DBEAMZ_CUDA_ABI_VERSION=2 \
+clang++ -std=c++17 -DBEAMZ_CUDA_ABI_VERSION=3 \
   -I"$(python -c 'import jax; print(jax.ffi.include_dir())')" -Icuda/src \
   -fsyntax-only cuda/src/ffi_handler.cc
 ```

@@ -6,7 +6,7 @@
 namespace nb = nanobind;
 
 NB_MODULE(beamz_cuda, module) {
-  module.attr("__version__") = "0.2.0";
+  module.attr("__version__") = "0.3.0";
   module.attr("__abi_version__") = BEAMZ_CUDA_ABI_VERSION;
   module.def("registrations", []() {
     nb::dict registrations;

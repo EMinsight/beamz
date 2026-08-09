@@ -73,7 +73,7 @@ def test_cuda_ffi_phase_packs_cpml_and_aliases_state(monkeypatch):
     assert len(results) == 9
     assert len(arguments) == 40
     assert attributes == {
-        "abi_version": np.int32(2),
+        "abi_version": np.int32(cuda_runtime.CUDA_ABI_VERSION),
         "phase": np.int32(0),
         "nterms": np.int32(6),
         "dt": np.float32(context.dt),
@@ -159,7 +159,7 @@ def test_cuda_multi_step_ffi_aliases_all_fields(monkeypatch):
     assert len(arguments) == 30
     assert options["input_output_aliases"] == {index: index for index in range(12)}
     assert attributes == {
-        "abi_version": np.int32(2),
+        "abi_version": np.int32(cuda_runtime.CUDA_ABI_VERSION),
         "nsteps": np.int32(7),
         "dt": np.float32(context.dt),
         "resolution": np.float32(context.resolution),
@@ -351,7 +351,7 @@ def test_cuda_program_graph_packs_monitor_batch_and_aliases_accumulators(monkeyp
     assert options["input_output_aliases"][109] == 19
     assert options["input_output_aliases"][110] == 20
     assert attributes["monitor_count"] == np.int32(1)
-    assert next_state.dft_vec_re is state.dft_vec_re
+    np.testing.assert_array_equal(next_state.dft_vec_re, state.dft_vec_re)
 
 
 def test_cuda_source_graph_supports_pec_without_cpml(monkeypatch):
@@ -416,7 +416,7 @@ def test_cuda_source_monitor_graph_aliases_dft_accumulators(monkeypatch):
     assert options["input_output_aliases"][93] == 20
     assert attributes["frequency_count"] == np.int32(3)
     assert attributes["cpml_enabled"] == np.int32(1)
-    assert next_state.dft_vec_re is state.dft_vec_re
+    np.testing.assert_array_equal(next_state.dft_vec_re, state.dft_vec_re)
 
 
 def test_cuda_source_monitor_graph_supports_pec_without_cpml(monkeypatch):
@@ -448,7 +448,7 @@ def test_cuda_source_monitor_graph_supports_pec_without_cpml(monkeypatch):
     assert options["input_output_aliases"][42] == 7
     assert options["input_output_aliases"][43] == 8
     assert attributes["cpml_enabled"] == np.int32(0)
-    assert next_state.dft_vec_re is state.dft_vec_re
+    np.testing.assert_array_equal(next_state.dft_vec_re, state.dft_vec_re)
 
 
 def test_cuda_backend_selects_hybrid_jax_orchestration_kernel():
