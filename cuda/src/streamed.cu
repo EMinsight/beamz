@@ -1886,6 +1886,167 @@ int BeamzLaunchStreamedSourceGroupSteps(
                              nullptr, nsteps);
 }
 
+int BeamzLaunchTemporalCpmlSourceGroupSteps(
+    void* raw_stream, const BeamzLaunch& h_ab, const BeamzLaunch& e_ab,
+    const BeamzLaunch& h_ba, const BeamzLaunch& e_ba,
+    const BeamzSourceGroupLaunch* source_groups, int32_t source_group_count,
+    int32_t nsteps) {
+  if (source_groups == nullptr || source_group_count != 9 || nsteps < 1 ||
+      h_ab.phase != 0 || e_ab.phase != 1 || h_ba.phase != 0 ||
+      e_ba.phase != 1 || h_ab.nterms != 6 || e_ab.nterms != 6 ||
+      h_ba.nterms != 6 || e_ba.nterms != 6) {
+    return cudaErrorInvalidValue;
+  }
+  for (int32_t index = 0; index < source_group_count; ++index) {
+    const BeamzSourceGroupLaunch& group = source_groups[index];
+    if (group.component < 0 || group.component > 2 || group.timing < 0 ||
+        group.timing > 2 || group.coefficients.rank != 4 ||
+        group.waveforms.rank != 2 || group.starts.rank != 2 ||
+        group.current_step.rank != 0 ||
+        group.coefficients.dims[0] != group.waveforms.dims[0] ||
+        group.coefficients.dims[0] != group.starts.dims[0] ||
+        group.starts.dims[1] != 3 || group.waveforms.dims[1] < 1 ||
+        !FitsIntOffsets(group.coefficients) ||
+        !FitsIntOffsets(group.waveforms) || !FitsIntOffsets(group.starts)) {
+      return cudaErrorInvalidValue;
+    }
+  }
+  auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
+  std::string graph_key = "temporal-cpml-source-groups";
+  graph_key += GraphKey(raw_stream, h_ab, e_ab, nsteps, nullptr,
+                        source_groups, source_group_count);
+  graph_key.append(reinterpret_cast<const char*>(&h_ba), sizeof(h_ba));
+  graph_key.append(reinterpret_cast<const char*>(&e_ba), sizeof(e_ba));
+  GraphCache& cache = CachedGraphs();
+  const bool cache_enabled = GraphCacheEnabled();
+  if (cache_enabled) {
+    std::lock_guard<std::mutex> lock(cache.mutex);
+    const auto cached = cache.entries.find(graph_key);
+    if (cached != cache.entries.end()) {
+      return static_cast<int>(cudaGraphLaunch(cached->second, stream));
+    }
+  }
+
+  auto launch_steps = [&]() {
+    cudaError_t launch_error = cudaSuccess;
+    auto launch_source_groups = [&](const BeamzLaunch& h_launch,
+                                    const BeamzLaunch& e_launch, int timing,
+                                    int32_t step) {
+      for (int32_t group_index = 0; group_index < source_group_count;
+           ++group_index) {
+        const BeamzSourceGroupLaunch& group = source_groups[group_index];
+        if (group.timing != timing || group.coefficients.dims[0] == 0) continue;
+        const BeamzBuffer& target =
+            timing == 0 ? e_launch.inputs[group.component]
+                        : (timing == 1 ? h_launch.outputs[group.component]
+                                       : e_launch.outputs[group.component]);
+        const dim3 source_threads = SourceThreads(group.coefficients.dims[3]);
+        const int z_blocks =
+            (group.coefficients.dims[1] + source_threads.z - 1) /
+            source_threads.z;
+        const bool coincident = group.coincident != 0 &&
+                                CoincidentSourceGroupsEnabled();
+        const bool batched = BatchedSourceGroupsEnabled();
+        const int launch_z_blocks =
+            !coincident && batched
+                ? z_blocks * group.coefficients.dims[0]
+                : z_blocks;
+        const dim3 source_blocks(
+            (group.coefficients.dims[3] + source_threads.x - 1) /
+                source_threads.x,
+            (group.coefficients.dims[2] + source_threads.y - 1) /
+                source_threads.y,
+            launch_z_blocks);
+        if (coincident) {
+          ApplyCoincidentSourceGroup<<<source_blocks, source_threads, 0,
+                                       stream>>>(target, group, step,
+                                                 h_launch.metallic_edges);
+          launch_error = cudaPeekAtLastError();
+        } else if (batched) {
+          ApplySourceGroupBatched<<<source_blocks, source_threads, 0, stream>>>(
+              target, group, z_blocks, step, h_launch.metallic_edges);
+          launch_error = cudaPeekAtLastError();
+        } else {
+          for (int32_t source_index = 0;
+               source_index < group.coefficients.dims[0]; ++source_index) {
+            ApplySourceGroup<<<source_blocks, source_threads, 0, stream>>>(
+                target, group, source_index, step, h_launch.metallic_edges);
+            launch_error = cudaPeekAtLastError();
+            if (launch_error != cudaSuccess) return;
+          }
+        }
+      }
+    };
+    for (int32_t step = 0; step < nsteps; ++step) {
+      const bool ab = (step & 1) == 0;
+      const BeamzLaunch& h_launch = ab ? h_ab : h_ba;
+      const BeamzLaunch& e_launch = ab ? e_ab : e_ba;
+      launch_source_groups(h_launch, e_launch, 0, step);
+      if (launch_error != cudaSuccess) return launch_error;
+      if (CpmlCoreScheduleSupported(h_launch, e_launch)) {
+        launch_error = LaunchCpmlShellPhase(stream, h_launch);
+        if (launch_error != cudaSuccess) return launch_error;
+        launch_error = LaunchCpmlCorePhase(stream, h_launch);
+        if (launch_error != cudaSuccess) return launch_error;
+        launch_source_groups(h_launch, e_launch, 1, step);
+        if (launch_error != cudaSuccess) return launch_error;
+        launch_error = LaunchCpmlShellPhase(stream, e_launch);
+        if (launch_error != cudaSuccess) return launch_error;
+        launch_error = LaunchCpmlCorePhase(stream, e_launch);
+      } else {
+        launch_error = static_cast<cudaError_t>(
+            BeamzLaunchStreamed(raw_stream, h_launch));
+        if (launch_error != cudaSuccess) return launch_error;
+        launch_source_groups(h_launch, e_launch, 1, step);
+        if (launch_error != cudaSuccess) return launch_error;
+        launch_error = static_cast<cudaError_t>(
+            BeamzLaunchStreamed(raw_stream, e_launch));
+      }
+      if (launch_error != cudaSuccess) return launch_error;
+      launch_source_groups(h_launch, e_launch, 2, step);
+      if (launch_error != cudaSuccess) return launch_error;
+    }
+    return launch_error;
+  };
+
+  cudaGraph_t graph = nullptr;
+  cudaGraphExec_t executable = nullptr;
+  cudaError_t error =
+      cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal);
+  if (error != cudaSuccess) {
+    (void)cudaGetLastError();
+    return static_cast<int>(launch_steps());
+  }
+  error = launch_steps();
+  const cudaError_t end_error = cudaStreamEndCapture(stream, &graph);
+  if (error == cudaSuccess) error = end_error;
+  if (error == cudaSuccess) error = cudaGraphInstantiate(&executable, graph, 0);
+  if (error == cudaSuccess && cache_enabled) {
+    std::lock_guard<std::mutex> lock(cache.mutex);
+    if (cache.entries.size() >= kMaxCachedGraphs) {
+      for (const auto& [unused_key, cached] : cache.entries) {
+        (void)unused_key;
+        cudaGraphExecDestroy(cached);
+      }
+      cache.entries.clear();
+    }
+    const auto [entry, inserted] = cache.entries.emplace(graph_key, executable);
+    if (!inserted) {
+      cudaGraphExecDestroy(executable);
+      executable = entry->second;
+    }
+    error = cudaGraphLaunch(executable, stream);
+  }
+  if (error == cudaSuccess && !cache_enabled) {
+    error = cudaGraphLaunch(executable, stream);
+  }
+  if (!cache_enabled && executable != nullptr) {
+    cudaGraphExecDestroy(executable);
+  }
+  if (graph != nullptr) cudaGraphDestroy(graph);
+  return static_cast<int>(error);
+}
+
 int BeamzLaunchStreamedProgramSteps(
     void* raw_stream, const BeamzLaunch& h_launch,
     const BeamzLaunch& e_launch,

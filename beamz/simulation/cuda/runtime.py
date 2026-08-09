@@ -337,6 +337,36 @@ def _coincident_source_group_mask(groups) -> int:
     return mask
 
 
+def _temporal_cpml_source_groups_supported(ctx, coeffs, nsteps: int) -> bool:
+    """Whether a frozen second field bank can use the fused regular-grid core."""
+    disabled = os.environ.get("BEAMZ_CUDA_DISABLE_CPML_TEMPORAL", "")
+    if disabled and disabled != "0":
+        return False
+    if (
+        nsteps < 2
+        or not ctx.boundary.cpml.enabled
+        or ctx.config.metric_kind != "isotropic_uniform"
+        or (_boundary_code(
+            ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms
+        )
+        >> 8)
+        <= 0
+    ):
+        return False
+    h_values = (
+        coeffs.h_decay_x,
+        coeffs.h_decay_y,
+        coeffs.h_decay_z,
+        coeffs.h_source_x,
+        coeffs.h_source_y,
+        coeffs.h_source_z,
+    )
+    e_sources = (coeffs.e_source_x, coeffs.e_source_y, coeffs.e_source_z)
+    return all(value.ndim == 0 for value in h_values) and all(
+        value.ndim == 1 and value.dtype == jnp.int32 for value in e_sources
+    )
+
+
 def run_source_steps(state, ctx, coeffs, source, nsteps: int) -> SimulationState:
     """Advance one packed pre-E source through one CUDA graph call."""
     if nsteps < 1:
@@ -407,8 +437,27 @@ def run_source_group_steps(state, ctx, coeffs, groups, nsteps: int) -> Simulatio
             else (group.coeffs, group.waveforms, group.starts)
         )
     arguments, result_values, aliases = _graph_io(state, ctx, coeffs)
+    use_temporal_cpml = _temporal_cpml_source_groups_supported(ctx, coeffs, nsteps)
+    if use_temporal_cpml:
+        fields = (state.hx, state.hy, state.hz, state.ex, state.ey, state.ez)
+        workspace = tuple(jnp.empty_like(value) for value in fields)
+        arguments = (*arguments, *workspace)
+        result_values = (
+            *fields,
+            *workspace,
+            *state.cpml_psi_h_terms,
+            *state.cpml_psi_e_terms,
+        )
+        aliases = {index: index for index in range(6)}
+        aliases.update({74 + index: 6 + index for index in range(6)})
+        aliases.update({31 + index: 12 + index for index in range(6)})
+        aliases.update({62 + index: 18 + index for index in range(6)})
     call = jax.ffi.ffi_call(
-        "beamz_cuda_streamed_source_groups_cpml_steps",
+        (
+            "beamz_cuda_temporal_source_groups_cpml_steps"
+            if use_temporal_cpml
+            else "beamz_cuda_streamed_source_groups_cpml_steps"
+        ),
         tuple(_shape(value) for value in result_values),
         input_output_aliases=aliases,
         vmap_method="sequential",
@@ -427,11 +476,27 @@ def run_source_group_steps(state, ctx, coeffs, groups, nsteps: int) -> Simulatio
             )
         ),
         metric_kind=_metric_kind_code(ctx),
-        cpml_enabled=np.int32(ctx.boundary.cpml.enabled),
         coincident_source_group_mask=np.int32(
             _coincident_source_group_mask(groups)
         ),
+        **(
+            {}
+            if use_temporal_cpml
+            else {"cpml_enabled": np.int32(ctx.boundary.cpml.enabled)}
+        ),
     )
+    if use_temporal_cpml:
+        field_start = 0 if nsteps % 2 == 0 else 6
+        return state._replace(
+            hx=outputs[field_start],
+            hy=outputs[field_start + 1],
+            hz=outputs[field_start + 2],
+            ex=outputs[field_start + 3],
+            ey=outputs[field_start + 4],
+            ez=outputs[field_start + 5],
+            cpml_psi_h_terms=outputs[12:18],
+            cpml_psi_e_terms=outputs[18:24],
+        )
     if ctx.boundary.cpml.enabled:
         return _replace_graph_outputs(state, outputs)
     return state._replace(

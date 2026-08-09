@@ -6,7 +6,7 @@
 namespace nb = nanobind;
 
 NB_MODULE(beamz_cuda, module) {
-  module.attr("__version__") = "0.5.0";
+  module.attr("__version__") = "0.6.0";
   module.attr("__abi_version__") = BEAMZ_CUDA_ABI_VERSION;
   module.def("registrations", []() {
     nb::dict registrations;
@@ -23,6 +23,9 @@ NB_MODULE(beamz_cuda, module) {
     registrations["beamz_cuda_streamed_source_groups_cpml_steps"] = nb::capsule(
         reinterpret_cast<void*>(
             beamz_cuda_streamed_source_groups_cpml_steps));
+    registrations["beamz_cuda_temporal_source_groups_cpml_steps"] = nb::capsule(
+        reinterpret_cast<void*>(
+            beamz_cuda_temporal_source_groups_cpml_steps));
     registrations["beamz_cuda_streamed_program_cpml_steps"] = nb::capsule(
         reinterpret_cast<void*>(beamz_cuda_streamed_program_cpml_steps));
     registrations["beamz_cuda_streamed_source_monitor_cpml_steps"] =

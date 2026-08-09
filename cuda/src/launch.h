@@ -98,6 +98,11 @@ int BeamzLaunchStreamedSourceGroupSteps(
     void* stream, const BeamzLaunch& h_launch, const BeamzLaunch& e_launch,
     const BeamzSourceGroupLaunch* source_groups, int32_t source_group_count,
     int32_t nsteps);
+int BeamzLaunchTemporalCpmlSourceGroupSteps(
+    void* stream, const BeamzLaunch& h_ab, const BeamzLaunch& e_ab,
+    const BeamzLaunch& h_ba, const BeamzLaunch& e_ba,
+    const BeamzSourceGroupLaunch* source_groups, int32_t source_group_count,
+    int32_t nsteps);
 int BeamzLaunchStreamedProgramSteps(
     void* stream, const BeamzLaunch& h_launch, const BeamzLaunch& e_launch,
     const BeamzSourceGroupLaunch* source_groups, int32_t source_group_count,

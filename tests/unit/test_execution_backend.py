@@ -287,6 +287,7 @@ def test_typed_ffi_registrations_use_cuda_api_v1(monkeypatch):
         "beamz_cuda_streamed_source_groups_cpml_steps",
         "beamz_cuda_streamed_source_monitor_cpml_steps",
         "beamz_cuda_streamed_steps",
+        "beamz_cuda_temporal_source_groups_cpml_steps",
         "beamz_cuda_temporal_steps",
     )
     assert {name for name, _, _ in registrations} == set(targets)

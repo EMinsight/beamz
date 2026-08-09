@@ -531,6 +531,116 @@ ffi::Error StreamedSourceGroupsCpmlStepsHandler(
                    std::to_string(error));
 }
 
+// A second XLA-owned field bank lets the CUDA implementation freeze every
+// timestep's inputs.  The native scheduler can then fuse the CPML-free core
+// without racing another block that still needs the old magnetic halo.
+ffi::Error TemporalSourceGroupsCpmlStepsHandler(
+    void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
+    int32_t abi_version, int32_t nsteps, float dt, float resolution,
+    int32_t metallic_edges, int32_t metric_kind,
+    int32_t coincident_source_group_mask) {
+  constexpr int32_t kSourceGroupCount = 9;
+  constexpr size_t kGraphInputCount = 74;
+  constexpr size_t kWorkspaceInputCount = 6;
+  constexpr size_t kSourceInputCount = 3 * kSourceGroupCount + 1;
+  constexpr size_t kInputCount =
+      kGraphInputCount + kWorkspaceInputCount + kSourceInputCount;
+  constexpr size_t kOutputCount = 24;
+  if (abi_version != BEAMZ_CUDA_ABI_VERSION || nsteps < 1 ||
+      metric_kind < 0 || metric_kind > 2 ||
+      coincident_source_group_mask < 0 ||
+      coincident_source_group_mask >= (1 << kSourceGroupCount)) {
+    return ffi::Error::InvalidArgument(
+        "invalid BeamZ CUDA temporal CPML source-group attributes");
+  }
+  BeamzBuffer inputs[kInputCount]{};
+  BeamzBuffer outputs[kOutputCount]{};
+  for (size_t index = 0; index < kInputCount; ++index) {
+    auto decoded = args.get<ffi::AnyBuffer>(index);
+    if (!decoded) return decoded.error();
+    if (auto error = DecodeBuffer(*decoded, &inputs[index]); error.failure()) {
+      return error;
+    }
+  }
+  for (size_t index = 0; index < kOutputCount; ++index) {
+    auto decoded = rets.get<ffi::AnyBuffer>(index);
+    if (!decoded) return decoded.error();
+    if (auto error = DecodeBuffer(**decoded, &outputs[index]); error.failure()) {
+      return error;
+    }
+  }
+
+  auto initialize = [&](int32_t phase) {
+    BeamzLaunch launch{};
+    launch.abi_version = abi_version;
+    launch.phase = phase;
+    launch.nterms = 6;
+    launch.metric_kind = metric_kind;
+    launch.dt = dt;
+    launch.resolution = resolution;
+    launch.inv_resolution = 1.0f / resolution;
+    launch.dt_over_eps = dt / kEps0;
+    launch.dt_over_mu = dt / kMu0;
+    SetBoundaryCode(&launch, metallic_edges);
+    return launch;
+  };
+  BeamzLaunch h_ab = initialize(0);
+  BeamzLaunch e_ab = initialize(1);
+  BeamzLaunch h_ba = initialize(0);
+  BeamzLaunch e_ba = initialize(1);
+  for (int component = 0; component < 3; ++component) {
+    // A occupies outputs 0..5 and B occupies outputs 6..11.  Both output
+    // groups alias their corresponding input buffers in the typed FFI call.
+    h_ab.inputs[component] = outputs[component];
+    h_ab.inputs[3 + component] = outputs[3 + component];
+    h_ab.outputs[component] = outputs[6 + component];
+    e_ab.inputs[component] = outputs[3 + component];
+    e_ab.inputs[3 + component] = outputs[6 + component];
+    e_ab.outputs[component] = outputs[9 + component];
+
+    h_ba.inputs[component] = outputs[6 + component];
+    h_ba.inputs[3 + component] = outputs[9 + component];
+    h_ba.outputs[component] = outputs[component];
+    e_ba.inputs[component] = outputs[9 + component];
+    e_ba.inputs[3 + component] = outputs[component];
+    e_ba.outputs[component] = outputs[3 + component];
+  }
+  for (int index = 0; index < 31; ++index) {
+    h_ab.inputs[6 + index] = h_ba.inputs[6 + index] = inputs[6 + index];
+    e_ab.inputs[6 + index] = e_ba.inputs[6 + index] = inputs[37 + index];
+  }
+  for (int term = 0; term < 6; ++term) {
+    h_ab.outputs[3 + term] = h_ba.outputs[3 + term] = outputs[12 + term];
+    e_ab.outputs[3 + term] = e_ba.outputs[3 + term] = outputs[18 + term];
+  }
+  for (int axis = 0; axis < 3; ++axis) {
+    h_ab.metrics[axis] = h_ba.metrics[axis] = inputs[68 + axis];
+    e_ab.metrics[axis] = e_ba.metrics[axis] = inputs[71 + axis];
+  }
+
+  BeamzSourceGroupLaunch groups[kSourceGroupCount]{};
+  constexpr size_t kSourceOffset = kGraphInputCount + kWorkspaceInputCount;
+  const BeamzBuffer& current_step =
+      inputs[kSourceOffset + 3 * kSourceGroupCount];
+  for (int32_t index = 0; index < kSourceGroupCount; ++index) {
+    groups[index].coefficients = inputs[kSourceOffset + 3 * index];
+    groups[index].waveforms = inputs[kSourceOffset + 3 * index + 1];
+    groups[index].starts = inputs[kSourceOffset + 3 * index + 2];
+    groups[index].current_step = current_step;
+    groups[index].timing = index / 3;
+    groups[index].component = index % 3;
+    groups[index].coincident =
+        (coincident_source_group_mask & (1 << index)) != 0;
+  }
+  const int error = BeamzLaunchTemporalCpmlSourceGroupSteps(
+      stream, h_ab, e_ab, h_ba, e_ba, groups, kSourceGroupCount, nsteps);
+  return error == 0
+             ? ffi::Error::Success()
+             : ffi::Error::Internal(
+                   "BeamZ CUDA temporal source-group CPML launch failed: " +
+                   std::to_string(error));
+}
+
 ffi::Error StreamedProgramCpmlStepsHandler(
     void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
     int32_t abi_version, int32_t nsteps, float dt, float resolution,
@@ -856,6 +966,21 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<int32_t>("metallic_edges")
         .Attr<int32_t>("metric_kind")
         .Attr<int32_t>("cpml_enabled")
+        .Attr<int32_t>("coincident_source_group_mask"));
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    beamz_cuda_temporal_source_groups_cpml_steps,
+    TemporalSourceGroupsCpmlStepsHandler,
+    ffi::Ffi::Bind()
+        .Ctx<ffi::PlatformStream<void*>>()
+        .RemainingArgs()
+        .RemainingRets()
+        .Attr<int32_t>("abi_version")
+        .Attr<int32_t>("nsteps")
+        .Attr<float>("dt")
+        .Attr<float>("resolution")
+        .Attr<int32_t>("metallic_edges")
+        .Attr<int32_t>("metric_kind")
         .Attr<int32_t>("coincident_source_group_mask"));
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
