@@ -16,7 +16,6 @@ enum BeamzCudaFlag : int32_t {
   kBeamzAdaptiveSourceTiles = 1 << 3,
   kBeamzCpmlCoreSplit = 1 << 4,
   kBeamzCombinedCpmlQueue = 1 << 5,
-  kBeamzPersistentCpml = 1 << 6,
   kBeamzGraphCache = 1 << 7,
   kBeamzTemporalPsi = 1 << 8,
   kBeamzTemporalCpml = 1 << 9,

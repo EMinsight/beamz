@@ -322,38 +322,6 @@ def test_streamed_cuda_matches_jax_complete_state(cpml):
     _assert_state_close(reference, actual)
 
 
-def test_persistent_cpml_covers_every_cell_and_matches_graph(monkeypatch):
-    simulation, state = _simulation_and_seed(
-        cpml=True,
-        source=False,
-        monitor=False,
-        heterogeneous=True,
-        timesteps=24,
-    )
-    # Make skipped or duplicated tile rows impossible to hide under the small
-    # absolute tolerance used for physically scaled parity workloads.
-    state = state._replace(
-        **{
-            name: np.asarray(getattr(state, name), dtype=np.float32) * np.float32(1e5)
-            for name in ("ex", "ey", "ez", "hx", "hy", "hz")
-        }
-    )
-    monkeypatch.setenv("BEAMZ_CUDA_ENABLE_PERSISTENT_CPML", "1")
-    monkeypatch.delenv("BEAMZ_CUDA_DISABLE_PERSISTENT_CPML", raising=False)
-    persistent_program = simulation.compile(num_steps=24, backend="cuda_streamed")
-    persistent = build_scan(persistent_program)(
-        _copy_state(state), persistent_program.coefficients
-    )
-    persistent.ez.block_until_ready()
-
-    monkeypatch.setenv("BEAMZ_CUDA_DISABLE_PERSISTENT_CPML", "1")
-    graph_program = simulation.compile(num_steps=24, backend="cuda_streamed")
-    graph = build_scan(graph_program)(_copy_state(state), graph_program.coefficients)
-    graph.ez.block_until_ready()
-
-    _assert_state_close(graph, persistent, dynamic_atol_scale=1e-7)
-
-
 def test_bf16_cpml_hybrid_queue_matches_split_schedule(monkeypatch):
     simulation, seeded = _simulation_and_seed(
         cpml=True,

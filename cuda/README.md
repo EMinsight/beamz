@@ -55,13 +55,6 @@ queue uses a precision-specific `32 × 4` absorber tile and remaps the same 128
 threads to a `64 × 2` recurrence-free core tile; FP32 retains its measured-optimal
 `64 × 4` queue.
 
-The exact cooperative persistent CPML scheduler remains available as an
-experimental diagnostic with `BEAMZ_CUDA_ENABLE_PERSISTENT_CPML=1`. Its
-warp-tiled resident grid covers every physical cell and bounds individual
-launches to avoid starving an interactive display, but the CUDA-graph scheduler
-currently sustains substantially higher bandwidth on GA102 and therefore
-remains the default. `BEAMZ_CUDA_DISABLE_PERSISTENT_CPML=1` overrides the opt-in.
-
 No CUDA result is promoted without all of the following on real hardware:
 
 - compile with the oldest supported CUDA toolkit and import beside supported JAX;

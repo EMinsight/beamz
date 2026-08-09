@@ -33,7 +33,6 @@ CUDA_COINCIDENT_SOURCE_GROUPS = 1 << 2
 CUDA_ADAPTIVE_SOURCE_TILES = 1 << 3
 CUDA_CPML_CORE_SPLIT = 1 << 4
 CUDA_COMBINED_CPML_QUEUE = 1 << 5
-CUDA_PERSISTENT_CPML = 1 << 6
 CUDA_GRAPH_CACHE = 1 << 7
 CUDA_TEMPORAL_PSI = 1 << 8
 CUDA_TEMPORAL_CPML = 1 << 9
@@ -99,10 +98,6 @@ def cuda_flags_from_env() -> int:
     for name, flag in disable_flags.items():
         if _env_enabled(name, default=False):
             flags &= ~flag
-    if _env_enabled("BEAMZ_CUDA_ENABLE_PERSISTENT_CPML", default=False) and not (
-        _env_enabled("BEAMZ_CUDA_DISABLE_PERSISTENT_CPML", default=False)
-    ):
-        flags |= CUDA_PERSISTENT_CPML
     precision = os.environ.get("BEAMZ_CUDA_CPML_PSI_PRECISION", "fp32").lower()
     if precision in {"bf16", "bfloat16"}:
         flags |= CUDA_BF16_PSI
