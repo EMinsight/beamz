@@ -10,6 +10,12 @@ from typing import Literal
 
 import jax
 
+from beamz.simulation._cuda_abi import (
+    CUDA_ABI_VERSION,
+    CUDA_HOPPER_TARGET,
+    CUDA_STREAMED_TARGETS,
+)
+
 ExecutionBackend = Literal[
     "auto",
     "jax",
@@ -21,7 +27,6 @@ ResolvedBackend = Literal["jax", "cuda_streamed", "cuda_hopper"]
 
 _EXTENSION_MODULE = "beamz_cuda"
 _REGISTERED_MODULE: ModuleType | None = None
-CUDA_ABI_VERSION = 10
 
 # One immutable bitset travels from program compilation through XLA FFI into every
 # native launch. Environment variables remain useful for controlled experiments,
@@ -53,21 +58,6 @@ CUDA_DEFAULT_FLAGS = (
     | CUDA_TEMPORAL_YEE
     | CUDA_MATERIAL_CODEBOOK
 )
-CUDA_STREAMED_TARGETS = frozenset(
-    {
-        "beamz_cuda_streamed",
-        "beamz_cuda_streamed_steps",
-        "beamz_cuda_temporal_steps",
-        "beamz_cuda_streamed_cpml_steps",
-        "beamz_cuda_streamed_source_groups_cpml_steps",
-        "beamz_cuda_temporal_source_groups_cpml_steps",
-        "beamz_cuda_temporal_program_cpml_steps",
-        "beamz_cuda_streamed_program_cpml_steps",
-    }
-)
-CUDA_HOPPER_TARGET = "beamz_cuda_hopper"
-
-
 class CudaBackendUnavailable(RuntimeError):
     """An explicitly requested CUDA backend cannot run in this process."""
 

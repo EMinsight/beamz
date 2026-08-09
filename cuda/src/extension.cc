@@ -1,34 +1,36 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
 
+#include "abi_layout.h"
 #include "ffi_handler.h"
 
 namespace nb = nanobind;
+using namespace beamz::cuda::abi;
 
 NB_MODULE(beamz_cuda, module) {
-  module.attr("__version__") = "0.10.0";
-  module.attr("__abi_version__") = BEAMZ_CUDA_ABI_VERSION;
+  module.attr("__version__") = kPackageVersion;
+  module.attr("__abi_version__") = kAbiVersion;
   module.def("registrations", []() {
     nb::dict registrations;
-    registrations["beamz_cuda_streamed"] =
+    registrations[kStreamedTarget] =
         nb::capsule(reinterpret_cast<void*>(beamz_cuda_streamed));
-    registrations["beamz_cuda_streamed_steps"] =
+    registrations[kStreamedStepsTarget] =
         nb::capsule(reinterpret_cast<void*>(beamz_cuda_streamed_steps));
-    registrations["beamz_cuda_temporal_steps"] =
+    registrations[kTemporalStepsTarget] =
         nb::capsule(reinterpret_cast<void*>(beamz_cuda_temporal_steps));
-    registrations["beamz_cuda_streamed_cpml_steps"] =
+    registrations[kStreamedCpmlStepsTarget] =
         nb::capsule(reinterpret_cast<void*>(beamz_cuda_streamed_cpml_steps));
-    registrations["beamz_cuda_streamed_source_groups_cpml_steps"] = nb::capsule(
+    registrations[kStreamedSourceGroupsCpmlStepsTarget] = nb::capsule(
         reinterpret_cast<void*>(
             beamz_cuda_streamed_source_groups_cpml_steps));
-    registrations["beamz_cuda_temporal_source_groups_cpml_steps"] = nb::capsule(
+    registrations[kTemporalSourceGroupsCpmlStepsTarget] = nb::capsule(
         reinterpret_cast<void*>(
             beamz_cuda_temporal_source_groups_cpml_steps));
-    registrations["beamz_cuda_temporal_program_cpml_steps"] = nb::capsule(
+    registrations[kTemporalProgramCpmlStepsTarget] = nb::capsule(
         reinterpret_cast<void*>(beamz_cuda_temporal_program_cpml_steps));
-    registrations["beamz_cuda_streamed_program_cpml_steps"] = nb::capsule(
+    registrations[kStreamedProgramCpmlStepsTarget] = nb::capsule(
         reinterpret_cast<void*>(beamz_cuda_streamed_program_cpml_steps));
-    registrations["beamz_cuda_hopper"] =
+    registrations[kHopperTarget] =
         nb::capsule(reinterpret_cast<void*>(beamz_cuda_hopper));
     return registrations;
   });

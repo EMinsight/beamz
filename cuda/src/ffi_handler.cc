@@ -3,33 +3,17 @@
 #include <cstdint>
 #include <string>
 
+#include "abi_layout.h"
 #include "launch.h"
 #include "xla/ffi/api/ffi.h"
 
 namespace ffi = xla::ffi;
+using namespace beamz::cuda::abi;
 
 namespace {
 
 constexpr float kEps0 = 8.8541878128e-12f;
 constexpr float kMu0 = 1.25663706212e-6f;
-constexpr int32_t kFieldCount = 6;
-constexpr int32_t kCpmlTermCount = 6;
-constexpr size_t kYeeGraphInputCount = 24;
-constexpr size_t kCpmlGraphInputCount = 74;
-constexpr size_t kYeeGraphOutputCount = 6;
-constexpr size_t kCpmlGraphOutputCount = 18;
-constexpr int32_t kCpmlPhaseInputCount = 31;
-constexpr int32_t kCpmlEInputOffset = kFieldCount + kCpmlPhaseInputCount;
-constexpr int32_t kCpmlHMetricOffset = 68;
-constexpr int32_t kCpmlEMetricOffset = 71;
-constexpr int32_t kCpmlHPsiInputOffset = 31;
-constexpr int32_t kCpmlEPsiInputOffset = 62;
-constexpr int32_t kTemporalHPsiOutputOffset = 12;
-constexpr int32_t kTemporalEPsiOutputOffset = 18;
-constexpr int32_t kTemporalHPsiWorkspaceOffset = 24;
-constexpr int32_t kTemporalEPsiWorkspaceOffset = 30;
-constexpr int32_t kSourceGroupCount = 9;
-
 void SetBoundaryCode(BeamzLaunch* launch, int32_t code) {
   launch->metallic_edges = code & 0x3f;
   launch->uniform_cpml_thickness = code >> 8;
@@ -310,7 +294,7 @@ ffi::Error Dispatch(Launcher launcher, void* stream, ffi::RemainingArgs args,
                     int32_t cuda_flags, int32_t phase, int32_t nterms,
                     float dt, float resolution, int32_t metallic_edges,
                     int32_t metric_kind) {
-  if (abi_version != BEAMZ_CUDA_ABI_VERSION) {
+  if (abi_version != kAbiVersion) {
     return ffi::Error::InvalidArgument("beamz_cuda ABI version mismatch");
   }
   if (phase < 0 || phase > 1 || (nterms != 0 && nterms != 6) ||
@@ -356,7 +340,7 @@ ffi::Error StreamedStepsHandler(void* stream, ffi::RemainingArgs args,
                                 int32_t cuda_flags, int32_t nsteps, float dt,
                                 float resolution, int32_t metallic_edges,
                                 int32_t metric_kind) {
-  if (abi_version != BEAMZ_CUDA_ABI_VERSION) {
+  if (abi_version != kAbiVersion) {
     return ffi::Error::InvalidArgument("beamz_cuda ABI version mismatch");
   }
   if (nsteps < 1) {
@@ -388,7 +372,7 @@ ffi::Error TemporalStepsHandler(void* stream, ffi::RemainingArgs args,
                                 int32_t cuda_flags, int32_t nsteps, float dt,
                                 float resolution, int32_t metallic_edges,
                                 int32_t metric_kind) {
-  if (abi_version != BEAMZ_CUDA_ABI_VERSION) {
+  if (abi_version != kAbiVersion) {
     return ffi::Error::InvalidArgument("beamz_cuda ABI version mismatch");
   }
   if (nsteps < 1 || metric_kind < 0 || metric_kind > 2) {
@@ -450,7 +434,7 @@ ffi::Error StreamedCpmlStepsHandler(
     void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
     int32_t abi_version, int32_t cuda_flags, int32_t nsteps, float dt,
     float resolution, int32_t metallic_edges, int32_t metric_kind) {
-  if (abi_version != BEAMZ_CUDA_ABI_VERSION) {
+  if (abi_version != kAbiVersion) {
     return ffi::Error::InvalidArgument("beamz_cuda ABI version mismatch");
   }
   if (nsteps < 1 || metric_kind < 0 || metric_kind > 2) {
@@ -476,7 +460,7 @@ ffi::Error StreamedSourceGroupsCpmlStepsHandler(
     int32_t abi_version, int32_t cuda_flags, int32_t nsteps, float dt,
     float resolution, int32_t metallic_edges, int32_t metric_kind,
     int32_t cpml_enabled, int32_t coincident_source_group_mask) {
-  if (abi_version != BEAMZ_CUDA_ABI_VERSION || nsteps < 1 ||
+  if (abi_version != kAbiVersion || nsteps < 1 ||
       metric_kind < 0 || metric_kind > 2 || cpml_enabled < 0 ||
       cpml_enabled > 1 || coincident_source_group_mask < 0 ||
       coincident_source_group_mask >= (1 << kSourceGroupCount)) {
@@ -528,7 +512,7 @@ ffi::Error TemporalSourceGroupsCpmlStepsHandler(
   constexpr size_t kInputCount =
       kGraphInputCount + kWorkspaceInputCount + kSourceInputCount;
   constexpr size_t kOutputCount = 36;
-  if (abi_version != BEAMZ_CUDA_ABI_VERSION || nsteps < 1 ||
+  if (abi_version != kAbiVersion || nsteps < 1 ||
       metric_kind < 0 || metric_kind > 2 ||
       coincident_source_group_mask < 0 ||
       coincident_source_group_mask >= (1 << kSourceGroupCount)) {
@@ -571,7 +555,7 @@ ffi::Error TemporalProgramCpmlStepsHandler(
   constexpr size_t kInputCount = kGraphInputCount + kWorkspaceInputCount +
                                  kSourceInputCount + kMonitorInputCount;
   constexpr size_t kOutputCount = 39;
-  if (abi_version != BEAMZ_CUDA_ABI_VERSION || nsteps < 1 ||
+  if (abi_version != kAbiVersion || nsteps < 1 ||
       metric_kind < 0 || metric_kind > 2 || monitor_count < 1 ||
       coincident_source_group_mask < 0 ||
       coincident_source_group_mask >= (1 << kSourceGroupCount)) {
@@ -613,7 +597,7 @@ ffi::Error StreamedProgramCpmlStepsHandler(
     float resolution, int32_t metallic_edges, int32_t metric_kind,
     int32_t cpml_enabled, int32_t monitor_count,
     int32_t coincident_source_group_mask) {
-  if (abi_version != BEAMZ_CUDA_ABI_VERSION || nsteps < 1 ||
+  if (abi_version != kAbiVersion || nsteps < 1 ||
       metric_kind < 0 || metric_kind > 2 || cpml_enabled < 0 ||
       cpml_enabled > 1 || monitor_count < 1 ||
       coincident_source_group_mask < 0 ||

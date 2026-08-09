@@ -1,0 +1,48 @@
+{
+  "abi_version": 10,
+  "package_version": "0.10.0",
+  "targets": {
+    "streamed": "beamz_cuda_streamed",
+    "streamed_steps": "beamz_cuda_streamed_steps",
+    "temporal_steps": "beamz_cuda_temporal_steps",
+    "streamed_cpml_steps": "beamz_cuda_streamed_cpml_steps",
+    "streamed_source_groups_cpml_steps": "beamz_cuda_streamed_source_groups_cpml_steps",
+    "temporal_source_groups_cpml_steps": "beamz_cuda_temporal_source_groups_cpml_steps",
+    "temporal_program_cpml_steps": "beamz_cuda_temporal_program_cpml_steps",
+    "streamed_program_cpml_steps": "beamz_cuda_streamed_program_cpml_steps",
+    "hopper": "beamz_cuda_hopper"
+  },
+  "streamed_targets": [
+    "streamed",
+    "streamed_steps",
+    "temporal_steps",
+    "streamed_cpml_steps",
+    "streamed_source_groups_cpml_steps",
+    "temporal_source_groups_cpml_steps",
+    "temporal_program_cpml_steps",
+    "streamed_program_cpml_steps"
+  ],
+  "layout": {
+    "field_count": 6,
+    "cpml_term_count": 6,
+    "source_group_count": 9,
+    "source_group_buffer_count": 3,
+    "monitor_input_count": 12,
+    "yee_graph_input_count": 24,
+    "yee_graph_output_count": 6,
+    "cpml_graph_input_count": 74,
+    "cpml_graph_output_count": 18,
+    "cpml_phase_input_count": 31,
+    "cpml_e_input_offset": 37,
+    "cpml_h_metric_offset": 68,
+    "cpml_e_metric_offset": 71,
+    "cpml_h_psi_input_offset": 31,
+    "cpml_e_psi_input_offset": 62,
+    "temporal_h_psi_output_offset": 12,
+    "temporal_e_psi_output_offset": 18,
+    "temporal_h_psi_workspace_offset": 24,
+    "temporal_e_psi_workspace_offset": 30,
+    "temporal_field_workspace_input": 74,
+    "temporal_psi_workspace_input": 80
+  }
+}

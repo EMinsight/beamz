@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from beamz.simulation import _cuda_abi as abi
 from beamz.simulation.backend import (
     CUDA_ABI_VERSION,
     CUDA_TEMPORAL_CPML,
@@ -30,14 +31,13 @@ _METRIC_KIND_CODE = {
     "rectilinear": 2,
 }
 
-_FIELD_COUNT = 6
-_CPML_TERM_COUNT = 6
-_SOURCE_GROUP_COUNT = 9
-_CPML_H_PSI_INPUT = 31
-_CPML_E_PSI_INPUT = 62
-_CPML_GRAPH_INPUT_COUNT = 74
-_TEMPORAL_FIELD_WORKSPACE_INPUT = _CPML_GRAPH_INPUT_COUNT
-_TEMPORAL_PSI_WORKSPACE_INPUT = _TEMPORAL_FIELD_WORKSPACE_INPUT + _FIELD_COUNT
+_FIELD_COUNT = abi.FIELD_COUNT
+_CPML_TERM_COUNT = abi.CPML_TERM_COUNT
+_SOURCE_GROUP_COUNT = abi.SOURCE_GROUP_COUNT
+_CPML_H_PSI_INPUT = abi.CPML_H_PSI_INPUT_OFFSET
+_CPML_E_PSI_INPUT = abi.CPML_E_PSI_INPUT_OFFSET
+_TEMPORAL_FIELD_WORKSPACE_INPUT = abi.TEMPORAL_FIELD_WORKSPACE_INPUT
+_TEMPORAL_PSI_WORKSPACE_INPUT = abi.TEMPORAL_PSI_WORKSPACE_INPUT
 
 
 def _metallic_edge_mask(edges: frozenset[str]) -> int:
@@ -178,9 +178,9 @@ def _ffi_phase(
 def update_h(state, ctx, coeffs) -> SimulationState:
     """Advance the three magnetic fields and optional CPML memory on CUDA."""
     target = (
-        "beamz_cuda_hopper"
+        abi.CUDA_HOPPER_TARGET
         if ctx.config.backend == "cuda_hopper"
-        else "beamz_cuda_streamed"
+        else abi.CUDA_STREAMED_TARGET
     )
     terms = ctx.boundary.cpml.h_terms
     materials = (
@@ -228,9 +228,9 @@ def update_h(state, ctx, coeffs) -> SimulationState:
 def update_e(state, ctx, coeffs) -> SimulationState:
     """Advance the three electric fields and optional CPML memory on CUDA."""
     target = (
-        "beamz_cuda_hopper"
+        abi.CUDA_HOPPER_TARGET
         if ctx.config.backend == "cuda_hopper"
-        else "beamz_cuda_streamed"
+        else abi.CUDA_STREAMED_TARGET
     )
     terms = ctx.boundary.cpml.e_terms
     materials = (
@@ -501,9 +501,9 @@ def run_source_group_steps(state, ctx, coeffs, groups, nsteps: int) -> Simulatio
     )
     call = _ffi_call(
         (
-            "beamz_cuda_temporal_source_groups_cpml_steps"
+            abi.CUDA_TEMPORAL_SOURCE_GROUPS_CPML_STEPS_TARGET
             if use_temporal_cpml
-            else "beamz_cuda_streamed_source_groups_cpml_steps"
+            else abi.CUDA_STREAMED_SOURCE_GROUPS_CPML_STEPS_TARGET
         ),
         result_values,
         aliases,
@@ -651,9 +651,9 @@ def run_program_steps(
     }
     call = _ffi_call(
         (
-            "beamz_cuda_temporal_program_cpml_steps"
+            abi.CUDA_TEMPORAL_PROGRAM_CPML_STEPS_TARGET
             if use_temporal_cpml
-            else "beamz_cuda_streamed_program_cpml_steps"
+            else abi.CUDA_STREAMED_PROGRAM_CPML_STEPS_TARGET
         ),
         result_values,
         aliases,
@@ -703,7 +703,7 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
     fields = _fields(state)
     if ctx.boundary.cpml.enabled:
         arguments, result_values, aliases = _cpml_graph_io(state, ctx, coeffs)
-        call = _ffi_call("beamz_cuda_streamed_cpml_steps", result_values, aliases)
+        call = _ffi_call(abi.CUDA_STREAMED_CPML_STEPS_TARGET, result_values, aliases)
         outputs = call(
             *arguments,
             **_step_attributes(ctx, nsteps),
@@ -731,7 +731,7 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
     if temporal_eligible:
         workspace = tuple(jnp.empty_like(value) for value in fields)
         call = _ffi_call(
-            "beamz_cuda_temporal_steps",
+            abi.CUDA_TEMPORAL_STEPS_TARGET,
             (*fields, *workspace),
             {index: index for index in range(2 * _FIELD_COUNT)},
         )
@@ -745,7 +745,7 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
         )
         return _replace_fields(state, outputs)
     call = _ffi_call(
-        "beamz_cuda_streamed_steps",
+        abi.CUDA_STREAMED_STEPS_TARGET,
         fields,
         {index: index for index in range(_FIELD_COUNT)},
     )
