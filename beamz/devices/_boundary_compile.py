@@ -197,6 +197,12 @@ class _AbsorberCompiler:
     def _get_edges_for_dimensionality(self, is_3d):
         return list(edges_for_dimension(self.spec.edges, is_3d))
 
+    def _physical_thickness(self) -> float:
+        thickness = self.spec.thickness
+        if thickness is None:
+            raise ValueError("PML thickness must be resolved before profile sampling.")
+        return float(thickness)
+
     def compile_absorber_regions(self, fields, domain_size, resolution, dt):
         """Create grid-aligned masks and graded conductivity profiles."""
         # Resolve geometry-dependent arrays now so runtime code stays branch-free and
@@ -239,7 +245,7 @@ class _AbsorberCompiler:
         sigma_max = self.spec.sigma_max
         if sigma_max is None:
             eta = np.sqrt(MU_0 / (EPS_0 * 1.0))
-            thickness = max(float(self.spec.thickness), float(resolution))
+            thickness = max(self._physical_thickness(), float(resolution))
             sigma_max = (
                 -(self.spec.m + 1)
                 * np.log(max(self.spec.target_reflection, 1e-16))
@@ -402,7 +408,7 @@ class _AbsorberCompiler:
         # Build this profile on its exact staggered support to avoid interpolation
         # inside timestep kernels.
         sigma = jnp.zeros_like(coords)
-        thickness = self.spec.thickness
+        thickness = self._physical_thickness()
         if self.spec.sigma_max is None:
             raise ValueError("PML profile parameters must be resolved before sampling.")
 
@@ -433,11 +439,9 @@ class _AbsorberCompiler:
         kappa = jnp.ones_like(coords)
         alpha = jnp.zeros_like(coords)
         thickness = max(
-            float(
-                self.cell_thickness
-                if self.cell_thickness is not None
-                else self.spec.thickness
-            ),
+            float(self.cell_thickness)
+            if self.cell_thickness is not None
+            else self._physical_thickness(),
             1e-30,
         )
         if self.spec.sigma_max is None or self.spec.alpha_max is None:
@@ -498,7 +502,7 @@ class _AbsorberCompiler:
         pml_cells = max(
             int(self.cell_thickness)
             if self.cell_thickness is not None
-            else int(round(float(self.spec.thickness) / max(float(spacing), 1e-30))),
+            else int(round(self._physical_thickness() / max(float(spacing), 1e-30))),
             1,
         )
         sigma_order = float(self.spec.m if sigma_order is None else sigma_order)
@@ -547,10 +551,13 @@ class _AbsorberCompiler:
             if sample_coordinates is None or self.cell_thickness is not None
             else jnp.asarray(sample_coordinates, dtype=jnp.float32)
         )
+        physical_thickness = (
+            0.0 if physical_coordinates is None else self._physical_thickness()
+        )
         distance_scale = (
             max(float(pml_cells), 1e-30)
             if physical_coordinates is None
-            else max(float(self.spec.thickness), 1e-30)
+            else max(physical_thickness, 1e-30)
         )
 
         def apply_side(dist):
@@ -573,9 +580,9 @@ class _AbsorberCompiler:
                 jnp.clip(float(pml_cells) - coords, 0.0, float(pml_cells))
                 if physical_coordinates is None
                 else jnp.clip(
-                    float(self.spec.thickness) - (coords - lower_bound),
+                    physical_thickness - (coords - lower_bound),
                     0.0,
-                    float(self.spec.thickness),
+                    physical_thickness,
                 )
             )
             mask, side_sigma, side_kappa, side_alpha = apply_side(low_dist)
@@ -592,9 +599,9 @@ class _AbsorberCompiler:
                 )
                 if physical_coordinates is None
                 else jnp.clip(
-                    coords - (upper_bound - float(self.spec.thickness)),
+                    coords - (upper_bound - physical_thickness),
                     0.0,
-                    float(self.spec.thickness),
+                    physical_thickness,
                 )
             )
             mask, side_sigma, side_kappa, side_alpha = apply_side(high_dist)
