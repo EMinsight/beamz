@@ -70,6 +70,16 @@ bool AdaptiveSourceTilesEnabled() {
   return value == nullptr || value[0] == '\0' || value[0] == '0';
 }
 
+bool CpmlCoreSplitEnabled() {
+  const char* value = std::getenv("BEAMZ_CUDA_DISABLE_CPML_CORE_SPLIT");
+  return value == nullptr || value[0] == '\0' || value[0] == '0';
+}
+
+bool CompactCpmlShellEnabled() {
+  const char* value = std::getenv("BEAMZ_CUDA_DISABLE_COMPACT_CPML_SHELL");
+  return value == nullptr || value[0] == '\0' || value[0] == '0';
+}
+
 dim3 SourceThreads(int64_t x_extent) {
   if (!AdaptiveSourceTilesEnabled() || x_extent >= 32) {
     return dim3(kTileX, kTileY, kTileZ);
@@ -485,6 +495,33 @@ __device__ __forceinline__ bool BufferContains(const BeamzBuffer& value, int z,
          y < value.dims[1] && x < value.dims[2];
 }
 
+__host__ __device__ __forceinline__ int Min3(int a, int b, int c) {
+  return a < b ? (a < c ? a : c) : (b < c ? b : c);
+}
+
+__device__ __forceinline__ bool InCpmlDeepCore(const BeamzLaunch& launch,
+                                                int z, int y, int x) {
+  const int thickness = launch.uniform_cpml_thickness;
+  const int low = thickness;
+  const int high_z =
+      Min3(static_cast<int>(launch.outputs[0].dims[0]),
+           static_cast<int>(launch.outputs[1].dims[0]),
+           static_cast<int>(launch.outputs[2].dims[0])) -
+      thickness;
+  const int high_y =
+      Min3(static_cast<int>(launch.outputs[0].dims[1]),
+           static_cast<int>(launch.outputs[1].dims[1]),
+           static_cast<int>(launch.outputs[2].dims[1])) -
+      thickness;
+  const int high_x =
+      Min3(static_cast<int>(launch.outputs[0].dims[2]),
+           static_cast<int>(launch.outputs[1].dims[2]),
+           static_cast<int>(launch.outputs[2].dims[2])) -
+      thickness;
+  return z >= low && y >= low && x >= low && z < high_z && y < high_y &&
+         x < high_x;
+}
+
 template <bool ScalarCoefficients, int MetricKind, int Component>
 __device__ __forceinline__ float FusedHValue(const BeamzLaunch& launch,
                                              int z, int y, int x) {
@@ -574,6 +611,107 @@ __device__ __forceinline__ float FusedEValue(const BeamzLaunch& launch,
           ? static_cast<const float*>(launch.inputs[9 + Component].data)[0]
           : Read3D(launch.inputs[9 + Component], z, y, x);
   return decay * old_field + source * curl;
+}
+
+template <int Phase, int PsiType, bool PackedLosslessMaterial,
+          bool HasMetallicEdges>
+__global__ void UpdateCpmlShell(BeamzLaunch launch) {
+  const int x = blockIdx.x * blockDim.x + threadIdx.x;
+  const int y = blockIdx.y * blockDim.y + threadIdx.y;
+  const int z = blockIdx.z * blockDim.z + threadIdx.z;
+  if (InCpmlDeepCore(launch, z, y, x)) return;
+  UpdateComponent<Phase, 0, true, 0, HasMetallicEdges, true, PsiType,
+                  PackedLosslessMaterial>(launch, z, y, x);
+  UpdateComponent<Phase, 1, true, 0, HasMetallicEdges, true, PsiType,
+                  PackedLosslessMaterial>(launch, z, y, x);
+  UpdateComponent<Phase, 2, true, 0, HasMetallicEdges, true, PsiType,
+                  PackedLosslessMaterial>(launch, z, y, x);
+}
+
+template <int Phase, int PsiType, bool PackedLosslessMaterial,
+          bool HasMetallicEdges>
+__global__ void UpdateCpmlShellCompact(BeamzLaunch launch, int max_z,
+                                       int max_y, int max_x, int high_z,
+                                       int high_y, int high_x,
+                                       int shell_cells) {
+  int cell = blockIdx.x * blockDim.x + threadIdx.x;
+  if (cell >= shell_cells) return;
+  const int low = launch.uniform_cpml_thickness;
+  const int core_z = high_z - low;
+  const int core_y = high_y - low;
+  int z;
+  int y;
+  int x;
+
+  // Flatten the six disjoint faces of the bounding box. This keeps x-major
+  // accesses within each face while avoiding a second dispatch of core blocks.
+  const int low_z_end = low * max_y * max_x;
+  const int high_z_end =
+      low_z_end + (max_z - high_z) * max_y * max_x;
+  const int low_y_end = high_z_end + core_z * low * max_x;
+  const int high_y_end =
+      low_y_end + core_z * (max_y - high_y) * max_x;
+  const int low_x_end = high_y_end + core_z * core_y * low;
+  if (cell < low_z_end) {
+    z = cell / (max_y * max_x);
+    const int remainder = cell - z * max_y * max_x;
+    y = remainder / max_x;
+    x = remainder - y * max_x;
+  } else if (cell < high_z_end) {
+    cell -= low_z_end;
+    z = high_z + cell / (max_y * max_x);
+    const int remainder = cell - (z - high_z) * max_y * max_x;
+    y = remainder / max_x;
+    x = remainder - y * max_x;
+  } else if (cell < low_y_end) {
+    cell -= high_z_end;
+    z = low + cell / (low * max_x);
+    const int remainder = cell - (z - low) * low * max_x;
+    y = remainder / max_x;
+    x = remainder - y * max_x;
+  } else if (cell < high_y_end) {
+    cell -= low_y_end;
+    z = low + cell / ((max_y - high_y) * max_x);
+    const int remainder =
+        cell - (z - low) * (max_y - high_y) * max_x;
+    y = high_y + remainder / max_x;
+    x = remainder - (y - high_y) * max_x;
+  } else if (cell < low_x_end) {
+    cell -= high_y_end;
+    z = low + cell / (core_y * low);
+    const int remainder = cell - (z - low) * core_y * low;
+    y = low + remainder / low;
+    x = remainder - (y - low) * low;
+  } else {
+    cell -= low_x_end;
+    const int width = max_x - high_x;
+    z = low + cell / (core_y * width);
+    const int remainder = cell - (z - low) * core_y * width;
+    y = low + remainder / width;
+    x = high_x + remainder - (y - low) * width;
+  }
+
+  UpdateComponent<Phase, 0, true, 0, HasMetallicEdges, true, PsiType,
+                  PackedLosslessMaterial>(launch, z, y, x);
+  UpdateComponent<Phase, 1, true, 0, HasMetallicEdges, true, PsiType,
+                  PackedLosslessMaterial>(launch, z, y, x);
+  UpdateComponent<Phase, 2, true, 0, HasMetallicEdges, true, PsiType,
+                  PackedLosslessMaterial>(launch, z, y, x);
+}
+
+template <int Phase, bool PackedLosslessMaterial, bool HasMetallicEdges>
+__global__ void UpdateCpmlCore(BeamzLaunch launch) {
+  const int low = launch.uniform_cpml_thickness;
+  const int x = low + blockIdx.x * blockDim.x + threadIdx.x;
+  const int y = low + blockIdx.y * blockDim.y + threadIdx.y;
+  const int z = low + blockIdx.z * blockDim.z + threadIdx.z;
+  if (!InCpmlDeepCore(launch, z, y, x)) return;
+  UpdateComponent<Phase, 0, false, 0, HasMetallicEdges, false, -1,
+                  PackedLosslessMaterial>(launch, z, y, x);
+  UpdateComponent<Phase, 1, false, 0, HasMetallicEdges, false, -1,
+                  PackedLosslessMaterial>(launch, z, y, x);
+  UpdateComponent<Phase, 2, false, 0, HasMetallicEdges, false, -1,
+                  PackedLosslessMaterial>(launch, z, y, x);
 }
 
 // Fuse a complete leapfrog timestep without a device-wide barrier.  Each block
@@ -1185,6 +1323,195 @@ int BeamzLaunchStreamed(void* raw_stream, const BeamzLaunch& launch) {
   return static_cast<int>(cudaPeekAtLastError());
 }
 
+bool HasPackedLosslessMaterial(const BeamzLaunch& launch) {
+  return launch.inputs[6].rank == 1 && launch.inputs[7].rank == 1 &&
+         launch.inputs[8].rank == 1 && launch.inputs[9].rank == 1 &&
+         launch.inputs[10].rank == 1 && launch.inputs[11].rank == 1 &&
+         launch.inputs[9].element_type == kBeamzS32 &&
+         launch.inputs[10].element_type == kBeamzS32 &&
+         launch.inputs[11].element_type == kBeamzS32;
+}
+
+int UniformPsiType(const BeamzLaunch& launch) {
+  if (!TypedPsiEnabled()) return -1;
+  constexpr int psi_input_base = 13 + 3 * 6;
+  int psi_type = launch.outputs[3].element_type;
+  for (int term = 0; term < 6; ++term) {
+    if (launch.inputs[psi_input_base + term].element_type != psi_type ||
+        launch.outputs[3 + term].element_type != psi_type) {
+      return -1;
+    }
+  }
+  return psi_type;
+}
+
+template <int Phase, int PsiType, bool PackedLosslessMaterial>
+void LaunchCpmlShellForType(cudaStream_t stream, const BeamzLaunch& launch,
+                            int max_z, int max_y, int max_x, int high_z,
+                            int high_y, int high_x, int64_t shell_cells) {
+  if (CompactCpmlShellEnabled() &&
+      shell_cells <= std::numeric_limits<int>::max()) {
+    constexpr int threads = 256;
+    const int compact_cells = static_cast<int>(shell_cells);
+    const int blocks = (compact_cells + threads - 1) / threads;
+    if (launch.metallic_edges == 0) {
+      UpdateCpmlShellCompact<Phase, PsiType, PackedLosslessMaterial, false>
+          <<<blocks, threads, 0, stream>>>(launch, max_z, max_y, max_x,
+                                           high_z, high_y, high_x,
+                                           compact_cells);
+    } else {
+      UpdateCpmlShellCompact<Phase, PsiType, PackedLosslessMaterial, true>
+          <<<blocks, threads, 0, stream>>>(launch, max_z, max_y, max_x,
+                                           high_z, high_y, high_x,
+                                           compact_cells);
+    }
+    return;
+  }
+  const dim3 threads(kTileX, kTileY, kPressureTileZ);
+  const dim3 blocks((max_x + threads.x - 1) / threads.x,
+                    (max_y + threads.y - 1) / threads.y,
+                    (max_z + threads.z - 1) / threads.z);
+  if (launch.metallic_edges == 0) {
+    UpdateCpmlShell<Phase, PsiType, PackedLosslessMaterial, false>
+        <<<blocks, threads, 0, stream>>>(launch);
+  } else {
+    UpdateCpmlShell<Phase, PsiType, PackedLosslessMaterial, true>
+        <<<blocks, threads, 0, stream>>>(launch);
+  }
+}
+
+cudaError_t LaunchCpmlShellPhase(cudaStream_t stream,
+                                 const BeamzLaunch& launch) {
+  int max_x = 0, max_y = 0, max_z = 0;
+  for (int component = 0; component < 3; ++component) {
+    const BeamzBuffer& output = launch.outputs[component];
+    max_x = output.dims[2] > max_x ? output.dims[2] : max_x;
+    max_y = output.dims[1] > max_y ? output.dims[1] : max_y;
+    max_z = output.dims[0] > max_z ? output.dims[0] : max_z;
+  }
+  const int low = launch.uniform_cpml_thickness;
+  const int high_z =
+      Min3(static_cast<int>(launch.outputs[0].dims[0]),
+           static_cast<int>(launch.outputs[1].dims[0]),
+           static_cast<int>(launch.outputs[2].dims[0])) -
+      low;
+  const int high_y =
+      Min3(static_cast<int>(launch.outputs[0].dims[1]),
+           static_cast<int>(launch.outputs[1].dims[1]),
+           static_cast<int>(launch.outputs[2].dims[1])) -
+      low;
+  const int high_x =
+      Min3(static_cast<int>(launch.outputs[0].dims[2]),
+           static_cast<int>(launch.outputs[1].dims[2]),
+           static_cast<int>(launch.outputs[2].dims[2])) -
+      low;
+  const int64_t shell_cells =
+      static_cast<int64_t>(max_z) * max_y * max_x -
+      static_cast<int64_t>(high_z - low) * (high_y - low) * (high_x - low);
+  const int psi_type = UniformPsiType(launch);
+  const bool packed = launch.phase == 1 && HasPackedLosslessMaterial(launch);
+  if (launch.phase == 0) {
+    if (psi_type == kBeamzBF16) {
+      LaunchCpmlShellForType<0, kBeamzBF16, false>(
+          stream, launch, max_z, max_y, max_x, high_z, high_y, high_x,
+          shell_cells);
+    } else if (psi_type == kBeamzF32) {
+      LaunchCpmlShellForType<0, kBeamzF32, false>(
+          stream, launch, max_z, max_y, max_x, high_z, high_y, high_x,
+          shell_cells);
+    } else {
+      LaunchCpmlShellForType<0, -1, false>(
+          stream, launch, max_z, max_y, max_x, high_z, high_y, high_x,
+          shell_cells);
+    }
+  } else if (packed && psi_type == kBeamzBF16) {
+    LaunchCpmlShellForType<1, kBeamzBF16, true>(
+        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x,
+        shell_cells);
+  } else if (packed && psi_type == kBeamzF32) {
+    LaunchCpmlShellForType<1, kBeamzF32, true>(
+        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x,
+        shell_cells);
+  } else if (packed) {
+    LaunchCpmlShellForType<1, -1, true>(
+        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x,
+        shell_cells);
+  } else if (psi_type == kBeamzBF16) {
+    LaunchCpmlShellForType<1, kBeamzBF16, false>(
+        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x,
+        shell_cells);
+  } else if (psi_type == kBeamzF32) {
+    LaunchCpmlShellForType<1, kBeamzF32, false>(
+        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x,
+        shell_cells);
+  } else {
+    LaunchCpmlShellForType<1, -1, false>(
+        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x,
+        shell_cells);
+  }
+  return cudaPeekAtLastError();
+}
+
+bool CpmlCoreScheduleSupported(const BeamzLaunch& h_launch,
+                               const BeamzLaunch& e_launch) {
+  if (!CpmlCoreSplitEnabled() || h_launch.nterms != 6 ||
+      e_launch.nterms != 6 || h_launch.metric_kind != 0 ||
+      e_launch.metric_kind != 0 || h_launch.uniform_cpml_thickness <= 0 ||
+      e_launch.uniform_cpml_thickness != h_launch.uniform_cpml_thickness ||
+      !HasPackedLosslessMaterial(e_launch)) {
+    return false;
+  }
+  for (int material = 0; material < 6; ++material) {
+    if (h_launch.inputs[6 + material].rank != 0) return false;
+  }
+  const int thickness = h_launch.uniform_cpml_thickness;
+  for (int axis = 0; axis < 3; ++axis) {
+    const int extent =
+        Min3(static_cast<int>(h_launch.outputs[0].dims[axis]),
+             static_cast<int>(h_launch.outputs[1].dims[axis]),
+             static_cast<int>(h_launch.outputs[2].dims[axis]));
+    if (extent <= 2 * thickness) return false;
+  }
+  return true;
+}
+
+cudaError_t LaunchCpmlCorePhase(cudaStream_t stream,
+                                const BeamzLaunch& launch) {
+  const int thickness = launch.uniform_cpml_thickness;
+  const int low = thickness;
+  const int high_z =
+      Min3(static_cast<int>(launch.outputs[0].dims[0]),
+           static_cast<int>(launch.outputs[1].dims[0]),
+           static_cast<int>(launch.outputs[2].dims[0])) -
+      thickness;
+  const int high_y =
+      Min3(static_cast<int>(launch.outputs[0].dims[1]),
+           static_cast<int>(launch.outputs[1].dims[1]),
+           static_cast<int>(launch.outputs[2].dims[1])) -
+      thickness;
+  const int high_x =
+      Min3(static_cast<int>(launch.outputs[0].dims[2]),
+           static_cast<int>(launch.outputs[1].dims[2]),
+           static_cast<int>(launch.outputs[2].dims[2])) -
+      thickness;
+  const dim3 threads(kTileX, kTileY, kTileZ);
+  const dim3 blocks((high_x - low + threads.x - 1) / threads.x,
+                    (high_y - low + threads.y - 1) / threads.y,
+                    (high_z - low + threads.z - 1) / threads.z);
+  if (launch.phase == 0) {
+    if (launch.metallic_edges == 0) {
+      UpdateCpmlCore<0, false, false><<<blocks, threads, 0, stream>>>(launch);
+    } else {
+      UpdateCpmlCore<0, false, true><<<blocks, threads, 0, stream>>>(launch);
+    }
+  } else if (launch.metallic_edges == 0) {
+    UpdateCpmlCore<1, true, false><<<blocks, threads, 0, stream>>>(launch);
+  } else {
+    UpdateCpmlCore<1, true, true><<<blocks, threads, 0, stream>>>(launch);
+  }
+  return cudaPeekAtLastError();
+}
+
 int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
                         const BeamzLaunch& e_launch,
                         const BeamzSourceLaunch* source,
@@ -1213,6 +1540,8 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
   }
   auto launch_steps = [&]() {
     cudaError_t launch_error = cudaSuccess;
+    const bool use_cpml_core =
+        CpmlCoreScheduleSupported(h_launch, e_launch);
     const bool precomputed_monitor_phase =
         monitor != nullptr && PrecomputedDftPhasesEnabled() &&
         monitor->phase_cos.rank == 2 && monitor->phase_sin.rank == 2 &&
@@ -1292,16 +1621,33 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
         launch_source_groups(0, step);
         if (launch_error != cudaSuccess) break;
       }
-      launch_error =
-          static_cast<cudaError_t>(BeamzLaunchStreamed(raw_stream, h_launch));
-      if (launch_error != cudaSuccess) break;
-      if (source_groups != nullptr) {
-        launch_source_groups(1, step);
+      if (use_cpml_core) {
+        // H and E remain separate launches: graph outputs alias their inputs, so
+        // cross-block H-to-E fusion would race while reading the old H halo.
+        launch_error = LaunchCpmlShellPhase(stream, h_launch);
+        if (launch_error != cudaSuccess) break;
+        launch_error = LaunchCpmlCorePhase(stream, h_launch);
+        if (launch_error != cudaSuccess) break;
+        if (source_groups != nullptr) {
+          launch_source_groups(1, step);
+          if (launch_error != cudaSuccess) break;
+        }
+        launch_error = LaunchCpmlShellPhase(stream, e_launch);
+        if (launch_error != cudaSuccess) break;
+        launch_error = LaunchCpmlCorePhase(stream, e_launch);
+        if (launch_error != cudaSuccess) break;
+      } else {
+        launch_error = static_cast<cudaError_t>(
+            BeamzLaunchStreamed(raw_stream, h_launch));
+        if (launch_error != cudaSuccess) break;
+        if (source_groups != nullptr) {
+          launch_source_groups(1, step);
+          if (launch_error != cudaSuccess) break;
+        }
+        launch_error = static_cast<cudaError_t>(
+            BeamzLaunchStreamed(raw_stream, e_launch));
         if (launch_error != cudaSuccess) break;
       }
-      launch_error =
-          static_cast<cudaError_t>(BeamzLaunchStreamed(raw_stream, e_launch));
-      if (launch_error != cudaSuccess) break;
       if (source_groups != nullptr) {
         launch_source_groups(2, step);
         if (launch_error != cudaSuccess) break;
