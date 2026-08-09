@@ -9,7 +9,11 @@ import numpy as np
 from beamz.simulation import kernels
 from beamz.simulation.compile import _elide_uniform_grid
 from beamz.simulation.cuda import runtime as cuda_runtime
-from beamz.simulation.execute import initial_program_state
+from beamz.simulation.execute import (
+    CUDA_GRAPH_MAX_STEPS,
+    build_scan,
+    initial_program_state,
+)
 from tests.performance.h100_workloads import H100Workload
 
 
@@ -164,6 +168,39 @@ def test_cuda_multi_step_ffi_aliases_all_fields(monkeypatch):
     }
     assert next_state.hx is state.hx
     assert next_state.ez is state.ez
+
+
+def test_cuda_scan_replays_one_bounded_graph_and_advances_chunk_clocks(monkeypatch):
+    program, state, _context = _program_and_state(cpml=False)
+    requested_steps = 2 * CUDA_GRAPH_MAX_STEPS + 7
+    program = replace(
+        program,
+        config=replace(
+            program.config,
+            backend="cuda_streamed",
+            num_steps=requested_steps,
+        ),
+    )
+    traced_step_counts = []
+
+    def fake_run_steps(chunk_state, _context, _coefficients, nsteps):
+        traced_step_counts.append(nsteps)
+        return chunk_state._replace(ex=chunk_state.ex + np.float32(nsteps))
+
+    monkeypatch.setattr(
+        "beamz.simulation.cuda.run_steps",
+        fake_run_steps,
+    )
+
+    next_state = build_scan(program)(state, program.coefficients)
+
+    assert traced_step_counts == [CUDA_GRAPH_MAX_STEPS, 7]
+    assert int(next_state.current_step) == requested_steps
+    np.testing.assert_allclose(
+        next_state.t,
+        state.t + np.float32(program.config.dt * requested_steps),
+    )
+    np.testing.assert_allclose(next_state.ex, state.ex + np.float32(requested_steps))
 
 
 def test_cuda_cpml_multi_step_ffi_aliases_fields_and_psi(monkeypatch):

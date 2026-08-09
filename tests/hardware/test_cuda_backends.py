@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 import beamz as bz
+import beamz.simulation.execute as execute_runtime
 from beamz.design import MaterialGrid
 from beamz.design.raster import Grid, Material, Scene, rasterize
 from beamz.simulation.backend import cuda_backend_status
@@ -28,13 +29,14 @@ def _simulation_and_seed(
     source: bool = True,
     monitor: bool = True,
     heterogeneous: bool = True,
+    timesteps: int = 32,
 ):
     workload = H100Workload(
         name="cuda_hardware_parity",
         shape_zyx=(18, 20, 35),
         # Cross the Gaussian source peak at step 24 and accumulate multiple DFT
         # phases rather than validating only the near-zero leading envelope.
-        timesteps=32,
+        timesteps=timesteps,
         resolution=80e-9,
         pml_cells=3,
         heterogeneous=heterogeneous,
@@ -359,6 +361,33 @@ def test_streamed_cuda_source_graph_continues_from_nonzero_step():
     actual = simulation.advance(
         state=_copy_state(prefix), num_steps=25, backend="cuda_streamed"
     ).state
+
+    _assert_state_close(reference, actual)
+
+
+@pytest.mark.parametrize(
+    ("cpml", "source", "monitor"),
+    [(False, False, False), (True, True, True)],
+    ids=["temporal_pec", "cpml_source_dft"],
+)
+def test_streamed_cuda_bounded_graph_replay_preserves_native_result(
+    monkeypatch, cpml, source, monitor
+):
+    # Two full native chunks plus a tail exercise graph reuse as well as absolute
+    # source timing, DFT phase/window timing, and clock advancement across boundaries.
+    timesteps = 519
+    simulation, state = _simulation_and_seed(
+        cpml=cpml,
+        source=source,
+        monitor=monitor,
+        heterogeneous=cpml,
+        timesteps=timesteps,
+    )
+    program = simulation.compile(num_steps=timesteps, backend="cuda_streamed")
+    monkeypatch.setattr(execute_runtime, "CUDA_GRAPH_MAX_STEPS", timesteps)
+    reference = build_scan(program)(_copy_state(state), program.coefficients)
+    monkeypatch.setattr(execute_runtime, "CUDA_GRAPH_MAX_STEPS", 256)
+    actual = build_scan(program)(_copy_state(state), program.coefficients)
 
     _assert_state_close(reference, actual)
 

@@ -46,6 +46,11 @@ SourceBatchMap = dict[
     tuple[BatchedSlabGroup | None, tuple[CompiledSourceSpec, ...]],
 ]
 
+# Native CUDA calls capture one graph node sequence per step. Keep captures small
+# enough to instantiate predictably, then replay the same executable from an XLA loop.
+# The even bound also keeps the temporal ping-pong kernel on its fast return layout.
+CUDA_GRAPH_MAX_STEPS = 256
+
 
 _COMPONENT_OFFSETS_2D = {
     "Ex": (0.0, 0.5),
@@ -602,31 +607,66 @@ def build_scan(program, *, donate_state: bool = False):
                 run_steps,
             )
 
-            scan_out = (
-                run_steps(state, step_context, coeffs, cfg.num_steps)
-                if not program.sources and not program.monitors
-                else run_program_steps(
-                    state,
-                    step_context,
-                    coeffs,
-                    graph_source_groups,
-                    packed_graph_monitors,
-                    cfg.num_steps,
+            def advance_native_chunk(chunk_state, chunk_steps: int, elapsed_steps):
+                elapsed_steps = jnp.asarray(elapsed_steps, dtype=jnp.int32)
+                chunk_state = chunk_state._replace(
+                    # Derive clocks from the immutable run origin. Incrementally
+                    # accumulating float32 chunk times would perturb long-run DFT
+                    # phases relative to one unbounded native launch.
+                    t=state.t + dt_scalar * elapsed_steps,
+                    current_step=state.current_step + elapsed_steps,
                 )
-                if program.monitors
-                else run_source_group_steps(
-                    state,
-                    step_context,
-                    coeffs,
-                    graph_source_groups,
-                    cfg.num_steps,
+                chunk_out = (
+                    run_steps(chunk_state, step_context, coeffs, chunk_steps)
+                    if not program.sources and not program.monitors
+                    else run_program_steps(
+                        chunk_state,
+                        step_context,
+                        coeffs,
+                        graph_source_groups,
+                        packed_graph_monitors,
+                        chunk_steps,
+                    )
+                    if program.monitors
+                    else run_source_group_steps(
+                        chunk_state,
+                        step_context,
+                        coeffs,
+                        graph_source_groups,
+                        chunk_steps,
+                    )
                 )
-            )
-            scan_out = scan_out._replace(
-                t=state.t + dt_scalar * cfg.num_steps,
-                current_step=state.current_step
-                + jnp.asarray(cfg.num_steps, dtype=jnp.int32),
-            )
+                completed_steps = elapsed_steps + jnp.asarray(
+                    chunk_steps, dtype=jnp.int32
+                )
+                return chunk_out._replace(
+                    t=state.t + dt_scalar * completed_steps,
+                    current_step=state.current_step + completed_steps,
+                )
+
+            if cfg.num_steps <= CUDA_GRAPH_MAX_STEPS:
+                scan_out = advance_native_chunk(state, cfg.num_steps, 0)
+            else:
+                full_chunks, tail_steps = divmod(cfg.num_steps, CUDA_GRAPH_MAX_STEPS)
+                # The loop body has one fixed native call signature. XLA therefore
+                # reuses its buffers and the CUDA layer hits one bounded graph-cache
+                # entry instead of capturing a graph proportional to the entire run.
+                scan_out = jax.lax.fori_loop(
+                    0,
+                    full_chunks,
+                    lambda _i, chunk_state: advance_native_chunk(
+                        chunk_state,
+                        CUDA_GRAPH_MAX_STEPS,
+                        _i * CUDA_GRAPH_MAX_STEPS,
+                    ),
+                    state,
+                )
+                if tail_steps:
+                    scan_out = advance_native_chunk(
+                        scan_out,
+                        tail_steps,
+                        full_chunks * CUDA_GRAPH_MAX_STEPS,
+                    )
         elif cfg.loop_kind == "scan":
 
             def _scan_body(carry, _unused):
