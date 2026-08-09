@@ -355,9 +355,7 @@ def test_cuda_cpml_multi_step_ffi_aliases_fields_and_psi(monkeypatch):
         **{62 + index: 12 + index for index in range(6)},
     }
     assert attributes["nsteps"] == np.int32(7)
-    assert attributes["program_layout"] == np.int32(
-        abi.PROGRAM_LAYOUT_CPML_IN_PLACE
-    )
+    assert attributes["program_layout"] == np.int32(abi.PROGRAM_LAYOUT_CPML_IN_PLACE)
     assert next_state.cpml_psi_h_terms == state.cpml_psi_h_terms
     assert next_state.cpml_psi_e_terms == state.cpml_psi_e_terms
 
@@ -446,9 +444,7 @@ def test_cuda_source_group_graph_packs_all_phases_and_aliases_state(monkeypatch)
     }
     assert attributes["nsteps"] == np.int32(3)
     assert attributes["cpml_enabled"] == np.int32(1)
-    assert attributes["program_layout"] == np.int32(
-        abi.PROGRAM_LAYOUT_SOURCE_IN_PLACE
-    )
+    assert attributes["program_layout"] == np.int32(abi.PROGRAM_LAYOUT_SOURCE_IN_PLACE)
     assert attributes["coincident_source_group_mask"] == np.int32(1)
     assert next_state.cpml_psi_h_terms == state.cpml_psi_h_terms
 
@@ -556,9 +552,7 @@ def test_cuda_program_graph_packs_monitor_batch_and_aliases_accumulators(monkeyp
     assert options["input_output_aliases"][109] == 19
     assert options["input_output_aliases"][110] == 20
     assert attributes["monitor_count"] == np.int32(1)
-    assert attributes["program_layout"] == np.int32(
-        abi.PROGRAM_LAYOUT_MONITOR_IN_PLACE
-    )
+    assert attributes["program_layout"] == np.int32(abi.PROGRAM_LAYOUT_MONITOR_IN_PLACE)
     assert attributes["coincident_source_group_mask"] == np.int32(1)
     np.testing.assert_array_equal(next_state.dft_vec_re, state.dft_vec_re)
 

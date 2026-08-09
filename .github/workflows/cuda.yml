@@ -6,11 +6,14 @@ on:
     paths:
       - ".github/workflows/cuda.yml"
       - "beamz/simulation/backend.py"
+      - "beamz/simulation/_cuda_abi.py"
       - "beamz/simulation/compile.py"
       - "beamz/simulation/cuda/**"
       - "beamz/simulation/execute.py"
       - "beamz/simulation/kernels.py"
+      - "beamz/simulation/model.py"
       - "cuda/**"
+      - "scripts/generate_cuda_abi.py"
       - "scripts/benchmark_h100.py"
       - "tests/hardware/test_cuda_backends.py"
       - "tests/performance/**"
@@ -18,11 +21,14 @@ on:
     paths:
       - ".github/workflows/cuda.yml"
       - "beamz/simulation/backend.py"
+      - "beamz/simulation/_cuda_abi.py"
       - "beamz/simulation/compile.py"
       - "beamz/simulation/cuda/**"
       - "beamz/simulation/execute.py"
       - "beamz/simulation/kernels.py"
+      - "beamz/simulation/model.py"
       - "cuda/**"
+      - "scripts/generate_cuda_abi.py"
       - "scripts/benchmark_h100.py"
       - "tests/hardware/test_cuda_backends.py"
       - "tests/performance/**"
@@ -59,21 +65,15 @@ jobs:
           uv pip install --python /tmp/beamz-cuda-smoke/bin/python \
             --no-deps cuda/dist/*.whl
           /tmp/beamz-cuda-smoke/bin/python - <<'PY'
+          import json
+          from pathlib import Path
+
           import beamz_cuda
 
-          assert beamz_cuda.__version__ == "0.3.0"
-          assert beamz_cuda.__abi_version__ == 3
-          assert set(beamz_cuda.registrations()) == {
-              "beamz_cuda_hopper",
-              "beamz_cuda_streamed",
-              "beamz_cuda_streamed_steps",
-              "beamz_cuda_temporal_steps",
-              "beamz_cuda_streamed_cpml_steps",
-              "beamz_cuda_streamed_source_cpml_steps",
-              "beamz_cuda_streamed_source_groups_cpml_steps",
-              "beamz_cuda_streamed_program_cpml_steps",
-              "beamz_cuda_streamed_source_monitor_cpml_steps",
-          }
+          schema = json.loads(Path("cuda/abi_layout.json").read_text())
+          assert beamz_cuda.__version__ == schema["package_version"]
+          assert beamz_cuda.__abi_version__ == schema["abi_version"]
+          assert set(beamz_cuda.registrations()) == set(schema["targets"].values())
           print(beamz_cuda.__version__)
           PY
       - uses: actions/upload-artifact@v4

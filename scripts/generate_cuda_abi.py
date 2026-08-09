@@ -19,19 +19,31 @@ def _pascal_case(value: str) -> str:
 
 def _render_python(schema: dict) -> str:
     targets = schema["targets"]
+    exported = [
+        "CUDA_ABI_VERSION",
+        "CUDA_PACKAGE_VERSION",
+        *(f"CUDA_{name.upper()}_TARGET" for name in targets),
+        "CUDA_STREAMED_TARGETS",
+        *(f"PROGRAM_LAYOUT_{name.upper()}" for name in schema["program_layouts"]),
+        *(name.upper() for name in schema["layout"]),
+    ]
     lines = [
         '"""Generated CUDA FFI contract. Do not edit by hand."""',
+        "",
+        "__all__ = [",
+        *(f"    {json.dumps(name)}," for name in exported),
+        "]",
         "",
         f"CUDA_ABI_VERSION = {schema['abi_version']}",
         f"CUDA_PACKAGE_VERSION = {json.dumps(schema['package_version'])}",
     ]
     for name, target in targets.items():
         lines.append(f"CUDA_{name.upper()}_TARGET = {json.dumps(target)}")
-    lines.extend(["", "CUDA_STREAMED_TARGETS = frozenset(("])
+    lines.extend(["", "CUDA_STREAMED_TARGETS = frozenset(", "    ("])
     lines.extend(
-        f"    CUDA_{name.upper()}_TARGET," for name in schema["streamed_targets"]
+        f"        CUDA_{name.upper()}_TARGET," for name in schema["streamed_targets"]
     )
-    lines.extend(["))", ""])
+    lines.extend(["    )", ")", ""])
     for name, value in schema["program_layouts"].items():
         lines.append(f"PROGRAM_LAYOUT_{name.upper()} = {value}")
     lines.append("")
@@ -53,10 +65,7 @@ def _render_cpp(schema: dict) -> str:
         "namespace beamz::cuda::abi {",
         "",
         f"inline constexpr int32_t kAbiVersion = {schema['abi_version']};",
-        (
-            "inline constexpr char kPackageVersion[] = "
-            f'"{schema["package_version"]}";'
-        ),
+        (f'inline constexpr char kPackageVersion[] = "{schema["package_version"]}";'),
     ]
     for name, target in schema["targets"].items():
         lines.append(
@@ -69,9 +78,7 @@ def _render_cpp(schema: dict) -> str:
         )
     lines.append("")
     for name, value in schema["layout"].items():
-        lines.append(
-            f"inline constexpr size_t k{_pascal_case(name)} = {value};"
-        )
+        lines.append(f"inline constexpr size_t k{_pascal_case(name)} = {value};")
     lines.extend(["", "}  // namespace beamz::cuda::abi", "", "#endif", ""])
     return "\n".join(lines)
 

@@ -144,9 +144,7 @@ class PML:
 
     def __post_init__(self) -> None:
         thickness = None if self.thickness is None else float(self.thickness)
-        if thickness is not None and (
-            not np.isfinite(thickness) or thickness < 0.0
-        ):
+        if thickness is not None and (not np.isfinite(thickness) or thickness < 0.0):
             raise ValueError("PML thickness must be a non-negative finite value.")
         formulation = str(self.formulation).lower()
         if formulation not in {"sponge", "cpml"}:

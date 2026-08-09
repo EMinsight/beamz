@@ -70,10 +70,9 @@ def test_default_cpml_is_exactly_twelve_cells_wide_on_every_3d_face(rectilinear)
     fields = _make_fields_3d(shape=shape, resolution=0.1)
     domain_size = _make_design_3d(shape=shape, resolution=0.1)
     if rectilinear:
+
         def edges(count, low, high):
-            return np.concatenate(
-                ([0.0], np.cumsum(np.linspace(low, high, count)))
-            )
+            return np.concatenate(([0.0], np.cumsum(np.linspace(low, high, count))))
 
         geometry = RectilinearGrid(
             edges(shape[2], 0.08, 0.12),

@@ -229,15 +229,11 @@ class _AbsorberCompiler:
             else self.spec
         )
         profile = type(self)(spec, cell_thickness=cell_thickness)
-        sigma_max, alpha_max = profile._resolved_profile_params(
-            fields, resolution, dt
-        )
+        sigma_max, alpha_max = profile._resolved_profile_params(fields, resolution, dt)
         changes: dict[str, float | None] = {"sigma_max": sigma_max}
         if isinstance(spec, PML):
             changes["alpha_max"] = alpha_max
-        return type(self)(
-            spec.updated_copy(**changes), cell_thickness=cell_thickness
-        )
+        return type(self)(spec.updated_copy(**changes), cell_thickness=cell_thickness)
 
     def _resolved_profile_params(self, fields, resolution, dt):
         sigma_max = self.spec.sigma_max
@@ -502,9 +498,7 @@ class _AbsorberCompiler:
         pml_cells = max(
             int(self.cell_thickness)
             if self.cell_thickness is not None
-            else int(
-                round(float(self.spec.thickness) / max(float(spacing), 1e-30))
-            ),
+            else int(round(float(self.spec.thickness) / max(float(spacing), 1e-30))),
             1,
         )
         sigma_order = float(self.spec.m if sigma_order is None else sigma_order)

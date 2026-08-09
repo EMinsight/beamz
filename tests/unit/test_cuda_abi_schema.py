@@ -31,9 +31,7 @@ def test_cuda_abi_layout_relationships_are_explicit():
     assert layout["cpml_e_psi_input_offset"] == (
         layout["cpml_h_psi_input_offset"] + layout["cpml_phase_input_count"]
     )
-    assert layout["temporal_field_workspace_input"] == layout[
-        "cpml_graph_input_count"
-    ]
+    assert layout["temporal_field_workspace_input"] == layout["cpml_graph_input_count"]
     assert layout["temporal_psi_workspace_input"] == (
         layout["temporal_field_workspace_input"] + layout["field_count"]
     )
