@@ -621,6 +621,21 @@ def run_program_steps(
             else (group.coeffs, group.waveforms, group.starts)
         )
     arguments, result_values, aliases = _graph_io(state, ctx, coeffs)
+    use_temporal_cpml = _temporal_cpml_source_groups_supported(ctx, coeffs, nsteps)
+    if use_temporal_cpml:
+        fields = (state.hx, state.hy, state.hz, state.ex, state.ey, state.ez)
+        workspace = tuple(jnp.empty_like(value) for value in fields)
+        arguments = (*arguments, *workspace)
+        result_values = (
+            *fields,
+            *workspace,
+            *state.cpml_psi_h_terms,
+            *state.cpml_psi_e_terms,
+        )
+        aliases = {index: index for index in range(6)}
+        aliases.update({74 + index: 6 + index for index in range(6)})
+        aliases.update({31 + index: 12 + index for index in range(6)})
+        aliases.update({62 + index: 18 + index for index in range(6)})
     state_output_count = len(result_values)
     result_values = (
         *result_values,
@@ -636,7 +651,11 @@ def run_program_steps(
         monitor_output_start + 2: state_output_count + 2,
     }
     call = jax.ffi.ffi_call(
-        "beamz_cuda_streamed_program_cpml_steps",
+        (
+            "beamz_cuda_temporal_program_cpml_steps"
+            if use_temporal_cpml
+            else "beamz_cuda_streamed_program_cpml_steps"
+        ),
         tuple(_shape(value) for value in result_values),
         input_output_aliases=aliases,
         vmap_method="sequential",
@@ -660,16 +679,32 @@ def run_program_steps(
             )
         ),
         metric_kind=_metric_kind_code(ctx),
-        cpml_enabled=np.int32(ctx.boundary.cpml.enabled),
         monitor_count=np.int32(packed_monitors[0].shape[0]),
         coincident_source_group_mask=np.int32(
             _coincident_source_group_mask(groups)
         ),
+        **(
+            {}
+            if use_temporal_cpml
+            else {"cpml_enabled": np.int32(ctx.boundary.cpml.enabled)}
+        ),
     )
-    next_state = (
-        _replace_graph_outputs(state, outputs)
-        if ctx.boundary.cpml.enabled
-        else state._replace(
+    if use_temporal_cpml:
+        field_start = 0 if nsteps % 2 == 0 else 6
+        next_state = state._replace(
+            hx=outputs[field_start],
+            hy=outputs[field_start + 1],
+            hz=outputs[field_start + 2],
+            ex=outputs[field_start + 3],
+            ey=outputs[field_start + 4],
+            ez=outputs[field_start + 5],
+            cpml_psi_h_terms=outputs[12:18],
+            cpml_psi_e_terms=outputs[18:24],
+        )
+    elif ctx.boundary.cpml.enabled:
+        next_state = _replace_graph_outputs(state, outputs)
+    else:
+        next_state = state._replace(
             hx=outputs[0],
             hy=outputs[1],
             hz=outputs[2],
@@ -677,7 +712,6 @@ def run_program_steps(
             ey=outputs[4],
             ez=outputs[5],
         )
-    )
     return next_state._replace(
         dft_vec_re=outputs[state_output_count],
         dft_vec_im=outputs[state_output_count + 1],

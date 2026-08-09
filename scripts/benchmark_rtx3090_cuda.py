@@ -297,6 +297,7 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
         "heterogeneous_cpml",
         "cpml_source",
         "cpml_source_monitor",
+        "cpml_multiple_monitors",
         "rectilinear_cpml",
     }
     boundaries = [bz.PEC(edges="all")]
@@ -331,6 +332,7 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
         "pec_source_monitor",
         "cpml_source",
         "cpml_source_monitor",
+        "cpml_multiple_monitors",
         "multiple_sources",
         "multiple_monitors",
         "ragged_monitors",
@@ -342,7 +344,12 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
         source_positions = (
             (0.25, 0.40)
             if args.profile
-            in {"multiple_sources", "multiple_monitors", "scheduled_windowed_monitor"}
+            in {
+                "multiple_sources",
+                "multiple_monitors",
+                "cpml_multiple_monitors",
+                "scheduled_windowed_monitor",
+            }
             else (0.25,)
         )
         sources = [
@@ -380,6 +387,7 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
         "pec_source_monitor",
         "cpml_source_monitor",
         "multiple_monitors",
+        "cpml_multiple_monitors",
         "ragged_monitors",
         "scheduled_windowed_monitor",
     }:
@@ -397,7 +405,9 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
             )
         else:
             monitor_positions = (
-                (0.68, 0.78) if args.profile == "multiple_monitors" else (0.75,)
+                (0.68, 0.78)
+                if args.profile in {"multiple_monitors", "cpml_multiple_monitors"}
+                else (0.75,)
             )
             monitor_plans = tuple(
                 (
@@ -506,6 +516,7 @@ def _parser() -> argparse.ArgumentParser:
             "pec_source_monitor",
             "cpml_source",
             "cpml_source_monitor",
+            "cpml_multiple_monitors",
             "axis_uniform_pec",
             "rectilinear_pec",
             "rectilinear_cpml",

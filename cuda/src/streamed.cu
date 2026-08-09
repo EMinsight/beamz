@@ -2076,7 +2076,7 @@ int BeamzLaunchTemporalCpmlSourceGroupSteps(
     void* raw_stream, const BeamzLaunch& h_ab, const BeamzLaunch& e_ab,
     const BeamzLaunch& h_ba, const BeamzLaunch& e_ba,
     const BeamzSourceGroupLaunch* source_groups, int32_t source_group_count,
-    int32_t nsteps) {
+    const BeamzDftGroupLaunch* monitor_groups, int32_t nsteps) {
   if (source_groups == nullptr || source_group_count != 9 || nsteps < 1 ||
       h_ab.phase != 0 || e_ab.phase != 1 || h_ba.phase != 0 ||
       e_ba.phase != 1 || h_ab.nterms != 6 || e_ab.nterms != 6 ||
@@ -2097,10 +2097,47 @@ int BeamzLaunchTemporalCpmlSourceGroupSteps(
       return cudaErrorInvalidValue;
     }
   }
+  if (monitor_groups != nullptr) {
+    const BeamzDftGroupLaunch& monitors = *monitor_groups;
+    if (monitors.monitor_count < 1 || monitors.indices.rank != 4 ||
+        monitors.weights.rank != 4 || monitors.frequencies.rank != 2 ||
+        monitors.component_masks.rank != 2 || monitors.counts.rank != 2 ||
+        monitors.codes.rank != 2 || monitors.windows.rank != 2 ||
+        monitors.dft_re.rank != 1 || monitors.dft_im.rank != 1 ||
+        monitors.dft_weight.rank != 1 || monitors.time.rank != 0 ||
+        monitors.current_step.rank != 0 ||
+        monitors.indices.dims[0] < monitors.monitor_count ||
+        monitors.indices.dims[1] != 6 ||
+        monitors.weights.dims[0] != monitors.indices.dims[0] ||
+        monitors.weights.dims[1] != monitors.indices.dims[1] ||
+        monitors.weights.dims[2] != monitors.indices.dims[2] ||
+        monitors.weights.dims[3] != monitors.indices.dims[3] ||
+        monitors.frequencies.dims[0] < monitors.monitor_count ||
+        monitors.component_masks.dims[0] < monitors.monitor_count ||
+        monitors.component_masks.dims[1] != 6 ||
+        monitors.counts.dims[0] < monitors.monitor_count ||
+        monitors.counts.dims[1] != 5 ||
+        monitors.codes.dims[0] < monitors.monitor_count ||
+        monitors.codes.dims[1] != 2 ||
+        monitors.windows.dims[0] < monitors.monitor_count ||
+        monitors.windows.dims[1] != 3 || monitors.dft_re.dims[0] < 1 ||
+        monitors.dft_im.dims[0] != monitors.dft_re.dims[0] ||
+        monitors.dft_weight.dims[0] < 1) {
+      return cudaErrorInvalidValue;
+    }
+    const BeamzBuffer monitor_buffers[] = {
+        monitors.indices,         monitors.weights, monitors.frequencies,
+        monitors.component_masks, monitors.counts,  monitors.codes,
+        monitors.windows,         monitors.dft_re,   monitors.dft_im,
+        monitors.dft_weight};
+    for (const BeamzBuffer& buffer : monitor_buffers) {
+      if (!FitsIntOffsets(buffer)) return cudaErrorInvalidValue;
+    }
+  }
   auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
   std::string graph_key = "temporal-cpml-source-groups";
-  graph_key += GraphKey(raw_stream, h_ab, e_ab, nsteps, nullptr,
-                        source_groups, source_group_count);
+  graph_key += GraphKey(raw_stream, h_ab, e_ab, nsteps, nullptr, source_groups,
+                        source_group_count, nullptr, monitor_groups);
   graph_key.append(reinterpret_cast<const char*>(&h_ba), sizeof(h_ba));
   graph_key.append(reinterpret_cast<const char*>(&e_ba), sizeof(e_ba));
   GraphCache& cache = CachedGraphs();
@@ -2187,6 +2224,20 @@ int BeamzLaunchTemporalCpmlSourceGroupSteps(
       if (launch_error != cudaSuccess) return launch_error;
       launch_source_groups(h_launch, e_launch, 2, step);
       if (launch_error != cudaSuccess) return launch_error;
+      if (monitor_groups != nullptr) {
+        const dim3 monitor_threads(32, 2, 2);
+        const dim3 monitor_blocks(
+            (monitor_groups->indices.dims[2] + monitor_threads.x - 1) /
+                monitor_threads.x,
+            (monitor_groups->frequencies.dims[1] + monitor_threads.y - 1) /
+                monitor_threads.y,
+            (monitor_groups->monitor_count * 6 + monitor_threads.z - 1) /
+                monitor_threads.z);
+        AccumulateDftGroups<<<monitor_blocks, monitor_threads, 0, stream>>>(
+            h_launch, e_launch, *monitor_groups, step);
+        launch_error = cudaPeekAtLastError();
+        if (launch_error != cudaSuccess) return launch_error;
+      }
     }
     return launch_error;
   };

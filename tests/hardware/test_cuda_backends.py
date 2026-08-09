@@ -154,15 +154,18 @@ def _feature_simulation(profile: str):
             ),
             bz.PEC(edges=("front", "back", "bottom", "top")),
         ]
-    elif profile == "asymmetric_cpml":
+    elif profile in {"asymmetric_cpml", "cpml_multiple_monitors"}:
         boundaries = [
             bz.PML(
-                edges=("back", "top", "left"),
+                edges=("back", "top", "left")
+                if profile == "asymmetric_cpml"
+                else "all",
                 thickness=3 * resolution,
                 formulation="cpml",
             ),
-            bz.PEC(edges=("front", "bottom", "right")),
         ]
+        if profile == "asymmetric_cpml":
+            boundaries.append(bz.PEC(edges=("front", "bottom", "right")))
     material_grid = MaterialGrid(
         permittivity=permittivity,
         conductivity=conductivity,
@@ -178,6 +181,7 @@ def _feature_simulation(profile: str):
         "multiple_sources",
         "overlapping_sources",
         "multiple_monitors",
+        "cpml_multiple_monitors",
         "scheduled_windowed_monitor",
     }:
         sources = [
@@ -210,8 +214,16 @@ def _feature_simulation(profile: str):
             )
         ]
     monitors = []
-    if profile in {"multiple_monitors", "scheduled_windowed_monitor"}:
-        positions = (0.65, 0.78) if profile == "multiple_monitors" else (0.72,)
+    if profile in {
+        "multiple_monitors",
+        "cpml_multiple_monitors",
+        "scheduled_windowed_monitor",
+    }:
+        positions = (
+            (0.65, 0.78)
+            if profile in {"multiple_monitors", "cpml_multiple_monitors"}
+            else (0.72,)
+        )
         monitors = [
             bz.FieldMonitor(
                 center=(fraction * size_xyz[0], 0.5 * size_xyz[1], 0.5 * size_xyz[2]),
@@ -256,6 +268,7 @@ def _feature_program_state(simulation, backend: str, profile: str, state):
         "overlapping_sources",
         "h_source",
         "multiple_monitors",
+        "cpml_multiple_monitors",
         "scheduled_windowed_monitor",
     ],
 )

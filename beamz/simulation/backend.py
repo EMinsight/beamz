@@ -21,7 +21,7 @@ ResolvedBackend = Literal["jax", "cuda_streamed", "cuda_hopper"]
 
 _EXTENSION_MODULE = "beamz_cuda"
 _REGISTERED_MODULE: ModuleType | None = None
-CUDA_ABI_VERSION = 6
+CUDA_ABI_VERSION = 7
 CUDA_STREAMED_TARGETS = frozenset(
     {
         "beamz_cuda_streamed",
@@ -31,6 +31,7 @@ CUDA_STREAMED_TARGETS = frozenset(
         "beamz_cuda_streamed_source_cpml_steps",
         "beamz_cuda_streamed_source_groups_cpml_steps",
         "beamz_cuda_temporal_source_groups_cpml_steps",
+        "beamz_cuda_temporal_program_cpml_steps",
         "beamz_cuda_streamed_program_cpml_steps",
         "beamz_cuda_streamed_source_monitor_cpml_steps",
     }

@@ -552,6 +552,68 @@ def test_cuda_program_graph_packs_monitor_batch_and_aliases_accumulators(monkeyp
     np.testing.assert_array_equal(next_state.dft_vec_re, state.dft_vec_re)
 
 
+def test_cuda_program_graph_uses_temporal_cpml_field_banks(monkeypatch):
+    program, state, context = _program_and_state(cpml=True, source=True, monitor=True)
+    coefficients = program.coefficients._replace(
+        h_decay_x=jnp.asarray(1.0, dtype=jnp.float32),
+        h_decay_y=jnp.asarray(1.0, dtype=jnp.float32),
+        h_decay_z=jnp.asarray(1.0, dtype=jnp.float32),
+        h_source_x=jnp.asarray(1.0, dtype=jnp.float32),
+        h_source_y=jnp.asarray(1.0, dtype=jnp.float32),
+        h_source_z=jnp.asarray(1.0, dtype=jnp.float32),
+        e_source_x=jnp.zeros((1,), dtype=jnp.int32),
+        e_source_y=jnp.zeros((1,), dtype=jnp.int32),
+        e_source_z=jnp.zeros((1,), dtype=jnp.int32),
+    )
+    captured = []
+
+    def fake_ffi_call(target, result_metadata, **options):
+        def call(*arguments, **attributes):
+            captured.append((target, result_metadata, options, arguments, attributes))
+            return (
+                *arguments[:6],
+                *arguments[74:80],
+                *arguments[31:37],
+                *arguments[62:68],
+                *arguments[114:117],
+            )
+
+        return call
+
+    monkeypatch.setattr(cuda_runtime.jax.ffi, "ffi_call", fake_ffi_call)
+    source_group = SimpleNamespace(
+        coeffs=jnp.ones((1, 2, 3, 4), dtype=jnp.float32),
+        waveforms=jnp.ones((1, 8), dtype=jnp.float32),
+        starts=jnp.zeros((1, 3), dtype=jnp.int32),
+        starts_tuple=((0, 0, 0),),
+    )
+    groups = (source_group, None, None, None, None, None, None, None, None)
+    packed = cuda_runtime.pack_dft_monitors(program.monitors)
+
+    next_state = cuda_runtime.run_program_steps(
+        state, context, coefficients, groups, packed, 3
+    )
+
+    target, results, options, arguments, attributes = captured[0]
+    assert target == "beamz_cuda_temporal_program_cpml_steps"
+    assert len(results) == 27
+    assert len(arguments) == 119
+    assert arguments[118] is state.current_step
+    assert options["input_output_aliases"] == {
+        **{index: index for index in range(6)},
+        **{74 + index: 6 + index for index in range(6)},
+        **{31 + index: 12 + index for index in range(6)},
+        **{62 + index: 18 + index for index in range(6)},
+        114: 24,
+        115: 25,
+        116: 26,
+    }
+    assert "cpml_enabled" not in attributes
+    assert attributes["monitor_count"] == np.int32(1)
+    assert next_state.hx is arguments[74]
+    np.testing.assert_array_equal(next_state.dft_vec_re, state.dft_vec_re)
+
+
 def test_cuda_source_graph_supports_pec_without_cpml(monkeypatch):
     program, state, context = _program_and_state(cpml=False, source=True)
     captured = []
