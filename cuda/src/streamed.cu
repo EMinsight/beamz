@@ -45,6 +45,11 @@ bool GraphCacheEnabled() {
   return value == nullptr || value[0] == '\0' || value[0] == '0';
 }
 
+bool TypedPsiEnabled() {
+  const char* value = std::getenv("BEAMZ_CUDA_DISABLE_TYPED_PSI");
+  return value == nullptr || value[0] == '\0' || value[0] == '0';
+}
+
 std::string GraphKey(void* stream, const BeamzLaunch& h_launch,
                      const BeamzLaunch& e_launch, int32_t nsteps,
                      const BeamzSourceLaunch* source = nullptr,
@@ -173,7 +178,7 @@ __device__ __forceinline__ float BoundaryDifference(const BeamzBuffer& value,
   return (Read3D(value, z, y, x) - Read3D(value, low_z, low_y, low_x)) * inv_dx;
 }
 
-template <int Term, bool UniformCpml = false>
+template <int Term, bool UniformCpml = false, int PsiType = -1>
 __device__ __forceinline__ float CorrectCpml(float derivative, int z, int y,
                                              int x, const BeamzLaunch& launch) {
   // The 3D compiler emits the six curl terms in this fixed derivative order.
@@ -214,11 +219,16 @@ __device__ __forceinline__ float CorrectCpml(float derivative, int z, int y,
                              static_cast<int>(psi_output.dims[2]) +
                          px;
   float old_psi;
-  if (psi_input.element_type == kBeamzBF16) {
+  if constexpr (PsiType == kBeamzBF16) {
     old_psi = __bfloat162float(
         static_cast<const __nv_bfloat16*>(psi_input.data)[psi_offset]);
-  } else {
+  } else if constexpr (PsiType == kBeamzF32) {
     old_psi = static_cast<const float*>(psi_input.data)[psi_offset];
+  } else {
+    old_psi = psi_input.element_type == kBeamzBF16
+                  ? __bfloat162float(static_cast<const __nv_bfloat16*>(
+                                         psi_input.data)[psi_offset])
+                  : static_cast<const float*>(psi_input.data)[psi_offset];
   }
   const float next_psi =
       static_cast<const float *>(
@@ -226,7 +236,12 @@ __device__ __forceinline__ float CorrectCpml(float derivative, int z, int y,
           old_psi +
       static_cast<const float*>(launch.inputs[coefficient_base].data)[packed] *
           derivative;
-  if (psi_output.element_type == kBeamzBF16) {
+  if constexpr (PsiType == kBeamzBF16) {
+    static_cast<__nv_bfloat16*>(psi_output.data)[psi_offset] =
+        __float2bfloat16_rn(next_psi);
+  } else if constexpr (PsiType == kBeamzF32) {
+    static_cast<float*>(psi_output.data)[psi_offset] = next_psi;
+  } else if (psi_output.element_type == kBeamzBF16) {
     static_cast<__nv_bfloat16*>(psi_output.data)[psi_offset] =
         __float2bfloat16_rn(next_psi);
   } else {
@@ -239,7 +254,8 @@ __device__ __forceinline__ float CorrectCpml(float derivative, int z, int y,
 }
 
 template <int Phase, int Component, bool Cpml, int MetricKind,
-          bool HasMetallicEdges = true, bool UniformCpml = false>
+          bool HasMetallicEdges = true, bool UniformCpml = false,
+          int PsiType = -1>
 __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
                                                 int z, int y, int x) {
   const BeamzBuffer& input = launch.inputs[Component];
@@ -305,10 +321,10 @@ __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
   }
   float curl;
   if constexpr (Cpml) {
-    curl = CorrectCpml<2 * Component, UniformCpml>(derivative0, z, y, x,
-                                                   launch) +
-           CorrectCpml<2 * Component + 1, UniformCpml>(derivative1, z, y, x,
-                                                       launch);
+    curl = CorrectCpml<2 * Component, UniformCpml, PsiType>(
+               derivative0, z, y, x, launch) +
+           CorrectCpml<2 * Component + 1, UniformCpml, PsiType>(
+               derivative1, z, y, x, launch);
   } else {
     curl = derivative0 - derivative1;
   }
@@ -332,17 +348,17 @@ __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
 }
 
 template <int Phase, bool Cpml, int MetricKind, bool HasMetallicEdges = true,
-          bool UniformCpml = false>
+          bool UniformCpml = false, int PsiType = -1>
 __global__ void UpdateFusedComponents(BeamzLaunch launch) {
   const int x = blockIdx.x * blockDim.x + threadIdx.x;
   const int y = blockIdx.y * blockDim.y + threadIdx.y;
   const int z = blockIdx.z * blockDim.z + threadIdx.z;
-  UpdateComponent<Phase, 0, Cpml, MetricKind, HasMetallicEdges, UniformCpml>(
-      launch, z, y, x);
-  UpdateComponent<Phase, 1, Cpml, MetricKind, HasMetallicEdges, UniformCpml>(
-      launch, z, y, x);
-  UpdateComponent<Phase, 2, Cpml, MetricKind, HasMetallicEdges, UniformCpml>(
-      launch, z, y, x);
+  UpdateComponent<Phase, 0, Cpml, MetricKind, HasMetallicEdges, UniformCpml,
+                  PsiType>(launch, z, y, x);
+  UpdateComponent<Phase, 1, Cpml, MetricKind, HasMetallicEdges, UniformCpml,
+                  PsiType>(launch, z, y, x);
+  UpdateComponent<Phase, 2, Cpml, MetricKind, HasMetallicEdges, UniformCpml,
+                  PsiType>(launch, z, y, x);
 }
 
 template <int Phase>
@@ -588,18 +604,50 @@ __global__ void FusedFullStepPec(BeamzLaunch h_launch,
 template <int MetricKind, bool HasMetallicEdges, bool UniformCpml>
 void LaunchFusedUpdate(cudaStream_t stream, const BeamzLaunch& launch,
                        dim3 blocks, dim3 threads) {
+  int psi_type = -1;
+  if (launch.nterms != 0 && TypedPsiEnabled()) {
+    constexpr int psi_input_base = 13 + 3 * 6;
+    psi_type = launch.outputs[3].element_type;
+    for (int term = 0; term < 6; ++term) {
+      if (launch.inputs[psi_input_base + term].element_type != psi_type ||
+          launch.outputs[3 + term].element_type != psi_type) {
+        psi_type = -1;
+        break;
+      }
+    }
+  }
   if (launch.phase == 0 && launch.nterms == 0) {
     UpdateFusedComponents<0, false, MetricKind, HasMetallicEdges, UniformCpml>
         <<<blocks, threads, 0, stream>>>(launch);
   } else if (launch.phase == 0) {
-    UpdateFusedComponents<0, true, MetricKind, HasMetallicEdges, UniformCpml>
-        <<<blocks, threads, 0, stream>>>(launch);
+    if (psi_type == kBeamzBF16) {
+      UpdateFusedComponents<0, true, MetricKind, HasMetallicEdges, UniformCpml,
+                            kBeamzBF16>
+          <<<blocks, threads, 0, stream>>>(launch);
+    } else if (psi_type == kBeamzF32) {
+      UpdateFusedComponents<0, true, MetricKind, HasMetallicEdges, UniformCpml,
+                            kBeamzF32>
+          <<<blocks, threads, 0, stream>>>(launch);
+    } else {
+      UpdateFusedComponents<0, true, MetricKind, HasMetallicEdges, UniformCpml>
+          <<<blocks, threads, 0, stream>>>(launch);
+    }
   } else if (launch.nterms == 0) {
     UpdateFusedComponents<1, false, MetricKind, HasMetallicEdges, UniformCpml>
         <<<blocks, threads, 0, stream>>>(launch);
   } else {
-    UpdateFusedComponents<1, true, MetricKind, HasMetallicEdges, UniformCpml>
-        <<<blocks, threads, 0, stream>>>(launch);
+    if (psi_type == kBeamzBF16) {
+      UpdateFusedComponents<1, true, MetricKind, HasMetallicEdges, UniformCpml,
+                            kBeamzBF16>
+          <<<blocks, threads, 0, stream>>>(launch);
+    } else if (psi_type == kBeamzF32) {
+      UpdateFusedComponents<1, true, MetricKind, HasMetallicEdges, UniformCpml,
+                            kBeamzF32>
+          <<<blocks, threads, 0, stream>>>(launch);
+    } else {
+      UpdateFusedComponents<1, true, MetricKind, HasMetallicEdges, UniformCpml>
+          <<<blocks, threads, 0, stream>>>(launch);
+    }
   }
 }
 
