@@ -203,6 +203,95 @@ def test_cuda_scan_replays_one_bounded_graph_and_advances_chunk_clocks(monkeypat
     np.testing.assert_allclose(next_state.ex, state.ex + np.float32(requested_steps))
 
 
+def test_cuda_scan_routes_one_slab_source_to_narrow_graph(monkeypatch):
+    program, state, _context = _program_and_state(cpml=True, source=True)
+    program = replace(
+        program,
+        config=replace(program.config, backend="cuda_streamed"),
+    )
+    calls = []
+
+    def fake_run_source_steps(chunk_state, _context, _coefficients, source, nsteps):
+        calls.append((source, nsteps))
+        return chunk_state
+
+    monkeypatch.setattr("beamz.simulation.cuda.run_source_steps", fake_run_source_steps)
+    monkeypatch.setattr(
+        "beamz.simulation.cuda.run_source_group_steps",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("general source graph should not be selected")
+        ),
+    )
+
+    build_scan(program)(state, program.coefficients)
+
+    assert calls == [(program.sources[0], program.config.num_steps)]
+
+
+def test_cuda_scan_routes_simple_source_monitor_to_narrow_graph(monkeypatch):
+    program, state, _context = _program_and_state(cpml=True, source=True, monitor=True)
+    program = replace(
+        program,
+        config=replace(program.config, backend="cuda_streamed"),
+    )
+    calls = []
+
+    def fake_run_source_monitor_steps(
+        chunk_state, _context, _coefficients, source, monitor, nsteps
+    ):
+        calls.append((source, monitor, nsteps))
+        return chunk_state
+
+    monkeypatch.setattr(
+        "beamz.simulation.cuda.run_source_monitor_steps",
+        fake_run_source_monitor_steps,
+    )
+    monkeypatch.setattr(
+        "beamz.simulation.cuda.run_program_steps",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("general program graph should not be selected")
+        ),
+    )
+
+    build_scan(program)(state, program.coefficients)
+
+    assert calls == [
+        (program.sources[0], program.monitors[0], program.config.num_steps)
+    ]
+
+
+def test_cuda_scan_keeps_scheduled_monitor_on_general_graph(monkeypatch):
+    program, state, _context = _program_and_state(cpml=True, source=True, monitor=True)
+    program = replace(
+        program,
+        config=replace(program.config, backend="cuda_streamed"),
+        monitors=(replace(program.monitors[0], dft_record_interval=2),),
+    )
+    calls = []
+
+    def fake_run_program_steps(
+        chunk_state, _context, _coefficients, groups, monitors, nsteps
+    ):
+        calls.append((groups, monitors, nsteps))
+        return chunk_state
+
+    monkeypatch.setattr(
+        "beamz.simulation.cuda.run_program_steps", fake_run_program_steps
+    )
+    monkeypatch.setattr(
+        "beamz.simulation.cuda.run_source_monitor_steps",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("narrow monitor graph should not be selected")
+        ),
+    )
+
+    build_scan(program)(state, program.coefficients)
+
+    assert len(calls) == 1
+    assert calls[0][1] is not None
+    assert calls[0][2] == program.config.num_steps
+
+
 def test_cuda_cpml_multi_step_ffi_aliases_fields_and_psi(monkeypatch):
     program, state, context = _program_and_state(cpml=True)
     captured = []
