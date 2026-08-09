@@ -133,6 +133,16 @@ class BackendMeasurement:
     trace_lower_s: float
     compile_s: float
     warm_runtime_samples_s: tuple[float, ...]
+    profile: str
+    field_precision: str
+    cpml_psi_precision: str
+    python_version: str
+    jax_version: str
+    jaxlib_version: str
+    beamz_version: str
+    cuda_component_version: str | None
+    cuda_abi_version: int | None
+    cuda_flags: int
     driver_version: str | None = None
     cuda_version: str | None = None
 
@@ -141,8 +151,31 @@ class BackendMeasurement:
             not self.label.strip()
             or not self.revision.strip()
             or not self.backend.strip()
+            or not self.profile.strip()
+            or not self.python_version.strip()
+            or not self.jax_version.strip()
+            or not self.jaxlib_version.strip()
+            or not self.beamz_version.strip()
         ):
             raise ValueError("measurement labels must be non-empty")
+        if self.backend not in {"jax", "cuda_streamed", "cuda_hopper"}:
+            raise ValueError("unknown benchmark backend")
+        if self.field_precision != "float32":
+            raise ValueError("RTX 3090 FDTD records require float32 fields")
+        if self.cpml_psi_precision not in {"float32", "bfloat16"}:
+            raise ValueError("unknown CPML state precision")
+        if self.cuda_flags < 0:
+            raise ValueError("cuda_flags must be non-negative")
+        if self.backend.startswith("cuda") and (
+            not self.cuda_component_version or self.cuda_abi_version is None
+        ):
+            raise ValueError("CUDA records require native component provenance")
+        if self.backend == "jax" and (
+            self.cuda_component_version is not None
+            or self.cuda_abi_version is not None
+            or self.cuda_flags != 0
+        ):
+            raise ValueError("JAX records must not claim CUDA component provenance")
         if len(self.grid_zyx) != 3 or any(value <= 0 for value in self.grid_zyx):
             raise ValueError("grid_zyx must contain three positive values")
         if self.timesteps <= 0:
@@ -190,6 +223,13 @@ class RTX3090Comparison:
             raise ValueError("measurements must use the same timestep count")
         if self.baseline.device != self.cuda.device:
             raise ValueError("measurements must use the same device")
+        if self.baseline.profile != self.cuda.profile:
+            raise ValueError("measurements must use the same workload profile")
+        if (
+            self.baseline.field_precision,
+            self.baseline.cpml_psi_precision,
+        ) != (self.cuda.field_precision, self.cuda.cpml_psi_precision):
+            raise ValueError("measurements must use the same numerical precision")
 
     @property
     def runtime_speedup(self) -> float:
@@ -216,7 +256,7 @@ class RTX3090Comparison:
 
     def as_dict(self) -> dict[str, Any]:
         return {
-            "schema_version": "beamz.performance/rtx3090-v1",
+            "schema_version": "beamz.performance/rtx3090-v2",
             "baseline": self.baseline.as_dict(),
             "cuda": self.cuda.as_dict(),
             "runtime_speedup": self.runtime_speedup,
@@ -240,7 +280,7 @@ class RTX3090Matrix:
 
     def as_dict(self) -> dict[str, Any]:
         return {
-            "schema_version": "beamz.performance/rtx3090-matrix-v1",
+            "schema_version": "beamz.performance/rtx3090-matrix-v2",
             "profiles": {
                 name: comparison.as_dict() for name, comparison in self.comparisons
             },
@@ -376,7 +416,12 @@ def _markdown_report(comparison: RTX3090Comparison) -> str:
             "# RTX 3090 custom CUDA FDTD benchmark",
             "",
             f"Device: `{baseline.device}`  ",
-            f"Workload: `{baseline.grid_zyx}` cells × `{baseline.timesteps}` timesteps  ",
+            f"Workload: `{baseline.profile}`, `{baseline.grid_zyx}` cells × "
+            f"`{baseline.timesteps}` timesteps  ",
+            f"Precision: fields `{cuda.field_precision}`, CPML state "
+            f"`{cuda.cpml_psi_precision}`  ",
+            f"CUDA component: `{cuda.cuda_component_version}` / ABI "
+            f"`{cuda.cuda_abi_version}`, flags `{cuda.cuda_flags}`  ",
             "Timing boundary: already-compiled full FDTD executable; allocator warmups excluded.",
             "",
             "| Implementation | Median runtime | 95% median CI | Median GCUPS | Mean ± stdev | Compile |",

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the canonical BeamZ H100 throughput workloads and emit schema-v2 JSON."""
+"""Run the canonical BeamZ H100 throughput workloads and emit schema-v3 JSON."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ import jaxlib
 import beamz
 from beamz.simulation import observe as monitor_runtime
 from beamz.simulation import sharding as sharding_runtime
+from beamz.simulation.backend import cuda_backend_status
 from beamz.simulation.execute import build_scan, initial_program_state
 from beamz.simulation.model import ShardingConfig
 from tests.performance.benchmark_schema import BenchmarkRecord
@@ -163,6 +164,17 @@ def run_benchmark(args: argparse.Namespace) -> BenchmarkRecord:
         sharding=sharding,
     )["total_bytes"]
     features = workload.feature_labels
+    cuda_component_version = None
+    cuda_abi_version = None
+    if program.config.backend.startswith("cuda"):
+        status = cuda_backend_status(register=False)
+        if not status.available:
+            raise RuntimeError(status.reason or "CUDA component unavailable")
+        cuda_component_version = status.extension_version
+        cuda_abi_version = status.abi_version
+    cpml_psi_precision = (
+        str(state.cpml_psi_h_terms[0].dtype) if state.cpml_psi_h_terms else "float32"
+    )
     return BenchmarkRecord(
         beamz_commit=_git_commit(),
         beamz_version=beamz.__version__,
@@ -184,6 +196,10 @@ def run_benchmark(args: argparse.Namespace) -> BenchmarkRecord:
         warm_runtime_samples_s=kernel_samples,
         warm_end_to_end_samples_s=end_to_end_samples,
         peak_memory_bytes=_peak_memory_bytes(execution_devices, memory_fallback),
+        cpml_psi_precision=cpml_psi_precision,
+        cuda_component_version=cuda_component_version,
+        cuda_abi_version=cuda_abi_version,
+        cuda_flags=int(program.config.cuda_flags),
     )
 
 

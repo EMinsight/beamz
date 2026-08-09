@@ -268,6 +268,7 @@ def _write_checkpoint(
     args.output_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "protocol": {
+            "schema_version": 2,
             "resolutions_nm": list(args.resolutions_nm),
             "timesteps": args.timesteps,
             "samples": args.samples,
@@ -289,6 +290,7 @@ def _load_checkpoint(
         return [], []
     payload = json.loads(path.read_text())
     expected = {
+        "schema_version": 2,
         "resolutions_nm": list(args.resolutions_nm),
         "timesteps": args.timesteps,
         "samples": args.samples,
@@ -475,6 +477,14 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
         gc.collect()
 
     stats = device.memory_stats() or {}
+    from beamz.simulation.backend import cuda_backend_status
+
+    status = cuda_backend_status(register=False)
+    if not status.available or status.extension_version is None:
+        raise RuntimeError(status.reason or "CUDA component unavailable")
+    cpml_psi_precision = (
+        str(state.cpml_psi_h_terms[0].dtype) if state.cpml_psi_h_terms else "float32"
+    )
     payload = {
         "workload": args.workload,
         "resolution_nm": resolution_nm,
@@ -497,6 +507,11 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
         "jax_version": jax.__version__,
         "jaxlib_version": jaxlib.__version__,
         "beamz_version": beamz.__version__,
+        "field_precision": str(state.ex.dtype),
+        "cpml_psi_precision": cpml_psi_precision,
+        "cuda_component_version": status.extension_version,
+        "cuda_abi_version": status.abi_version,
+        "cuda_flags": int(program.config.cuda_flags),
     }
     print(json.dumps(payload, allow_nan=False))
 

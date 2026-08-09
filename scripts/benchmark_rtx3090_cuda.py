@@ -154,6 +154,24 @@ def _measurement(payload: dict[str, object], label: str) -> BackendMeasurement:
             float(value)
             for value in payload["warm_runtime_samples_s"]  # type: ignore[arg-type]
         ),
+        profile=str(payload["profile"]),
+        field_precision=str(payload["field_precision"]),
+        cpml_psi_precision=str(payload["cpml_psi_precision"]),
+        python_version=str(payload["python_version"]),
+        jax_version=str(payload["jax_version"]),
+        jaxlib_version=str(payload["jaxlib_version"]),
+        beamz_version=str(payload["beamz_version"]),
+        cuda_component_version=(
+            None
+            if payload.get("cuda_component_version") is None
+            else str(payload["cuda_component_version"])
+        ),
+        cuda_abi_version=(
+            None
+            if payload.get("cuda_abi_version") is None
+            else int(payload["cuda_abi_version"])
+        ),
+        cuda_flags=int(payload["cuda_flags"]),
         driver_version=(
             None
             if payload.get("driver_version") is None
@@ -233,6 +251,7 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
     from dataclasses import replace
 
     import jax
+    import jaxlib
     import numpy as np
 
     import beamz as bz
@@ -476,9 +495,23 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
         _block(result)
         samples.append(time.perf_counter() - started)
     smi = _nvidia_smi()
+    resolved_backend = getattr(program.config, "backend", "jax")
+    cuda_component_version = None
+    cuda_abi_version = None
+    if str(resolved_backend).startswith("cuda"):
+        from beamz.simulation.backend import cuda_backend_status
+
+        status = cuda_backend_status(register=False)
+        if not status.available:
+            raise RuntimeError(status.reason or "CUDA component unavailable")
+        cuda_component_version = status.extension_version
+        cuda_abi_version = status.abi_version
+    cpml_psi_precision = (
+        str(state.cpml_psi_h_terms[0].dtype) if state.cpml_psi_h_terms else "float32"
+    )
     payload = {
         "revision": _revision(Path.cwd()),
-        "backend": getattr(program.config, "backend", "jax"),
+        "backend": resolved_backend,
         "device": str(getattr(device, "device_kind", device)),
         "grid_zyx": shape,
         "timesteps": args.timesteps,
@@ -489,6 +522,14 @@ def _run_child_benchmark(args: argparse.Namespace) -> None:
         "driver_version": smi["driver_version"],
         "cuda_version": smi["cuda_version"],
         "python_version": platform.python_version(),
+        "jax_version": jax.__version__,
+        "jaxlib_version": jaxlib.__version__,
+        "beamz_version": bz.__version__,
+        "field_precision": str(state.ex.dtype),
+        "cpml_psi_precision": cpml_psi_precision,
+        "cuda_component_version": cuda_component_version,
+        "cuda_abi_version": cuda_abi_version,
+        "cuda_flags": int(getattr(program.config, "cuda_flags", 0)),
     }
     print(json.dumps(payload, allow_nan=False))
 

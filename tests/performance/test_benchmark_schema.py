@@ -110,7 +110,13 @@ def test_benchmark_comparison_rejects_feature_or_backend_mismatch(baseline_recor
     with pytest.raises(ValueError, match="same workload"):
         compare_benchmarks(
             baseline_record,
-            replace(baseline_record, backend="cuda_streamed"),
+            replace(
+                baseline_record,
+                backend="cuda_streamed",
+                cuda_component_version="0.12.0",
+                cuda_abi_version=12,
+                cuda_flags=128,
+            ),
             controlled_hardware=True,
         )
 
@@ -128,6 +134,9 @@ def test_backend_speedup_allows_implementation_change_on_same_hardware(
     candidate = replace(
         baseline_record,
         backend="cuda_streamed",
+        cuda_component_version="0.12.0",
+        cuda_abi_version=12,
+        cuda_flags=128,
         warm_runtime_samples_s=(1.0, 1.0, 1.0),
         warm_end_to_end_samples_s=(1.4, 1.4, 1.4),
         compile_s=4.0,
@@ -140,3 +149,22 @@ def test_backend_speedup_allows_implementation_change_on_same_hardware(
     assert speedup.end_to_end_speedup == pytest.approx(1.5)
     assert speedup.compile_speedup == pytest.approx(2.0)
     assert speedup.memory_ratio == pytest.approx(0.75)
+
+
+def test_cuda_benchmark_requires_native_component_provenance(baseline_record):
+    with pytest.raises(ValueError, match="component provenance"):
+        replace(baseline_record, backend="cuda_streamed")
+
+
+def test_backend_speedup_rejects_mixed_cpml_precision(baseline_record):
+    candidate = replace(
+        baseline_record,
+        backend="cuda_streamed",
+        cpml_psi_precision="bfloat16",
+        cuda_component_version="0.12.0",
+        cuda_abi_version=12,
+        cuda_flags=128 | (1 << 12),
+    )
+
+    with pytest.raises(ValueError, match="same physical workload"):
+        compare_backend_speedup(baseline_record, candidate)

@@ -21,7 +21,7 @@ except ModuleNotFoundError:
     from scripts.rtx3090_benchmark import TimingStatistics, summarize_timings
 
 
-SCHEMA_VERSION = "beamz.performance/rtx3090-capacity-v1"
+SCHEMA_VERSION = "beamz.performance/rtx3090-capacity-v2"
 MODAL_WORKLOAD = "modal_waveguide_cpml"
 BARE_WORKLOAD = "bare_pec"
 
@@ -45,6 +45,16 @@ class CapacityMeasurement:
     live_bytes_in_use: int
     process_memory_bytes: int
     allocator_limit_bytes: int
+    backend: str
+    field_precision: str
+    cpml_psi_precision: str
+    python_version: str
+    jax_version: str
+    jaxlib_version: str
+    beamz_version: str
+    cuda_component_version: str
+    cuda_abi_version: int
+    cuda_flags: int
 
     def __post_init__(self) -> None:
         if self.workload not in {MODAL_WORKLOAD, BARE_WORKLOAD}:
@@ -70,6 +80,25 @@ class CapacityMeasurement:
             raise ValueError("memory measurements must be non-negative")
         if self.allocator_limit_bytes <= 0:
             raise ValueError("allocator_limit_bytes must be positive")
+        if self.backend != "cuda_streamed":
+            raise ValueError("capacity records require the streamed CUDA backend")
+        if self.field_precision != "float32":
+            raise ValueError("capacity records require float32 fields")
+        if self.cpml_psi_precision not in {"float32", "bfloat16"}:
+            raise ValueError("unknown CPML state precision")
+        if not all(
+            value.strip()
+            for value in (
+                self.python_version,
+                self.jax_version,
+                self.jaxlib_version,
+                self.beamz_version,
+                self.cuda_component_version,
+            )
+        ):
+            raise ValueError("capacity software provenance must be complete")
+        if self.cuda_abi_version <= 0 or self.cuda_flags < 0:
+            raise ValueError("capacity CUDA provenance is invalid")
 
     @property
     def cells(self) -> int:
@@ -156,6 +185,16 @@ class CapacityMeasurement:
             live_bytes_in_use=int(payload["live_bytes_in_use"]),
             process_memory_bytes=int(payload["process_memory_bytes"]),
             allocator_limit_bytes=int(payload["allocator_limit_bytes"]),
+            backend=str(payload["backend"]),
+            field_precision=str(payload["field_precision"]),
+            cpml_psi_precision=str(payload["cpml_psi_precision"]),
+            python_version=str(payload["python_version"]),
+            jax_version=str(payload["jax_version"]),
+            jaxlib_version=str(payload["jaxlib_version"]),
+            beamz_version=str(payload["beamz_version"]),
+            cuda_component_version=str(payload["cuda_component_version"]),
+            cuda_abi_version=int(payload["cuda_abi_version"]),
+            cuda_flags=int(payload["cuda_flags"]),
         )
 
 
@@ -247,6 +286,23 @@ class CapacitySweep:
             for item in self.measurements
         ):
             raise ValueError("all points must use the sweep sample count")
+        provenance = {
+            (
+                item.backend,
+                item.field_precision,
+                item.cpml_psi_precision,
+                item.python_version,
+                item.jax_version,
+                item.jaxlib_version,
+                item.beamz_version,
+                item.cuda_component_version,
+                item.cuda_abi_version,
+                item.cuda_flags,
+            )
+            for item in self.measurements
+        }
+        if len(provenance) != 1:
+            raise ValueError("all capacity points must share execution provenance")
 
     @property
     def modal(self) -> tuple[CapacityMeasurement, ...]:
@@ -368,6 +424,7 @@ class CapacitySweep:
         return result
 
     def as_dict(self) -> dict[str, Any]:
+        first = self.measurements[0]
         return {
             "schema_version": SCHEMA_VERSION,
             "beamz_revision": self.beamz_revision,
@@ -382,6 +439,18 @@ class CapacitySweep:
             "warmups": self.warmups,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
+            "execution_provenance": {
+                "backend": first.backend,
+                "field_precision": first.field_precision,
+                "cpml_psi_precision": first.cpml_psi_precision,
+                "python_version": first.python_version,
+                "jax_version": first.jax_version,
+                "jaxlib_version": first.jaxlib_version,
+                "beamz_version": first.beamz_version,
+                "cuda_component_version": first.cuda_component_version,
+                "cuda_abi_version": first.cuda_abi_version,
+                "cuda_flags": first.cuda_flags,
+            },
             "measurement_definition": {
                 "gcups": "prod(grid_zyx) * timesteps / median_warm_runtime_s / 1e9",
                 "timing_boundary": (
@@ -438,6 +507,11 @@ def _csv_rows(sweep: CapacitySweep) -> list[dict[str, Any]]:
                 "trace_lower_s": item.trace_lower_s,
                 "executable_compile_s": item.executable_compile_s,
                 "source_spec_count": item.source_spec_count,
+                "backend": item.backend,
+                "cpml_psi_precision": item.cpml_psi_precision,
+                "cuda_component_version": item.cuda_component_version,
+                "cuda_abi_version": item.cuda_abi_version,
+                "cuda_flags": item.cuda_flags,
             }
         )
     return rows
@@ -461,6 +535,10 @@ def _markdown_report(sweep: CapacitySweep) -> str:
         "",
         f"BeamZ revision: `{sweep.beamz_revision}`  ",
         f"Device: `{sweep.device}` ({sweep.total_gpu_memory_bytes / 2**30:.2f} GiB)  ",
+        f"CUDA component: `{sweep.measurements[0].cuda_component_version}` / ABI "
+        f"`{sweep.measurements[0].cuda_abi_version}`, flags "
+        f"`{sweep.measurements[0].cuda_flags}`, CPML state "
+        f"`{sweep.measurements[0].cpml_psi_precision}`  ",
         (
             f"Protocol: `{sweep.timesteps}` steps, `{sweep.warmups}` warm-ups, "
             f"`{sweep.samples}` timed samples per point; fixed physical waveguide."

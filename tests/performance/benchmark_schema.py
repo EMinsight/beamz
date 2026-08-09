@@ -8,7 +8,7 @@ import statistics
 from dataclasses import asdict, dataclass
 from typing import Any
 
-SCHEMA_VERSION = "beamz.performance/v2"
+SCHEMA_VERSION = "beamz.performance/v3"
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +41,10 @@ class BenchmarkRecord:
     warm_runtime_samples_s: tuple[float, ...]
     warm_end_to_end_samples_s: tuple[float, ...]
     peak_memory_bytes: int
+    cpml_psi_precision: str = "float32"
+    cuda_component_version: str | None = None
+    cuda_abi_version: int | None = None
+    cuda_flags: int = 0
 
     def __post_init__(self) -> None:
         text_fields = (
@@ -60,6 +64,20 @@ class BenchmarkRecord:
             raise ValueError("precision must be float32 or float64")
         if self.backend not in {"jax", "cuda_streamed", "cuda_hopper"}:
             raise ValueError("unknown benchmark backend")
+        if self.cpml_psi_precision not in {"float32", "bfloat16"}:
+            raise ValueError("unknown CPML state precision")
+        if self.cuda_flags < 0:
+            raise ValueError("cuda_flags must be non-negative")
+        if self.backend.startswith("cuda") and (
+            not self.cuda_component_version or self.cuda_abi_version is None
+        ):
+            raise ValueError("CUDA records require native component provenance")
+        if self.backend == "jax" and (
+            self.cuda_component_version is not None
+            or self.cuda_abi_version is not None
+            or self.cuda_flags != 0
+        ):
+            raise ValueError("JAX records must not claim CUDA component provenance")
         if self.device_count <= 0:
             raise ValueError("device_count must be positive")
         if len(self.grid_dimensions) not in {2, 3} or any(
@@ -114,6 +132,7 @@ class BenchmarkRecord:
         return (
             self.workload,
             self.precision,
+            self.cpml_psi_precision,
             self.grid_dimensions,
             self.timesteps,
             self.boundaries,
@@ -124,7 +143,14 @@ class BenchmarkRecord:
     @property
     def execution_identity(self) -> tuple[Any, ...]:
         """Return implementation and hardware inputs for regression gating."""
-        return (self.backend, self.device, self.device_count)
+        return (
+            self.backend,
+            self.device,
+            self.device_count,
+            self.cuda_component_version,
+            self.cuda_abi_version,
+            self.cuda_flags,
+        )
 
     @property
     def comparison_identity(self) -> tuple[Any, ...]:

@@ -50,6 +50,16 @@ def _measurement(
         live_bytes_in_use=int(peak_bytes * 0.85),
         process_memory_bytes=int(peak_bytes * 1.12),
         allocator_limit_bytes=22 * 2**30,
+        backend="cuda_streamed",
+        field_precision="float32",
+        cpml_psi_precision="float32",
+        python_version="3.11.15",
+        jax_version="0.9.0",
+        jaxlib_version="0.9.0",
+        beamz_version="0.4.3",
+        cuda_component_version="0.12.0",
+        cuda_abi_version=12,
+        cuda_flags=128,
     )
 
 
@@ -135,7 +145,8 @@ def test_capacity_artifacts_include_raw_data_graph_and_report_contract(tmp_path)
 
     payload = json.loads(paths["json"].read_text())
     artifact = json.loads(paths["artifact"].read_text())
-    assert payload["schema_version"] == "beamz.performance/rtx3090-capacity-v1"
+    assert payload["schema_version"] == "beamz.performance/rtx3090-capacity-v2"
+    assert payload["execution_provenance"]["cuda_abi_version"] == 12
     assert len(payload["measurements"]) == 10
     assert paths["csv"].read_text().startswith("workload,resolution_nm")
     assert paths["graph"].read_bytes().startswith(b"\x89PNG")
