@@ -24,7 +24,9 @@ nanobind_add_module(
   src/extension.cc
   src/ffi_handler.cc
   src/graph.cu
-  src/streamed.cu
+  src/io.cu
+  src/program.cu
+  src/update.cu
   src/hopper.cu
 )
 target_compile_features(beamz_cuda PRIVATE cxx_std_17)
