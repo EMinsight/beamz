@@ -4,10 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <mutex>
-#include <string>
-#include <unordered_map>
-
+#include "graph.h"
 #include "launch.h"
 
 namespace {
@@ -24,20 +21,6 @@ constexpr int kFusedSharedY = kFusedCoreY + 1;
 constexpr int kFusedSharedZ = kFusedCoreZ + 1;
 constexpr int kFusedVolume = kFusedSharedX * kFusedSharedY * kFusedSharedZ;
 constexpr size_t kFusedSharedBytes = 3 * kFusedVolume * sizeof(float);
-constexpr size_t kMaxCachedGraphs = 32;
-
-struct GraphCache {
-  std::mutex mutex;
-  std::unordered_map<std::string, cudaGraphExec_t> entries;
-};
-
-GraphCache& CachedGraphs() {
-  // Deliberately retain executable handles until process teardown. CUDA contexts may
-  // already be gone when static destructors run, and the bounded cache is tiny.
-  static auto* cache = new GraphCache();
-  return *cache;
-}
-
 bool FlagEnabled(const BeamzLaunch& launch, BeamzCudaFlag flag) {
   return (launch.cuda_flags & flag) != 0;
 }
@@ -51,30 +34,6 @@ dim3 SourceThreads(const BeamzLaunch& launch, int64_t x_extent) {
   if (x_extent <= 4) return dim3(4, 16, 2);
   if (x_extent <= 8) return dim3(8, 8, 2);
   return dim3(16, 4, 2);
-}
-
-std::string GraphKey(void* stream, const BeamzLaunch& h_launch,
-                     const BeamzLaunch& e_launch, int32_t nsteps,
-                     const BeamzSourceGroupLaunch* source_groups = nullptr,
-                     int32_t source_group_count = 0,
-                     const BeamzDftGroupLaunch* monitor_groups = nullptr) {
-  std::string key;
-  key.reserve(sizeof(stream) + sizeof(nsteps) + 2 * sizeof(BeamzLaunch));
-  key.append(reinterpret_cast<const char*>(&stream), sizeof(stream));
-  key.append(reinterpret_cast<const char*>(&nsteps), sizeof(nsteps));
-  key.append(reinterpret_cast<const char*>(&h_launch), sizeof(h_launch));
-  key.append(reinterpret_cast<const char*>(&e_launch), sizeof(e_launch));
-  if (source_groups != nullptr && source_group_count > 0) {
-    key.append(reinterpret_cast<const char*>(&source_group_count),
-               sizeof(source_group_count));
-    key.append(reinterpret_cast<const char*>(source_groups),
-               sizeof(*source_groups) * source_group_count);
-  }
-  if (monitor_groups != nullptr) {
-    key.append(reinterpret_cast<const char*>(monitor_groups),
-               sizeof(*monitor_groups));
-  }
-  return key;
 }
 
 bool FitsIntOffsets(const BeamzBuffer& value) {
@@ -1772,30 +1731,18 @@ cudaError_t LaunchCpmlShellAndCorePhase(cudaStream_t stream,
   return error == cudaSuccess ? LaunchCpmlCorePhase(stream, launch) : error;
 }
 
-int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
-                        const BeamzLaunch& e_launch,
-                        const BeamzSourceGroupLaunch* source_groups,
-                        int32_t source_group_count,
-                        const BeamzDftGroupLaunch* monitor_groups,
-                        int32_t nsteps) {
-  if (nsteps < 1 || h_launch.phase != 0 || e_launch.phase != 1 ||
-      h_launch.nterms != e_launch.nterms ||
-      (h_launch.nterms != 0 && h_launch.nterms != 6)) {
-    return cudaErrorInvalidValue;
-  }
+int LaunchStreamedGraph(void* raw_stream,
+                        const BeamzProgramLaunch& program) {
+  const BeamzLaunch& h_launch = program.h_ab;
+  const BeamzLaunch& e_launch = program.e_ab;
+  const BeamzSourceGroupLaunch* source_groups = program.source_groups;
+  const int32_t source_group_count = program.source_group_count;
+  const BeamzDftGroupLaunch* monitor_groups = program.monitors;
+  const int32_t nsteps = program.nsteps;
   auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
-  const std::string graph_key = GraphKey(
-      raw_stream, h_launch, e_launch, nsteps, source_groups,
-      source_group_count, monitor_groups);
-  GraphCache& cache = CachedGraphs();
+  const std::string graph_key =
+      BeamzGraphKey("in-place", raw_stream, program);
   const bool cache_enabled = FlagEnabled(h_launch, kBeamzGraphCache);
-  if (cache_enabled) {
-    std::lock_guard<std::mutex> lock(cache.mutex);
-    const auto cached = cache.entries.find(graph_key);
-    if (cached != cache.entries.end()) {
-      return static_cast<int>(cudaGraphLaunch(cached->second, stream));
-    }
-  }
   auto launch_steps = [&]() {
     cudaError_t launch_error = cudaSuccess;
     const bool use_cpml_core =
@@ -1852,51 +1799,16 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
     }
     return launch_error;
   };
-  cudaGraph_t graph = nullptr;
-  cudaGraphExec_t executable = nullptr;
-  cudaError_t error =
-      cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal);
-  // Nested capture is not supported. If XLA already owns capture on this stream,
-  // enqueue the kernels directly so they become part of the outer graph.
-  if (error != cudaSuccess) {
-    (void)cudaGetLastError();
-    return launch_steps();
-  }
-  error = launch_steps();
-  cudaError_t end_error = cudaStreamEndCapture(stream, &graph);
-  if (error == cudaSuccess) error = end_error;
-  if (error == cudaSuccess) error = cudaGraphInstantiate(&executable, graph, 0);
-  if (error == cudaSuccess && cache_enabled) {
-    std::lock_guard<std::mutex> lock(cache.mutex);
-    if (cache.entries.size() >= kMaxCachedGraphs) {
-      for (const auto& [unused_key, cached] : cache.entries) {
-        (void)unused_key;
-        cudaGraphExecDestroy(cached);
-      }
-      cache.entries.clear();
-    }
-    const auto [entry, inserted] = cache.entries.emplace(graph_key, executable);
-    if (!inserted) {
-      cudaGraphExecDestroy(executable);
-      executable = entry->second;
-    }
-    // Keep the executable protected from concurrent eviction until the launch has
-    // been submitted to its stream.
-    error = cudaGraphLaunch(executable, stream);
-  }
-  if (error == cudaSuccess && !cache_enabled) {
-    error = cudaGraphLaunch(executable, stream);
-  }
-  if (!cache_enabled && executable != nullptr) {
-    cudaGraphExecDestroy(executable);
-  }
-  if (graph != nullptr) cudaGraphDestroy(graph);
-  return error;
+  return BeamzLaunchGraph(stream, graph_key, cache_enabled, launch_steps);
 }
 
-int LaunchTemporalSteps(void* raw_stream, const BeamzLaunch& h_ab,
-                        const BeamzLaunch& e_ab, const BeamzLaunch& h_ba,
-                        const BeamzLaunch& e_ba, int32_t nsteps) {
+int LaunchTemporalSteps(void* raw_stream,
+                        const BeamzProgramLaunch& program) {
+  const BeamzLaunch& h_ab = program.h_ab;
+  const BeamzLaunch& e_ab = program.e_ab;
+  const BeamzLaunch& h_ba = program.h_ba;
+  const BeamzLaunch& e_ba = program.e_ba;
+  const int32_t nsteps = program.nsteps;
   bool scalar_coefficients = true;
   for (int material = 0; material < 6; ++material) {
     const int h_rank = h_ab.inputs[6 + material].rank;
@@ -1905,7 +1817,6 @@ int LaunchTemporalSteps(void* raw_stream, const BeamzLaunch& h_ab,
   }
 
   auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
-  cudaError_t error = cudaSuccess;
 
   int64_t max_x = 0, max_y = 0, max_z = 0;
   for (int component = 0; component < 3; ++component) {
@@ -1931,19 +1842,9 @@ int LaunchTemporalSteps(void* raw_stream, const BeamzLaunch& h_ab,
     e_tail.outputs[component] = e_ba.outputs[component];
   }
 
-  std::string graph_key = "fused-full-step";
-  graph_key += GraphKey(raw_stream, h_ab, e_ab, nsteps);
-  graph_key.append(reinterpret_cast<const char*>(&h_ba), sizeof(h_ba));
-  graph_key.append(reinterpret_cast<const char*>(&e_ba), sizeof(e_ba));
-  GraphCache& cache = CachedGraphs();
+  const std::string graph_key =
+      BeamzGraphKey("temporal-yee", raw_stream, program);
   const bool cache_enabled = FlagEnabled(h_ab, kBeamzGraphCache);
-  if (cache_enabled) {
-    std::lock_guard<std::mutex> lock(cache.mutex);
-    const auto cached = cache.entries.find(graph_key);
-    if (cached != cache.entries.end()) {
-      return static_cast<int>(cudaGraphLaunch(cached->second, stream));
-    }
-  }
 
   auto launch_steps = [&]() {
     cudaError_t launch_error = cudaSuccess;
@@ -1998,63 +1899,23 @@ int LaunchTemporalSteps(void* raw_stream, const BeamzLaunch& h_ab,
     return launch_error;
   };
 
-  cudaGraph_t graph = nullptr;
-  cudaGraphExec_t executable = nullptr;
-  error = cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal);
-  if (error != cudaSuccess) {
-    (void)cudaGetLastError();
-    return static_cast<int>(launch_steps());
-  }
-  error = launch_steps();
-  const cudaError_t end_error = cudaStreamEndCapture(stream, &graph);
-  if (error == cudaSuccess) error = end_error;
-  if (error == cudaSuccess) error = cudaGraphInstantiate(&executable, graph, 0);
-  if (error == cudaSuccess && cache_enabled) {
-    std::lock_guard<std::mutex> lock(cache.mutex);
-    if (cache.entries.size() >= kMaxCachedGraphs) {
-      for (const auto& [unused_key, cached] : cache.entries) {
-        (void)unused_key;
-        cudaGraphExecDestroy(cached);
-      }
-      cache.entries.clear();
-    }
-    const auto [entry, inserted] = cache.entries.emplace(graph_key, executable);
-    if (!inserted) {
-      cudaGraphExecDestroy(executable);
-      executable = entry->second;
-    }
-    error = cudaGraphLaunch(executable, stream);
-  }
-  if (error == cudaSuccess && !cache_enabled) {
-    error = cudaGraphLaunch(executable, stream);
-  }
-  if (!cache_enabled && executable != nullptr) {
-    cudaGraphExecDestroy(executable);
-  }
-  if (graph != nullptr) cudaGraphDestroy(graph);
-  return static_cast<int>(error);
+  return BeamzLaunchGraph(stream, graph_key, cache_enabled, launch_steps);
 }
 
-int LaunchTemporalCpmlProgram(
-    void* raw_stream, const BeamzLaunch& h_ab, const BeamzLaunch& e_ab,
-    const BeamzLaunch& h_ba, const BeamzLaunch& e_ba,
-    const BeamzSourceGroupLaunch* source_groups, int32_t source_group_count,
-    const BeamzDftGroupLaunch* monitor_groups, int32_t nsteps) {
+int LaunchTemporalCpmlProgram(void* raw_stream,
+                              const BeamzProgramLaunch& program) {
+  const BeamzLaunch& h_ab = program.h_ab;
+  const BeamzLaunch& e_ab = program.e_ab;
+  const BeamzLaunch& h_ba = program.h_ba;
+  const BeamzLaunch& e_ba = program.e_ba;
+  const BeamzSourceGroupLaunch* source_groups = program.source_groups;
+  const int32_t source_group_count = program.source_group_count;
+  const BeamzDftGroupLaunch* monitor_groups = program.monitors;
+  const int32_t nsteps = program.nsteps;
   auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
-  std::string graph_key = "temporal-cpml-source-groups";
-  graph_key += GraphKey(raw_stream, h_ab, e_ab, nsteps, source_groups,
-                        source_group_count, monitor_groups);
-  graph_key.append(reinterpret_cast<const char*>(&h_ba), sizeof(h_ba));
-  graph_key.append(reinterpret_cast<const char*>(&e_ba), sizeof(e_ba));
-  GraphCache& cache = CachedGraphs();
+  const std::string graph_key =
+      BeamzGraphKey("temporal-cpml", raw_stream, program);
   const bool cache_enabled = FlagEnabled(h_ab, kBeamzGraphCache);
-  if (cache_enabled) {
-    std::lock_guard<std::mutex> lock(cache.mutex);
-    const auto cached = cache.entries.find(graph_key);
-    if (cached != cache.entries.end()) {
-      return static_cast<int>(cudaGraphLaunch(cached->second, stream));
-    }
-  }
 
   auto launch_steps = [&]() {
     cudaError_t launch_error = cudaSuccess;
@@ -2107,42 +1968,7 @@ int LaunchTemporalCpmlProgram(
     return launch_error;
   };
 
-  cudaGraph_t graph = nullptr;
-  cudaGraphExec_t executable = nullptr;
-  cudaError_t error =
-      cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal);
-  if (error != cudaSuccess) {
-    (void)cudaGetLastError();
-    return static_cast<int>(launch_steps());
-  }
-  error = launch_steps();
-  const cudaError_t end_error = cudaStreamEndCapture(stream, &graph);
-  if (error == cudaSuccess) error = end_error;
-  if (error == cudaSuccess) error = cudaGraphInstantiate(&executable, graph, 0);
-  if (error == cudaSuccess && cache_enabled) {
-    std::lock_guard<std::mutex> lock(cache.mutex);
-    if (cache.entries.size() >= kMaxCachedGraphs) {
-      for (const auto& [unused_key, cached] : cache.entries) {
-        (void)unused_key;
-        cudaGraphExecDestroy(cached);
-      }
-      cache.entries.clear();
-    }
-    const auto [entry, inserted] = cache.entries.emplace(graph_key, executable);
-    if (!inserted) {
-      cudaGraphExecDestroy(executable);
-      executable = entry->second;
-    }
-    error = cudaGraphLaunch(executable, stream);
-  }
-  if (error == cudaSuccess && !cache_enabled) {
-    error = cudaGraphLaunch(executable, stream);
-  }
-  if (!cache_enabled && executable != nullptr) {
-    cudaGraphExecDestroy(executable);
-  }
-  if (graph != nullptr) cudaGraphDestroy(graph);
-  return static_cast<int>(error);
+  return BeamzLaunchGraph(stream, graph_key, cache_enabled, launch_steps);
 }
 
 int BeamzLaunchProgram(void* raw_stream, const BeamzProgramLaunch& program) {
@@ -2150,20 +1976,14 @@ int BeamzLaunchProgram(void* raw_stream, const BeamzProgramLaunch& program) {
     return static_cast<int>(error);
   }
   if (program.field_bank_count == 1) {
-    return LaunchStreamedGraph(
-        raw_stream, program.h_ab, program.e_ab, program.source_groups,
-        program.source_group_count, program.monitors, program.nsteps);
+    return LaunchStreamedGraph(raw_stream, program);
   }
   if (program.h_ab.nterms == 0 && program.source_group_count == 0 &&
       program.monitors == nullptr) {
-    return LaunchTemporalSteps(raw_stream, program.h_ab, program.e_ab,
-                               program.h_ba, program.e_ba, program.nsteps);
+    return LaunchTemporalSteps(raw_stream, program);
   }
   if (program.h_ab.nterms == 6 && program.source_group_count == 9) {
-    return LaunchTemporalCpmlProgram(
-        raw_stream, program.h_ab, program.e_ab, program.h_ba, program.e_ba,
-        program.source_groups, program.source_group_count, program.monitors,
-        program.nsteps);
+    return LaunchTemporalCpmlProgram(raw_stream, program);
   }
   return cudaErrorInvalidValue;
 }

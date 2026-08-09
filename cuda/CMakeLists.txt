@@ -23,6 +23,7 @@ nanobind_add_module(
   NB_STATIC
   src/extension.cc
   src/ffi_handler.cc
+  src/graph.cu
   src/streamed.cu
   src/hopper.cu
 )
