@@ -1884,9 +1884,11 @@ cudaError_t LaunchPersistentCpml(cudaStream_t stream,
   if (error != cudaSuccess || blocks_per_sm < 1) return cudaErrorNotSupported;
   CpmlQueueGeometry geometry = MakeCpmlQueueGeometry(h_ab);
   constexpr int64_t kPersistentCellLimit = 10000000;
+  constexpr int64_t kPersistentCellStepLimit = 2000000000;
   const int64_t cells = static_cast<int64_t>(geometry.max_z) *
                         geometry.max_y * geometry.max_x;
-  if (nsteps < 16 || cells > kPersistentCellLimit) {
+  if (nsteps < 16 || cells > kPersistentCellLimit ||
+      cells * nsteps > kPersistentCellStepLimit) {
     return cudaErrorNotSupported;
   }
   PersistentSourceGroups persistent_sources{};
