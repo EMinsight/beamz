@@ -1494,7 +1494,7 @@ cudaError_t LaunchCpmlCorePhase(cudaStream_t stream,
            static_cast<int>(launch.outputs[1].dims[2]),
            static_cast<int>(launch.outputs[2].dims[2])) -
       thickness;
-  const dim3 threads(kTileX, kTileY, kTileZ);
+  const dim3 threads(64, 4, 1);
   const dim3 blocks((high_x - low + threads.x - 1) / threads.x,
                     (high_y - low + threads.y - 1) / threads.y,
                     (high_z - low + threads.z - 1) / threads.z);
