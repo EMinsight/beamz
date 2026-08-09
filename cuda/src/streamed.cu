@@ -82,8 +82,10 @@ bool CombinedCpmlQueueEnabled() {
 }
 
 bool PersistentCpmlEnabled() {
-  const char* value = std::getenv("BEAMZ_CUDA_DISABLE_PERSISTENT_CPML");
-  return value == nullptr || value[0] == '\0' || value[0] == '0';
+  const char* enabled = std::getenv("BEAMZ_CUDA_ENABLE_PERSISTENT_CPML");
+  const char* disabled = std::getenv("BEAMZ_CUDA_DISABLE_PERSISTENT_CPML");
+  return enabled != nullptr && enabled[0] != '\0' && enabled[0] != '0' &&
+         (disabled == nullptr || disabled[0] == '\0' || disabled[0] == '0');
 }
 
 dim3 SourceThreads(int64_t x_extent) {
@@ -695,12 +697,15 @@ __global__ void UpdateCpmlCore(BeamzLaunch launch) {
 }
 
 template <int Phase, int PsiType, bool PackedLosslessMaterial,
-          bool HasMetallicEdges>
+          bool HasMetallicEdges, bool WarpTile = false>
 __device__ __forceinline__ void UpdateCombinedCpmlQueueBlock(
     const BeamzLaunch& launch, int max_z, int max_y, int max_x, int high_z,
     int high_y, int high_x, int z_region_blocks, int y_region_blocks,
     int shell_blocks, int core_x_blocks, int core_y_blocks, int block) {
-  constexpr int tile_x = 64;
+  constexpr int tile_x = WarpTile ? 32 : 64;
+  constexpr int tile_y = WarpTile ? 1 : kTileY;
+  const int local_x_thread = WarpTile ? (threadIdx.x & 31) : threadIdx.x;
+  const int local_y_thread = WarpTile ? 0 : threadIdx.y;
   const int low = launch.uniform_cpml_thickness;
   int z;
   int y;
@@ -708,40 +713,40 @@ __device__ __forceinline__ void UpdateCombinedCpmlQueueBlock(
   if (block < shell_blocks) {
     const int x_blocks = (max_x + tile_x - 1) / tile_x;
     if (block < z_region_blocks) {
-      const int y_blocks = (max_y + kTileY - 1) / kTileY;
+      const int y_blocks = (max_y + tile_y - 1) / tile_y;
       const int block_z = block / (x_blocks * y_blocks);
       block -= block_z * x_blocks * y_blocks;
       const int block_y = block / x_blocks;
       const int block_x = block - block_y * x_blocks;
       z = block_z < low ? block_z : high_z + block_z - low;
-      y = block_y * kTileY + threadIdx.y;
-      x = block_x * tile_x + threadIdx.x;
+      y = block_y * tile_y + local_y_thread;
+      x = block_x * tile_x + local_x_thread;
       if (y >= max_y || x >= max_x) return;
     } else if ((block -= z_region_blocks, block < y_region_blocks)) {
       const int outer_y = low + max_y - high_y;
-      const int y_blocks = (outer_y + kTileY - 1) / kTileY;
+      const int y_blocks = (outer_y + tile_y - 1) / tile_y;
       const int block_z = block / (x_blocks * y_blocks);
       block -= block_z * x_blocks * y_blocks;
       const int block_y = block / x_blocks;
       const int block_x = block - block_y * x_blocks;
       z = low + block_z;
-      const int local_y = block_y * kTileY + threadIdx.y;
+      const int local_y = block_y * tile_y + local_y_thread;
       y = local_y < low ? local_y : high_y + local_y - low;
-      x = block_x * tile_x + threadIdx.x;
+      x = block_x * tile_x + local_x_thread;
       if (local_y >= outer_y || x >= max_x) return;
     } else {
       block -= y_region_blocks;
       const int outer_x = low + max_x - high_x;
       const int inner_y = high_y - low;
       const int region_x_blocks = (outer_x + tile_x - 1) / tile_x;
-      const int y_blocks = (inner_y + kTileY - 1) / kTileY;
+      const int y_blocks = (inner_y + tile_y - 1) / tile_y;
       const int block_z = block / (region_x_blocks * y_blocks);
       block -= block_z * region_x_blocks * y_blocks;
       const int block_y = block / region_x_blocks;
       const int block_x = block - block_y * region_x_blocks;
       z = low + block_z;
-      y = low + block_y * kTileY + threadIdx.y;
-      const int local_x = block_x * tile_x + threadIdx.x;
+      y = low + block_y * tile_y + local_y_thread;
+      const int local_x = block_x * tile_x + local_x_thread;
       x = local_x < low ? local_x : high_x + local_x - low;
       if (y >= high_y || local_x >= outer_x) return;
     }
@@ -760,8 +765,8 @@ __device__ __forceinline__ void UpdateCombinedCpmlQueueBlock(
   const int block_y = block / core_x_blocks;
   const int block_x = block - block_y * core_x_blocks;
   z = low + block_z;
-  y = low + block_y * kTileY + threadIdx.y;
-  x = low + block_x * tile_x + threadIdx.x;
+  y = low + block_y * tile_y + local_y_thread;
+  x = low + block_x * tile_x + local_x_thread;
   if (z >= high_z || y >= high_y || x >= high_x) return;
   UpdateComponent<Phase, 0, false, 0, HasMetallicEdges, false, -1,
                   PackedLosslessMaterial>(launch, z, y, x);
@@ -814,8 +819,11 @@ __device__ __forceinline__ void ApplyCoincidentSourceGroupCell(
 __device__ __forceinline__ void ApplyPersistentSourceTiming(
     const PersistentSourceGroups& groups, const BeamzLaunch& h_launch,
     const BeamzLaunch& e_launch, int timing, int32_t step) {
-  const int linear_thread = blockIdx.x * blockDim.x + threadIdx.x;
-  const int thread_count = gridDim.x * blockDim.x;
+  const int block_threads = blockDim.x * blockDim.y * blockDim.z;
+  const int thread_in_block =
+      (threadIdx.z * blockDim.y + threadIdx.y) * blockDim.x + threadIdx.x;
+  const int linear_thread = blockIdx.x * block_threads + thread_in_block;
+  const int thread_count = gridDim.x * block_threads;
   for (int component = 0; component < 3; ++component) {
     const BeamzSourceGroupLaunch& group = groups.values[3 * timing + component];
     const int slab_cells = static_cast<int>(
@@ -856,9 +864,12 @@ template <int PsiType>
 __device__ __forceinline__ void AccumulatePersistentDftGroups(
     const BeamzLaunch& h_launch, const BeamzLaunch& e_launch,
     const BeamzDftGroupLaunch& monitors, int step_offset) {
-  const int lane = threadIdx.x & 31;
-  const int warp = (blockIdx.x * blockDim.x + threadIdx.x) >> 5;
-  const int warp_count = (gridDim.x * blockDim.x) >> 5;
+  const int block_threads = blockDim.x * blockDim.y * blockDim.z;
+  const int thread_in_block =
+      (threadIdx.z * blockDim.y + threadIdx.y) * blockDim.x + threadIdx.x;
+  const int lane = thread_in_block & 31;
+  const int warp = (blockIdx.x * block_threads + thread_in_block) >> 5;
+  const int warp_count = (gridDim.x * block_threads) >> 5;
   const int max_points = static_cast<int>(monitors.indices.dims[2]);
   const int max_frequency_count =
       static_cast<int>(monitors.frequencies.dims[1]);
@@ -964,26 +975,30 @@ __global__ void PersistentCpmlSteps(BeamzLaunch h_ab, BeamzLaunch e_ab,
                                     CpmlQueueGeometry geometry,
                                     PersistentSourceGroups source_groups,
                                     BeamzDftGroupLaunch monitor_groups,
+                                    int32_t step_base,
                                     int32_t nsteps) {
   cooperative_groups::grid_group grid = cooperative_groups::this_grid();
-  for (int32_t step = 0; step < nsteps; ++step) {
+  for (int32_t local_step = 0; local_step < nsteps; ++local_step) {
+    const int32_t step = step_base + local_step;
     if ((step & 1) == 0) {
       ApplyPersistentSourceTiming(source_groups, h_ab, e_ab, 0, step);
     } else {
       ApplyPersistentSourceTiming(source_groups, h_ba, e_ba, 0, step);
     }
     grid.sync();
-    for (int block = blockIdx.x; block < geometry.total_blocks;
-         block += gridDim.x) {
+    const int warp = (blockIdx.x * blockDim.x + threadIdx.x) >> 5;
+    const int warp_count = (gridDim.x * blockDim.x) >> 5;
+    for (int block = warp; block < geometry.total_blocks;
+         block += warp_count) {
       if ((step & 1) == 0) {
-        UpdateCombinedCpmlQueueBlock<0, PsiType, false, false>(
+        UpdateCombinedCpmlQueueBlock<0, PsiType, false, false, true>(
             h_ab, geometry.max_z, geometry.max_y, geometry.max_x,
             geometry.high_z, geometry.high_y, geometry.high_x,
             geometry.z_region_blocks, geometry.y_region_blocks,
             geometry.shell_blocks, geometry.core_x_blocks,
             geometry.core_y_blocks, block);
       } else {
-        UpdateCombinedCpmlQueueBlock<0, PsiType, false, false>(
+        UpdateCombinedCpmlQueueBlock<0, PsiType, false, false, true>(
             h_ba, geometry.max_z, geometry.max_y, geometry.max_x,
             geometry.high_z, geometry.high_y, geometry.high_x,
             geometry.z_region_blocks, geometry.y_region_blocks,
@@ -1000,17 +1015,17 @@ __global__ void PersistentCpmlSteps(BeamzLaunch h_ab, BeamzLaunch e_ab,
     }
     grid.sync();
 
-    for (int block = blockIdx.x; block < geometry.total_blocks;
-         block += gridDim.x) {
+    for (int block = warp; block < geometry.total_blocks;
+         block += warp_count) {
       if ((step & 1) == 0) {
-        UpdateCombinedCpmlQueueBlock<1, PsiType, true, false>(
+        UpdateCombinedCpmlQueueBlock<1, PsiType, true, false, true>(
             e_ab, geometry.max_z, geometry.max_y, geometry.max_x,
             geometry.high_z, geometry.high_y, geometry.high_x,
             geometry.z_region_blocks, geometry.y_region_blocks,
             geometry.shell_blocks, geometry.core_x_blocks,
             geometry.core_y_blocks, block);
       } else {
-        UpdateCombinedCpmlQueueBlock<1, PsiType, true, false>(
+        UpdateCombinedCpmlQueueBlock<1, PsiType, true, false, true>(
             e_ba, geometry.max_z, geometry.max_y, geometry.max_x,
             geometry.high_z, geometry.high_y, geometry.high_x,
             geometry.z_region_blocks, geometry.y_region_blocks,
@@ -1944,25 +1959,26 @@ CpmlQueueGeometry MakeCpmlQueueGeometry(const BeamzLaunch& launch) {
            static_cast<int>(launch.outputs[1].dims[2]),
            static_cast<int>(launch.outputs[2].dims[2])) -
       low;
-  constexpr int tile_x = 64;
+  constexpr int tile_x = 32;
+  constexpr int tile_y = 1;
   const int x_blocks = (geometry.max_x + tile_x - 1) / tile_x;
   geometry.z_region_blocks =
-      x_blocks * ((geometry.max_y + kTileY - 1) / kTileY) *
+      x_blocks * ((geometry.max_y + tile_y - 1) / tile_y) *
       (low + geometry.max_z - geometry.high_z);
   geometry.y_region_blocks =
       x_blocks *
-      ((low + geometry.max_y - geometry.high_y + kTileY - 1) / kTileY) *
+      ((low + geometry.max_y - geometry.high_y + tile_y - 1) / tile_y) *
       (geometry.high_z - low);
   const int x_region_blocks =
       ((low + geometry.max_x - geometry.high_x + tile_x - 1) / tile_x) *
-      ((geometry.high_y - low + kTileY - 1) / kTileY) *
+      ((geometry.high_y - low + tile_y - 1) / tile_y) *
       (geometry.high_z - low);
   geometry.shell_blocks =
       geometry.z_region_blocks + geometry.y_region_blocks + x_region_blocks;
   geometry.core_x_blocks =
       (geometry.high_x - low + tile_x - 1) / tile_x;
   geometry.core_y_blocks =
-      (geometry.high_y - low + kTileY - 1) / kTileY;
+      (geometry.high_y - low + tile_y - 1) / tile_y;
   geometry.total_blocks =
       geometry.shell_blocks + geometry.core_x_blocks *
                                   geometry.core_y_blocks *
@@ -1995,7 +2011,8 @@ cudaError_t LaunchPersistentCpml(cudaStream_t stream,
   error = cudaDeviceGetAttribute(&multiprocessors,
                                  cudaDevAttrMultiProcessorCount, device);
   if (error != cudaSuccess) return error;
-  constexpr int threads = 256;
+  constexpr int thread_count = 256;
+  const dim3 threads(thread_count, 1, 1);
   const void* persistent_kernel =
       monitor_groups == nullptr
           ? reinterpret_cast<const void*>(
@@ -2004,15 +2021,16 @@ cudaError_t LaunchPersistentCpml(cudaStream_t stream,
                 PersistentCpmlSteps<kBeamzF32, true>);
   int blocks_per_sm = 0;
   error = cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-      &blocks_per_sm, persistent_kernel, threads, 0);
+      &blocks_per_sm, persistent_kernel, thread_count, 0);
   if (error != cudaSuccess || blocks_per_sm < 1) return cudaErrorNotSupported;
   CpmlQueueGeometry geometry = MakeCpmlQueueGeometry(h_ab);
-  constexpr int64_t kPersistentCellLimit = 10000000;
-  constexpr int64_t kPersistentCellStepLimit = 2000000000;
+  // Bound each non-preemptible cooperative launch, rather than the whole
+  // simulation. This avoids display starvation while retaining the resident
+  // schedule for domains that need several short launches.
+  constexpr int64_t kPersistentLaunchCellSteps = 1000000000;
   const int64_t cells = static_cast<int64_t>(geometry.max_z) *
                         geometry.max_y * geometry.max_x;
-  if (nsteps < 16 || cells > kPersistentCellLimit ||
-      cells * nsteps > kPersistentCellStepLimit) {
+  if (nsteps < 16 || cells < 1) {
     return cudaErrorNotSupported;
   }
   PersistentSourceGroups persistent_sources{};
@@ -2025,14 +2043,25 @@ cudaError_t LaunchPersistentCpml(cudaStream_t stream,
       geometry.total_blocks < blocks_per_sm * multiprocessors
           ? geometry.total_blocks
           : blocks_per_sm * multiprocessors;
-  void* arguments[] = {const_cast<BeamzLaunch*>(&h_ab),
-                       const_cast<BeamzLaunch*>(&e_ab),
-                       const_cast<BeamzLaunch*>(&h_ba),
-                       const_cast<BeamzLaunch*>(&e_ba), &geometry,
-                       &persistent_sources, &persistent_monitors, &nsteps};
-  return cudaLaunchCooperativeKernel(
-      const_cast<void*>(persistent_kernel), blocks, threads, arguments, 0,
-      stream);
+  const int32_t max_chunk_steps = static_cast<int32_t>(
+      kPersistentLaunchCellSteps / cells > 0
+          ? kPersistentLaunchCellSteps / cells
+          : 1);
+  for (int32_t step_base = 0; step_base < nsteps;) {
+    int32_t chunk_steps = nsteps - step_base;
+    if (chunk_steps > max_chunk_steps) chunk_steps = max_chunk_steps;
+    void* arguments[] = {const_cast<BeamzLaunch*>(&h_ab),
+                         const_cast<BeamzLaunch*>(&e_ab),
+                         const_cast<BeamzLaunch*>(&h_ba),
+                         const_cast<BeamzLaunch*>(&e_ba), &geometry,
+                         &persistent_sources, &persistent_monitors, &step_base,
+                         &chunk_steps};
+    error = cudaLaunchCooperativeKernel(const_cast<void*>(persistent_kernel),
+                                        blocks, threads, arguments, 0, stream);
+    if (error != cudaSuccess) return error;
+    step_base += chunk_steps;
+  }
+  return cudaSuccess;
 }
 
 cudaError_t LaunchCpmlShellAndCorePhase(cudaStream_t stream,

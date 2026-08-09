@@ -53,13 +53,12 @@ For memory-constrained CPML runs,
 BF16 while fields and recurrence arithmetic remain FP32. The default is `fp32`;
 use BF16 only after validating application-level accuracy.
 
-Regular FP32 CPML programs without monitors and with up to ten million cells
-and two billion cell-steps use a cooperative persistent grid on supported GPUs.
-The duration bound prevents a long non-preemptible launch from starving an
-interactive display. Set
-`BEAMZ_CUDA_DISABLE_PERSISTENT_CPML=1` to retain the CUDA-graph scheduler for
-diagnosis or benchmarking. Larger domains keep the graph scheduler because it
-currently sustains higher bandwidth beyond that crossover.
+The exact cooperative persistent CPML scheduler remains available as an
+experimental diagnostic with `BEAMZ_CUDA_ENABLE_PERSISTENT_CPML=1`. Its
+warp-tiled resident grid covers every physical cell and bounds individual
+launches to avoid starving an interactive display, but the CUDA-graph scheduler
+currently sustains substantially higher bandwidth on GA102 and therefore
+remains the default. `BEAMZ_CUDA_DISABLE_PERSISTENT_CPML=1` overrides the opt-in.
 
 No CUDA result is promoted without all of the following on real hardware:
 
