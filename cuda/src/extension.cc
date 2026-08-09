@@ -7,8 +7,8 @@
 namespace nb = nanobind;
 using namespace beamz::cuda::abi;
 
-NB_MODULE(beamz_cuda, module) {
-  module.attr("__version__") = kPackageVersion;
+NB_MODULE(_cuda, module) {
+  module.attr("__version__") = kComponentVersion;
   module.attr("__abi_version__") = kAbiVersion;
   module.def("registrations", []() {
     nb::dict registrations;

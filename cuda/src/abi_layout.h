@@ -8,7 +8,7 @@
 namespace beamz::cuda::abi {
 
 inline constexpr int32_t kAbiVersion = 11;
-inline constexpr char kPackageVersion[] = "0.11.0";
+inline constexpr char kComponentVersion[] = "0.11.0";
 inline constexpr char kStreamedTarget[] = "beamz_cuda_streamed";
 inline constexpr char kProgramTarget[] = "beamz_cuda_program";
 inline constexpr char kHopperTarget[] = "beamz_cuda_hopper";

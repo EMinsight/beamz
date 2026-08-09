@@ -2,7 +2,7 @@
 
 __all__ = [
     "CUDA_ABI_VERSION",
-    "CUDA_PACKAGE_VERSION",
+    "CUDA_COMPONENT_VERSION",
     "CUDA_STREAMED_TARGET",
     "CUDA_PROGRAM_TARGET",
     "CUDA_HOPPER_TARGET",
@@ -38,7 +38,7 @@ __all__ = [
 ]
 
 CUDA_ABI_VERSION = 11
-CUDA_PACKAGE_VERSION = "0.11.0"
+CUDA_COMPONENT_VERSION = "0.11.0"
 CUDA_STREAMED_TARGET = "beamz_cuda_streamed"
 CUDA_PROGRAM_TARGET = "beamz_cuda_program"
 CUDA_HOPPER_TARGET = "beamz_cuda_hopper"

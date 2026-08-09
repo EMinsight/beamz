@@ -18,8 +18,7 @@ execute_process(
 )
 
 nanobind_add_module(
-  beamz_cuda
-  STABLE_ABI
+  _cuda
   NB_STATIC
   src/extension.cc
   src/ffi_handler.cc
@@ -29,10 +28,10 @@ nanobind_add_module(
   src/update.cu
   src/hopper.cu
 )
-target_compile_features(beamz_cuda PRIVATE cxx_std_17)
-target_include_directories(beamz_cuda PRIVATE "${JAX_FFI_INCLUDE}" src)
+target_compile_features(_cuda PRIVATE cxx_std_17)
+target_include_directories(_cuda PRIVATE "${JAX_FFI_INCLUDE}" src)
 set_target_properties(
-  beamz_cuda
+  _cuda
   PROPERTIES
     CUDA_STANDARD 17
     CUDA_STANDARD_REQUIRED ON
@@ -40,11 +39,11 @@ set_target_properties(
     CUDA_SEPARABLE_COMPILATION ON
 )
 target_compile_options(
-  beamz_cuda
+  _cuda
   PRIVATE
     $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr;-lineinfo>
 )
 if(BEAMZ_CUDA_FAST_MATH)
-  target_compile_options(beamz_cuda PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>)
+  target_compile_options(_cuda PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>)
 endif()
-install(TARGETS beamz_cuda LIBRARY DESTINATION .)
+install(TARGETS _cuda LIBRARY DESTINATION beamz)

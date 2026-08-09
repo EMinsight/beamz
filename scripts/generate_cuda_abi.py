@@ -21,7 +21,7 @@ def _render_python(schema: dict) -> str:
     targets = schema["targets"]
     exported = [
         "CUDA_ABI_VERSION",
-        "CUDA_PACKAGE_VERSION",
+        "CUDA_COMPONENT_VERSION",
         *(f"CUDA_{name.upper()}_TARGET" for name in targets),
         "CUDA_STREAMED_TARGETS",
         *(f"PROGRAM_LAYOUT_{name.upper()}" for name in schema["program_layouts"]),
@@ -35,7 +35,7 @@ def _render_python(schema: dict) -> str:
         "]",
         "",
         f"CUDA_ABI_VERSION = {schema['abi_version']}",
-        f"CUDA_PACKAGE_VERSION = {json.dumps(schema['package_version'])}",
+        f"CUDA_COMPONENT_VERSION = {json.dumps(schema['component_version'])}",
     ]
     for name, target in targets.items():
         lines.append(f"CUDA_{name.upper()}_TARGET = {json.dumps(target)}")
@@ -65,7 +65,10 @@ def _render_cpp(schema: dict) -> str:
         "namespace beamz::cuda::abi {",
         "",
         f"inline constexpr int32_t kAbiVersion = {schema['abi_version']};",
-        (f'inline constexpr char kPackageVersion[] = "{schema["package_version"]}";'),
+        (
+            f"inline constexpr char kComponentVersion[] = "
+            f'"{schema["component_version"]}";'
+        ),
     ]
     for name, target in schema["targets"].items():
         lines.append(

@@ -38,11 +38,17 @@ def test_cuda_abi_layout_relationships_are_explicit():
     assert layout["cpml_e_psi_input_offset"] == abi.CPML_E_PSI_INPUT_OFFSET
 
 
-def test_cuda_wheel_version_matches_abi_schema():
+def test_private_cuda_component_version_matches_abi_schema():
     schema = json.loads((ROOT / "cuda" / "abi_layout.json").read_text())
     wheel_config = (ROOT / "cuda" / "pyproject.toml").read_text()
+    cmake_config = (ROOT / "cuda" / "CMakeLists.txt").read_text()
     wheel_version = re.search(r'^version = "([^"]+)"$', wheel_config, re.MULTILINE)
 
     assert wheel_version is not None
-    assert wheel_version.group(1) == schema["package_version"]
+    assert wheel_version.group(1) == schema["component_version"]
+    assert 'name = "beamz-cuda-component"' in wheel_config
+    assert "Private :: Do Not Upload" in wheel_config
+    assert '"beamz==' not in wheel_config
+    assert re.search(r"nanobind_add_module\(\s*_cuda\b", cmake_config)
+    assert "install(TARGETS _cuda LIBRARY DESTINATION beamz)" in cmake_config
     assert schema["abi_version"] == abi.CUDA_ABI_VERSION

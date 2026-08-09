@@ -38,8 +38,8 @@ permissions:
   contents: read
 
 jobs:
-  wheel:
-    name: Build CUDA 12 wheel
+  component:
+    name: Build private CUDA 12 component
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container: nvidia/cuda:12.4.1-devel-ubuntu22.04
@@ -55,30 +55,35 @@ jobs:
           version: "latest"
           enable-cache: true
       - run: uv python install 3.11
-      - name: Build optional extension wheel
+      - name: Install BeamZ test dependencies
+        run: uv sync --python 3.11 --extra test --no-install-project
+      - name: Build optional private component
         env:
           UV_PYTHON: "3.11"
         run: uv build --wheel cuda
-      - name: Import wheel and inspect FFI targets
+      - name: Import component through the BeamZ namespace
         run: |
-          uv venv /tmp/beamz-cuda-smoke --python 3.11
-          uv pip install --python /tmp/beamz-cuda-smoke/bin/python \
+          uv pip install --python .venv/bin/python \
             --no-deps cuda/dist/*.whl
-          /tmp/beamz-cuda-smoke/bin/python - <<'PY'
+          cd /tmp
+          "$GITHUB_WORKSPACE"/.venv/bin/python - <<'PY'
           import json
+          import os
           from pathlib import Path
 
-          import beamz_cuda
+          import beamz._cuda as cuda
 
-          schema = json.loads(Path("cuda/abi_layout.json").read_text())
-          assert beamz_cuda.__version__ == schema["package_version"]
-          assert beamz_cuda.__abi_version__ == schema["abi_version"]
-          assert set(beamz_cuda.registrations()) == set(schema["targets"].values())
-          print(beamz_cuda.__version__)
+          schema = json.loads(
+              (Path(os.environ["GITHUB_WORKSPACE"]) / "cuda/abi_layout.json").read_text()
+          )
+          assert cuda.__version__ == schema["component_version"]
+          assert cuda.__abi_version__ == schema["abi_version"]
+          assert set(cuda.registrations()) == set(schema["targets"].values())
+          print(cuda.__version__)
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: beamz-cuda-wheel
+          name: beamz-private-cuda-component
           path: cuda/dist/*.whl
 
   h100:
@@ -86,7 +91,7 @@ jobs:
     if: >-
       ${{ vars.BEAMZ_H100_RUNNER_ENABLED == 'true' &&
           github.event_name != 'pull_request' }}
-    needs: wheel
+    needs: component
     runs-on: [self-hosted, linux, x64, h100]
     timeout-minutes: 60
     steps:
@@ -104,12 +109,12 @@ jobs:
           uv pip install --python .venv/bin/python "jax[cuda12]>=0.4.31"
       - uses: actions/download-artifact@v4
         with:
-          name: beamz-cuda-wheel
+          name: beamz-private-cuda-component
           path: ${{ runner.temp }}/cuda-dist
-      - name: Install CUDA extension
+      - name: Install private CUDA component
         run: >-
-          uv pip install --python .venv/bin/python --no-deps
-          "${RUNNER_TEMP}"/cuda-dist/*.whl
+          uv pip install --python .venv/bin/python --target "${GITHUB_WORKSPACE}"
+          --no-deps "${RUNNER_TEMP}"/cuda-dist/*.whl
       - name: Run complete-state numerical parity
         run: >-
           uv run --no-sync --no-active --python 3.11 python -m pytest
