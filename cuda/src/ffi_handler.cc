@@ -658,18 +658,18 @@ ffi::Error StreamedSourceMonitorCpmlStepsHandler(
     return ffi::Error::InvalidArgument(
         "invalid BeamZ CUDA source-monitor graph attributes");
   }
-  BeamzBuffer inputs[95]{};
-  BeamzBuffer outputs[21]{};
+  BeamzBuffer inputs[97]{};
+  BeamzBuffer outputs[23]{};
   const size_t graph_input_count = cpml_enabled ? 74 : 24;
   const size_t graph_output_count = cpml_enabled ? 18 : 6;
-  for (size_t index = 0; index < graph_input_count + 21; ++index) {
+  for (size_t index = 0; index < graph_input_count + 23; ++index) {
     auto decoded = args.get<ffi::AnyBuffer>(index);
     if (!decoded) return decoded.error();
     if (auto error = DecodeBuffer(*decoded, &inputs[index]); error.failure()) {
       return error;
     }
   }
-  for (size_t index = 0; index < graph_output_count + 3; ++index) {
+  for (size_t index = 0; index < graph_output_count + 5; ++index) {
     auto decoded = rets.get<ffi::AnyBuffer>(index);
     if (!decoded) return decoded.error();
     if (auto error = DecodeBuffer(**decoded, &outputs[index]); error.failure()) {
@@ -743,6 +743,8 @@ ffi::Error StreamedSourceMonitorCpmlStepsHandler(
   monitor.dft_im = outputs[graph_output_count + 1];
   monitor.dft_weight = outputs[graph_output_count + 2];
   monitor.time = inputs[graph_input_count + 20];
+  monitor.phase_cos = outputs[graph_output_count + 3];
+  monitor.phase_sin = outputs[graph_output_count + 4];
   monitor.frequency_count = frequency_count;
   monitor.point_count = point_count;
   const int error = BeamzLaunchStreamedSourceMonitorSteps(

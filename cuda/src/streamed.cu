@@ -50,6 +50,11 @@ bool TypedPsiEnabled() {
   return value == nullptr || value[0] == '\0' || value[0] == '0';
 }
 
+bool PrecomputedDftPhasesEnabled() {
+  const char* value = std::getenv("BEAMZ_CUDA_DISABLE_PRECOMPUTED_DFT_PHASES");
+  return value == nullptr || value[0] == '\0' || value[0] == '0';
+}
+
 std::string GraphKey(void* stream, const BeamzLaunch& h_launch,
                      const BeamzLaunch& e_launch, int32_t nsteps,
                      const BeamzSourceLaunch* source = nullptr,
@@ -778,9 +783,30 @@ __global__ void ApplySourceGroup(BeamzBuffer target,
       static_cast<const float*>(group.waveforms.data)[waveform_offset];
 }
 
+__global__ void PreparePlaneDftPhases(BeamzLaunch e_launch,
+                                      BeamzDftLaunch monitor,
+                                      int nsteps) {
+  const int linear = blockIdx.x * blockDim.x + threadIdx.x;
+  const int count = nsteps * monitor.frequency_count;
+  if (linear >= count) return;
+  const int step = linear / monitor.frequency_count;
+  const int frequency = linear - step * monitor.frequency_count;
+  const float time = static_cast<const float*>(monitor.time.data)[0] +
+                     static_cast<float>(step + 1) * e_launch.dt;
+  const float theta =
+      6.2831853071795864769f *
+      static_cast<const float*>(monitor.frequencies.data)[frequency] * time;
+  float phase_sin;
+  float phase_cos;
+  sincosf(theta, &phase_sin, &phase_cos);
+  static_cast<float*>(monitor.phase_cos.data)[linear] = phase_cos;
+  static_cast<float*>(monitor.phase_sin.data)[linear] = phase_sin;
+}
+
 __global__ void AccumulatePlaneDft(BeamzLaunch h_launch,
                                    BeamzLaunch e_launch,
-                                   BeamzDftLaunch monitor, int step_offset) {
+                                   BeamzDftLaunch monitor, int step_offset,
+                                   bool precomputed_phase) {
   const int point = blockIdx.x * blockDim.x + threadIdx.x;
   const int frequency = blockIdx.y * blockDim.y + threadIdx.y;
   const int component = blockIdx.z * blockDim.z + threadIdx.z;
@@ -809,13 +835,20 @@ __global__ void AccumulatePlaneDft(BeamzLaunch h_launch,
               static_cast<const float*>(weights.data)[gather_offset];
   }
 
-  const float t = static_cast<const float*>(monitor.time.data)[0] +
-                  static_cast<float>(step_offset + 1) * e_launch.dt;
-  const float theta = 6.2831853071795864769f *
-                      static_cast<const float*>(monitor.frequencies.data)[frequency] *
-                      t;
-  float phase_sin, phase_cos;
-  sincosf(theta, &phase_sin, &phase_cos);
+  float phase_sin;
+  float phase_cos;
+  if (precomputed_phase) {
+    const int phase_offset = step_offset * monitor.frequency_count + frequency;
+    phase_cos = static_cast<const float*>(monitor.phase_cos.data)[phase_offset];
+    phase_sin = static_cast<const float*>(monitor.phase_sin.data)[phase_offset];
+  } else {
+    const float t = static_cast<const float*>(monitor.time.data)[0] +
+                    static_cast<float>(step_offset + 1) * e_launch.dt;
+    const float theta =
+        6.2831853071795864769f *
+        static_cast<const float*>(monitor.frequencies.data)[frequency] * t;
+    sincosf(theta, &phase_sin, &phase_cos);
+  }
   const int accumulator_offset =
       (component * static_cast<int>(monitor.dft_re.dims[2]) + frequency) *
           static_cast<int>(monitor.dft_re.dims[3]) +
@@ -1025,6 +1058,22 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
   }
   auto launch_steps = [&]() {
     cudaError_t launch_error = cudaSuccess;
+    const bool precomputed_monitor_phase =
+        monitor != nullptr && PrecomputedDftPhasesEnabled() &&
+        monitor->phase_cos.rank == 2 && monitor->phase_sin.rank == 2 &&
+        monitor->phase_cos.dims[0] >= nsteps &&
+        monitor->phase_sin.dims[0] >= nsteps &&
+        monitor->phase_cos.dims[1] >= monitor->frequency_count &&
+        monitor->phase_sin.dims[1] >= monitor->frequency_count;
+    if (precomputed_monitor_phase) {
+      constexpr int phase_threads = 128;
+      const int phase_count = nsteps * monitor->frequency_count;
+      PreparePlaneDftPhases<<<
+          (phase_count + phase_threads - 1) / phase_threads, phase_threads, 0,
+          stream>>>(e_launch, *monitor, nsteps);
+      launch_error = cudaPeekAtLastError();
+      if (launch_error != cudaSuccess) return launch_error;
+    }
     auto launch_source_groups = [&](int timing, int32_t step) {
       for (int32_t group_index = 0; group_index < source_group_count;
            ++group_index) {
@@ -1084,7 +1133,7 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
                 monitor_threads.y,
             (6 + monitor_threads.z - 1) / monitor_threads.z);
         AccumulatePlaneDft<<<monitor_blocks, monitor_threads, 0, stream>>>(
-            h_launch, e_launch, *monitor, step);
+            h_launch, e_launch, *monitor, step, precomputed_monitor_phase);
         launch_error = cudaPeekAtLastError();
         if (launch_error != cudaSuccess) break;
       }
@@ -1425,7 +1474,14 @@ int BeamzLaunchStreamedSourceMonitorSteps(
   if (monitor.frequency_count < 1 || monitor.point_count < 1 ||
       monitor.frequencies.rank != 1 || monitor.component_mask.rank != 1 ||
       monitor.dft_re.rank != 4 || monitor.dft_im.rank != 4 ||
-      monitor.dft_weight.rank != 2 || monitor.time.rank != 0) {
+      monitor.dft_weight.rank != 2 || monitor.time.rank != 0 ||
+      monitor.phase_cos.rank != 2 || monitor.phase_sin.rank != 2 ||
+      monitor.phase_cos.dims[0] < nsteps ||
+      monitor.phase_sin.dims[0] < nsteps ||
+      monitor.phase_cos.dims[1] < monitor.frequency_count ||
+      monitor.phase_sin.dims[1] < monitor.frequency_count ||
+      !FitsIntOffsets(monitor.phase_cos) ||
+      !FitsIntOffsets(monitor.phase_sin)) {
     return cudaErrorInvalidValue;
   }
   for (int component = 0; component < 6; ++component) {

@@ -59,6 +59,8 @@ struct BeamzDftLaunch {
   BeamzBuffer dft_im;
   BeamzBuffer dft_weight;
   BeamzBuffer time;
+  BeamzBuffer phase_cos;
+  BeamzBuffer phase_sin;
   int32_t frequency_count;
   int32_t point_count;
 };

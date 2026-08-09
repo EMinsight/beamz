@@ -633,6 +633,8 @@ def run_source_monitor_steps(
         (1, 6, monitor.freq_count, monitor.dft_point_count)
     )
     dft_weight_sum = state.dft_weight_sum.reshape((1, monitor.freq_count))
+    phase_cos = jnp.empty((nsteps, monitor.freq_count), dtype=jnp.float32)
+    phase_sin = jnp.empty((nsteps, monitor.freq_count), dtype=jnp.float32)
     arguments, result_values, aliases = _graph_io(state, ctx, coeffs)
     state_output_count = len(result_values)
     result_values = (
@@ -640,12 +642,16 @@ def run_source_monitor_steps(
         dft_vec_re,
         dft_vec_im,
         dft_weight_sum,
+        phase_cos,
+        phase_sin,
     )
     aliases = {
         **aliases,
         len(arguments) + 17: state_output_count,
         len(arguments) + 18: state_output_count + 1,
         len(arguments) + 19: state_output_count + 2,
+        len(arguments) + 21: state_output_count + 3,
+        len(arguments) + 22: state_output_count + 4,
     }
     call = jax.ffi.ffi_call(
         "beamz_cuda_streamed_source_monitor_cpml_steps",
@@ -666,6 +672,8 @@ def run_source_monitor_steps(
         dft_vec_im,
         dft_weight_sum,
         state.t,
+        phase_cos,
+        phase_sin,
         abi_version=np.int32(CUDA_ABI_VERSION),
         nsteps=np.int32(nsteps),
         dt=np.float32(ctx.dt),

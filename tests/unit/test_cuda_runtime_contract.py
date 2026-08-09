@@ -536,6 +536,7 @@ def test_cuda_source_monitor_graph_aliases_dft_accumulators(monkeypatch):
                 *arguments[31:37],
                 *arguments[62:68],
                 *arguments[91:94],
+                *arguments[95:97],
             )
 
         return call
@@ -553,11 +554,13 @@ def test_cuda_source_monitor_graph_aliases_dft_accumulators(monkeypatch):
 
     target, results, options, arguments, attributes = captured[0]
     assert target == "beamz_cuda_streamed_source_monitor_cpml_steps"
-    assert len(results) == 21
-    assert len(arguments) == 95
+    assert len(results) == 23
+    assert len(arguments) == 97
     assert options["input_output_aliases"][91] == 18
     assert options["input_output_aliases"][92] == 19
     assert options["input_output_aliases"][93] == 20
+    assert options["input_output_aliases"][95] == 21
+    assert options["input_output_aliases"][96] == 22
     assert attributes["frequency_count"] == np.int32(3)
     assert attributes["cpml_enabled"] == np.int32(1)
     np.testing.assert_array_equal(next_state.dft_vec_re, state.dft_vec_re)
@@ -570,7 +573,7 @@ def test_cuda_source_monitor_graph_supports_pec_without_cpml(monkeypatch):
     def fake_ffi_call(target, result_metadata, **options):
         def call(*arguments, **attributes):
             captured.append((target, result_metadata, options, arguments, attributes))
-            return (*arguments[:6], *arguments[41:44])
+            return (*arguments[:6], *arguments[41:44], *arguments[45:47])
 
         return call
 
@@ -586,11 +589,13 @@ def test_cuda_source_monitor_graph_supports_pec_without_cpml(monkeypatch):
     )
 
     _target, results, options, arguments, attributes = captured[0]
-    assert len(results) == 9
-    assert len(arguments) == 45
+    assert len(results) == 11
+    assert len(arguments) == 47
     assert options["input_output_aliases"][41] == 6
     assert options["input_output_aliases"][42] == 7
     assert options["input_output_aliases"][43] == 8
+    assert options["input_output_aliases"][45] == 9
+    assert options["input_output_aliases"][46] == 10
     assert attributes["cpml_enabled"] == np.int32(0)
     np.testing.assert_array_equal(next_state.dft_vec_re, state.dft_vec_re)
 
