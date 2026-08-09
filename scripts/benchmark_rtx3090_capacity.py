@@ -371,7 +371,13 @@ def _waveguide_simulation(resolution: float, timesteps: int):
         design=design,
         sources=[source],
         monitors=[],
-        boundaries=[bz.PML(edges="all", thickness=0.75 * wavelength)],
+        boundaries=[
+            bz.PML(
+                edges="all",
+                thickness=0.75 * wavelength,
+                formulation="cpml",
+            )
+        ],
         time=times,
         resolution=resolution,
     )

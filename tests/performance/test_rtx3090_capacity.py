@@ -9,6 +9,7 @@ import pytest
 from scripts.benchmark_rtx3090_capacity import (
     _load_checkpoint,
     _looks_like_gpu_oom,
+    _waveguide_simulation,
     _write_checkpoint,
 )
 from scripts.rtx3090_capacity import (
@@ -185,3 +186,10 @@ def test_capacity_checkpoint_round_trips_completed_attempts(tmp_path):
 
     assert measurements == [measurement]
     assert failures == [failure]
+
+
+def test_modal_capacity_workload_explicitly_uses_cpml():
+    simulation = _waveguide_simulation(80e-9, 4)
+
+    assert len(simulation.boundaries) == 1
+    assert simulation.boundaries[0].formulation == "cpml"
