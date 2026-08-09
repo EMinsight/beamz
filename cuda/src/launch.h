@@ -75,27 +75,25 @@ struct BeamzDftGroupLaunch {
   int32_t monitor_count;
 };
 
+// A non-owning, complete native timestep program assembled by the FFI decoder.
+// One field bank describes in-place graph execution; two banks describe the
+// temporal ping-pong schedule. Source and monitor pointers remain valid for the
+// duration of graph lookup/capture because their storage belongs to the handler.
+struct BeamzProgramLaunch {
+  BeamzLaunch h_ab;
+  BeamzLaunch e_ab;
+  BeamzLaunch h_ba;
+  BeamzLaunch e_ba;
+  const BeamzSourceGroupLaunch* source_groups;
+  int32_t source_group_count;
+  const BeamzDftGroupLaunch* monitors;
+  int32_t field_bank_count;
+  int32_t nsteps;
+};
+
 // Returns zero after enqueueing all work, otherwise a CUDA runtime error code.
 int BeamzLaunchStreamed(void* stream, const BeamzLaunch& launch);
-int BeamzLaunchStreamedSteps(void* stream, const BeamzLaunch& h_launch,
-                             const BeamzLaunch& e_launch, int32_t nsteps);
-int BeamzLaunchTemporalSteps(void* stream, const BeamzLaunch& h_ab,
-                             const BeamzLaunch& e_ab,
-                             const BeamzLaunch& h_ba,
-                             const BeamzLaunch& e_ba, int32_t nsteps);
-int BeamzLaunchStreamedSourceGroupSteps(
-    void* stream, const BeamzLaunch& h_launch, const BeamzLaunch& e_launch,
-    const BeamzSourceGroupLaunch* source_groups, int32_t source_group_count,
-    int32_t nsteps);
-int BeamzLaunchTemporalCpmlSourceGroupSteps(
-    void* stream, const BeamzLaunch& h_ab, const BeamzLaunch& e_ab,
-    const BeamzLaunch& h_ba, const BeamzLaunch& e_ba,
-    const BeamzSourceGroupLaunch* source_groups, int32_t source_group_count,
-    const BeamzDftGroupLaunch* monitor_groups, int32_t nsteps);
-int BeamzLaunchStreamedProgramSteps(
-    void* stream, const BeamzLaunch& h_launch, const BeamzLaunch& e_launch,
-    const BeamzSourceGroupLaunch* source_groups, int32_t source_group_count,
-    const BeamzDftGroupLaunch& monitors, int32_t nsteps);
+int BeamzLaunchProgram(void* stream, const BeamzProgramLaunch& program);
 int BeamzLaunchHopper(void* stream, const BeamzLaunch& launch);
 
 #endif  // BEAMZ_CUDA_LAUNCH_H_

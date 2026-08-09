@@ -87,6 +87,150 @@ bool FitsIntOffsets(const BeamzBuffer& value) {
   return true;
 }
 
+cudaError_t ValidatePhase(const BeamzLaunch& launch) {
+  if (launch.phase < 0 || launch.phase > 1 || launch.metric_kind < 0 ||
+      launch.metric_kind > 2 || (launch.nterms != 0 && launch.nterms != 6)) {
+    return cudaErrorInvalidValue;
+  }
+  const int input_count = launch.nterms == 0 ? 12 : 13 + 4 * launch.nterms;
+  const int output_count = 3 + launch.nterms;
+  for (int index = 0; index < input_count; ++index) {
+    if (!FitsIntOffsets(launch.inputs[index])) return cudaErrorInvalidValue;
+  }
+  for (int index = 0; index < output_count; ++index) {
+    if (!FitsIntOffsets(launch.outputs[index])) return cudaErrorInvalidValue;
+  }
+  for (int axis = 0; axis < 3; ++axis) {
+    const BeamzBuffer& metric = launch.metrics[axis];
+    if (!FitsIntOffsets(metric) ||
+        (launch.metric_kind == 1 && metric.rank != 0) ||
+        (launch.metric_kind == 2 &&
+         (metric.rank != 1 || metric.dims[0] < 1))) {
+      return cudaErrorInvalidValue;
+    }
+  }
+  return cudaSuccess;
+}
+
+cudaError_t ValidateSourceGroups(const BeamzSourceGroupLaunch* groups,
+                                 int32_t count) {
+  if (groups == nullptr) return count == 0 ? cudaSuccess : cudaErrorInvalidValue;
+  if (count != 9) return cudaErrorInvalidValue;
+  for (int32_t index = 0; index < count; ++index) {
+    const BeamzSourceGroupLaunch& group = groups[index];
+    if (group.component < 0 || group.component > 2 || group.timing < 0 ||
+        group.timing > 2 || group.coefficients.rank != 4 ||
+        group.waveforms.rank != 2 || group.starts.rank != 2 ||
+        group.current_step.rank != 0 ||
+        group.coefficients.dims[0] != group.waveforms.dims[0] ||
+        group.coefficients.dims[0] != group.starts.dims[0] ||
+        group.starts.dims[1] != 3 || group.waveforms.dims[1] < 1 ||
+        !FitsIntOffsets(group.coefficients) ||
+        !FitsIntOffsets(group.waveforms) || !FitsIntOffsets(group.starts)) {
+      return cudaErrorInvalidValue;
+    }
+  }
+  return cudaSuccess;
+}
+
+cudaError_t ValidateMonitors(const BeamzDftGroupLaunch* value) {
+  if (value == nullptr) return cudaSuccess;
+  const BeamzDftGroupLaunch& monitors = *value;
+  if (monitors.monitor_count < 1 || monitors.indices.rank != 4 ||
+      monitors.weights.rank != 4 || monitors.frequencies.rank != 2 ||
+      monitors.component_masks.rank != 2 || monitors.counts.rank != 2 ||
+      monitors.codes.rank != 2 || monitors.windows.rank != 2 ||
+      monitors.dft_re.rank != 1 || monitors.dft_im.rank != 1 ||
+      monitors.dft_weight.rank != 1 || monitors.time.rank != 0 ||
+      monitors.current_step.rank != 0 ||
+      monitors.indices.dims[0] < monitors.monitor_count ||
+      monitors.indices.dims[1] != 6 ||
+      monitors.weights.dims[0] != monitors.indices.dims[0] ||
+      monitors.weights.dims[1] != monitors.indices.dims[1] ||
+      monitors.weights.dims[2] != monitors.indices.dims[2] ||
+      monitors.weights.dims[3] != monitors.indices.dims[3] ||
+      monitors.frequencies.dims[0] < monitors.monitor_count ||
+      monitors.component_masks.dims[0] < monitors.monitor_count ||
+      monitors.component_masks.dims[1] != 6 ||
+      monitors.counts.dims[0] < monitors.monitor_count ||
+      monitors.counts.dims[1] != 5 ||
+      monitors.codes.dims[0] < monitors.monitor_count ||
+      monitors.codes.dims[1] != 2 ||
+      monitors.windows.dims[0] < monitors.monitor_count ||
+      monitors.windows.dims[1] != 3 || monitors.dft_re.dims[0] < 1 ||
+      monitors.dft_im.dims[0] != monitors.dft_re.dims[0] ||
+      monitors.dft_weight.dims[0] < 1) {
+    return cudaErrorInvalidValue;
+  }
+  const BeamzBuffer buffers[] = {
+      monitors.indices,         monitors.weights, monitors.frequencies,
+      monitors.component_masks, monitors.counts,  monitors.codes,
+      monitors.windows,         monitors.dft_re,   monitors.dft_im,
+      monitors.dft_weight};
+  for (const BeamzBuffer& buffer : buffers) {
+    if (!FitsIntOffsets(buffer)) return cudaErrorInvalidValue;
+  }
+  return cudaSuccess;
+}
+
+cudaError_t ValidateProgram(const BeamzProgramLaunch& program) {
+  if (program.nsteps < 1 ||
+      (program.field_bank_count != 1 && program.field_bank_count != 2) ||
+      program.h_ab.phase != 0 || program.e_ab.phase != 1 ||
+      program.h_ab.nterms != program.e_ab.nterms) {
+    return cudaErrorInvalidValue;
+  }
+  if (cudaError_t error = ValidatePhase(program.h_ab); error != cudaSuccess) {
+    return error;
+  }
+  if (cudaError_t error = ValidatePhase(program.e_ab); error != cudaSuccess) {
+    return error;
+  }
+  if (program.field_bank_count == 2) {
+    if (program.h_ba.phase != 0 || program.e_ba.phase != 1 ||
+        program.h_ba.nterms != program.h_ab.nterms ||
+        program.e_ba.nterms != program.e_ab.nterms) {
+      return cudaErrorInvalidValue;
+    }
+    if (cudaError_t error = ValidatePhase(program.h_ba); error != cudaSuccess) {
+      return error;
+    }
+    if (cudaError_t error = ValidatePhase(program.e_ba); error != cudaSuccess) {
+      return error;
+    }
+    if (program.h_ab.nterms == 0) {
+      if (program.nsteps < 4 || program.source_group_count != 0 ||
+          program.monitors != nullptr ||
+          program.e_ab.metric_kind != program.h_ab.metric_kind ||
+          program.h_ba.metric_kind != program.h_ab.metric_kind ||
+          program.e_ba.metric_kind != program.h_ab.metric_kind ||
+          program.h_ab.metallic_edges != 63 ||
+          program.e_ab.metallic_edges != 63 ||
+          program.h_ba.metallic_edges != 63 ||
+          program.e_ba.metallic_edges != 63) {
+        return cudaErrorInvalidValue;
+      }
+      for (int material = 0; material < 6; ++material) {
+        const int h_rank = program.h_ab.inputs[6 + material].rank;
+        const int e_rank = program.e_ab.inputs[6 + material].rank;
+        if ((h_rank != 0 && h_rank != 3) ||
+            (e_rank != 0 && e_rank != 3)) {
+          return cudaErrorInvalidValue;
+        }
+      }
+    } else if (program.h_ab.nterms != 6 ||
+               program.source_group_count != 9) {
+      return cudaErrorInvalidValue;
+    }
+  }
+  if (cudaError_t error = ValidateSourceGroups(program.source_groups,
+                                                program.source_group_count);
+      error != cudaSuccess) {
+    return error;
+  }
+  return ValidateMonitors(program.monitors);
+}
+
 __device__ __forceinline__ int Offset(const BeamzBuffer& value, int z, int y,
                                       int x) {
   if (value.rank == 0) return 0;
@@ -451,6 +595,56 @@ __device__ __forceinline__ bool BufferContains(const BeamzBuffer& value, int z,
 
 __host__ __device__ __forceinline__ int Min3(int a, int b, int c) {
   return a < b ? (a < c ? a : c) : (b < c ? b : c);
+}
+
+struct PhaseGeometry {
+  int max_z;
+  int max_y;
+  int max_x;
+};
+
+PhaseGeometry MakePhaseGeometry(const BeamzLaunch& launch) {
+  PhaseGeometry geometry{};
+  for (int component = 0; component < 3; ++component) {
+    const BeamzBuffer& output = launch.outputs[component];
+    geometry.max_z =
+        output.dims[0] > geometry.max_z ? output.dims[0] : geometry.max_z;
+    geometry.max_y =
+        output.dims[1] > geometry.max_y ? output.dims[1] : geometry.max_y;
+    geometry.max_x =
+        output.dims[2] > geometry.max_x ? output.dims[2] : geometry.max_x;
+  }
+  return geometry;
+}
+
+struct CpmlGeometry {
+  PhaseGeometry field;
+  int low;
+  int high_z;
+  int high_y;
+  int high_x;
+};
+
+CpmlGeometry MakeCpmlGeometry(const BeamzLaunch& launch) {
+  CpmlGeometry geometry{};
+  geometry.field = MakePhaseGeometry(launch);
+  geometry.low = launch.uniform_cpml_thickness;
+  geometry.high_z =
+      Min3(static_cast<int>(launch.outputs[0].dims[0]),
+           static_cast<int>(launch.outputs[1].dims[0]),
+           static_cast<int>(launch.outputs[2].dims[0])) -
+      geometry.low;
+  geometry.high_y =
+      Min3(static_cast<int>(launch.outputs[0].dims[1]),
+           static_cast<int>(launch.outputs[1].dims[1]),
+           static_cast<int>(launch.outputs[2].dims[1])) -
+      geometry.low;
+  geometry.high_x =
+      Min3(static_cast<int>(launch.outputs[0].dims[2]),
+           static_cast<int>(launch.outputs[1].dims[2]),
+           static_cast<int>(launch.outputs[2].dims[2])) -
+      geometry.low;
+  return geometry;
 }
 
 __device__ __forceinline__ bool InCpmlDeepCore(const BeamzLaunch& launch,
@@ -1293,40 +1487,17 @@ cudaError_t LaunchDftGroups(cudaStream_t stream, const BeamzLaunch& h_launch,
 }  // namespace
 
 int BeamzLaunchStreamed(void* raw_stream, const BeamzLaunch& launch) {
-  if (launch.metric_kind < 0 || launch.metric_kind > 2) {
-    return cudaErrorInvalidValue;
-  }
-  const int input_count = launch.nterms == 0 ? 12 : 13 + 4 * launch.nterms;
-  const int output_count = 3 + launch.nterms;
-  for (int index = 0; index < input_count; ++index) {
-    if (!FitsIntOffsets(launch.inputs[index])) return cudaErrorInvalidValue;
-  }
-  for (int index = 0; index < output_count; ++index) {
-    if (!FitsIntOffsets(launch.outputs[index])) return cudaErrorInvalidValue;
-  }
-  for (int axis = 0; axis < 3; ++axis) {
-    const BeamzBuffer& metric = launch.metrics[axis];
-    if (!FitsIntOffsets(metric)) return cudaErrorInvalidValue;
-    if ((launch.metric_kind == 1 && metric.rank != 0) ||
-        (launch.metric_kind == 2 &&
-         (metric.rank != 1 || metric.dims[0] < 1))) {
-      return cudaErrorInvalidValue;
-    }
+  if (cudaError_t error = ValidatePhase(launch); error != cudaSuccess) {
+    return static_cast<int>(error);
   }
   auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
-  int64_t max_x = 0, max_y = 0, max_z = 0;
-  for (int component = 0; component < 3; ++component) {
-    const BeamzBuffer& output = launch.outputs[component];
-    max_x = output.dims[2] > max_x ? output.dims[2] : max_x;
-    max_y = output.dims[1] > max_y ? output.dims[1] : max_y;
-    max_z = output.dims[0] > max_z ? output.dims[0] : max_z;
-  }
-  const int y_blocks = static_cast<int>((max_y + kTileY - 1) / kTileY);
+  const PhaseGeometry geometry = MakePhaseGeometry(launch);
+  const int y_blocks = (geometry.max_y + kTileY - 1) / kTileY;
   const int tile_z =
       launch.nterms != 0 || launch.metric_kind != 0 ? kPressureTileZ : kTileZ;
   const dim3 threads(kTileX, kTileY, tile_z);
-  const dim3 fused_blocks((max_x + kTileX - 1) / kTileX, y_blocks,
-                          (max_z + tile_z - 1) / tile_z);
+  const dim3 fused_blocks((geometry.max_x + kTileX - 1) / kTileX, y_blocks,
+                          (geometry.max_z + tile_z - 1) / tile_z);
   const bool scalar_coefficients =
       launch.nterms == 0 && launch.inputs[6].rank == 0 &&
       launch.inputs[7].rank == 0 && launch.inputs[8].rank == 0 &&
@@ -1393,9 +1564,14 @@ int UniformPsiType(const BeamzLaunch& launch) {
 
 template <int Phase, int PsiType, bool PackedLosslessMaterial>
 void LaunchCpmlShellForType(cudaStream_t stream, const BeamzLaunch& launch,
-                            int max_z, int max_y, int max_x, int high_z,
-                            int high_y, int high_x) {
-  const int low = launch.uniform_cpml_thickness;
+                            const CpmlGeometry& geometry) {
+  const int max_z = geometry.field.max_z;
+  const int max_y = geometry.field.max_y;
+  const int max_x = geometry.field.max_x;
+  const int low = geometry.low;
+  const int high_z = geometry.high_z;
+  const int high_y = geometry.high_y;
+  const int high_x = geometry.high_x;
   const int x_blocks = (max_x + kTileX - 1) / kTileX;
   const int z_region_blocks =
       x_blocks * ((max_y + kTileY - 1) / kTileY) *
@@ -1423,60 +1599,38 @@ void LaunchCpmlShellForType(cudaStream_t stream, const BeamzLaunch& launch,
 
 cudaError_t LaunchCpmlShellPhase(cudaStream_t stream,
                                  const BeamzLaunch& launch) {
-  int max_x = 0, max_y = 0, max_z = 0;
-  for (int component = 0; component < 3; ++component) {
-    const BeamzBuffer& output = launch.outputs[component];
-    max_x = output.dims[2] > max_x ? output.dims[2] : max_x;
-    max_y = output.dims[1] > max_y ? output.dims[1] : max_y;
-    max_z = output.dims[0] > max_z ? output.dims[0] : max_z;
-  }
-  const int low = launch.uniform_cpml_thickness;
-  const int high_z =
-      Min3(static_cast<int>(launch.outputs[0].dims[0]),
-           static_cast<int>(launch.outputs[1].dims[0]),
-           static_cast<int>(launch.outputs[2].dims[0])) -
-      low;
-  const int high_y =
-      Min3(static_cast<int>(launch.outputs[0].dims[1]),
-           static_cast<int>(launch.outputs[1].dims[1]),
-           static_cast<int>(launch.outputs[2].dims[1])) -
-      low;
-  const int high_x =
-      Min3(static_cast<int>(launch.outputs[0].dims[2]),
-           static_cast<int>(launch.outputs[1].dims[2]),
-           static_cast<int>(launch.outputs[2].dims[2])) -
-      low;
+  const CpmlGeometry geometry = MakeCpmlGeometry(launch);
   const int psi_type = UniformPsiType(launch);
   const bool packed = launch.phase == 1 && HasPackedLosslessMaterial(launch);
   if (launch.phase == 0) {
     if (psi_type == kBeamzBF16) {
       LaunchCpmlShellForType<0, kBeamzBF16, false>(
-          stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
+          stream, launch, geometry);
     } else if (psi_type == kBeamzF32) {
       LaunchCpmlShellForType<0, kBeamzF32, false>(
-          stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
+          stream, launch, geometry);
     } else {
       LaunchCpmlShellForType<0, -1, false>(
-          stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
+          stream, launch, geometry);
     }
   } else if (packed && psi_type == kBeamzBF16) {
     LaunchCpmlShellForType<1, kBeamzBF16, true>(
-        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
+        stream, launch, geometry);
   } else if (packed && psi_type == kBeamzF32) {
     LaunchCpmlShellForType<1, kBeamzF32, true>(
-        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
+        stream, launch, geometry);
   } else if (packed) {
     LaunchCpmlShellForType<1, -1, true>(
-        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
+        stream, launch, geometry);
   } else if (psi_type == kBeamzBF16) {
     LaunchCpmlShellForType<1, kBeamzBF16, false>(
-        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
+        stream, launch, geometry);
   } else if (psi_type == kBeamzF32) {
     LaunchCpmlShellForType<1, kBeamzF32, false>(
-        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
+        stream, launch, geometry);
   } else {
     LaunchCpmlShellForType<1, -1, false>(
-        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
+        stream, launch, geometry);
   }
   return cudaPeekAtLastError();
 }
@@ -1493,40 +1647,19 @@ bool CpmlCoreScheduleSupported(const BeamzLaunch& h_launch,
   for (int material = 0; material < 6; ++material) {
     if (h_launch.inputs[6 + material].rank != 0) return false;
   }
-  const int thickness = h_launch.uniform_cpml_thickness;
-  for (int axis = 0; axis < 3; ++axis) {
-    const int extent =
-        Min3(static_cast<int>(h_launch.outputs[0].dims[axis]),
-             static_cast<int>(h_launch.outputs[1].dims[axis]),
-             static_cast<int>(h_launch.outputs[2].dims[axis]));
-    if (extent <= 2 * thickness) return false;
-  }
-  return true;
+  const CpmlGeometry geometry = MakeCpmlGeometry(h_launch);
+  return geometry.high_z > geometry.low &&
+         geometry.high_y > geometry.low && geometry.high_x > geometry.low;
 }
 
 cudaError_t LaunchCpmlCorePhase(cudaStream_t stream,
                                 const BeamzLaunch& launch) {
-  const int thickness = launch.uniform_cpml_thickness;
-  const int low = thickness;
-  const int high_z =
-      Min3(static_cast<int>(launch.outputs[0].dims[0]),
-           static_cast<int>(launch.outputs[1].dims[0]),
-           static_cast<int>(launch.outputs[2].dims[0])) -
-      thickness;
-  const int high_y =
-      Min3(static_cast<int>(launch.outputs[0].dims[1]),
-           static_cast<int>(launch.outputs[1].dims[1]),
-           static_cast<int>(launch.outputs[2].dims[1])) -
-      thickness;
-  const int high_x =
-      Min3(static_cast<int>(launch.outputs[0].dims[2]),
-           static_cast<int>(launch.outputs[1].dims[2]),
-           static_cast<int>(launch.outputs[2].dims[2])) -
-      thickness;
+  const CpmlGeometry geometry = MakeCpmlGeometry(launch);
   const dim3 threads(64, 4, 1);
-  const dim3 blocks((high_x - low + threads.x - 1) / threads.x,
-                    (high_y - low + threads.y - 1) / threads.y,
-                    (high_z - low + threads.z - 1) / threads.z);
+  const dim3 blocks(
+      (geometry.high_x - geometry.low + threads.x - 1) / threads.x,
+      (geometry.high_y - geometry.low + threads.y - 1) / threads.y,
+      (geometry.high_z - geometry.low + threads.z - 1) / threads.z);
   if (launch.phase == 0) {
     if (launch.metallic_edges == 0) {
       UpdateCpmlCore<0, false, false><<<blocks, threads, 0, stream>>>(launch);
@@ -1543,15 +1676,20 @@ cudaError_t LaunchCpmlCorePhase(cudaStream_t stream,
 
 template <int Phase, int PsiType, bool PackedLosslessMaterial>
 void LaunchCombinedCpmlQueueForType(cudaStream_t stream,
-                                    const BeamzLaunch& launch, int max_z,
-                                    int max_y, int max_x, int high_z,
-                                    int high_y, int high_x) {
+                                    const BeamzLaunch& launch,
+                                    const CpmlGeometry& geometry) {
   constexpr int tile_x = PsiType == kBeamzBF16 ? 32 : 64;
   constexpr int tile_y = 4;
   constexpr int core_tile_x = PsiType == kBeamzBF16 ? 64 : tile_x;
   constexpr int core_tile_y = PsiType == kBeamzBF16 ? 2 : tile_y;
   static_assert(tile_x * tile_y == core_tile_x * core_tile_y);
-  const int low = launch.uniform_cpml_thickness;
+  const int max_z = geometry.field.max_z;
+  const int max_y = geometry.field.max_y;
+  const int max_x = geometry.field.max_x;
+  const int low = geometry.low;
+  const int high_z = geometry.high_z;
+  const int high_y = geometry.high_y;
+  const int high_x = geometry.high_x;
   const int x_blocks = (max_x + tile_x - 1) / tile_x;
   const int z_region_blocks =
       x_blocks * ((max_y + tile_y - 1) / tile_y) *
@@ -1589,60 +1727,38 @@ void LaunchCombinedCpmlQueueForType(cudaStream_t stream,
 
 cudaError_t LaunchCombinedCpmlQueuePhase(cudaStream_t stream,
                                          const BeamzLaunch& launch) {
-  int max_x = 0, max_y = 0, max_z = 0;
-  for (int component = 0; component < 3; ++component) {
-    const BeamzBuffer& output = launch.outputs[component];
-    max_x = output.dims[2] > max_x ? output.dims[2] : max_x;
-    max_y = output.dims[1] > max_y ? output.dims[1] : max_y;
-    max_z = output.dims[0] > max_z ? output.dims[0] : max_z;
-  }
-  const int low = launch.uniform_cpml_thickness;
-  const int high_z =
-      Min3(static_cast<int>(launch.outputs[0].dims[0]),
-           static_cast<int>(launch.outputs[1].dims[0]),
-           static_cast<int>(launch.outputs[2].dims[0])) -
-      low;
-  const int high_y =
-      Min3(static_cast<int>(launch.outputs[0].dims[1]),
-           static_cast<int>(launch.outputs[1].dims[1]),
-           static_cast<int>(launch.outputs[2].dims[1])) -
-      low;
-  const int high_x =
-      Min3(static_cast<int>(launch.outputs[0].dims[2]),
-           static_cast<int>(launch.outputs[1].dims[2]),
-           static_cast<int>(launch.outputs[2].dims[2])) -
-      low;
+  const CpmlGeometry geometry = MakeCpmlGeometry(launch);
   const int psi_type = UniformPsiType(launch);
   const bool packed = launch.phase == 1 && HasPackedLosslessMaterial(launch);
   if (launch.phase == 0) {
     if (psi_type == kBeamzBF16) {
       LaunchCombinedCpmlQueueForType<0, kBeamzBF16, false>(
-          stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
+          stream, launch, geometry);
     } else if (psi_type == kBeamzF32) {
       LaunchCombinedCpmlQueueForType<0, kBeamzF32, false>(
-          stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
+          stream, launch, geometry);
     } else {
       LaunchCombinedCpmlQueueForType<0, -1, false>(
-          stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
+          stream, launch, geometry);
     }
   } else if (packed && psi_type == kBeamzBF16) {
     LaunchCombinedCpmlQueueForType<1, kBeamzBF16, true>(
-        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
+        stream, launch, geometry);
   } else if (packed && psi_type == kBeamzF32) {
     LaunchCombinedCpmlQueueForType<1, kBeamzF32, true>(
-        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
+        stream, launch, geometry);
   } else if (packed) {
     LaunchCombinedCpmlQueueForType<1, -1, true>(
-        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
+        stream, launch, geometry);
   } else if (psi_type == kBeamzBF16) {
     LaunchCombinedCpmlQueueForType<1, kBeamzBF16, false>(
-        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
+        stream, launch, geometry);
   } else if (psi_type == kBeamzF32) {
     LaunchCombinedCpmlQueueForType<1, kBeamzF32, false>(
-        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
+        stream, launch, geometry);
   } else {
     LaunchCombinedCpmlQueueForType<1, -1, false>(
-        stream, launch, max_z, max_y, max_x, high_z, high_y, high_x);
+        stream, launch, geometry);
   }
   return cudaPeekAtLastError();
 }
@@ -1778,33 +1894,13 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
   return error;
 }
 
-int BeamzLaunchStreamedSteps(void* raw_stream, const BeamzLaunch& h_launch,
-                             const BeamzLaunch& e_launch, int32_t nsteps) {
-  return LaunchStreamedGraph(raw_stream, h_launch, e_launch, nullptr, 0,
-                             nullptr, nsteps);
-}
-
-int BeamzLaunchTemporalSteps(void* raw_stream, const BeamzLaunch& h_ab,
-                             const BeamzLaunch& e_ab,
-                             const BeamzLaunch& h_ba,
-                             const BeamzLaunch& e_ba, int32_t nsteps) {
-  if (nsteps < 4 || h_ab.phase != 0 || e_ab.phase != 1 || h_ba.phase != 0 ||
-      e_ba.phase != 1 || h_ab.nterms != 0 || e_ab.nterms != 0 ||
-      h_ba.nterms != 0 || e_ba.nterms != 0 || h_ab.metric_kind < 0 ||
-      h_ab.metric_kind > 2 || e_ab.metric_kind != h_ab.metric_kind ||
-      h_ba.metric_kind != h_ab.metric_kind ||
-      e_ba.metric_kind != h_ab.metric_kind || h_ab.metallic_edges != 63 ||
-      e_ab.metallic_edges != 63 || h_ba.metallic_edges != 63 ||
-      e_ba.metallic_edges != 63) {
-    return cudaErrorInvalidValue;
-  }
+int LaunchTemporalSteps(void* raw_stream, const BeamzLaunch& h_ab,
+                        const BeamzLaunch& e_ab, const BeamzLaunch& h_ba,
+                        const BeamzLaunch& e_ba, int32_t nsteps) {
   bool scalar_coefficients = true;
   for (int material = 0; material < 6; ++material) {
     const int h_rank = h_ab.inputs[6 + material].rank;
     const int e_rank = e_ab.inputs[6 + material].rank;
-    if ((h_rank != 0 && h_rank != 3) || (e_rank != 0 && e_rank != 3)) {
-      return cudaErrorInvalidValue;
-    }
     scalar_coefficients &= h_rank == 0 && e_rank == 0;
   }
 
@@ -1939,94 +2035,11 @@ int BeamzLaunchTemporalSteps(void* raw_stream, const BeamzLaunch& h_ab,
   return static_cast<int>(error);
 }
 
-int BeamzLaunchStreamedSourceGroupSteps(
-    void* raw_stream, const BeamzLaunch& h_launch,
-    const BeamzLaunch& e_launch,
-    const BeamzSourceGroupLaunch* source_groups, int32_t source_group_count,
-    int32_t nsteps) {
-  if (source_groups == nullptr || source_group_count != 9) {
-    return cudaErrorInvalidValue;
-  }
-  for (int32_t index = 0; index < source_group_count; ++index) {
-    const BeamzSourceGroupLaunch& group = source_groups[index];
-    if (group.component < 0 || group.component > 2 || group.timing < 0 ||
-        group.timing > 2 || group.coefficients.rank != 4 ||
-        group.waveforms.rank != 2 || group.starts.rank != 2 ||
-        group.current_step.rank != 0 ||
-        group.coefficients.dims[0] != group.waveforms.dims[0] ||
-        group.coefficients.dims[0] != group.starts.dims[0] ||
-        group.starts.dims[1] != 3 || group.waveforms.dims[1] < 1 ||
-        !FitsIntOffsets(group.coefficients) ||
-        !FitsIntOffsets(group.waveforms) || !FitsIntOffsets(group.starts)) {
-      return cudaErrorInvalidValue;
-    }
-  }
-  return LaunchStreamedGraph(raw_stream, h_launch, e_launch, source_groups,
-                             source_group_count, nullptr, nsteps);
-}
-
-int BeamzLaunchTemporalCpmlSourceGroupSteps(
+int LaunchTemporalCpmlProgram(
     void* raw_stream, const BeamzLaunch& h_ab, const BeamzLaunch& e_ab,
     const BeamzLaunch& h_ba, const BeamzLaunch& e_ba,
     const BeamzSourceGroupLaunch* source_groups, int32_t source_group_count,
     const BeamzDftGroupLaunch* monitor_groups, int32_t nsteps) {
-  if (source_groups == nullptr || source_group_count != 9 || nsteps < 1 ||
-      h_ab.phase != 0 || e_ab.phase != 1 || h_ba.phase != 0 ||
-      e_ba.phase != 1 || h_ab.nterms != 6 || e_ab.nterms != 6 ||
-      h_ba.nterms != 6 || e_ba.nterms != 6) {
-    return cudaErrorInvalidValue;
-  }
-  for (int32_t index = 0; index < source_group_count; ++index) {
-    const BeamzSourceGroupLaunch& group = source_groups[index];
-    if (group.component < 0 || group.component > 2 || group.timing < 0 ||
-        group.timing > 2 || group.coefficients.rank != 4 ||
-        group.waveforms.rank != 2 || group.starts.rank != 2 ||
-        group.current_step.rank != 0 ||
-        group.coefficients.dims[0] != group.waveforms.dims[0] ||
-        group.coefficients.dims[0] != group.starts.dims[0] ||
-        group.starts.dims[1] != 3 || group.waveforms.dims[1] < 1 ||
-        !FitsIntOffsets(group.coefficients) ||
-        !FitsIntOffsets(group.waveforms) || !FitsIntOffsets(group.starts)) {
-      return cudaErrorInvalidValue;
-    }
-  }
-  if (monitor_groups != nullptr) {
-    const BeamzDftGroupLaunch& monitors = *monitor_groups;
-    if (monitors.monitor_count < 1 || monitors.indices.rank != 4 ||
-        monitors.weights.rank != 4 || monitors.frequencies.rank != 2 ||
-        monitors.component_masks.rank != 2 || monitors.counts.rank != 2 ||
-        monitors.codes.rank != 2 || monitors.windows.rank != 2 ||
-        monitors.dft_re.rank != 1 || monitors.dft_im.rank != 1 ||
-        monitors.dft_weight.rank != 1 || monitors.time.rank != 0 ||
-        monitors.current_step.rank != 0 ||
-        monitors.indices.dims[0] < monitors.monitor_count ||
-        monitors.indices.dims[1] != 6 ||
-        monitors.weights.dims[0] != monitors.indices.dims[0] ||
-        monitors.weights.dims[1] != monitors.indices.dims[1] ||
-        monitors.weights.dims[2] != monitors.indices.dims[2] ||
-        monitors.weights.dims[3] != monitors.indices.dims[3] ||
-        monitors.frequencies.dims[0] < monitors.monitor_count ||
-        monitors.component_masks.dims[0] < monitors.monitor_count ||
-        monitors.component_masks.dims[1] != 6 ||
-        monitors.counts.dims[0] < monitors.monitor_count ||
-        monitors.counts.dims[1] != 5 ||
-        monitors.codes.dims[0] < monitors.monitor_count ||
-        monitors.codes.dims[1] != 2 ||
-        monitors.windows.dims[0] < monitors.monitor_count ||
-        monitors.windows.dims[1] != 3 || monitors.dft_re.dims[0] < 1 ||
-        monitors.dft_im.dims[0] != monitors.dft_re.dims[0] ||
-        monitors.dft_weight.dims[0] < 1) {
-      return cudaErrorInvalidValue;
-    }
-    const BeamzBuffer monitor_buffers[] = {
-        monitors.indices,         monitors.weights, monitors.frequencies,
-        monitors.component_masks, monitors.counts,  monitors.codes,
-        monitors.windows,         monitors.dft_re,   monitors.dft_im,
-        monitors.dft_weight};
-    for (const BeamzBuffer& buffer : monitor_buffers) {
-      if (!FitsIntOffsets(buffer)) return cudaErrorInvalidValue;
-    }
-  }
   auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
   std::string graph_key = "temporal-cpml-source-groups";
   graph_key += GraphKey(raw_stream, h_ab, e_ab, nsteps, source_groups,
@@ -2132,61 +2145,25 @@ int BeamzLaunchTemporalCpmlSourceGroupSteps(
   return static_cast<int>(error);
 }
 
-int BeamzLaunchStreamedProgramSteps(
-    void* raw_stream, const BeamzLaunch& h_launch,
-    const BeamzLaunch& e_launch,
-    const BeamzSourceGroupLaunch* source_groups, int32_t source_group_count,
-    const BeamzDftGroupLaunch& monitors, int32_t nsteps) {
-  if (source_groups == nullptr || source_group_count != 9 ||
-      monitors.monitor_count < 1 || monitors.indices.rank != 4 ||
-      monitors.weights.rank != 4 || monitors.frequencies.rank != 2 ||
-      monitors.component_masks.rank != 2 || monitors.counts.rank != 2 ||
-      monitors.codes.rank != 2 || monitors.windows.rank != 2 ||
-      monitors.dft_re.rank != 1 || monitors.dft_im.rank != 1 ||
-      monitors.dft_weight.rank != 1 || monitors.time.rank != 0 ||
-      monitors.current_step.rank != 0 ||
-      monitors.indices.dims[0] < monitors.monitor_count ||
-      monitors.indices.dims[1] != 6 ||
-      monitors.weights.dims[0] != monitors.indices.dims[0] ||
-      monitors.weights.dims[1] != monitors.indices.dims[1] ||
-      monitors.weights.dims[2] != monitors.indices.dims[2] ||
-      monitors.weights.dims[3] != monitors.indices.dims[3] ||
-      monitors.frequencies.dims[0] < monitors.monitor_count ||
-      monitors.component_masks.dims[0] < monitors.monitor_count ||
-      monitors.component_masks.dims[1] != 6 ||
-      monitors.counts.dims[0] < monitors.monitor_count ||
-      monitors.counts.dims[1] != 5 ||
-      monitors.codes.dims[0] < monitors.monitor_count ||
-      monitors.codes.dims[1] != 2 ||
-      monitors.windows.dims[0] < monitors.monitor_count ||
-      monitors.windows.dims[1] != 3 ||
-      monitors.dft_re.dims[0] < 1 ||
-      monitors.dft_im.dims[0] != monitors.dft_re.dims[0] ||
-      monitors.dft_weight.dims[0] < 1) {
-    return cudaErrorInvalidValue;
+int BeamzLaunchProgram(void* raw_stream, const BeamzProgramLaunch& program) {
+  if (cudaError_t error = ValidateProgram(program); error != cudaSuccess) {
+    return static_cast<int>(error);
   }
-  for (int32_t index = 0; index < source_group_count; ++index) {
-    const BeamzSourceGroupLaunch& group = source_groups[index];
-    if (group.component < 0 || group.component > 2 || group.timing < 0 ||
-        group.timing > 2 || group.coefficients.rank != 4 ||
-        group.waveforms.rank != 2 || group.starts.rank != 2 ||
-        group.current_step.rank != 0 ||
-        group.coefficients.dims[0] != group.waveforms.dims[0] ||
-        group.coefficients.dims[0] != group.starts.dims[0] ||
-        group.starts.dims[1] != 3 || group.waveforms.dims[1] < 1 ||
-        !FitsIntOffsets(group.coefficients) ||
-        !FitsIntOffsets(group.waveforms) || !FitsIntOffsets(group.starts)) {
-      return cudaErrorInvalidValue;
-    }
+  if (program.field_bank_count == 1) {
+    return LaunchStreamedGraph(
+        raw_stream, program.h_ab, program.e_ab, program.source_groups,
+        program.source_group_count, program.monitors, program.nsteps);
   }
-  const BeamzBuffer monitor_buffers[] = {
-      monitors.indices,         monitors.weights, monitors.frequencies,
-      monitors.component_masks, monitors.counts,  monitors.codes,
-      monitors.windows,         monitors.dft_re,   monitors.dft_im,
-      monitors.dft_weight};
-  for (const BeamzBuffer& buffer : monitor_buffers) {
-    if (!FitsIntOffsets(buffer)) return cudaErrorInvalidValue;
+  if (program.h_ab.nterms == 0 && program.source_group_count == 0 &&
+      program.monitors == nullptr) {
+    return LaunchTemporalSteps(raw_stream, program.h_ab, program.e_ab,
+                               program.h_ba, program.e_ba, program.nsteps);
   }
-  return LaunchStreamedGraph(raw_stream, h_launch, e_launch, source_groups,
-                             source_group_count, &monitors, nsteps);
+  if (program.h_ab.nterms == 6 && program.source_group_count == 9) {
+    return LaunchTemporalCpmlProgram(
+        raw_stream, program.h_ab, program.e_ab, program.h_ba, program.e_ba,
+        program.source_groups, program.source_group_count, program.monitors,
+        program.nsteps);
+  }
+  return cudaErrorInvalidValue;
 }

@@ -116,6 +116,40 @@ struct TemporalCpmlLaunches {
   BeamzLaunch e_ba;
 };
 
+BeamzProgramLaunch InPlaceProgram(
+    const GraphLaunches& launches, int32_t nsteps,
+    const BeamzSourceGroupLaunch* source_groups = nullptr,
+    int32_t source_group_count = 0,
+    const BeamzDftGroupLaunch* monitors = nullptr) {
+  BeamzProgramLaunch program{};
+  program.h_ab = launches.h;
+  program.e_ab = launches.e;
+  program.source_groups = source_groups;
+  program.source_group_count = source_group_count;
+  program.monitors = monitors;
+  program.field_bank_count = 1;
+  program.nsteps = nsteps;
+  return program;
+}
+
+BeamzProgramLaunch TemporalProgram(
+    const TemporalCpmlLaunches& launches, int32_t nsteps,
+    const BeamzSourceGroupLaunch* source_groups = nullptr,
+    int32_t source_group_count = 0,
+    const BeamzDftGroupLaunch* monitors = nullptr) {
+  BeamzProgramLaunch program{};
+  program.h_ab = launches.h_ab;
+  program.e_ab = launches.e_ab;
+  program.h_ba = launches.h_ba;
+  program.e_ba = launches.e_ba;
+  program.source_groups = source_groups;
+  program.source_group_count = source_group_count;
+  program.monitors = monitors;
+  program.field_bank_count = 2;
+  program.nsteps = nsteps;
+  return program;
+}
+
 TemporalCpmlLaunches InitializeTemporalCpmlLaunches(
     int32_t abi_version, int32_t cuda_flags, float dt, float resolution,
     int32_t boundary_code, int32_t metric_kind, const BeamzBuffer* inputs,
@@ -339,8 +373,7 @@ ffi::Error StreamedStepsHandler(void* stream, ffi::RemainingArgs args,
   GraphLaunches launches = InitializeGraphLaunches(
       abi_version, cuda_flags, dt, resolution, metallic_edges, metric_kind,
       false, inputs, outputs);
-  const int error = BeamzLaunchStreamedSteps(stream, launches.h, launches.e,
-                                             nsteps);
+  const int error = BeamzLaunchProgram(stream, InPlaceProgram(launches, nsteps));
   return error == 0 ? ffi::Error::Success()
                     : ffi::Error::Internal(
                           "BeamZ CUDA multi-step launch failed: " +
@@ -399,8 +432,14 @@ ffi::Error TemporalStepsHandler(void* stream, ffi::RemainingArgs args,
     h_ab.metrics[axis] = h_ba.metrics[axis] = inputs[24 + axis];
     e_ab.metrics[axis] = e_ba.metrics[axis] = inputs[27 + axis];
   }
-  const int error = BeamzLaunchTemporalSteps(stream, h_ab, e_ab, h_ba, e_ba,
-                                             nsteps);
+  BeamzProgramLaunch program{};
+  program.h_ab = h_ab;
+  program.e_ab = e_ab;
+  program.h_ba = h_ba;
+  program.e_ba = e_ba;
+  program.field_bank_count = 2;
+  program.nsteps = nsteps;
+  const int error = BeamzLaunchProgram(stream, program);
   return error == 0 ? ffi::Error::Success()
                     : ffi::Error::Internal(
                           "BeamZ CUDA temporal workspace launch failed: " +
@@ -425,8 +464,7 @@ ffi::Error StreamedCpmlStepsHandler(
   GraphLaunches launches = InitializeGraphLaunches(
       abi_version, cuda_flags, dt, resolution, metallic_edges, metric_kind,
       true, inputs, outputs);
-  const int error = BeamzLaunchStreamedSteps(stream, launches.h, launches.e,
-                                             nsteps);
+  const int error = BeamzLaunchProgram(stream, InPlaceProgram(launches, nsteps));
   return error == 0 ? ffi::Error::Success()
                     : ffi::Error::Internal(
                           "BeamZ CUDA multi-step CPML launch failed: " +
@@ -461,16 +499,14 @@ ffi::Error StreamedSourceGroupsCpmlStepsHandler(
   GraphLaunches launches = InitializeGraphLaunches(
       abi_version, cuda_flags, dt, resolution, metallic_edges, metric_kind,
       cpml_enabled != 0, inputs, outputs);
-  BeamzLaunch& h_launch = launches.h;
-  BeamzLaunch& e_launch = launches.e;
 
   BeamzSourceGroupLaunch groups[kSourceGroupCount]{};
   const BeamzBuffer& current_step =
       inputs[graph_input_count + 3 * kSourceGroupCount];
   InitializeSourceGroups(groups, inputs, graph_input_count, current_step,
                          coincident_source_group_mask);
-  const int error = BeamzLaunchStreamedSourceGroupSteps(
-      stream, h_launch, e_launch, groups, kSourceGroupCount, nsteps);
+  const int error = BeamzLaunchProgram(
+      stream, InPlaceProgram(launches, nsteps, groups, kSourceGroupCount));
   return error == 0
              ? ffi::Error::Success()
              : ffi::Error::Internal(
@@ -514,9 +550,8 @@ ffi::Error TemporalSourceGroupsCpmlStepsHandler(
       inputs[kSourceOffset + 3 * kSourceGroupCount];
   InitializeSourceGroups(groups, inputs, kSourceOffset, current_step,
                          coincident_source_group_mask);
-  const int error = BeamzLaunchTemporalCpmlSourceGroupSteps(
-      stream, launches.h_ab, launches.e_ab, launches.h_ba, launches.e_ba,
-      groups, kSourceGroupCount, nullptr, nsteps);
+  const int error = BeamzLaunchProgram(
+      stream, TemporalProgram(launches, nsteps, groups, kSourceGroupCount));
   return error == 0
              ? ffi::Error::Success()
              : ffi::Error::Internal(
@@ -562,9 +597,9 @@ ffi::Error TemporalProgramCpmlStepsHandler(
       inputs, kMonitorOffset, outputs[36], outputs[37], outputs[38],
       monitor_count);
 
-  const int error = BeamzLaunchTemporalCpmlSourceGroupSteps(
-      stream, launches.h_ab, launches.e_ab, launches.h_ba, launches.e_ba,
-      groups, kSourceGroupCount, &monitors, nsteps);
+  const int error = BeamzLaunchProgram(
+      stream, TemporalProgram(launches, nsteps, groups, kSourceGroupCount,
+                              &monitors));
   return error == 0
              ? ffi::Error::Success()
              : ffi::Error::Internal(
@@ -604,8 +639,6 @@ ffi::Error StreamedProgramCpmlStepsHandler(
   GraphLaunches launches = InitializeGraphLaunches(
       abi_version, cuda_flags, dt, resolution, metallic_edges, metric_kind,
       cpml_enabled != 0, inputs, outputs);
-  BeamzLaunch& h_launch = launches.h;
-  BeamzLaunch& e_launch = launches.e;
 
   const size_t monitor_start = graph_input_count + source_input_count;
   const BeamzBuffer& current_step = inputs[monitor_start + 11];
@@ -616,8 +649,9 @@ ffi::Error StreamedProgramCpmlStepsHandler(
       inputs, monitor_start, inputs[monitor_start + 7],
       inputs[monitor_start + 8], inputs[monitor_start + 9], monitor_count);
 
-  const int error = BeamzLaunchStreamedProgramSteps(
-      stream, h_launch, e_launch, groups, kSourceGroupCount, monitors, nsteps);
+  const int error = BeamzLaunchProgram(
+      stream, InPlaceProgram(launches, nsteps, groups, kSourceGroupCount,
+                             &monitors));
   return error == 0
              ? ffi::Error::Success()
              : ffi::Error::Internal(
