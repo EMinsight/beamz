@@ -55,6 +55,11 @@ bool PrecomputedDftPhasesEnabled() {
   return value == nullptr || value[0] == '\0' || value[0] == '0';
 }
 
+bool BatchedSourceGroupsEnabled() {
+  const char* value = std::getenv("BEAMZ_CUDA_DISABLE_BATCHED_SOURCE_GROUPS");
+  return value == nullptr || value[0] == '\0' || value[0] == '0';
+}
+
 std::string GraphKey(void* stream, const BeamzLaunch& h_launch,
                      const BeamzLaunch& e_launch, int32_t nsteps,
                      const BeamzSourceLaunch* source = nullptr,
@@ -728,13 +733,9 @@ __device__ __forceinline__ bool SourceCellConstrained(
   return false;
 }
 
-__global__ void ApplySourceGroup(BeamzBuffer target,
-                                 BeamzSourceGroupLaunch group,
-                                 int source_index, int step_offset,
-                                 int metallic_edges) {
-  const int x = blockIdx.x * blockDim.x + threadIdx.x;
-  const int y = blockIdx.y * blockDim.y + threadIdx.y;
-  const int z = blockIdx.z * blockDim.z + threadIdx.z;
+__device__ __forceinline__ void ApplySourceGroupCell(
+    BeamzBuffer target, BeamzSourceGroupLaunch group, int source_index,
+    int step_offset, int metallic_edges, int z, int y, int x) {
   if (z >= group.coefficients.dims[1] ||
       y >= group.coefficients.dims[2] ||
       x >= group.coefficients.dims[3]) {
@@ -781,6 +782,30 @@ __global__ void ApplySourceGroup(BeamzBuffer target,
   static_cast<float*>(target.data)[target_offset] +=
       static_cast<const float*>(group.coefficients.data)[coefficient_offset] *
       static_cast<const float*>(group.waveforms.data)[waveform_offset];
+}
+
+__global__ void ApplySourceGroup(BeamzBuffer target,
+                                 BeamzSourceGroupLaunch group,
+                                 int source_index, int step_offset,
+                                 int metallic_edges) {
+  const int x = blockIdx.x * blockDim.x + threadIdx.x;
+  const int y = blockIdx.y * blockDim.y + threadIdx.y;
+  const int z = blockIdx.z * blockDim.z + threadIdx.z;
+  ApplySourceGroupCell(target, group, source_index, step_offset,
+                       metallic_edges, z, y, x);
+}
+
+__global__ void ApplySourceGroupBatched(BeamzBuffer target,
+                                        BeamzSourceGroupLaunch group,
+                                        int z_blocks, int step_offset,
+                                        int metallic_edges) {
+  const int source_index = blockIdx.z / z_blocks;
+  const int source_block_z = blockIdx.z - source_index * z_blocks;
+  const int x = blockIdx.x * blockDim.x + threadIdx.x;
+  const int y = blockIdx.y * blockDim.y + threadIdx.y;
+  const int z = source_block_z * blockDim.z + threadIdx.z;
+  ApplySourceGroupCell(target, group, source_index, step_offset,
+                       metallic_edges, z, y, x);
 }
 
 __global__ void PreparePlaneDftPhases(BeamzLaunch e_launch,
@@ -1082,16 +1107,26 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
         const BeamzLaunch& target_launch = timing == 1 ? h_launch : e_launch;
         const BeamzBuffer& target = target_launch.outputs[group.component];
         const dim3 source_threads(kTileX, kTileY, kTileZ);
+        const int z_blocks =
+            (group.coefficients.dims[1] + kTileZ - 1) / kTileZ;
         const dim3 source_blocks(
             (group.coefficients.dims[3] + kTileX - 1) / kTileX,
             (group.coefficients.dims[2] + kTileY - 1) / kTileY,
-            (group.coefficients.dims[1] + kTileZ - 1) / kTileZ);
-        for (int32_t source_index = 0;
-             source_index < group.coefficients.dims[0]; ++source_index) {
-          ApplySourceGroup<<<source_blocks, source_threads, 0, stream>>>(
-              target, group, source_index, step, h_launch.metallic_edges);
+            BatchedSourceGroupsEnabled()
+                ? z_blocks * group.coefficients.dims[0]
+                : z_blocks);
+        if (BatchedSourceGroupsEnabled()) {
+          ApplySourceGroupBatched<<<source_blocks, source_threads, 0, stream>>>(
+              target, group, z_blocks, step, h_launch.metallic_edges);
           launch_error = cudaPeekAtLastError();
-          if (launch_error != cudaSuccess) return;
+        } else {
+          for (int32_t source_index = 0;
+               source_index < group.coefficients.dims[0]; ++source_index) {
+            ApplySourceGroup<<<source_blocks, source_threads, 0, stream>>>(
+                target, group, source_index, step, h_launch.metallic_edges);
+            launch_error = cudaPeekAtLastError();
+            if (launch_error != cudaSuccess) return;
+          }
         }
       }
     };
