@@ -190,8 +190,9 @@ def _merge_profiles(lhs, rhs, *, key: str | None = None):
 class _AbsorberCompiler:
     """Lower one immutable Device specification into grid-aware solver arrays."""
 
-    def __init__(self, spec: PML | Absorber):
+    def __init__(self, spec: PML | Absorber, *, cell_thickness: int | None = None):
         self.spec = spec
+        self.cell_thickness = cell_thickness
 
     def _get_edges_for_dimensionality(self, is_3d):
         return list(edges_for_dimension(self.spec.edges, is_3d))
@@ -217,11 +218,26 @@ class _AbsorberCompiler:
     def _resolved_profile_boundary(self, fields, resolution, dt):
         # Build this profile on its exact staggered support to avoid interpolation
         # inside timestep kernels.
-        sigma_max, alpha_max = self._resolved_profile_params(fields, resolution, dt)
+        cell_thickness = (
+            self.spec.DEFAULT_CELLS
+            if isinstance(self.spec, PML) and self.spec.thickness is None
+            else None
+        )
+        spec = (
+            self.spec.updated_copy(thickness=cell_thickness * float(resolution))
+            if cell_thickness is not None
+            else self.spec
+        )
+        profile = type(self)(spec, cell_thickness=cell_thickness)
+        sigma_max, alpha_max = profile._resolved_profile_params(
+            fields, resolution, dt
+        )
         changes: dict[str, float | None] = {"sigma_max": sigma_max}
-        if isinstance(self.spec, PML):
+        if isinstance(spec, PML):
             changes["alpha_max"] = alpha_max
-        return type(self)(self.spec.updated_copy(**changes))
+        return type(self)(
+            spec.updated_copy(**changes), cell_thickness=cell_thickness
+        )
 
     def _resolved_profile_params(self, fields, resolution, dt):
         sigma_max = self.spec.sigma_max
@@ -409,10 +425,25 @@ class _AbsorberCompiler:
 
         # Build this profile on its exact staggered support to avoid interpolation
         # inside timestep kernels.
+        if self.cell_thickness is not None:
+            # A cell-count default must retain exactly the same number of layers on
+            # uniform, axis-uniform, and fully rectilinear grids. Grade in logical
+            # cell coordinates; explicit physical thicknesses continue to use the
+            # realized metric coordinates supplied by the caller.
+            cells = int(coords.shape[0])
+            coords = jnp.arange(cells, dtype=jnp.float32) + 0.5
+            length = float(cells)
         sigma = jnp.zeros_like(coords)
         kappa = jnp.ones_like(coords)
         alpha = jnp.zeros_like(coords)
-        thickness = max(float(self.spec.thickness), 1e-30)
+        thickness = max(
+            float(
+                self.cell_thickness
+                if self.cell_thickness is not None
+                else self.spec.thickness
+            ),
+            1e-30,
+        )
         if self.spec.sigma_max is None or self.spec.alpha_max is None:
             raise ValueError(
                 "CPML profile parameters must be resolved before sampling."
@@ -469,7 +500,12 @@ class _AbsorberCompiler:
         alpha = jnp.zeros((int(total_samples),), dtype=jnp.float32)
 
         pml_cells = max(
-            int(round(float(self.spec.thickness) / max(float(spacing), 1e-30))), 1
+            int(self.cell_thickness)
+            if self.cell_thickness is not None
+            else int(
+                round(float(self.spec.thickness) / max(float(spacing), 1e-30))
+            ),
+            1,
         )
         sigma_order = float(self.spec.m if sigma_order is None else sigma_order)
         kappa_order = float(self.spec.m if kappa_order is None else kappa_order)
@@ -514,7 +550,7 @@ class _AbsorberCompiler:
 
         physical_coordinates = (
             None
-            if sample_coordinates is None
+            if sample_coordinates is None or self.cell_thickness is not None
             else jnp.asarray(sample_coordinates, dtype=jnp.float32)
         )
         distance_scale = (

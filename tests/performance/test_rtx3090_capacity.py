@@ -193,3 +193,5 @@ def test_modal_capacity_workload_explicitly_uses_cpml():
 
     assert len(simulation.boundaries) == 1
     assert simulation.boundaries[0].formulation == "cpml"
+    assert simulation.boundaries[0].thickness is None
+    assert simulation.boundaries[0].DEFAULT_CELLS == 12
