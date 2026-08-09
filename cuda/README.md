@@ -61,9 +61,10 @@ compatibility diagnostic.
 
 Regular-grid, lossless CPML simulations with packed source groups use two
 XLA-owned field banks. Alternating frozen inputs and outputs removes in-place
-read/write hazards and enables safe spatial fusion in the CPML-free core. Set
-`BEAMZ_CUDA_DISABLE_CPML_TEMPORAL=1` only for paired diagnostics against the
-legacy in-place schedule.
+read/write hazards and enables safe spatial fusion in the CPML-free core. The
+validated temporal, packed-source, material-codebook, and combined CPML queues
+are unconditional; the legacy experimental schedule switches and their dead
+kernels have been removed.
 
 For memory-constrained CPML runs,
 `BEAMZ_CUDA_CPML_PSI_PRECISION=bf16` stores only absorber recurrence state in
@@ -72,6 +73,10 @@ use BF16 only after validating application-level accuracy. On GA102 the combined
 queue uses a precision-specific `32 × 4` absorber tile and remaps the same 128
 threads to a `64 × 2` recurrence-free core tile; FP32 retains its measured-optimal
 `64 × 4` queue.
+
+`BEAMZ_CUDA_DISABLE_GRAPH_CACHE=1` remains as a diagnostic switch. It and the
+CPML precision choice are snapshotted into the immutable compiled-program key;
+native execution never rereads environment variables.
 
 No CUDA result is promoted without all of the following on real hardware:
 

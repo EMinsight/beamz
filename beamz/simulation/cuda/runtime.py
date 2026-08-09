@@ -7,12 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from beamz.simulation import _cuda_abi as abi
-from beamz.simulation.backend import (
-    CUDA_ABI_VERSION,
-    CUDA_TEMPORAL_CPML,
-    CUDA_TEMPORAL_PSI,
-    CUDA_TEMPORAL_YEE,
-)
+from beamz.simulation.backend import CUDA_ABI_VERSION
 from beamz.simulation.model import SimulationState
 
 _PHASE_H = 0
@@ -432,10 +427,10 @@ def _temporal_cpml_graph_io(state, ctx, coeffs):
     return (*arguments, *workspace, *psi_workspace), result_values, aliases
 
 
-def _replace_temporal_cpml_outputs(state, outputs, nsteps, cuda_flags):
+def _replace_temporal_cpml_outputs(state, outputs, nsteps):
     field_start = 0 if nsteps % 2 == 0 else _FIELD_COUNT
     psi_start = 2 * _FIELD_COUNT
-    if nsteps % 2 and cuda_flags & CUDA_TEMPORAL_PSI:
+    if nsteps % 2:
         psi_start += 2 * _CPML_TERM_COUNT
     return _replace_fields(state, outputs, field_start)._replace(
         cpml_psi_h_terms=outputs[psi_start : psi_start + _CPML_TERM_COUNT],
@@ -474,8 +469,7 @@ def _coincident_source_group_mask(groups) -> int:
 def _temporal_cpml_source_groups_supported(ctx, coeffs, nsteps: int) -> bool:
     """Whether a frozen second field bank can use the fused regular-grid core."""
     if (
-        not ctx.config.cuda_flags & CUDA_TEMPORAL_CPML
-        or nsteps < 2
+        nsteps < 2
         or not ctx.boundary.cpml.enabled
         or ctx.config.metric_kind != "isotropic_uniform"
         or (
@@ -527,9 +521,7 @@ def run_source_group_steps(state, ctx, coeffs, groups, nsteps: int) -> Simulatio
         ),
     )
     if use_temporal_cpml:
-        return _replace_temporal_cpml_outputs(
-            state, outputs, nsteps, ctx.config.cuda_flags
-        )
+        return _replace_temporal_cpml_outputs(state, outputs, nsteps)
     if ctx.boundary.cpml.enabled:
         return _replace_graph_outputs(state, outputs)
     return _replace_fields(state, outputs)
@@ -678,9 +670,7 @@ def run_program_steps(
         ),
     )
     if use_temporal_cpml:
-        next_state = _replace_temporal_cpml_outputs(
-            state, outputs, nsteps, ctx.config.cuda_flags
-        )
+        next_state = _replace_temporal_cpml_outputs(state, outputs, nsteps)
     elif ctx.boundary.cpml.enabled:
         next_state = _replace_graph_outputs(state, outputs)
     else:
@@ -727,9 +717,7 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
         coeffs.e_source_z,
     )
     temporal_eligible = (
-        bool(ctx.config.cuda_flags & CUDA_TEMPORAL_YEE)
-        and nsteps >= 4
-        and _metallic_edge_mask(ctx.boundary.cpml.metallic_edges) == 63
+        nsteps >= 4 and _metallic_edge_mask(ctx.boundary.cpml.metallic_edges) == 63
     )
     if temporal_eligible:
         workspace = tuple(jnp.empty_like(value) for value in fields)

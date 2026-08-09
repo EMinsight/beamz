@@ -12,6 +12,9 @@ import jax
 
 from beamz.simulation._cuda_abi import (
     CUDA_ABI_VERSION,
+    CUDA_BF16_PSI,
+    CUDA_DEFAULT_FLAGS,
+    CUDA_GRAPH_CACHE,
     CUDA_HOPPER_TARGET,
     CUDA_STREAMED_TARGETS,
 )
@@ -28,37 +31,6 @@ ResolvedBackend = Literal["jax", "cuda_streamed", "cuda_hopper"]
 _EXTENSION_MODULE = "beamz._cuda"
 _REGISTERED_MODULE: ModuleType | None = None
 
-# One immutable bitset travels from program compilation through XLA FFI into every
-# native launch. Environment variables remain useful for controlled experiments,
-# but they are sampled exactly once and therefore cannot change a cached program's
-# numerical or scheduling meaning underneath JAX.
-CUDA_TYPED_PSI = 1 << 0
-CUDA_BATCHED_SOURCE_GROUPS = 1 << 1
-CUDA_COINCIDENT_SOURCE_GROUPS = 1 << 2
-CUDA_ADAPTIVE_SOURCE_TILES = 1 << 3
-CUDA_CPML_CORE_SPLIT = 1 << 4
-CUDA_COMBINED_CPML_QUEUE = 1 << 5
-CUDA_GRAPH_CACHE = 1 << 7
-CUDA_TEMPORAL_PSI = 1 << 8
-CUDA_TEMPORAL_CPML = 1 << 9
-CUDA_TEMPORAL_YEE = 1 << 10
-CUDA_MATERIAL_CODEBOOK = 1 << 11
-CUDA_BF16_PSI = 1 << 12
-
-CUDA_DEFAULT_FLAGS = (
-    CUDA_TYPED_PSI
-    | CUDA_BATCHED_SOURCE_GROUPS
-    | CUDA_COINCIDENT_SOURCE_GROUPS
-    | CUDA_ADAPTIVE_SOURCE_TILES
-    | CUDA_CPML_CORE_SPLIT
-    | CUDA_COMBINED_CPML_QUEUE
-    | CUDA_GRAPH_CACHE
-    | CUDA_TEMPORAL_PSI
-    | CUDA_TEMPORAL_CPML
-    | CUDA_TEMPORAL_YEE
-    | CUDA_MATERIAL_CODEBOOK
-)
-
 
 class CudaBackendUnavailable(RuntimeError):
     """An explicitly requested CUDA backend cannot run in this process."""
@@ -72,24 +44,10 @@ def _env_enabled(name: str, *, default: bool) -> bool:
 
 
 def cuda_flags_from_env() -> int:
-    """Snapshot experimental CUDA policy into one cacheable native bitset."""
+    """Snapshot CUDA cache and precision choices into one cacheable bitset."""
     flags = CUDA_DEFAULT_FLAGS
-    disable_flags = {
-        "BEAMZ_CUDA_DISABLE_TYPED_PSI": CUDA_TYPED_PSI,
-        "BEAMZ_CUDA_DISABLE_BATCHED_SOURCE_GROUPS": CUDA_BATCHED_SOURCE_GROUPS,
-        "BEAMZ_CUDA_DISABLE_COINCIDENT_SOURCE_GROUPS": CUDA_COINCIDENT_SOURCE_GROUPS,
-        "BEAMZ_CUDA_DISABLE_ADAPTIVE_SOURCE_TILES": CUDA_ADAPTIVE_SOURCE_TILES,
-        "BEAMZ_CUDA_DISABLE_CPML_CORE_SPLIT": CUDA_CPML_CORE_SPLIT,
-        "BEAMZ_CUDA_DISABLE_COMBINED_CPML_QUEUE": CUDA_COMBINED_CPML_QUEUE,
-        "BEAMZ_CUDA_DISABLE_GRAPH_CACHE": CUDA_GRAPH_CACHE,
-        "BEAMZ_CUDA_DISABLE_TEMPORAL_PSI": CUDA_TEMPORAL_PSI,
-        "BEAMZ_CUDA_DISABLE_CPML_TEMPORAL": CUDA_TEMPORAL_CPML,
-        "BEAMZ_CUDA_DISABLE_TEMPORAL": CUDA_TEMPORAL_YEE,
-        "BEAMZ_CUDA_DISABLE_MATERIAL_CODEBOOK": CUDA_MATERIAL_CODEBOOK,
-    }
-    for name, flag in disable_flags.items():
-        if _env_enabled(name, default=False):
-            flags &= ~flag
+    if _env_enabled("BEAMZ_CUDA_DISABLE_GRAPH_CACHE", default=False):
+        flags &= ~CUDA_GRAPH_CACHE
     precision = os.environ.get("BEAMZ_CUDA_CPML_PSI_PRECISION", "fp32").lower()
     if precision in {"bf16", "bfloat16"}:
         flags |= CUDA_BF16_PSI

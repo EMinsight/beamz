@@ -16,6 +16,65 @@ constexpr int kAxis1Elements = kTileZ * (kTileY + 2) * kTileX;
 constexpr int kAxis2Elements = kTileZ * kTileY * (kTileX + 2);
 constexpr int kMaxSharedElements = kAxis0Elements;
 
+bool SameShape(const BeamzBuffer& left, const BeamzBuffer& right) {
+  if (left.rank != right.rank) return false;
+  for (int axis = 0; axis < left.rank; ++axis) {
+    if (left.dims[axis] != right.dims[axis]) return false;
+  }
+  return true;
+}
+
+bool ValidateHopperPhase(const BeamzLaunch& launch) {
+  if (launch.phase < 0 || launch.phase > 1 || launch.metric_kind != 0 ||
+      (launch.nterms != 0 && launch.nterms != 6)) {
+    return false;
+  }
+  for (int component = 0; component < 6; ++component) {
+    if (launch.inputs[component].rank != 3 ||
+        launch.inputs[component].element_type != kBeamzF32) {
+      return false;
+    }
+  }
+  for (int component = 0; component < 3; ++component) {
+    if (launch.outputs[component].rank != 3 ||
+        launch.outputs[component].element_type != kBeamzF32 ||
+        !SameShape(launch.inputs[component], launch.outputs[component])) {
+      return false;
+    }
+  }
+  for (int material = 6; material < 12; ++material) {
+    const BeamzBuffer& value = launch.inputs[material];
+    if (value.element_type != kBeamzF32 || value.rank > 3) return false;
+  }
+  if (launch.nterms != 0) {
+    const BeamzBuffer& metadata = launch.inputs[12];
+    if (metadata.element_type != kBeamzS32 || metadata.rank != 2 ||
+        metadata.dims[0] != 6 || metadata.dims[1] != 5) {
+      return false;
+    }
+    for (int index = 13; index < 13 + 3 * launch.nterms; ++index) {
+      if (launch.inputs[index].element_type != kBeamzF32 ||
+          launch.inputs[index].rank != 3) {
+        return false;
+      }
+    }
+    const int psi_input_base = 13 + 3 * launch.nterms;
+    for (int term = 0; term < launch.nterms; ++term) {
+      const BeamzBuffer& input = launch.inputs[psi_input_base + term];
+      const BeamzBuffer& output = launch.outputs[3 + term];
+      if (input.element_type != kBeamzF32 ||
+          output.element_type != kBeamzF32 || input.rank != 3 ||
+          output.rank != 3 || !SameShape(input, output)) {
+        return false;
+      }
+    }
+  }
+  for (const BeamzBuffer& metric : launch.metrics) {
+    if (metric.element_type != kBeamzF32) return false;
+  }
+  return true;
+}
+
 __device__ __forceinline__ int64_t Offset(const BeamzBuffer& value, int z,
                                           int y, int x) {
   if (value.rank == 0) return 0;
@@ -275,6 +334,9 @@ __global__ __launch_bounds__(256, 2) void UpdateTiled(BeamzLaunch launch,
 }  // namespace
 
 int BeamzLaunchHopper(void* raw_stream, const BeamzLaunch& launch) {
+  if (!ValidateHopperPhase(launch)) {
+    return static_cast<int>(cudaErrorInvalidValue);
+  }
   auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
   const dim3 threads(kTileX, kTileY, kTileZ);
   for (int component = 0; component < 3; ++component) {

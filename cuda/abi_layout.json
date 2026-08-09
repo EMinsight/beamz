@@ -1,6 +1,6 @@
 {
-  "abi_version": 11,
-  "component_version": "0.11.0",
+  "abi_version": 12,
+  "component_version": "0.12.0",
   "targets": {
     "streamed": "beamz_cuda_streamed",
     "program": "beamz_cuda_program",
@@ -9,6 +9,13 @@
   "streamed_targets": [
     "streamed",
     "program"
+  ],
+  "flags": {
+    "graph_cache": 7,
+    "bf16_psi": 12
+  },
+  "default_flags": [
+    "graph_cache"
   ],
   "program_layouts": {
     "yee_in_place": 0,
@@ -24,7 +31,22 @@
     "cpml_term_count": 6,
     "source_group_count": 9,
     "source_group_buffer_count": 3,
+    "source_group_coefficients_input": 0,
+    "source_group_waveforms_input": 1,
+    "source_group_starts_input": 2,
     "monitor_input_count": 12,
+    "monitor_indices_input": 0,
+    "monitor_weights_input": 1,
+    "monitor_frequencies_input": 2,
+    "monitor_component_masks_input": 3,
+    "monitor_counts_input": 4,
+    "monitor_codes_input": 5,
+    "monitor_windows_input": 6,
+    "monitor_dft_re_input": 7,
+    "monitor_dft_im_input": 8,
+    "monitor_dft_weight_input": 9,
+    "monitor_time_input": 10,
+    "monitor_current_step_input": 11,
     "yee_graph_input_count": 24,
     "yee_graph_output_count": 6,
     "cpml_graph_input_count": 74,

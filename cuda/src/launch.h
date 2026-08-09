@@ -9,21 +9,6 @@ enum BeamzElementType : int32_t {
   kBeamzBF16 = 2,
 };
 
-enum BeamzCudaFlag : int32_t {
-  kBeamzTypedPsi = 1 << 0,
-  kBeamzBatchedSourceGroups = 1 << 1,
-  kBeamzCoincidentSourceGroups = 1 << 2,
-  kBeamzAdaptiveSourceTiles = 1 << 3,
-  kBeamzCpmlCoreSplit = 1 << 4,
-  kBeamzCombinedCpmlQueue = 1 << 5,
-  kBeamzGraphCache = 1 << 7,
-  kBeamzTemporalPsi = 1 << 8,
-  kBeamzTemporalCpml = 1 << 9,
-  kBeamzTemporalYee = 1 << 10,
-  kBeamzMaterialCodebook = 1 << 11,
-  kBeamzBf16Psi = 1 << 12,
-};
-
 struct BeamzBuffer {
   void* data;
   int32_t rank;

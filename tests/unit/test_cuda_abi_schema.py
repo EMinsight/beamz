@@ -35,7 +35,16 @@ def test_cuda_abi_layout_relationships_are_explicit():
     assert layout["temporal_psi_workspace_input"] == (
         layout["temporal_field_workspace_input"] + layout["field_count"]
     )
+    assert layout["monitor_current_step_input"] == layout["monitor_input_count"] - 1
+    assert {
+        layout["source_group_coefficients_input"],
+        layout["source_group_waveforms_input"],
+        layout["source_group_starts_input"],
+    } == set(range(layout["source_group_buffer_count"]))
     assert layout["cpml_e_psi_input_offset"] == abi.CPML_E_PSI_INPUT_OFFSET
+    assert 1 << schema["flags"]["graph_cache"] == abi.CUDA_GRAPH_CACHE
+    assert 1 << schema["flags"]["bf16_psi"] == abi.CUDA_BF16_PSI
+    assert abi.CUDA_DEFAULT_FLAGS == abi.CUDA_GRAPH_CACHE
 
 
 def test_private_cuda_component_version_matches_abi_schema():

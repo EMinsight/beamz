@@ -12,7 +12,7 @@ namespace {
 
 using namespace beamz::cuda::abi;
 
-bool FlagEnabled(const BeamzLaunch& launch, BeamzCudaFlag flag) {
+bool FlagEnabled(const BeamzLaunch& launch, int32_t flag) {
   return (launch.cuda_flags & flag) != 0;
 }
 
@@ -26,6 +26,10 @@ bool FitsIntOffsets(const BeamzBuffer& value) {
   return true;
 }
 
+bool HasType(const BeamzBuffer& value, BeamzElementType type) {
+  return value.element_type == type;
+}
+
 cudaError_t ValidateSourceGroups(const BeamzSourceGroupLaunch* groups,
                                  int32_t count) {
   if (groups == nullptr) return count == 0 ? cudaSuccess : cudaErrorInvalidValue;
@@ -36,6 +40,10 @@ cudaError_t ValidateSourceGroups(const BeamzSourceGroupLaunch* groups,
         group.timing > 2 || group.coefficients.rank != 4 ||
         group.waveforms.rank != 2 || group.starts.rank != 2 ||
         group.current_step.rank != 0 ||
+        !HasType(group.coefficients, kBeamzF32) ||
+        !HasType(group.waveforms, kBeamzF32) ||
+        !HasType(group.starts, kBeamzS32) ||
+        !HasType(group.current_step, kBeamzS32) ||
         group.coefficients.dims[0] != group.waveforms.dims[0] ||
         group.coefficients.dims[0] != group.starts.dims[0] ||
         group.starts.dims[1] != 3 || group.waveforms.dims[1] < 1 ||
@@ -57,6 +65,18 @@ cudaError_t ValidateMonitors(const BeamzDftGroupLaunch* value) {
       monitors.dft_re.rank != 1 || monitors.dft_im.rank != 1 ||
       monitors.dft_weight.rank != 1 || monitors.time.rank != 0 ||
       monitors.current_step.rank != 0 ||
+      !HasType(monitors.indices, kBeamzS32) ||
+      !HasType(monitors.weights, kBeamzF32) ||
+      !HasType(monitors.frequencies, kBeamzF32) ||
+      !HasType(monitors.component_masks, kBeamzF32) ||
+      !HasType(monitors.counts, kBeamzS32) ||
+      !HasType(monitors.codes, kBeamzS32) ||
+      !HasType(monitors.windows, kBeamzF32) ||
+      !HasType(monitors.dft_re, kBeamzF32) ||
+      !HasType(monitors.dft_im, kBeamzF32) ||
+      !HasType(monitors.dft_weight, kBeamzF32) ||
+      !HasType(monitors.time, kBeamzF32) ||
+      !HasType(monitors.current_step, kBeamzS32) ||
       monitors.indices.dims[0] < monitors.monitor_count ||
       monitors.indices.dims[1] != 6 ||
       monitors.weights.dims[0] != monitors.indices.dims[0] ||

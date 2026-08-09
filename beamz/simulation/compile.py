@@ -31,7 +31,6 @@ from beamz.lattice import (
     sample_voxel_grid_at_component_2d,
     sample_voxel_grid_at_e_component_3d_centered,
 )
-from beamz.simulation.backend import CUDA_MATERIAL_CODEBOOK
 from beamz.simulation.model import (
     BoundaryPlan,
     CompiledGrid,
@@ -646,13 +645,9 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
                     e_source_z,
                 )
             )
-            packed_e = (
-                _pack_cuda_lossless_e_coefficients(
-                    (e_decay_x, e_decay_y, e_decay_z),
-                    (e_source_x, e_source_y, e_source_z),
-                )
-                if request.run.cuda_flags & CUDA_MATERIAL_CODEBOOK
-                else None
+            packed_e = _pack_cuda_lossless_e_coefficients(
+                (e_decay_x, e_decay_y, e_decay_z),
+                (e_source_x, e_source_y, e_source_z),
             )
             if packed_e is not None:
                 (

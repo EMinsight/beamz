@@ -167,21 +167,16 @@ TemporalCpmlLaunches InitializeTemporalCpmlLaunches(
         launches.e_ba.inputs[kFieldCount + index] =
             inputs[kCpmlEInputOffset + index];
   }
-  const bool temporal_psi = (cuda_flags & kBeamzTemporalPsi) != 0;
   for (int term = 0; term < kCpmlTermCount; ++term) {
     launches.h_ab.outputs[3 + term] =
-        outputs[(temporal_psi ? kTemporalHPsiWorkspaceOffset
-                              : kTemporalHPsiOutputOffset) + term];
+        outputs[kTemporalHPsiWorkspaceOffset + term];
     launches.h_ba.inputs[kCpmlHPsiInputOffset + term] =
-        temporal_psi ? outputs[kTemporalHPsiWorkspaceOffset + term]
-                     : inputs[kCpmlHPsiInputOffset + term];
+        outputs[kTemporalHPsiWorkspaceOffset + term];
     launches.h_ba.outputs[3 + term] = outputs[kTemporalHPsiOutputOffset + term];
     launches.e_ab.outputs[3 + term] =
-        outputs[(temporal_psi ? kTemporalEPsiWorkspaceOffset
-                              : kTemporalEPsiOutputOffset) + term];
+        outputs[kTemporalEPsiWorkspaceOffset + term];
     launches.e_ba.inputs[kCpmlHPsiInputOffset + term] =
-        temporal_psi ? outputs[kTemporalEPsiWorkspaceOffset + term]
-                     : inputs[kCpmlEPsiInputOffset + term];
+        outputs[kTemporalEPsiWorkspaceOffset + term];
     launches.e_ba.outputs[3 + term] = outputs[kTemporalEPsiOutputOffset + term];
   }
   for (int axis = 0; axis < 3; ++axis) {
@@ -199,9 +194,11 @@ void InitializeSourceGroups(
     int32_t coincident_mask) {
   for (int32_t index = 0; index < kSourceGroupCount; ++index) {
     const size_t group_offset = offset + kSourceGroupBufferCount * index;
-    groups[index].coefficients = inputs[group_offset];
-    groups[index].waveforms = inputs[group_offset + 1];
-    groups[index].starts = inputs[group_offset + 2];
+    groups[index].coefficients =
+        inputs[group_offset + kSourceGroupCoefficientsInput];
+    groups[index].waveforms =
+        inputs[group_offset + kSourceGroupWaveformsInput];
+    groups[index].starts = inputs[group_offset + kSourceGroupStartsInput];
     groups[index].current_step = current_step;
     groups[index].timing = index / 3;
     groups[index].component = index % 3;
@@ -214,18 +211,18 @@ BeamzDftGroupLaunch InitializeDftGroups(
     const BeamzBuffer& dft_im, const BeamzBuffer& dft_weight,
     int32_t monitor_count) {
   BeamzDftGroupLaunch monitors{};
-  monitors.indices = inputs[offset];
-  monitors.weights = inputs[offset + 1];
-  monitors.frequencies = inputs[offset + 2];
-  monitors.component_masks = inputs[offset + 3];
-  monitors.counts = inputs[offset + 4];
-  monitors.codes = inputs[offset + 5];
-  monitors.windows = inputs[offset + 6];
+  monitors.indices = inputs[offset + kMonitorIndicesInput];
+  monitors.weights = inputs[offset + kMonitorWeightsInput];
+  monitors.frequencies = inputs[offset + kMonitorFrequenciesInput];
+  monitors.component_masks = inputs[offset + kMonitorComponentMasksInput];
+  monitors.counts = inputs[offset + kMonitorCountsInput];
+  monitors.codes = inputs[offset + kMonitorCodesInput];
+  monitors.windows = inputs[offset + kMonitorWindowsInput];
   monitors.dft_re = dft_re;
   monitors.dft_im = dft_im;
   monitors.dft_weight = dft_weight;
-  monitors.time = inputs[offset + 10];
-  monitors.current_step = inputs[offset + 11];
+  monitors.time = inputs[offset + kMonitorTimeInput];
+  monitors.current_step = inputs[offset + kMonitorCurrentStepInput];
   monitors.monitor_count = monitor_count;
   return monitors;
 }
@@ -589,7 +586,8 @@ ffi::Error TemporalProgramCpmlStepsHandler(
 
   constexpr size_t kSourceOffset = kGraphInputCount + kWorkspaceInputCount;
   constexpr size_t kMonitorOffset = kSourceOffset + kSourceInputCount;
-  const BeamzBuffer& current_step = inputs[kMonitorOffset + 11];
+  const BeamzBuffer& current_step =
+      inputs[kMonitorOffset + kMonitorCurrentStepInput];
   BeamzSourceGroupLaunch groups[kSourceGroupCount]{};
   InitializeSourceGroups(groups, inputs, kSourceOffset, current_step,
                          coincident_source_group_mask);
@@ -645,13 +643,15 @@ ffi::Error StreamedProgramCpmlStepsHandler(
       cpml_enabled != 0, inputs, outputs);
 
   const size_t monitor_start = graph_input_count + kSourceInputCount;
-  const BeamzBuffer& current_step = inputs[monitor_start + 11];
+  const BeamzBuffer& current_step =
+      inputs[monitor_start + kMonitorCurrentStepInput];
   BeamzSourceGroupLaunch groups[kSourceGroupCount]{};
   InitializeSourceGroups(groups, inputs, graph_input_count, current_step,
                          coincident_source_group_mask);
   BeamzDftGroupLaunch monitors = InitializeDftGroups(
-      inputs, monitor_start, inputs[monitor_start + 7],
-      inputs[monitor_start + 8], inputs[monitor_start + 9], monitor_count);
+      inputs, monitor_start, inputs[monitor_start + kMonitorDftReInput],
+      inputs[monitor_start + kMonitorDftImInput],
+      inputs[monitor_start + kMonitorDftWeightInput], monitor_count);
 
   const int error = BeamzLaunchProgram(
       stream, InPlaceProgram(launches, nsteps, groups, kSourceGroupCount,

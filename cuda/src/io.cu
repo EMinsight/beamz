@@ -11,12 +11,8 @@ constexpr int kTileX = 32;
 constexpr int kTileY = 4;
 constexpr int kTileZ = 2;
 
-bool FlagEnabled(const BeamzLaunch& launch, BeamzCudaFlag flag) {
-  return (launch.cuda_flags & flag) != 0;
-}
-
-dim3 SourceThreads(const BeamzLaunch& launch, int64_t x_extent) {
-  if (!FlagEnabled(launch, kBeamzAdaptiveSourceTiles) || x_extent >= 32) {
+dim3 SourceThreads(int64_t x_extent) {
+  if (x_extent >= 32) {
     return dim3(kTileX, kTileY, kTileZ);
   }
   if (x_extent <= 1) return dim3(1, 64, 2);
@@ -171,17 +167,6 @@ __global__ void ApplySingleSourceGroup(BeamzBuffer target,
       static_cast<const float*>(group.waveforms.data)[waveform_index];
 }
 
-__global__ void ApplySourceGroup(BeamzBuffer target,
-                                 BeamzSourceGroupLaunch group,
-                                 int source_index, int step_offset,
-                                 int metallic_edges) {
-  const int x = blockIdx.x * blockDim.x + threadIdx.x;
-  const int y = blockIdx.y * blockDim.y + threadIdx.y;
-  const int z = blockIdx.z * blockDim.z + threadIdx.z;
-  ApplySourceGroupCell<false>(target, group, source_index, step_offset,
-                              metallic_edges, z, y, x);
-}
-
 __device__ __forceinline__ void ApplyCoincidentSourceGroupCell(
     BeamzBuffer target, BeamzSourceGroupLaunch group, int step_offset,
     int metallic_edges, int z, int y, int x) {
@@ -266,18 +251,13 @@ cudaError_t LaunchSourceGroup(cudaStream_t stream, const BeamzLaunch& launch,
                               const BeamzBuffer& target,
                               const BeamzSourceGroupLaunch& group,
                               int32_t step) {
-  const dim3 threads = SourceThreads(launch, group.coefficients.dims[3]);
+  const dim3 threads = SourceThreads(group.coefficients.dims[3]);
   const int z_blocks =
       (group.coefficients.dims[1] + threads.z - 1) / threads.z;
   const bool single = group.coefficients.dims[0] == 1;
-  const bool coincident =
-      !single && group.coincident != 0 &&
-      FlagEnabled(launch, kBeamzCoincidentSourceGroups);
-  const bool batched = FlagEnabled(launch, kBeamzBatchedSourceGroups);
+  const bool coincident = !single && group.coincident != 0;
   const int launch_z_blocks =
-      !single && !coincident && batched
-          ? z_blocks * group.coefficients.dims[0]
-          : z_blocks;
+      !single && !coincident ? z_blocks * group.coefficients.dims[0] : z_blocks;
   const dim3 blocks(
       (group.coefficients.dims[3] + threads.x - 1) / threads.x,
       (group.coefficients.dims[2] + threads.y - 1) / threads.y,
@@ -300,21 +280,9 @@ cudaError_t LaunchSourceGroup(cudaStream_t stream, const BeamzLaunch& launch,
         target, group, step, launch.metallic_edges);
     return cudaPeekAtLastError();
   }
-  if (batched) {
-    ApplySourceGroupBatched<<<blocks, threads, 0, stream>>>(
-        target, group, z_blocks, step, launch.metallic_edges);
-    return cudaPeekAtLastError();
-  }
-  for (int32_t source_index = 0;
-       source_index < group.coefficients.dims[0]; ++source_index) {
-    ApplySourceGroup<<<blocks, threads, 0, stream>>>(
-        target, group, source_index, step, launch.metallic_edges);
-    if (const cudaError_t error = cudaPeekAtLastError();
-        error != cudaSuccess) {
-      return error;
-    }
-  }
-  return cudaSuccess;
+  ApplySourceGroupBatched<<<blocks, threads, 0, stream>>>(
+      target, group, z_blocks, step, launch.metallic_edges);
+  return cudaPeekAtLastError();
 }
 
 template <bool SingleMonitor>
