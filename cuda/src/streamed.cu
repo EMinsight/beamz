@@ -60,6 +60,11 @@ bool BatchedSourceGroupsEnabled() {
   return value == nullptr || value[0] == '\0' || value[0] == '0';
 }
 
+bool CoincidentSourceGroupsEnabled() {
+  const char* value = std::getenv("BEAMZ_CUDA_DISABLE_COINCIDENT_SOURCE_GROUPS");
+  return value == nullptr || value[0] == '\0' || value[0] == '0';
+}
+
 std::string GraphKey(void* stream, const BeamzLaunch& h_launch,
                      const BeamzLaunch& e_launch, int32_t nsteps,
                      const BeamzSourceLaunch* source = nullptr,
@@ -801,6 +806,60 @@ __global__ void ApplySourceGroup(BeamzBuffer target,
                               metallic_edges, z, y, x);
 }
 
+__device__ __forceinline__ void ApplyCoincidentSourceGroupCell(
+    BeamzBuffer target, BeamzSourceGroupLaunch group, int step_offset,
+    int metallic_edges, int z, int y, int x) {
+  if (z >= group.coefficients.dims[1] ||
+      y >= group.coefficients.dims[2] ||
+      x >= group.coefficients.dims[3]) {
+    return;
+  }
+  const auto* starts = static_cast<const int32_t*>(group.starts.data);
+  const int target_z = starts[0] + z;
+  const int target_y = starts[1] + y;
+  const int target_x = starts[2] + x;
+  if (target_z < 0 || target_z >= target.dims[0] || target_y < 0 ||
+      target_y >= target.dims[1] || target_x < 0 ||
+      target_x >= target.dims[2]) {
+    return;
+  }
+  if (group.timing != 0 &&
+      SourceCellConstrained(target, group.component,
+                            group.timing == 1 ? 0 : 1, metallic_edges,
+                            target_z, target_y, target_x)) {
+    return;
+  }
+  int waveform_index =
+      static_cast<const int32_t*>(group.current_step.data)[0] + step_offset;
+  waveform_index = waveform_index < 0 ? 0 : waveform_index;
+  waveform_index =
+      waveform_index >= group.waveforms.dims[1]
+          ? static_cast<int>(group.waveforms.dims[1]) - 1
+          : waveform_index;
+  const int target_offset =
+      (target_z * static_cast<int>(target.dims[1]) + target_y) *
+          static_cast<int>(target.dims[2]) +
+      target_x;
+  float value = static_cast<float*>(target.data)[target_offset];
+  const int coefficient_stride =
+      static_cast<int>(group.coefficients.dims[1] *
+                       group.coefficients.dims[2] *
+                       group.coefficients.dims[3]);
+  const int coefficient_cell =
+      (z * static_cast<int>(group.coefficients.dims[2]) + y) *
+          static_cast<int>(group.coefficients.dims[3]) +
+      x;
+  const auto* coefficients =
+      static_cast<const float*>(group.coefficients.data);
+  const auto* waveforms = static_cast<const float*>(group.waveforms.data);
+  const int waveform_stride = static_cast<int>(group.waveforms.dims[1]);
+  for (int source = 0; source < group.coefficients.dims[0]; ++source) {
+    value += coefficients[source * coefficient_stride + coefficient_cell] *
+             waveforms[source * waveform_stride + waveform_index];
+  }
+  static_cast<float*>(target.data)[target_offset] = value;
+}
+
 __global__ void ApplySourceGroupBatched(BeamzBuffer target,
                                         BeamzSourceGroupLaunch group,
                                         int z_blocks, int step_offset,
@@ -814,6 +873,17 @@ __global__ void ApplySourceGroupBatched(BeamzBuffer target,
   // their additive semantics instead of racing read-modify-write operations.
   ApplySourceGroupCell<true>(target, group, source_index, step_offset,
                              metallic_edges, z, y, x);
+}
+
+__global__ void ApplyCoincidentSourceGroup(BeamzBuffer target,
+                                            BeamzSourceGroupLaunch group,
+                                            int step_offset,
+                                            int metallic_edges) {
+  const int x = blockIdx.x * blockDim.x + threadIdx.x;
+  const int y = blockIdx.y * blockDim.y + threadIdx.y;
+  const int z = blockIdx.z * blockDim.z + threadIdx.z;
+  ApplyCoincidentSourceGroupCell(target, group, step_offset, metallic_edges, z,
+                                 y, x);
 }
 
 __global__ void PreparePlaneDftPhases(BeamzLaunch e_launch,
@@ -1117,13 +1187,23 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
         const dim3 source_threads(kTileX, kTileY, kTileZ);
         const int z_blocks =
             (group.coefficients.dims[1] + kTileZ - 1) / kTileZ;
+        const bool coincident = group.coincident != 0 &&
+                                CoincidentSourceGroupsEnabled();
+        const bool batched = BatchedSourceGroupsEnabled();
+        const int launch_z_blocks =
+            !coincident && batched
+                ? z_blocks * group.coefficients.dims[0]
+                : z_blocks;
         const dim3 source_blocks(
             (group.coefficients.dims[3] + kTileX - 1) / kTileX,
             (group.coefficients.dims[2] + kTileY - 1) / kTileY,
-            BatchedSourceGroupsEnabled()
-                ? z_blocks * group.coefficients.dims[0]
-                : z_blocks);
-        if (BatchedSourceGroupsEnabled()) {
+            launch_z_blocks);
+        if (coincident) {
+          ApplyCoincidentSourceGroup<<<source_blocks, source_threads, 0,
+                                       stream>>>(target, group, step,
+                                                 h_launch.metallic_edges);
+          launch_error = cudaPeekAtLastError();
+        } else if (batched) {
           ApplySourceGroupBatched<<<source_blocks, source_threads, 0, stream>>>(
               target, group, z_blocks, step, h_launch.metallic_edges);
           launch_error = cudaPeekAtLastError();

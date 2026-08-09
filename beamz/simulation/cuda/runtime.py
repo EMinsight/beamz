@@ -325,6 +325,18 @@ def _replace_graph_outputs(state, outputs) -> SimulationState:
     )
 
 
+def _coincident_source_group_mask(groups) -> int:
+    """Encode equal-shape source groups whose slabs share one origin."""
+    mask = 0
+    for index, group in enumerate(groups):
+        if group is None:
+            continue
+        starts = getattr(group, "starts_tuple", ())
+        if starts and all(start == starts[0] for start in starts[1:]):
+            mask |= 1 << index
+    return mask
+
+
 def run_source_steps(state, ctx, coeffs, source, nsteps: int) -> SimulationState:
     """Advance one packed pre-E source through one CUDA graph call."""
     if nsteps < 1:
@@ -416,6 +428,9 @@ def run_source_group_steps(state, ctx, coeffs, groups, nsteps: int) -> Simulatio
         ),
         metric_kind=_metric_kind_code(ctx),
         cpml_enabled=np.int32(ctx.boundary.cpml.enabled),
+        coincident_source_group_mask=np.int32(
+            _coincident_source_group_mask(groups)
+        ),
     )
     if ctx.boundary.cpml.enabled:
         return _replace_graph_outputs(state, outputs)
@@ -582,6 +597,9 @@ def run_program_steps(
         metric_kind=_metric_kind_code(ctx),
         cpml_enabled=np.int32(ctx.boundary.cpml.enabled),
         monitor_count=np.int32(packed_monitors[0].shape[0]),
+        coincident_source_group_mask=np.int32(
+            _coincident_source_group_mask(groups)
+        ),
     )
     next_state = (
         _replace_graph_outputs(state, outputs)

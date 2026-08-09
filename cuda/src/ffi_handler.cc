@@ -430,11 +430,13 @@ ffi::Error StreamedSourceCpmlStepsHandler(
 ffi::Error StreamedSourceGroupsCpmlStepsHandler(
     void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
     int32_t abi_version, int32_t nsteps, float dt, float resolution,
-    int32_t metallic_edges, int32_t metric_kind, int32_t cpml_enabled) {
+    int32_t metallic_edges, int32_t metric_kind, int32_t cpml_enabled,
+    int32_t coincident_source_group_mask) {
   constexpr int32_t kSourceGroupCount = 9;
   if (abi_version != BEAMZ_CUDA_ABI_VERSION || nsteps < 1 ||
       metric_kind < 0 || metric_kind > 2 || cpml_enabled < 0 ||
-      cpml_enabled > 1) {
+      cpml_enabled > 1 || coincident_source_group_mask < 0 ||
+      coincident_source_group_mask >= (1 << kSourceGroupCount)) {
     return ffi::Error::InvalidArgument(
         "invalid BeamZ CUDA source-group graph attributes");
   }
@@ -517,6 +519,8 @@ ffi::Error StreamedSourceGroupsCpmlStepsHandler(
     groups[index].current_step = current_step;
     groups[index].timing = index / 3;
     groups[index].component = index % 3;
+    groups[index].coincident =
+        (coincident_source_group_mask & (1 << index)) != 0;
   }
   const int error = BeamzLaunchStreamedSourceGroupSteps(
       stream, h_launch, e_launch, groups, kSourceGroupCount, nsteps);
@@ -531,11 +535,13 @@ ffi::Error StreamedProgramCpmlStepsHandler(
     void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
     int32_t abi_version, int32_t nsteps, float dt, float resolution,
     int32_t metallic_edges, int32_t metric_kind, int32_t cpml_enabled,
-    int32_t monitor_count) {
+    int32_t monitor_count, int32_t coincident_source_group_mask) {
   constexpr int32_t kSourceGroupCount = 9;
   if (abi_version != BEAMZ_CUDA_ABI_VERSION || nsteps < 1 ||
       metric_kind < 0 || metric_kind > 2 || cpml_enabled < 0 ||
-      cpml_enabled > 1 || monitor_count < 1) {
+      cpml_enabled > 1 || monitor_count < 1 ||
+      coincident_source_group_mask < 0 ||
+      coincident_source_group_mask >= (1 << kSourceGroupCount)) {
     return ffi::Error::InvalidArgument(
         "invalid BeamZ CUDA program graph attributes");
   }
@@ -620,6 +626,8 @@ ffi::Error StreamedProgramCpmlStepsHandler(
     groups[index].current_step = current_step;
     groups[index].timing = index / 3;
     groups[index].component = index % 3;
+    groups[index].coincident =
+        (coincident_source_group_mask & (1 << index)) != 0;
   }
   BeamzDftGroupLaunch monitors{};
   monitors.indices = inputs[monitor_start];
@@ -847,7 +855,8 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<float>("resolution")
         .Attr<int32_t>("metallic_edges")
         .Attr<int32_t>("metric_kind")
-        .Attr<int32_t>("cpml_enabled"));
+        .Attr<int32_t>("cpml_enabled")
+        .Attr<int32_t>("coincident_source_group_mask"));
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     beamz_cuda_streamed_program_cpml_steps, StreamedProgramCpmlStepsHandler,
@@ -862,7 +871,8 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<int32_t>("metallic_edges")
         .Attr<int32_t>("metric_kind")
         .Attr<int32_t>("cpml_enabled")
-        .Attr<int32_t>("monitor_count"));
+        .Attr<int32_t>("monitor_count")
+        .Attr<int32_t>("coincident_source_group_mask"));
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     beamz_cuda_streamed_source_monitor_cpml_steps,

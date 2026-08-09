@@ -423,6 +423,7 @@ def test_cuda_source_group_graph_packs_all_phases_and_aliases_state(monkeypatch)
         coeffs=jnp.ones((2, 3, 4, 5), dtype=jnp.float32),
         waveforms=jnp.ones((2, 8), dtype=jnp.float32),
         starts=jnp.zeros((2, 3), dtype=jnp.int32),
+        starts_tuple=((0, 0, 0), (0, 0, 0)),
     )
     groups = (source_group, None, None, None, None, None, None, None, None)
 
@@ -445,6 +446,7 @@ def test_cuda_source_group_graph_packs_all_phases_and_aliases_state(monkeypatch)
     }
     assert attributes["nsteps"] == np.int32(3)
     assert attributes["cpml_enabled"] == np.int32(1)
+    assert attributes["coincident_source_group_mask"] == np.int32(1)
     assert next_state.cpml_psi_h_terms == state.cpml_psi_h_terms
 
 
@@ -478,6 +480,7 @@ def test_cuda_program_graph_packs_monitor_batch_and_aliases_accumulators(monkeyp
         coeffs=jnp.ones((1, 2, 3, 4), dtype=jnp.float32),
         waveforms=jnp.ones((1, 8), dtype=jnp.float32),
         starts=jnp.zeros((1, 3), dtype=jnp.int32),
+        starts_tuple=((0, 0, 0),),
     )
     groups = (source_group, None, None, None, None, None, None, None, None)
     packed = cuda_runtime.pack_dft_monitors(program.monitors)
@@ -495,6 +498,7 @@ def test_cuda_program_graph_packs_monitor_batch_and_aliases_accumulators(monkeyp
     assert options["input_output_aliases"][109] == 19
     assert options["input_output_aliases"][110] == 20
     assert attributes["monitor_count"] == np.int32(1)
+    assert attributes["coincident_source_group_mask"] == np.int32(1)
     np.testing.assert_array_equal(next_state.dft_vec_re, state.dft_vec_re)
 
 

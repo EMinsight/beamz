@@ -48,6 +48,7 @@ struct BeamzSourceGroupLaunch {
   BeamzBuffer current_step;
   int32_t component;
   int32_t timing;
+  int32_t coincident;
 };
 
 struct BeamzDftLaunch {
