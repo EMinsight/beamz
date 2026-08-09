@@ -6,7 +6,7 @@ import os
 from collections import OrderedDict
 from collections.abc import Mapping
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from dataclasses import fields as dataclass_fields
 from types import MappingProxyType, SimpleNamespace
 from typing import Any, Literal, cast
@@ -31,6 +31,7 @@ from beamz.lattice import (
     sample_voxel_grid_at_component_2d,
     sample_voxel_grid_at_e_component_3d_centered,
 )
+from beamz.simulation.backend import CUDA_MATERIAL_CODEBOOK
 from beamz.simulation.model import (
     BoundaryPlan,
     CompiledGrid,
@@ -73,6 +74,7 @@ class CompiledProgramKey:
     loop_kind: str
     source_single_slab_dense: bool
     backend: str
+    cuda_flags: int
     sharding: ShardingToken
     materials: HashToken
     sources: tuple[HashToken, ...]
@@ -93,6 +95,7 @@ class CompiledProgramKey:
             request.run.loop_kind,
             request.run.source_single_slab_dense,
             request.run.backend,
+            request.run.cuda_flags,
             request.run.sharding,
             cache_token(request.materials),
             tuple(cache_token(source) for source in request.sources),
@@ -172,12 +175,6 @@ def _pack_cuda_coefficient_ids(value, *, max_values: int = 256):
 def _pack_cuda_lossless_e_coefficients(decays, sources):
     """Return table/ID material buffers for a lossless low-cardinality E update."""
 
-    if os.environ.get("BEAMZ_CUDA_DISABLE_MATERIAL_CODEBOOK", "0") in {
-        "1",
-        "true",
-        "yes",
-    }:
-        return None
     decay_arrays = tuple(np.asarray(value) for value in decays)
     if not all(
         value.ndim == 0 and np.float32(value) == np.float32(1.0)
@@ -404,6 +401,7 @@ def _prepare_compilation(
         source_single_slab_dense=bool(request.run.source_single_slab_dense),
         backend=str(request.run.backend),
         sharding=effective_sharding,
+        cuda_flags=int(request.run.cuda_flags),
     )
     return _CompileSetup(
         dt,
@@ -648,9 +646,13 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
                     e_source_z,
                 )
             )
-            packed_e = _pack_cuda_lossless_e_coefficients(
-                (e_decay_x, e_decay_y, e_decay_z),
-                (e_source_x, e_source_y, e_source_z),
+            packed_e = (
+                _pack_cuda_lossless_e_coefficients(
+                    (e_decay_x, e_decay_y, e_decay_z),
+                    (e_source_x, e_source_y, e_source_z),
+                )
+                if request.run.cuda_flags & CUDA_MATERIAL_CODEBOOK
+                else None
             )
             if packed_e is not None:
                 (
@@ -826,9 +828,15 @@ def compile_program(
         "yes",
         "on",
     }
-    from .backend import CudaBackendUnavailable, normalize_backend, resolve_backend
+    from .backend import (
+        CudaBackendUnavailable,
+        cuda_flags_from_env,
+        normalize_backend,
+        resolve_backend,
+    )
 
     requested_backend = normalize_backend(backend)
+    sharding_token = sharding_cache_token(sharding)
     metric_kind = simulation.grid.metric_kind_for(
         ("x", "y", "z") if simulation.is_3d else ("x", "y")
     )
@@ -837,6 +845,7 @@ def compile_program(
         requested_backend != "cuda_hopper" or metric_kind == "isotropic_uniform"
     )
     cuda_material_supported = not material_grid.uses_full_permittivity
+    cuda_sharding_supported = not sharding_token[0] or sharding_token[2] == 1
     if requested_backend not in {"auto", "jax"} and not cuda_grid_supported:
         requirement = (
             "a 3D simulation"
@@ -852,21 +861,30 @@ def compile_program(
             "CUDA execution does not yet support full-tensor permittivity; "
             "use backend='jax' for coupled constitutive updates."
         )
-    cuda_problem_supported = cuda_grid_supported and cuda_material_supported
+    if requested_backend not in {"auto", "jax"} and not cuda_sharding_supported:
+        raise CudaBackendUnavailable(
+            "CUDA execution currently supports one GPU; use backend='jax' for "
+            "multi-device sharding."
+        )
+    cuda_problem_supported = (
+        cuda_grid_supported and cuda_material_supported and cuda_sharding_supported
+    )
     resolved_backend = (
         "jax"
         if requested_backend == "auto" and not cuda_problem_supported
         else resolve_backend(requested_backend)
     )
+    cuda_flags = cuda_flags_from_env() if resolved_backend != "jax" else 0
     request = simulation.to_request(
         num_steps=steps,
         loop_kind=loop_kind,
         source_single_slab_dense=dense,
         backend=resolved_backend,
-        sharding=sharding_cache_token(sharding),
+        sharding=sharding_token,
         compiler_sharding=sharding,
         progress=progress,
     )
+    request = replace(request, run=replace(request.run, cuda_flags=cuda_flags))
     signature = CompiledProgramKey.from_request(request)
     if cached := _PROGRAM_CACHE.get(signature):
         _PROGRAM_CACHE.move_to_end(signature)

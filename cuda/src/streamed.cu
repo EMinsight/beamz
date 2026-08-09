@@ -4,7 +4,6 @@
 #include <cooperative_groups.h>
 
 #include <cstddef>
-#include <cstdlib>
 #include <cstdint>
 #include <limits>
 #include <mutex>
@@ -41,55 +40,12 @@ GraphCache& CachedGraphs() {
   return *cache;
 }
 
-bool GraphCacheEnabled() {
-  const char* value = std::getenv("BEAMZ_CUDA_DISABLE_GRAPH_CACHE");
-  return value == nullptr || value[0] == '\0' || value[0] == '0';
+bool FlagEnabled(const BeamzLaunch& launch, BeamzCudaFlag flag) {
+  return (launch.cuda_flags & flag) != 0;
 }
 
-bool TypedPsiEnabled() {
-  const char* value = std::getenv("BEAMZ_CUDA_DISABLE_TYPED_PSI");
-  return value == nullptr || value[0] == '\0' || value[0] == '0';
-}
-
-bool PrecomputedDftPhasesEnabled() {
-  const char* value = std::getenv("BEAMZ_CUDA_DISABLE_PRECOMPUTED_DFT_PHASES");
-  return value == nullptr || value[0] == '\0' || value[0] == '0';
-}
-
-bool BatchedSourceGroupsEnabled() {
-  const char* value = std::getenv("BEAMZ_CUDA_DISABLE_BATCHED_SOURCE_GROUPS");
-  return value == nullptr || value[0] == '\0' || value[0] == '0';
-}
-
-bool CoincidentSourceGroupsEnabled() {
-  const char* value = std::getenv("BEAMZ_CUDA_DISABLE_COINCIDENT_SOURCE_GROUPS");
-  return value == nullptr || value[0] == '\0' || value[0] == '0';
-}
-
-bool AdaptiveSourceTilesEnabled() {
-  const char* value = std::getenv("BEAMZ_CUDA_DISABLE_ADAPTIVE_SOURCE_TILES");
-  return value == nullptr || value[0] == '\0' || value[0] == '0';
-}
-
-bool CpmlCoreSplitEnabled() {
-  const char* value = std::getenv("BEAMZ_CUDA_DISABLE_CPML_CORE_SPLIT");
-  return value == nullptr || value[0] == '\0' || value[0] == '0';
-}
-
-bool CombinedCpmlQueueEnabled() {
-  const char* value = std::getenv("BEAMZ_CUDA_DISABLE_COMBINED_CPML_QUEUE");
-  return value == nullptr || value[0] == '\0' || value[0] == '0';
-}
-
-bool PersistentCpmlEnabled() {
-  const char* enabled = std::getenv("BEAMZ_CUDA_ENABLE_PERSISTENT_CPML");
-  const char* disabled = std::getenv("BEAMZ_CUDA_DISABLE_PERSISTENT_CPML");
-  return enabled != nullptr && enabled[0] != '\0' && enabled[0] != '0' &&
-         (disabled == nullptr || disabled[0] == '\0' || disabled[0] == '0');
-}
-
-dim3 SourceThreads(int64_t x_extent) {
-  if (!AdaptiveSourceTilesEnabled() || x_extent >= 32) {
+dim3 SourceThreads(const BeamzLaunch& launch, int64_t x_extent) {
+  if (!FlagEnabled(launch, kBeamzAdaptiveSourceTiles) || x_extent >= 32) {
     return dim3(kTileX, kTileY, kTileZ);
   }
   if (x_extent <= 1) return dim3(1, 64, 2);
@@ -1135,7 +1091,7 @@ template <int MetricKind, bool HasMetallicEdges, bool UniformCpml>
 void LaunchFusedUpdate(cudaStream_t stream, const BeamzLaunch& launch,
                        dim3 blocks, dim3 threads) {
   int psi_type = -1;
-  if (launch.nterms != 0 && TypedPsiEnabled()) {
+  if (launch.nterms != 0 && FlagEnabled(launch, kBeamzTypedPsi)) {
     constexpr int psi_input_base = 13 + 3 * 6;
     psi_type = launch.outputs[3].element_type;
     for (int term = 0; term < 6; ++term) {
@@ -1682,7 +1638,7 @@ bool HasPackedLosslessMaterial(const BeamzLaunch& launch) {
 }
 
 int UniformPsiType(const BeamzLaunch& launch) {
-  if (!TypedPsiEnabled()) return -1;
+  if (!FlagEnabled(launch, kBeamzTypedPsi)) return -1;
   constexpr int psi_input_base = 13 + 3 * 6;
   int psi_type = launch.outputs[3].element_type;
   for (int term = 0; term < 6; ++term) {
@@ -1786,7 +1742,7 @@ cudaError_t LaunchCpmlShellPhase(cudaStream_t stream,
 
 bool CpmlCoreScheduleSupported(const BeamzLaunch& h_launch,
                                const BeamzLaunch& e_launch) {
-  if (!CpmlCoreSplitEnabled() || h_launch.nterms != 6 ||
+  if (!FlagEnabled(h_launch, kBeamzCpmlCoreSplit) || h_launch.nterms != 6 ||
       e_launch.nterms != 6 || h_launch.metric_kind != 0 ||
       e_launch.metric_kind != 0 || h_launch.uniform_cpml_thickness <= 0 ||
       e_launch.uniform_cpml_thickness != h_launch.uniform_cpml_thickness ||
@@ -2012,7 +1968,7 @@ cudaError_t LaunchPersistentCpml(cudaStream_t stream,
                                  const BeamzSourceGroupLaunch* source_groups,
                                  const BeamzDftGroupLaunch* monitor_groups,
                                  int32_t nsteps) {
-  if (!PersistentCpmlEnabled() || h_ab.metallic_edges != 0 ||
+  if (!FlagEnabled(h_ab, kBeamzPersistentCpml) || h_ab.metallic_edges != 0 ||
       e_ab.metallic_edges != 0 || UniformPsiType(h_ab) != kBeamzF32 ||
       UniformPsiType(e_ab) != kBeamzF32 ||
       !CpmlCoreScheduleSupported(h_ab, e_ab)) {
@@ -2084,7 +2040,7 @@ cudaError_t LaunchPersistentCpml(cudaStream_t stream,
 
 cudaError_t LaunchCpmlShellAndCorePhase(cudaStream_t stream,
                                         const BeamzLaunch& launch) {
-  if (CombinedCpmlQueueEnabled()) {
+  if (FlagEnabled(launch, kBeamzCombinedCpmlQueue)) {
     return LaunchCombinedCpmlQueuePhase(stream, launch);
   }
   cudaError_t error = LaunchCpmlShellPhase(stream, launch);
@@ -2109,7 +2065,7 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
       GraphKey(raw_stream, h_launch, e_launch, nsteps, source, source_groups,
                source_group_count, monitor, monitor_groups);
   GraphCache& cache = CachedGraphs();
-  const bool cache_enabled = GraphCacheEnabled();
+  const bool cache_enabled = FlagEnabled(h_launch, kBeamzGraphCache);
   if (cache_enabled) {
     std::lock_guard<std::mutex> lock(cache.mutex);
     const auto cached = cache.entries.find(graph_key);
@@ -2122,7 +2078,7 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
     const bool use_cpml_core =
         CpmlCoreScheduleSupported(h_launch, e_launch);
     const bool precomputed_monitor_phase =
-        monitor != nullptr && PrecomputedDftPhasesEnabled() &&
+        monitor != nullptr && FlagEnabled(h_launch, kBeamzPrecomputedDftPhases) &&
         monitor->phase_cos.rank == 2 && monitor->phase_sin.rank == 2 &&
         monitor->phase_cos.dims[0] >= nsteps &&
         monitor->phase_sin.dims[0] >= nsteps &&
@@ -2144,13 +2100,16 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
         if (group.timing != timing || group.coefficients.dims[0] == 0) continue;
         const BeamzLaunch& target_launch = timing == 1 ? h_launch : e_launch;
         const BeamzBuffer& target = target_launch.outputs[group.component];
-        const dim3 source_threads = SourceThreads(group.coefficients.dims[3]);
+        const dim3 source_threads =
+            SourceThreads(h_launch, group.coefficients.dims[3]);
         const int z_blocks =
             (group.coefficients.dims[1] + source_threads.z - 1) /
             source_threads.z;
-        const bool coincident = group.coincident != 0 &&
-                                CoincidentSourceGroupsEnabled();
-        const bool batched = BatchedSourceGroupsEnabled();
+        const bool coincident =
+            group.coincident != 0 &&
+            FlagEnabled(h_launch, kBeamzCoincidentSourceGroups);
+        const bool batched =
+            FlagEnabled(h_launch, kBeamzBatchedSourceGroups);
         const int launch_z_blocks =
             !coincident && batched
                 ? z_blocks * group.coefficients.dims[0]
@@ -2183,7 +2142,8 @@ int LaunchStreamedGraph(void* raw_stream, const BeamzLaunch& h_launch,
     };
     for (int32_t step = 0; step < nsteps; ++step) {
       if (source != nullptr) {
-        const dim3 source_threads = SourceThreads(source->coefficient.dims[2]);
+        const dim3 source_threads =
+            SourceThreads(h_launch, source->coefficient.dims[2]);
         const dim3 source_blocks(
             (source->coefficient.dims[2] + source_threads.x - 1) /
                 source_threads.x,
@@ -2360,7 +2320,7 @@ int BeamzLaunchTemporalSteps(void* raw_stream, const BeamzLaunch& h_ab,
   graph_key.append(reinterpret_cast<const char*>(&h_ba), sizeof(h_ba));
   graph_key.append(reinterpret_cast<const char*>(&e_ba), sizeof(e_ba));
   GraphCache& cache = CachedGraphs();
-  const bool cache_enabled = GraphCacheEnabled();
+  const bool cache_enabled = FlagEnabled(h_ab, kBeamzGraphCache);
   if (cache_enabled) {
     std::lock_guard<std::mutex> lock(cache.mutex);
     const auto cached = cache.entries.find(graph_key);
@@ -2572,7 +2532,7 @@ int BeamzLaunchTemporalCpmlSourceGroupSteps(
     }
   }
   auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
-  if (PersistentCpmlEnabled()) {
+  if (FlagEnabled(h_ab, kBeamzPersistentCpml)) {
     const cudaError_t persistent_error = LaunchPersistentCpml(
         stream, h_ab, e_ab, h_ba, e_ba, source_groups, monitor_groups,
         nsteps);
@@ -2586,7 +2546,7 @@ int BeamzLaunchTemporalCpmlSourceGroupSteps(
   graph_key.append(reinterpret_cast<const char*>(&h_ba), sizeof(h_ba));
   graph_key.append(reinterpret_cast<const char*>(&e_ba), sizeof(e_ba));
   GraphCache& cache = CachedGraphs();
-  const bool cache_enabled = GraphCacheEnabled();
+  const bool cache_enabled = FlagEnabled(h_ab, kBeamzGraphCache);
   if (cache_enabled) {
     std::lock_guard<std::mutex> lock(cache.mutex);
     const auto cached = cache.entries.find(graph_key);
@@ -2608,13 +2568,16 @@ int BeamzLaunchTemporalCpmlSourceGroupSteps(
             timing == 0 ? e_launch.inputs[group.component]
                         : (timing == 1 ? h_launch.outputs[group.component]
                                        : e_launch.outputs[group.component]);
-        const dim3 source_threads = SourceThreads(group.coefficients.dims[3]);
+        const dim3 source_threads =
+            SourceThreads(h_launch, group.coefficients.dims[3]);
         const int z_blocks =
             (group.coefficients.dims[1] + source_threads.z - 1) /
             source_threads.z;
-        const bool coincident = group.coincident != 0 &&
-                                CoincidentSourceGroupsEnabled();
-        const bool batched = BatchedSourceGroupsEnabled();
+        const bool coincident =
+            group.coincident != 0 &&
+            FlagEnabled(h_launch, kBeamzCoincidentSourceGroups);
+        const bool batched =
+            FlagEnabled(h_launch, kBeamzBatchedSourceGroups);
         const int launch_z_blocks =
             !coincident && batched
                 ? z_blocks * group.coefficients.dims[0]

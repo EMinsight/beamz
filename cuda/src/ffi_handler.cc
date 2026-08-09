@@ -1,6 +1,5 @@
 #include "ffi_handler.h"
 
-#include <cstdlib>
 #include <cstdint>
 #include <string>
 
@@ -14,14 +13,28 @@ namespace {
 constexpr float kEps0 = 8.8541878128e-12f;
 constexpr float kMu0 = 1.25663706212e-6f;
 
-bool TemporalPsiEnabled() {
-  const char* value = std::getenv("BEAMZ_CUDA_DISABLE_TEMPORAL_PSI");
-  return value == nullptr || value[0] == '\0' || value[0] == '0';
-}
-
 void SetBoundaryCode(BeamzLaunch* launch, int32_t code) {
   launch->metallic_edges = code & 0x3f;
   launch->uniform_cpml_thickness = code >> 8;
+}
+
+BeamzLaunch InitializeLaunch(int32_t abi_version, int32_t cuda_flags,
+                             int32_t phase, int32_t nterms, int32_t metric_kind,
+                             float dt, float resolution,
+                             int32_t boundary_code) {
+  BeamzLaunch launch{};
+  launch.abi_version = abi_version;
+  launch.cuda_flags = cuda_flags;
+  launch.phase = phase;
+  launch.nterms = nterms;
+  launch.metric_kind = metric_kind;
+  launch.dt = dt;
+  launch.resolution = resolution;
+  launch.inv_resolution = 1.0f / resolution;
+  launch.dt_over_eps = dt / kEps0;
+  launch.dt_over_mu = dt / kMu0;
+  SetBoundaryCode(&launch, boundary_code);
+  return launch;
 }
 
 ffi::Error DecodeBuffer(const ffi::AnyBuffer& value, BeamzBuffer* output) {
@@ -53,9 +66,10 @@ ffi::Error DecodeBuffer(const ffi::AnyBuffer& value, BeamzBuffer* output) {
 using Launcher = int (*)(void*, const BeamzLaunch&);
 
 ffi::Error Dispatch(Launcher launcher, void* stream, ffi::RemainingArgs args,
-                    ffi::RemainingRets rets, int32_t abi_version, int32_t phase,
-                    int32_t nterms, float dt, float resolution,
-                    int32_t metallic_edges, int32_t metric_kind) {
+                    ffi::RemainingRets rets, int32_t abi_version,
+                    int32_t cuda_flags, int32_t phase, int32_t nterms,
+                    float dt, float resolution, int32_t metallic_edges,
+                    int32_t metric_kind) {
   if (abi_version != BEAMZ_CUDA_ABI_VERSION) {
     return ffi::Error::InvalidArgument("beamz_cuda ABI version mismatch");
   }
@@ -66,17 +80,9 @@ ffi::Error Dispatch(Launcher launcher, void* stream, ffi::RemainingArgs args,
   }
   const size_t payload_count = 13 + 4 * static_cast<size_t>(nterms);
   const size_t output_count = 3 + static_cast<size_t>(nterms);
-  BeamzLaunch launch{};
-  launch.abi_version = abi_version;
-  launch.phase = phase;
-  launch.nterms = nterms;
-  launch.metric_kind = metric_kind;
-  launch.dt = dt;
-  launch.resolution = resolution;
-  launch.inv_resolution = 1.0f / resolution;
-  launch.dt_over_eps = dt / kEps0;
-  launch.dt_over_mu = dt / kMu0;
-  SetBoundaryCode(&launch, metallic_edges);
+  BeamzLaunch launch = InitializeLaunch(abi_version, cuda_flags, phase, nterms,
+                                        metric_kind, dt, resolution,
+                                        metallic_edges);
   for (size_t index = 0; index < payload_count; ++index) {
     auto decoded = args.get<ffi::AnyBuffer>(index);
     if (!decoded) return decoded.error();
@@ -109,17 +115,19 @@ ffi::Error Dispatch(Launcher launcher, void* stream, ffi::RemainingArgs args,
 
 ffi::Error StreamedHandler(void* stream, ffi::RemainingArgs args,
                            ffi::RemainingRets rets, int32_t abi_version,
-                           int32_t phase, int32_t nterms, float dt,
-                           float resolution, int32_t metallic_edges,
+                           int32_t cuda_flags, int32_t phase, int32_t nterms,
+                           float dt, float resolution, int32_t metallic_edges,
                            int32_t metric_kind) {
-  return Dispatch(BeamzLaunchStreamed, stream, args, rets, abi_version, phase,
-                  nterms, dt, resolution, metallic_edges, metric_kind);
+  return Dispatch(BeamzLaunchStreamed, stream, args, rets, abi_version,
+                  cuda_flags, phase, nterms, dt, resolution, metallic_edges,
+                  metric_kind);
 }
 
 ffi::Error StreamedStepsHandler(void* stream, ffi::RemainingArgs args,
                                 ffi::RemainingRets rets, int32_t abi_version,
-                                int32_t nsteps, float dt, float resolution,
-                                int32_t metallic_edges, int32_t metric_kind) {
+                                int32_t cuda_flags, int32_t nsteps, float dt,
+                                float resolution, int32_t metallic_edges,
+                                int32_t metric_kind) {
   if (abi_version != BEAMZ_CUDA_ABI_VERSION) {
     return ffi::Error::InvalidArgument("beamz_cuda ABI version mismatch");
   }
@@ -147,18 +155,8 @@ ffi::Error StreamedStepsHandler(void* stream, ffi::RemainingArgs args,
   }
 
   auto initialize = [&](int32_t phase) {
-    BeamzLaunch launch{};
-    launch.abi_version = abi_version;
-    launch.phase = phase;
-    launch.nterms = 0;
-    launch.metric_kind = metric_kind;
-    launch.dt = dt;
-    launch.resolution = resolution;
-    launch.inv_resolution = 1.0f / resolution;
-    launch.dt_over_eps = dt / kEps0;
-    launch.dt_over_mu = dt / kMu0;
-    SetBoundaryCode(&launch, metallic_edges);
-    return launch;
+    return InitializeLaunch(abi_version, cuda_flags, phase, 0,
+                            metric_kind, dt, resolution, metallic_edges);
   };
   BeamzLaunch h_launch = initialize(0);
   BeamzLaunch e_launch = initialize(1);
@@ -192,8 +190,9 @@ ffi::Error StreamedStepsHandler(void* stream, ffi::RemainingArgs args,
 // of mutating buffers which the typed FFI contract considers read-only.
 ffi::Error TemporalStepsHandler(void* stream, ffi::RemainingArgs args,
                                 ffi::RemainingRets rets, int32_t abi_version,
-                                int32_t nsteps, float dt, float resolution,
-                                int32_t metallic_edges, int32_t metric_kind) {
+                                int32_t cuda_flags, int32_t nsteps, float dt,
+                                float resolution, int32_t metallic_edges,
+                                int32_t metric_kind) {
   if (abi_version != BEAMZ_CUDA_ABI_VERSION) {
     return ffi::Error::InvalidArgument("beamz_cuda ABI version mismatch");
   }
@@ -218,18 +217,8 @@ ffi::Error TemporalStepsHandler(void* stream, ffi::RemainingArgs args,
   }
 
   auto initialize = [&](int32_t phase) {
-    BeamzLaunch launch{};
-    launch.abi_version = abi_version;
-    launch.phase = phase;
-    launch.nterms = 0;
-    launch.metric_kind = metric_kind;
-    launch.dt = dt;
-    launch.resolution = resolution;
-    launch.inv_resolution = 1.0f / resolution;
-    launch.dt_over_eps = dt / kEps0;
-    launch.dt_over_mu = dt / kMu0;
-    SetBoundaryCode(&launch, metallic_edges);
-    return launch;
+    return InitializeLaunch(abi_version, cuda_flags, phase, 0,
+                            metric_kind, dt, resolution, metallic_edges);
   };
   BeamzLaunch h_ab = initialize(0);
   BeamzLaunch e_ab = initialize(1);
@@ -270,8 +259,8 @@ ffi::Error TemporalStepsHandler(void* stream, ffi::RemainingArgs args,
 
 ffi::Error StreamedCpmlStepsHandler(
     void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
-    int32_t abi_version, int32_t nsteps, float dt, float resolution,
-    int32_t metallic_edges, int32_t metric_kind) {
+    int32_t abi_version, int32_t cuda_flags, int32_t nsteps, float dt,
+    float resolution, int32_t metallic_edges, int32_t metric_kind) {
   if (abi_version != BEAMZ_CUDA_ABI_VERSION) {
     return ffi::Error::InvalidArgument("beamz_cuda ABI version mismatch");
   }
@@ -296,18 +285,8 @@ ffi::Error StreamedCpmlStepsHandler(
   }
 
   auto initialize = [&](int32_t phase) {
-    BeamzLaunch launch{};
-    launch.abi_version = abi_version;
-    launch.phase = phase;
-    launch.nterms = 6;
-    launch.metric_kind = metric_kind;
-    launch.dt = dt;
-    launch.resolution = resolution;
-    launch.inv_resolution = 1.0f / resolution;
-    launch.dt_over_eps = dt / kEps0;
-    launch.dt_over_mu = dt / kMu0;
-    SetBoundaryCode(&launch, metallic_edges);
-    return launch;
+    return InitializeLaunch(abi_version, cuda_flags, phase, 6,
+                            metric_kind, dt, resolution, metallic_edges);
   };
   BeamzLaunch h_launch = initialize(0);
   BeamzLaunch e_launch = initialize(1);
@@ -341,10 +320,10 @@ ffi::Error StreamedCpmlStepsHandler(
 
 ffi::Error StreamedSourceCpmlStepsHandler(
     void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
-    int32_t abi_version, int32_t nsteps, float dt, float resolution,
-    int32_t metallic_edges, int32_t source_component, int32_t source_start_z,
-    int32_t source_start_y, int32_t source_start_x, int32_t metric_kind,
-    int32_t cpml_enabled) {
+    int32_t abi_version, int32_t cuda_flags, int32_t nsteps, float dt,
+    float resolution, int32_t metallic_edges, int32_t source_component,
+    int32_t source_start_z, int32_t source_start_y, int32_t source_start_x,
+    int32_t metric_kind, int32_t cpml_enabled) {
   if (abi_version != BEAMZ_CUDA_ABI_VERSION || nsteps < 1 ||
       source_component < 0 || source_component > 2 || metric_kind < 0 ||
       metric_kind > 2 || cpml_enabled < 0 || cpml_enabled > 1) {
@@ -371,18 +350,8 @@ ffi::Error StreamedSourceCpmlStepsHandler(
   }
 
   auto initialize = [&](int32_t phase) {
-    BeamzLaunch launch{};
-    launch.abi_version = abi_version;
-    launch.phase = phase;
-    launch.nterms = cpml_enabled ? 6 : 0;
-    launch.metric_kind = metric_kind;
-    launch.dt = dt;
-    launch.resolution = resolution;
-    launch.inv_resolution = 1.0f / resolution;
-    launch.dt_over_eps = dt / kEps0;
-    launch.dt_over_mu = dt / kMu0;
-    SetBoundaryCode(&launch, metallic_edges);
-    return launch;
+    return InitializeLaunch(abi_version, cuda_flags, phase, cpml_enabled ? 6 : 0,
+                            metric_kind, dt, resolution, metallic_edges);
   };
   BeamzLaunch h_launch = initialize(0);
   BeamzLaunch e_launch = initialize(1);
@@ -435,9 +404,9 @@ ffi::Error StreamedSourceCpmlStepsHandler(
 
 ffi::Error StreamedSourceGroupsCpmlStepsHandler(
     void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
-    int32_t abi_version, int32_t nsteps, float dt, float resolution,
-    int32_t metallic_edges, int32_t metric_kind, int32_t cpml_enabled,
-    int32_t coincident_source_group_mask) {
+    int32_t abi_version, int32_t cuda_flags, int32_t nsteps, float dt,
+    float resolution, int32_t metallic_edges, int32_t metric_kind,
+    int32_t cpml_enabled, int32_t coincident_source_group_mask) {
   constexpr int32_t kSourceGroupCount = 9;
   if (abi_version != BEAMZ_CUDA_ABI_VERSION || nsteps < 1 ||
       metric_kind < 0 || metric_kind > 2 || cpml_enabled < 0 ||
@@ -468,18 +437,8 @@ ffi::Error StreamedSourceGroupsCpmlStepsHandler(
   }
 
   auto initialize = [&](int32_t phase) {
-    BeamzLaunch launch{};
-    launch.abi_version = abi_version;
-    launch.phase = phase;
-    launch.nterms = cpml_enabled ? 6 : 0;
-    launch.metric_kind = metric_kind;
-    launch.dt = dt;
-    launch.resolution = resolution;
-    launch.inv_resolution = 1.0f / resolution;
-    launch.dt_over_eps = dt / kEps0;
-    launch.dt_over_mu = dt / kMu0;
-    SetBoundaryCode(&launch, metallic_edges);
-    return launch;
+    return InitializeLaunch(abi_version, cuda_flags, phase, cpml_enabled ? 6 : 0,
+                            metric_kind, dt, resolution, metallic_edges);
   };
   BeamzLaunch h_launch = initialize(0);
   BeamzLaunch e_launch = initialize(1);
@@ -542,8 +501,8 @@ ffi::Error StreamedSourceGroupsCpmlStepsHandler(
 // without racing another block that still needs the old magnetic halo.
 ffi::Error TemporalSourceGroupsCpmlStepsHandler(
     void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
-    int32_t abi_version, int32_t nsteps, float dt, float resolution,
-    int32_t metallic_edges, int32_t metric_kind,
+    int32_t abi_version, int32_t cuda_flags, int32_t nsteps, float dt,
+    float resolution, int32_t metallic_edges, int32_t metric_kind,
     int32_t coincident_source_group_mask) {
   constexpr int32_t kSourceGroupCount = 9;
   constexpr size_t kGraphInputCount = 74;
@@ -577,18 +536,8 @@ ffi::Error TemporalSourceGroupsCpmlStepsHandler(
   }
 
   auto initialize = [&](int32_t phase) {
-    BeamzLaunch launch{};
-    launch.abi_version = abi_version;
-    launch.phase = phase;
-    launch.nterms = 6;
-    launch.metric_kind = metric_kind;
-    launch.dt = dt;
-    launch.resolution = resolution;
-    launch.inv_resolution = 1.0f / resolution;
-    launch.dt_over_eps = dt / kEps0;
-    launch.dt_over_mu = dt / kMu0;
-    SetBoundaryCode(&launch, metallic_edges);
-    return launch;
+    return InitializeLaunch(abi_version, cuda_flags, phase, 6,
+                            metric_kind, dt, resolution, metallic_edges);
   };
   BeamzLaunch h_ab = initialize(0);
   BeamzLaunch e_ab = initialize(1);
@@ -615,7 +564,7 @@ ffi::Error TemporalSourceGroupsCpmlStepsHandler(
     h_ab.inputs[6 + index] = h_ba.inputs[6 + index] = inputs[6 + index];
     e_ab.inputs[6 + index] = e_ba.inputs[6 + index] = inputs[37 + index];
   }
-  const bool temporal_psi = TemporalPsiEnabled();
+  const bool temporal_psi = (cuda_flags & kBeamzTemporalPsi) != 0;
   for (int term = 0; term < 6; ++term) {
     h_ab.outputs[3 + term] =
         temporal_psi ? outputs[24 + term] : outputs[12 + term];
@@ -659,9 +608,9 @@ ffi::Error TemporalSourceGroupsCpmlStepsHandler(
 
 ffi::Error TemporalProgramCpmlStepsHandler(
     void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
-    int32_t abi_version, int32_t nsteps, float dt, float resolution,
-    int32_t metallic_edges, int32_t metric_kind, int32_t monitor_count,
-    int32_t coincident_source_group_mask) {
+    int32_t abi_version, int32_t cuda_flags, int32_t nsteps, float dt,
+    float resolution, int32_t metallic_edges, int32_t metric_kind,
+    int32_t monitor_count, int32_t coincident_source_group_mask) {
   constexpr int32_t kSourceGroupCount = 9;
   constexpr size_t kGraphInputCount = 74;
   constexpr size_t kWorkspaceInputCount = 18;
@@ -695,18 +644,8 @@ ffi::Error TemporalProgramCpmlStepsHandler(
   }
 
   auto initialize = [&](int32_t phase) {
-    BeamzLaunch launch{};
-    launch.abi_version = abi_version;
-    launch.phase = phase;
-    launch.nterms = 6;
-    launch.metric_kind = metric_kind;
-    launch.dt = dt;
-    launch.resolution = resolution;
-    launch.inv_resolution = 1.0f / resolution;
-    launch.dt_over_eps = dt / kEps0;
-    launch.dt_over_mu = dt / kMu0;
-    SetBoundaryCode(&launch, metallic_edges);
-    return launch;
+    return InitializeLaunch(abi_version, cuda_flags, phase, 6,
+                            metric_kind, dt, resolution, metallic_edges);
   };
   BeamzLaunch h_ab = initialize(0);
   BeamzLaunch e_ab = initialize(1);
@@ -731,7 +670,7 @@ ffi::Error TemporalProgramCpmlStepsHandler(
     h_ab.inputs[6 + index] = h_ba.inputs[6 + index] = inputs[6 + index];
     e_ab.inputs[6 + index] = e_ba.inputs[6 + index] = inputs[37 + index];
   }
-  const bool temporal_psi = TemporalPsiEnabled();
+  const bool temporal_psi = (cuda_flags & kBeamzTemporalPsi) != 0;
   for (int term = 0; term < 6; ++term) {
     h_ab.outputs[3 + term] =
         temporal_psi ? outputs[24 + term] : outputs[12 + term];
@@ -790,9 +729,10 @@ ffi::Error TemporalProgramCpmlStepsHandler(
 
 ffi::Error StreamedProgramCpmlStepsHandler(
     void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
-    int32_t abi_version, int32_t nsteps, float dt, float resolution,
-    int32_t metallic_edges, int32_t metric_kind, int32_t cpml_enabled,
-    int32_t monitor_count, int32_t coincident_source_group_mask) {
+    int32_t abi_version, int32_t cuda_flags, int32_t nsteps, float dt,
+    float resolution, int32_t metallic_edges, int32_t metric_kind,
+    int32_t cpml_enabled, int32_t monitor_count,
+    int32_t coincident_source_group_mask) {
   constexpr int32_t kSourceGroupCount = 9;
   if (abi_version != BEAMZ_CUDA_ABI_VERSION || nsteps < 1 ||
       metric_kind < 0 || metric_kind > 2 || cpml_enabled < 0 ||
@@ -826,18 +766,8 @@ ffi::Error StreamedProgramCpmlStepsHandler(
   }
 
   auto initialize = [&](int32_t phase) {
-    BeamzLaunch launch{};
-    launch.abi_version = abi_version;
-    launch.phase = phase;
-    launch.nterms = cpml_enabled ? 6 : 0;
-    launch.metric_kind = metric_kind;
-    launch.dt = dt;
-    launch.resolution = resolution;
-    launch.inv_resolution = 1.0f / resolution;
-    launch.dt_over_eps = dt / kEps0;
-    launch.dt_over_mu = dt / kMu0;
-    SetBoundaryCode(&launch, metallic_edges);
-    return launch;
+    return InitializeLaunch(abi_version, cuda_flags, phase, cpml_enabled ? 6 : 0,
+                            metric_kind, dt, resolution, metallic_edges);
   };
   BeamzLaunch h_launch = initialize(0);
   BeamzLaunch e_launch = initialize(1);
@@ -912,10 +842,11 @@ ffi::Error StreamedProgramCpmlStepsHandler(
 
 ffi::Error StreamedSourceMonitorCpmlStepsHandler(
     void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
-    int32_t abi_version, int32_t nsteps, float dt, float resolution,
-    int32_t metallic_edges, int32_t source_component, int32_t source_start_z,
-    int32_t source_start_y, int32_t source_start_x, int32_t frequency_count,
-    int32_t point_count, int32_t metric_kind, int32_t cpml_enabled) {
+    int32_t abi_version, int32_t cuda_flags, int32_t nsteps, float dt,
+    float resolution, int32_t metallic_edges, int32_t source_component,
+    int32_t source_start_z, int32_t source_start_y, int32_t source_start_x,
+    int32_t frequency_count, int32_t point_count, int32_t metric_kind,
+    int32_t cpml_enabled) {
   if (abi_version != BEAMZ_CUDA_ABI_VERSION || nsteps < 1 ||
       source_component < 0 || source_component > 2 || frequency_count < 1 ||
       point_count < 1 || metric_kind < 0 || metric_kind > 2 ||
@@ -943,18 +874,8 @@ ffi::Error StreamedSourceMonitorCpmlStepsHandler(
   }
 
   auto initialize = [&](int32_t phase) {
-    BeamzLaunch launch{};
-    launch.abi_version = abi_version;
-    launch.phase = phase;
-    launch.nterms = cpml_enabled ? 6 : 0;
-    launch.metric_kind = metric_kind;
-    launch.dt = dt;
-    launch.resolution = resolution;
-    launch.inv_resolution = 1.0f / resolution;
-    launch.dt_over_eps = dt / kEps0;
-    launch.dt_over_mu = dt / kMu0;
-    SetBoundaryCode(&launch, metallic_edges);
-    return launch;
+    return InitializeLaunch(abi_version, cuda_flags, phase, cpml_enabled ? 6 : 0,
+                            metric_kind, dt, resolution, metallic_edges);
   };
   BeamzLaunch h_launch = initialize(0);
   BeamzLaunch e_launch = initialize(1);
@@ -1022,11 +943,12 @@ ffi::Error StreamedSourceMonitorCpmlStepsHandler(
 
 ffi::Error HopperHandler(void* stream, ffi::RemainingArgs args,
                          ffi::RemainingRets rets, int32_t abi_version,
-                         int32_t phase, int32_t nterms, float dt,
-                         float resolution, int32_t metallic_edges,
+                         int32_t cuda_flags, int32_t phase, int32_t nterms,
+                         float dt, float resolution, int32_t metallic_edges,
                          int32_t metric_kind) {
-  return Dispatch(BeamzLaunchHopper, stream, args, rets, abi_version, phase,
-                  nterms, dt, resolution, metallic_edges, metric_kind);
+  return Dispatch(BeamzLaunchHopper, stream, args, rets, abi_version,
+                  cuda_flags, phase, nterms, dt, resolution, metallic_edges,
+                  metric_kind);
 }
 
 }  // namespace
@@ -1037,6 +959,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_streamed, StreamedHandler,
                                   .RemainingArgs()
                                   .RemainingRets()
                                   .Attr<int32_t>("abi_version")
+                                  .Attr<int32_t>("cuda_flags")
                                   .Attr<int32_t>("phase")
                                   .Attr<int32_t>("nterms")
                                   .Attr<float>("dt")
@@ -1050,6 +973,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_streamed_steps, StreamedStepsHandler,
                                   .RemainingArgs()
                                   .RemainingRets()
                                   .Attr<int32_t>("abi_version")
+                                  .Attr<int32_t>("cuda_flags")
                                   .Attr<int32_t>("nsteps")
                                   .Attr<float>("dt")
                                   .Attr<float>("resolution")
@@ -1062,6 +986,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_temporal_steps, TemporalStepsHandler,
                                   .RemainingArgs()
                                   .RemainingRets()
                                   .Attr<int32_t>("abi_version")
+                                  .Attr<int32_t>("cuda_flags")
                                   .Attr<int32_t>("nsteps")
                                   .Attr<float>("dt")
                                   .Attr<float>("resolution")
@@ -1075,6 +1000,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .RemainingArgs()
         .RemainingRets()
         .Attr<int32_t>("abi_version")
+        .Attr<int32_t>("cuda_flags")
         .Attr<int32_t>("nsteps")
         .Attr<float>("dt")
         .Attr<float>("resolution")
@@ -1088,6 +1014,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .RemainingArgs()
         .RemainingRets()
         .Attr<int32_t>("abi_version")
+        .Attr<int32_t>("cuda_flags")
         .Attr<int32_t>("nsteps")
         .Attr<float>("dt")
         .Attr<float>("resolution")
@@ -1107,6 +1034,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .RemainingArgs()
         .RemainingRets()
         .Attr<int32_t>("abi_version")
+        .Attr<int32_t>("cuda_flags")
         .Attr<int32_t>("nsteps")
         .Attr<float>("dt")
         .Attr<float>("resolution")
@@ -1123,6 +1051,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .RemainingArgs()
         .RemainingRets()
         .Attr<int32_t>("abi_version")
+        .Attr<int32_t>("cuda_flags")
         .Attr<int32_t>("nsteps")
         .Attr<float>("dt")
         .Attr<float>("resolution")
@@ -1137,6 +1066,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .RemainingArgs()
         .RemainingRets()
         .Attr<int32_t>("abi_version")
+        .Attr<int32_t>("cuda_flags")
         .Attr<int32_t>("nsteps")
         .Attr<float>("dt")
         .Attr<float>("resolution")
@@ -1152,6 +1082,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .RemainingArgs()
         .RemainingRets()
         .Attr<int32_t>("abi_version")
+        .Attr<int32_t>("cuda_flags")
         .Attr<int32_t>("nsteps")
         .Attr<float>("dt")
         .Attr<float>("resolution")
@@ -1169,6 +1100,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .RemainingArgs()
         .RemainingRets()
         .Attr<int32_t>("abi_version")
+        .Attr<int32_t>("cuda_flags")
         .Attr<int32_t>("nsteps")
         .Attr<float>("dt")
         .Attr<float>("resolution")
@@ -1188,6 +1120,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_hopper, HopperHandler,
                                   .RemainingArgs()
                                   .RemainingRets()
                                   .Attr<int32_t>("abi_version")
+                                  .Attr<int32_t>("cuda_flags")
                                   .Attr<int32_t>("phase")
                                   .Attr<int32_t>("nterms")
                                   .Attr<float>("dt")

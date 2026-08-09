@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
@@ -9,6 +10,7 @@ import beamz as bz
 from beamz.design import MaterialGrid, RectilinearGrid
 from beamz.design.raster import Grid, Material, RasterOptions, Scene, rasterize
 from beamz.simulation import backend as backend_runtime
+from beamz.simulation import sharding as sharding_runtime
 
 
 class _FakeDevice:
@@ -110,6 +112,30 @@ def test_explicit_streamed_cuda_accepts_rectilinear_3d_simulations(monkeypatch):
 
     assert program.config.backend == "cuda_streamed"
     assert program.config.metric_kind == "rectilinear"
+
+
+def test_auto_preserves_jax_for_multi_device_sharding(monkeypatch):
+    monkeypatch.setattr(
+        backend_runtime,
+        "resolve_backend",
+        lambda backend: "cuda_streamed" if backend == "auto" else backend,
+    )
+    monkeypatch.setattr(sharding_runtime, "_jax_devices_for_config", lambda _cfg: ())
+
+    program = _rectilinear_3d_simulation().compile(
+        backend="auto", sharding={"num_devices": 2}
+    )
+
+    assert program.config.backend == "jax"
+
+
+def test_explicit_cuda_rejects_multi_device_sharding():
+    with pytest.raises(
+        backend_runtime.CudaBackendUnavailable, match="multi-device sharding"
+    ):
+        _rectilinear_3d_simulation().compile(
+            backend="cuda_streamed", sharding={"num_devices": 2}
+        )
 
 
 def test_hopper_cuda_rejects_rectilinear_3d_simulations():
@@ -329,3 +355,48 @@ def test_backend_participates_in_compiled_program_identity():
     assert jax_key != cuda_key
     assert jax_key.backend == "jax"
     assert cuda_key.backend == "cuda_streamed"
+
+
+def test_cuda_policy_participates_in_compiled_program_identity():
+    from beamz.simulation.compile import CompiledProgramKey
+
+    simulation = _rectilinear_3d_simulation()
+    request = simulation.to_request(num_steps=2, backend="cuda_streamed")
+    default_key = CompiledProgramKey.from_request(
+        replace(
+            request,
+            run=replace(request.run, cuda_flags=backend_runtime.CUDA_DEFAULT_FLAGS),
+        )
+    )
+    uncached_key = CompiledProgramKey.from_request(
+        replace(
+            request,
+            run=replace(
+                request.run,
+                cuda_flags=(
+                    backend_runtime.CUDA_DEFAULT_FLAGS
+                    & ~backend_runtime.CUDA_GRAPH_CACHE
+                ),
+            ),
+        )
+    )
+
+    assert default_key != uncached_key
+
+
+def test_cuda_policy_is_snapshotted_when_program_is_compiled(monkeypatch):
+    monkeypatch.setattr(
+        backend_runtime,
+        "resolve_backend",
+        lambda backend: "cuda_streamed" if backend == "cuda_streamed" else backend,
+    )
+    simulation = _rectilinear_3d_simulation()
+    simulation.clear_compiled_cache()
+
+    first = simulation.compile(backend="cuda_streamed")
+    monkeypatch.setenv("BEAMZ_CUDA_DISABLE_GRAPH_CACHE", "1")
+    second = simulation.compile(backend="cuda_streamed")
+
+    assert first.config.cuda_flags & backend_runtime.CUDA_GRAPH_CACHE
+    assert not second.config.cuda_flags & backend_runtime.CUDA_GRAPH_CACHE
+    assert first is not second

@@ -27,8 +27,7 @@ def test_cuda_coefficient_ids_round_trip_exact_fp32_values():
     assert packed.size == 2
 
 
-def test_cuda_lossless_codebook_requires_scalar_unit_decay(monkeypatch):
-    monkeypatch.delenv("BEAMZ_CUDA_DISABLE_MATERIAL_CODEBOOK", raising=False)
+def test_cuda_lossless_codebook_requires_scalar_unit_decay():
     sources = tuple(np.asarray([[[1.0, 2.0, 1.0]]], dtype=np.float32) for _ in range(3))
 
     packed = _pack_cuda_lossless_e_coefficients(
@@ -46,18 +45,6 @@ def test_cuda_lossless_codebook_requires_scalar_unit_decay(monkeypatch):
         _pack_cuda_lossless_e_coefficients(
             (np.asarray(0.9, dtype=np.float32), *(np.asarray(1.0) for _ in range(2))),
             sources,
-        )
-        is None
-    )
-
-
-def test_cuda_material_codebook_debug_disable(monkeypatch):
-    monkeypatch.setenv("BEAMZ_CUDA_DISABLE_MATERIAL_CODEBOOK", "1")
-    sources = tuple(np.ones((1, 1, 1), dtype=np.float32) for _ in range(3))
-
-    assert (
-        _pack_cuda_lossless_e_coefficients(
-            tuple(np.asarray(1.0, dtype=np.float32) for _ in range(3)), sources
         )
         is None
     )

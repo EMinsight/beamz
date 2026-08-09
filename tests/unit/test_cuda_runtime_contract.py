@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import jax.numpy as jnp
 import numpy as np
 
+from beamz.simulation import backend as backend_runtime
 from beamz.simulation import kernels
 from beamz.simulation.compile import _elide_uniform_grid
 from beamz.simulation.cuda import runtime as cuda_runtime
@@ -37,7 +38,11 @@ def _program_and_state(*, cpml: bool, source: bool = False, monitor: bool = Fals
         current_step=0,
         monitor_steps=3,
     )
-    config = replace(program.config, backend="cuda_streamed")
+    config = replace(
+        program.config,
+        backend="cuda_streamed",
+        cuda_flags=backend_runtime.CUDA_DEFAULT_FLAGS,
+    )
     context = kernels.CompiledStepContext(
         config=config,
         boundary=program.boundary,
@@ -75,6 +80,13 @@ def test_cuda_cpml_bf16_state_is_explicit_and_preserves_continuation(monkeypatch
         cpml_psi_e_terms=tuple(value - 0.25 for value in state.cpml_psi_e_terms),
     )
     monkeypatch.setenv("BEAMZ_CUDA_CPML_PSI_PRECISION", "bf16")
+    cuda_program = replace(
+        cuda_program,
+        config=replace(
+            cuda_program.config,
+            cuda_flags=backend_runtime.cuda_flags_from_env(),
+        ),
+    )
 
     converted = initial_program_state(
         cuda_program,
@@ -94,15 +106,11 @@ def test_cuda_cpml_bf16_state_is_explicit_and_preserves_continuation(monkeypatch
     )
 
 
-def test_cuda_cpml_rejects_unknown_psi_precision(monkeypatch):
-    program, _state, _context = _program_and_state(cpml=True)
-    cuda_program = replace(
-        program, config=replace(program.config, backend="cuda_streamed")
-    )
+def test_cuda_policy_rejects_unknown_psi_precision(monkeypatch):
     monkeypatch.setenv("BEAMZ_CUDA_CPML_PSI_PRECISION", "fp8")
 
     with np.testing.assert_raises_regex(ValueError, "must be 'fp32' or 'bf16'"):
-        initial_program_state(cuda_program, t=0.0, current_step=0, monitor_steps=3)
+        backend_runtime.cuda_flags_from_env()
 
 
 def test_cuda_ffi_phase_packs_cpml_and_aliases_state(monkeypatch):
@@ -128,6 +136,7 @@ def test_cuda_ffi_phase_packs_cpml_and_aliases_state(monkeypatch):
     assert len(arguments) == 40
     assert attributes == {
         "abi_version": np.int32(cuda_runtime.CUDA_ABI_VERSION),
+        "cuda_flags": np.int32(context.config.cuda_flags),
         "phase": np.int32(0),
         "nterms": np.int32(6),
         "dt": np.float32(context.dt),
@@ -215,6 +224,7 @@ def test_cuda_multi_step_ffi_aliases_all_fields(monkeypatch):
     assert options["input_output_aliases"] == {index: index for index in range(12)}
     assert attributes == {
         "abi_version": np.int32(cuda_runtime.CUDA_ABI_VERSION),
+        "cuda_flags": np.int32(context.config.cuda_flags),
         "nsteps": np.int32(7),
         "dt": np.float32(context.dt),
         "resolution": np.float32(context.resolution),

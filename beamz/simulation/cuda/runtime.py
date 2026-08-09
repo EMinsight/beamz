@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-import os
-
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from beamz.simulation.backend import CUDA_ABI_VERSION
+from beamz.simulation.backend import (
+    CUDA_ABI_VERSION,
+    CUDA_TEMPORAL_CPML,
+    CUDA_TEMPORAL_PSI,
+    CUDA_TEMPORAL_YEE,
+)
 from beamz.simulation.model import SimulationState
 
 _PHASE_H = 0
@@ -91,6 +94,7 @@ def _ffi_phase(
     metric_kind,
     dt,
     resolution,
+    cuda_flags,
     metallic_edges,
 ):
     if len(terms) != len(psi_terms):
@@ -125,6 +129,7 @@ def _ffi_phase(
     outputs = call(
         *arguments,
         abi_version=np.int32(CUDA_ABI_VERSION),
+        cuda_flags=np.int32(cuda_flags),
         phase=np.int32(phase),
         nterms=np.int32(len(terms)),
         dt=np.float32(dt),
@@ -174,6 +179,7 @@ def update_h(state, ctx, coeffs) -> SimulationState:
         metric_kind=_metric_kind_code(ctx),
         dt=ctx.dt,
         resolution=ctx.resolution,
+        cuda_flags=ctx.config.cuda_flags,
         metallic_edges=ctx.boundary.cpml.metallic_edges,
     )
     return state._replace(
@@ -223,6 +229,7 @@ def update_e(state, ctx, coeffs) -> SimulationState:
         metric_kind=_metric_kind_code(ctx),
         dt=ctx.dt,
         resolution=ctx.resolution,
+        cuda_flags=ctx.config.cuda_flags,
         metallic_edges=ctx.boundary.cpml.metallic_edges,
     )
     return state._replace(
@@ -339,17 +346,15 @@ def _coincident_source_group_mask(groups) -> int:
 
 def _temporal_cpml_source_groups_supported(ctx, coeffs, nsteps: int) -> bool:
     """Whether a frozen second field bank can use the fused regular-grid core."""
-    disabled = os.environ.get("BEAMZ_CUDA_DISABLE_CPML_TEMPORAL", "")
-    if disabled and disabled != "0":
-        return False
     if (
-        nsteps < 2
+        not ctx.config.cuda_flags & CUDA_TEMPORAL_CPML
+        or nsteps < 2
         or not ctx.boundary.cpml.enabled
         or ctx.config.metric_kind != "isotropic_uniform"
-        or (_boundary_code(
-            ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms
+        or (
+            _boundary_code(ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms)
+            >> 8
         )
-        >> 8)
         <= 0
     ):
         return False
@@ -393,13 +398,12 @@ def run_source_steps(state, ctx, coeffs, source, nsteps: int) -> SimulationState
         source.waveform,
         state.current_step,
         abi_version=np.int32(CUDA_ABI_VERSION),
+        cuda_flags=np.int32(ctx.config.cuda_flags),
         nsteps=np.int32(nsteps),
         dt=np.float32(ctx.dt),
         resolution=np.float32(ctx.resolution),
         metallic_edges=np.int32(
-            _boundary_code(
-                ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms
-            )
+            _boundary_code(ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms)
         ),
         metric_kind=_metric_kind_code(ctx),
         cpml_enabled=np.int32(ctx.boundary.cpml.enabled),
@@ -470,18 +474,15 @@ def run_source_group_steps(state, ctx, coeffs, groups, nsteps: int) -> Simulatio
         *source_arguments,
         state.current_step,
         abi_version=np.int32(CUDA_ABI_VERSION),
+        cuda_flags=np.int32(ctx.config.cuda_flags),
         nsteps=np.int32(nsteps),
         dt=np.float32(ctx.dt),
         resolution=np.float32(ctx.resolution),
         metallic_edges=np.int32(
-            _boundary_code(
-                ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms
-            )
+            _boundary_code(ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms)
         ),
         metric_kind=_metric_kind_code(ctx),
-        coincident_source_group_mask=np.int32(
-            _coincident_source_group_mask(groups)
-        ),
+        coincident_source_group_mask=np.int32(_coincident_source_group_mask(groups)),
         **(
             {}
             if use_temporal_cpml
@@ -490,10 +491,7 @@ def run_source_group_steps(state, ctx, coeffs, groups, nsteps: int) -> Simulatio
     )
     if use_temporal_cpml:
         field_start = 0 if nsteps % 2 == 0 else 6
-        temporal_psi = os.environ.get("BEAMZ_CUDA_DISABLE_TEMPORAL_PSI", "0") in {
-            "",
-            "0",
-        }
+        temporal_psi = bool(ctx.config.cuda_flags & CUDA_TEMPORAL_PSI)
         psi_start = 12 if nsteps % 2 == 0 or not temporal_psi else 24
         return state._replace(
             hx=outputs[field_start],
@@ -681,19 +679,16 @@ def run_program_steps(
         state.t,
         state.current_step,
         abi_version=np.int32(CUDA_ABI_VERSION),
+        cuda_flags=np.int32(ctx.config.cuda_flags),
         nsteps=np.int32(nsteps),
         dt=np.float32(ctx.dt),
         resolution=np.float32(ctx.resolution),
         metallic_edges=np.int32(
-            _boundary_code(
-                ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms
-            )
+            _boundary_code(ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms)
         ),
         metric_kind=_metric_kind_code(ctx),
         monitor_count=np.int32(packed_monitors[0].shape[0]),
-        coincident_source_group_mask=np.int32(
-            _coincident_source_group_mask(groups)
-        ),
+        coincident_source_group_mask=np.int32(_coincident_source_group_mask(groups)),
         **(
             {}
             if use_temporal_cpml
@@ -702,10 +697,7 @@ def run_program_steps(
     )
     if use_temporal_cpml:
         field_start = 0 if nsteps % 2 == 0 else 6
-        temporal_psi = os.environ.get("BEAMZ_CUDA_DISABLE_TEMPORAL_PSI", "0") in {
-            "",
-            "0",
-        }
+        temporal_psi = bool(ctx.config.cuda_flags & CUDA_TEMPORAL_PSI)
         psi_start = 12 if nsteps % 2 == 0 or not temporal_psi else 24
         next_state = state._replace(
             hx=outputs[field_start],
@@ -808,13 +800,12 @@ def run_source_monitor_steps(
         phase_cos,
         phase_sin,
         abi_version=np.int32(CUDA_ABI_VERSION),
+        cuda_flags=np.int32(ctx.config.cuda_flags),
         nsteps=np.int32(nsteps),
         dt=np.float32(ctx.dt),
         resolution=np.float32(ctx.resolution),
         metallic_edges=np.int32(
-            _boundary_code(
-                ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms
-            )
+            _boundary_code(ctx.boundary.cpml.metallic_edges, ctx.boundary.cpml.h_terms)
         ),
         metric_kind=_metric_kind_code(ctx),
         cpml_enabled=np.int32(ctx.boundary.cpml.enabled),
@@ -865,6 +856,7 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
         outputs = call(
             *arguments,
             abi_version=np.int32(CUDA_ABI_VERSION),
+            cuda_flags=np.int32(ctx.config.cuda_flags),
             nsteps=np.int32(nsteps),
             dt=np.float32(ctx.dt),
             resolution=np.float32(ctx.resolution),
@@ -890,12 +882,8 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
         coeffs.e_source_y,
         coeffs.e_source_z,
     )
-    temporal_enabled = os.environ.get("BEAMZ_CUDA_DISABLE_TEMPORAL", "0") in {
-        "",
-        "0",
-    }
     temporal_eligible = (
-        temporal_enabled
+        bool(ctx.config.cuda_flags & CUDA_TEMPORAL_YEE)
         and nsteps >= 4
         and _metallic_edge_mask(ctx.boundary.cpml.metallic_edges) == 63
     )
@@ -914,6 +902,7 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
             *_phase_metrics(ctx, _PHASE_H),
             *_phase_metrics(ctx, _PHASE_E),
             abi_version=np.int32(CUDA_ABI_VERSION),
+            cuda_flags=np.int32(ctx.config.cuda_flags),
             nsteps=np.int32(nsteps),
             dt=np.float32(ctx.dt),
             resolution=np.float32(ctx.resolution),
@@ -940,6 +929,7 @@ def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:
         *_phase_metrics(ctx, _PHASE_H),
         *_phase_metrics(ctx, _PHASE_E),
         abi_version=np.int32(CUDA_ABI_VERSION),
+        cuda_flags=np.int32(ctx.config.cuda_flags),
         nsteps=np.int32(nsteps),
         dt=np.float32(ctx.dt),
         resolution=np.float32(ctx.resolution),

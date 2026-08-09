@@ -21,6 +21,7 @@ from beamz.devices.sources.compiler import (
     CompiledSourceSpec,
     batch_slab_specs,
 )
+from beamz.simulation.backend import CUDA_BF16_PSI
 from beamz.simulation.model import (
     AutoTermination,
     CompiledProgram,
@@ -858,12 +859,12 @@ def initial_program_state(
     """Allocate or restore every runtime buffer required by a compiled plan."""
     cpml, layout = program.boundary.cpml, program.sharding.layout
     psi_dtype = None
-    if program.config.backend == "cuda_streamed" and cpml.enabled:
-        precision = os.environ.get("BEAMZ_CUDA_CPML_PSI_PRECISION", "fp32").lower()
-        if precision in {"bf16", "bfloat16"}:
-            psi_dtype = jnp.bfloat16
-        elif precision not in {"fp32", "float32", ""}:
-            raise ValueError("BEAMZ_CUDA_CPML_PSI_PRECISION must be 'fp32' or 'bf16'")
+    if (
+        program.config.backend == "cuda_streamed"
+        and cpml.enabled
+        and program.config.cuda_flags & CUDA_BF16_PSI
+    ):
+        psi_dtype = jnp.bfloat16
 
     def field(name):
         # Fresh runs use the compiled lattice; continuations supply evolved canonical

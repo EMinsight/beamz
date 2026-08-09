@@ -9,6 +9,23 @@ enum BeamzElementType : int32_t {
   kBeamzBF16 = 2,
 };
 
+enum BeamzCudaFlag : int32_t {
+  kBeamzTypedPsi = 1 << 0,
+  kBeamzPrecomputedDftPhases = 1 << 1,
+  kBeamzBatchedSourceGroups = 1 << 2,
+  kBeamzCoincidentSourceGroups = 1 << 3,
+  kBeamzAdaptiveSourceTiles = 1 << 4,
+  kBeamzCpmlCoreSplit = 1 << 5,
+  kBeamzCombinedCpmlQueue = 1 << 6,
+  kBeamzPersistentCpml = 1 << 7,
+  kBeamzGraphCache = 1 << 8,
+  kBeamzTemporalPsi = 1 << 9,
+  kBeamzTemporalCpml = 1 << 10,
+  kBeamzTemporalYee = 1 << 11,
+  kBeamzMaterialCodebook = 1 << 12,
+  kBeamzBf16Psi = 1 << 13,
+};
+
 struct BeamzBuffer {
   void* data;
   int32_t rank;
@@ -18,6 +35,7 @@ struct BeamzBuffer {
 
 struct BeamzLaunch {
   int32_t abi_version;
+  int32_t cuda_flags;
   int32_t phase;
   int32_t nterms;
   int32_t metric_kind;

@@ -34,6 +34,7 @@ class RunSpec:
     source_single_slab_dense: bool
     sharding: ShardingToken
     backend: str = "jax"
+    cuda_flags: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -460,6 +461,7 @@ class RunConfig:
     source_single_slab_dense: bool = False
     backend: str = "jax"
     sharding: ShardingConfig = ShardingConfig()
+    cuda_flags: int = 0
 
 
 @dataclass(frozen=True, slots=True, eq=False)

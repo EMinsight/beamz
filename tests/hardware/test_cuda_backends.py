@@ -334,21 +334,21 @@ def test_persistent_cpml_covers_every_cell_and_matches_graph(monkeypatch):
     # absolute tolerance used for physically scaled parity workloads.
     state = state._replace(
         **{
-            name: np.asarray(getattr(state, name), dtype=np.float32)
-            * np.float32(1e5)
+            name: np.asarray(getattr(state, name), dtype=np.float32) * np.float32(1e5)
             for name in ("ex", "ey", "ez", "hx", "hy", "hz")
         }
     )
-    program = simulation.compile(num_steps=24, backend="cuda_streamed")
-    scan = build_scan(program)
-
     monkeypatch.setenv("BEAMZ_CUDA_ENABLE_PERSISTENT_CPML", "1")
     monkeypatch.delenv("BEAMZ_CUDA_DISABLE_PERSISTENT_CPML", raising=False)
-    persistent = scan(_copy_state(state), program.coefficients)
+    persistent_program = simulation.compile(num_steps=24, backend="cuda_streamed")
+    persistent = build_scan(persistent_program)(
+        _copy_state(state), persistent_program.coefficients
+    )
     persistent.ez.block_until_ready()
 
     monkeypatch.setenv("BEAMZ_CUDA_DISABLE_PERSISTENT_CPML", "1")
-    graph = scan(_copy_state(state), program.coefficients)
+    graph_program = simulation.compile(num_steps=24, backend="cuda_streamed")
+    graph = build_scan(graph_program)(_copy_state(state), graph_program.coefficients)
     graph.ez.block_until_ready()
 
     _assert_state_close(graph, persistent, dynamic_atol_scale=1e-7)
@@ -362,11 +362,12 @@ def test_bf16_cpml_hybrid_queue_matches_split_schedule(monkeypatch):
         heterogeneous=False,
         timesteps=24,
     )
-    program = simulation.compile(num_steps=24, backend="cuda_streamed")
     monkeypatch.setenv("BEAMZ_CUDA_CPML_PSI_PRECISION", "bf16")
     monkeypatch.setenv("BEAMZ_CUDA_DISABLE_GRAPH_CACHE", "1")
+    monkeypatch.delenv("BEAMZ_CUDA_DISABLE_COMBINED_CPML_QUEUE", raising=False)
+    hybrid_program = simulation.compile(num_steps=24, backend="cuda_streamed")
     state = initial_program_state(
-        program,
+        hybrid_program,
         t=float(simulation.time[0]),
         current_step=0,
         continuation=seeded,
@@ -376,19 +377,16 @@ def test_bf16_cpml_hybrid_queue_matches_split_schedule(monkeypatch):
     # would otherwise put a skipped row below the normal absolute tolerance.
     state = state._replace(
         **{
-            name: np.asarray(getattr(state, name), dtype=np.float32)
-            * np.float32(1e5)
+            name: np.asarray(getattr(state, name), dtype=np.float32) * np.float32(1e5)
             for name in ("ex", "ey", "ez", "hx", "hy", "hz")
         }
     )
-    scan = build_scan(program)
-
-    monkeypatch.delenv("BEAMZ_CUDA_DISABLE_COMBINED_CPML_QUEUE", raising=False)
-    hybrid = scan(_copy_state(state), program.coefficients)
+    hybrid = build_scan(hybrid_program)(_copy_state(state), hybrid_program.coefficients)
     hybrid.ez.block_until_ready()
 
     monkeypatch.setenv("BEAMZ_CUDA_DISABLE_COMBINED_CPML_QUEUE", "1")
-    split = scan(_copy_state(state), program.coefficients)
+    split_program = simulation.compile(num_steps=24, backend="cuda_streamed")
+    split = build_scan(split_program)(_copy_state(state), split_program.coefficients)
     split.ez.block_until_ready()
 
     _assert_state_close(split, hybrid, dynamic_atol_scale=1e-7)
