@@ -339,21 +339,27 @@ class CapacitySweep:
                     result["capacity"]["fitted_allocator_capacity_cells"] = max(
                         0, int(available / memory_fit["slope"])
                     )
-                    physical_available = (
-                        self.total_gpu_memory_bytes
-                        - self.baseline_gpu_memory_bytes
-                        - memory_fit["intercept"]
-                    )
-                    fitted_physical_cells = max(
-                        0, int(physical_available / memory_fit["slope"])
-                    )
-                    result["capacity"]["fitted_shared_gpu_capacity_cells"] = (
-                        fitted_physical_cells
-                    )
-                    if fitted_physical_cells > 0:
-                        result["capacity"]["fitted_shared_gpu_resolution_nm"] = (
+                    fitted_allocator_cells = result["capacity"][
+                        "fitted_allocator_capacity_cells"
+                    ]
+                    if fitted_allocator_cells > 0:
+                        result["capacity"]["fitted_allocator_resolution_nm"] = (
                             largest.resolution_nm
-                            * (largest.cells / fitted_physical_cells) ** (1.0 / 3.0)
+                            * (largest.cells / fitted_allocator_cells) ** (1.0 / 3.0)
+                        )
+                    total_vram_available = (
+                        self.total_gpu_memory_bytes - memory_fit["intercept"]
+                    )
+                    fitted_total_vram_cells = max(
+                        0, int(total_vram_available / memory_fit["slope"])
+                    )
+                    result["capacity"]["fitted_total_vram_capacity_cells"] = (
+                        fitted_total_vram_cells
+                    )
+                    if fitted_total_vram_cells > 0:
+                        result["capacity"]["fitted_total_vram_resolution_nm"] = (
+                            largest.resolution_nm
+                            * (largest.cells / fitted_total_vram_cells) ** (1.0 / 3.0)
                         )
         if modal_summary and bare_summary:
             result["bare_to_modal_best_gcups_ratio"] = (
@@ -502,9 +508,9 @@ def _markdown_report(sweep: CapacitySweep) -> str:
             f"{capacity['shared_gpu_safety_stop_resolution_nm']:.3g} nm** was not "
             "re-run after the allocation transition closed the T3/Chromium GPU "
             "process twice. The active-memory fit projects "
-            f"**{_format_cells(capacity['fitted_shared_gpu_capacity_cells'])} "
-            "cells** on nominal free VRAM, but that projection is not a measured "
-            "capacity point."
+            f"**{_format_cells(capacity['fitted_allocator_capacity_cells'])} "
+            "cells** against the configured allocator limit, but that projection "
+            "is not a measured capacity point."
         )
     lines.extend(
         [
@@ -796,8 +802,8 @@ def _report_artifact(sweep: CapacitySweep) -> dict[str, Any]:
             " The next allocation transition destabilized the shared T3/Chromium "
             "GPU process twice, so the measured capacity is a safe lower bound; "
             f"the active-memory fit projects about "
-            f"{_format_cells(capacity['fitted_shared_gpu_capacity_cells'])} cells "
-            "against nominal free VRAM."
+            f"{_format_cells(capacity['fitted_allocator_capacity_cells'])} cells "
+            "against the configured allocator limit."
         )
     else:
         capacity_text = (
