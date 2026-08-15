@@ -14,10 +14,12 @@ from __future__ import annotations
 
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
+from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
 import numpy as np
 
+from beamz.analysis import SParameterResult, s_parameters
 from beamz.const import LIGHT_SPEED, µm
 from beamz.design.gds import ImportedComponent, import_component
 from beamz.design.grid_spec import GridSpec
@@ -25,7 +27,7 @@ from beamz.design.materials import Material
 from beamz.devices.boundaries import PML
 from beamz.devices.modes import ModeSpec
 from beamz.devices.ports import Port
-from beamz.simulation import Simulation
+from beamz.simulation import AutoTermination, Simulation, SimulationResults
 
 Layer = tuple[int, int]
 
@@ -206,11 +208,15 @@ class PreparedComponent:
 
     def simulation_template(self) -> Simulation:
         """Build a source-free native BeamZ simulation with all modal monitors."""
-        monitors = tuple(port.to_monitor(self.settings.frequencies) for port in self.ports)
+        monitors = tuple(
+            port.to_monitor(self.settings.frequencies) for port in self.ports
+        )
         return Simulation(
             design=self.design,
             monitors=monitors,
-            boundaries=(PML(thickness=self.settings.pml_thickness, formulation="cpml"),),
+            boundaries=(
+                PML(thickness=self.settings.pml_thickness, formulation="cpml"),
+            ),
             grid_spec=self.settings.resolved_grid_spec(),
             run_time=self.settings.run_time,
             normalize_source=0,
@@ -264,6 +270,182 @@ class PreparedComponent:
         port = self.ports[0].name if source_port is None else source_port
         return self.simulation_for(port).plot(**kwargs)
 
+    def run_sparameters(
+        self,
+        excitations: str | Sequence[str] = "all",
+        *,
+        termination: AutoTermination | None = None,
+        progress: bool = False,
+        sharding: Any = None,
+        min_incident_db: float = -40.0,
+        mode_strategy: str = "per_frequency",
+    ) -> ComponentSimulationResults:
+        """Run one local BeamZ simulation per requested input port.
+
+        This is a convenience over :meth:`simulation_for`, not a distinct solver
+        API: every run uses ordinary BeamZ sources, monitors, and detached
+        ``SimulationResults``.  ``excitations='all'`` returns the full named
+        S-matrix; a sequence, or one port name, computes selected columns.
+        """
+        if excitations == "all":
+            source_names = tuple(port.name for port in self.ports)
+        elif isinstance(excitations, str):
+            source_names = (excitations,)
+        else:
+            source_names = tuple(str(name) for name in excitations)
+        if not source_names:
+            raise ValueError("excitations must select at least one source port.")
+        if len(set(source_names)) != len(source_names):
+            raise ValueError("excitations must not contain duplicate port names.")
+        unknown = sorted(set(source_names).difference(port.name for port in self.ports))
+        if unknown:
+            raise ValueError(f"excitations contains unknown port(s): {unknown}.")
+
+        native_results: dict[str, SimulationResults] = {}
+        extracted: dict[str, SParameterResult] = {}
+        combined: dict[tuple[str, str], np.ndarray] = {}
+        diagnostics: dict[str, Any] = {}
+        for source_name in source_names:
+            result = self.simulation_for(source_name).run(
+                termination=termination,
+                progress=progress,
+                sharding=sharding,
+            )
+            column = s_parameters(
+                result,
+                source_port=source_name,
+                ports=self.ports,
+                frequencies=self.settings.frequencies,
+                min_incident_db=min_incident_db,
+                mode_strategy=mode_strategy,
+            )
+            native_results[source_name] = result
+            extracted[source_name] = column
+            combined.update(column.s_matrix)
+            diagnostics[source_name] = column.diagnostics
+
+        s_matrix = SParameterResult(
+            s_matrix=combined,
+            frequencies=self.settings.frequencies,
+            diagnostics={
+                "source_columns": diagnostics,
+                "port_order": tuple(port.name for port in self.ports),
+                "normalization": "modal incident amplitude at source port datum",
+                "mode_strategy": str(mode_strategy).lower(),
+            },
+        )
+        return ComponentSimulationResults(
+            setup=self,
+            sparameters=s_matrix,
+            native_results=native_results,
+            source_columns=extracted,
+            provenance=_provenance(self, source_names),
+        )
+
+
+def _provenance(
+    setup: PreparedComponent, source_names: Sequence[str]
+) -> Mapping[str, object]:
+    """Build serializable, result-owned setup provenance."""
+    import beamz
+
+    return MappingProxyType(
+        {
+            "beamz_version": beamz.__version__,
+            "component_name": setup.component_name,
+            "source_ports": tuple(source_names),
+            "port_order": tuple(port.name for port in setup.ports),
+            "frequencies_hz": tuple(
+                float(value) for value in setup.settings.frequencies
+            ),
+            "wavelengths_m": setup.settings.wavelengths,
+            "layer": setup.settings.layer,
+            "pml_thickness_m": setup.settings.pml_thickness,
+            "run_time_s": setup.settings.run_time,
+            "normalization": "S[out, in] = outgoing/outgoing modal amplitude at port datums",
+        }
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ComponentSimulationResults:
+    """Detached GDSFactory-component results with native BeamZ provenance.
+
+    The result owns named S-parameters plus the native BeamZ results for each
+    excitation.  It never retains mutable simulation state.
+    """
+
+    setup: PreparedComponent
+    sparameters: SParameterResult
+    native_results: Mapping[str, SimulationResults]
+    source_columns: Mapping[str, SParameterResult]
+    provenance: Mapping[str, object]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.setup, PreparedComponent):
+            raise TypeError("setup must be a PreparedComponent.")
+        if not isinstance(self.sparameters, SParameterResult):
+            raise TypeError("sparameters must be an SParameterResult.")
+        object.__setattr__(
+            self, "native_results", MappingProxyType(dict(self.native_results))
+        )
+        object.__setattr__(
+            self, "source_columns", MappingProxyType(dict(self.source_columns))
+        )
+        object.__setattr__(self, "provenance", MappingProxyType(dict(self.provenance)))
+
+    def plot_sparameters(self, *, ax: Any = None, db: bool = True):
+        """Plot the named S-matrix columns against vacuum wavelength."""
+        import matplotlib.pyplot as plt
+
+        if ax is None:
+            _, ax = plt.subplots()
+        wavelength_um = LIGHT_SPEED / self.sparameters.frequencies / µm
+        for (output, source), values in self.sparameters.s_matrix.items():
+            magnitude = np.abs(np.asarray(values))
+            data = 20.0 * np.log10(np.maximum(magnitude, 1e-15)) if db else magnitude
+            ax.plot(wavelength_um, data, label=f"S{output},{source}")
+        ax.set_xlabel("Wavelength (um)")
+        ax.set_ylabel("Magnitude (dB)" if db else "Magnitude")
+        ax.legend()
+        return ax.figure, ax
+
+    def plot_field(self, excitation: str, *args: Any, **kwargs: Any):
+        """Plot a field from one result-owned native BeamZ execution."""
+        return self.native_results[str(excitation)].plot_field(*args, **kwargs)
+
+    def check_reciprocity(self) -> Mapping[str, object]:
+        """Return pairwise reciprocal-column residuals for available S entries."""
+        residuals: dict[tuple[str, str], float] = {}
+        matrix = self.sparameters.s_matrix
+        for (output, source), values in matrix.items():
+            reverse = matrix.get((source, output))
+            if reverse is not None and source <= output:
+                residuals[(output, source)] = float(
+                    np.max(np.abs(np.asarray(values) - np.asarray(reverse)))
+                )
+        return MappingProxyType(
+            {
+                "pairwise_max_abs_error": MappingProxyType(residuals),
+                "max_abs_error": max(residuals.values(), default=float("nan")),
+                "complete": len(residuals) > 0,
+            }
+        )
+
+    def check_passivity(self) -> Mapping[str, np.ndarray]:
+        """Return guided-output power sums for each available source column."""
+        frequencies = self.sparameters.frequencies
+        values: dict[str, np.ndarray] = {}
+        for source in self.source_columns:
+            total = np.zeros(frequencies.shape, dtype=float)
+            for port in self.setup.ports:
+                coefficient = self.sparameters.s_matrix.get((port.name, source))
+                if coefficient is not None:
+                    total += np.abs(np.asarray(coefficient)) ** 2
+            total.setflags(write=False)
+            values[source] = total
+        return MappingProxyType(values)
+
 
 def prepare(
     component: Any = "mmi1x2",
@@ -302,7 +484,9 @@ def prepare(
     )
     if not imported.ports:
         raise ValueError("GDSFactory component has no optical ports to simulate.")
-    ports = tuple(port.updated_copy(mode_spec=resolved.mode_spec) for port in imported.ports)
+    ports = tuple(
+        port.updated_copy(mode_spec=resolved.mode_spec) for port in imported.ports
+    )
     imported = ImportedComponent(
         design=imported.design,
         ports=ports,
@@ -322,6 +506,7 @@ prepare_component = prepare
 
 
 __all__ = [
+    "ComponentSimulationResults",
     "PortMetadata",
     "PreparedComponent",
     "Settings",
