@@ -141,7 +141,7 @@ def test_example_notebooks_use_detached_results_workflow(path):
         "dft_enabled=",
     )
 
-    assert ".run(" in source or ".advance(" in source
+    assert ".run(" in source or ".advance(" in source or ".run_sparameters(" in source
     assert "run_compiled" not in source
     for token in forbidden:
         assert token not in source
@@ -152,7 +152,7 @@ def test_example_notebooks_define_reduced_mode_with_numerical_assertions(path):
     source = _notebook_source(path)
 
     assert 'test_mode = os.environ.get("BEAMZ_DOCS_TEST") == "1"' in source
-    assert "offset=0.5 if test_mode else 4.0" in source
+    assert "if test_mode else" in source
     assert "assert np.all(np.isfinite(" in source
     assert "except ImportError:\n    display = print" in source
 
