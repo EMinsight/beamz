@@ -48,6 +48,10 @@ gds = [
     "gdsfactory>=8.0; python_version < '3.14'",
     "gdsfactory>=9.0; python_version >= '3.14'",
 ]
+gdsfactory = [
+    "gdsfactory>=8.0; python_version < '3.14'",
+    "gdsfactory>=9.0; python_version >= '3.14'",
+]
 mesh = [
     "meshio>=5.3",
     "trimesh>=4.5",

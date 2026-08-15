@@ -94,8 +94,45 @@ jobs:
           name: python-package-distributions
           path: dist/
 
+  package-qualification:
+    name: Qualify built GDSFactory workflow
+    needs: [build-sdist, build-wheels]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Download Linux wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: python-wheel-x86_64-unknown-linux-gnu
+          path: dist
+      - name: Download source distribution
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-sdist
+          path: dist
+      - name: Qualify executable GDSFactory documentation against built wheel
+        run: |
+          python -m venv /tmp/beamz-wheel-qualification
+          /tmp/beamz-wheel-qualification/bin/python -m pip install --upgrade pip
+          beamz_wheel=$(find dist -name '*.whl' -print -quit)
+          test -n "$beamz_wheel"
+          /tmp/beamz-wheel-qualification/bin/python -m pip install "$beamz_wheel[gdsfactory]"
+          /tmp/beamz-wheel-qualification/bin/python scripts/execute_markdown_python.py docs/gdsfactory.md
+      - name: Qualify executable GDSFactory documentation against source distribution
+        run: |
+          python -m venv /tmp/beamz-sdist-qualification
+          /tmp/beamz-sdist-qualification/bin/python -m pip install --upgrade pip
+          beamz_sdist=$(find dist -name '*.tar.gz' -print -quit)
+          test -n "$beamz_sdist"
+          /tmp/beamz-sdist-qualification/bin/python -m pip install "$beamz_sdist" "gdsfactory>=8.0"
+          /tmp/beamz-sdist-qualification/bin/python scripts/execute_markdown_python.py docs/gdsfactory.md
+
   github-release:
-    needs: build
+    needs: [build, package-qualification]
     runs-on: ubuntu-latest
     permissions:
       contents: write
