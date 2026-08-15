@@ -121,7 +121,8 @@ jobs:
           beamz_wheel=$(find dist -name '*.whl' -print -quit)
           test -n "$beamz_wheel"
           /tmp/beamz-wheel-qualification/bin/python -m pip install "$beamz_wheel[gdsfactory]"
-          /tmp/beamz-wheel-qualification/bin/python scripts/execute_markdown_python.py docs/gdsfactory.md
+          (cd /tmp && /tmp/beamz-wheel-qualification/bin/python "$GITHUB_WORKSPACE/scripts/execute_markdown_python.py" "$GITHUB_WORKSPACE/docs/gdsfactory.md")
+          (cd /tmp && JAX_PLATFORMS=cpu /tmp/beamz-wheel-qualification/bin/python "$GITHUB_WORKSPACE/scripts/gdsfactory_package_smoke.py")
       - name: Qualify executable GDSFactory documentation against source distribution
         run: |
           python -m venv /tmp/beamz-sdist-qualification
@@ -129,7 +130,8 @@ jobs:
           beamz_sdist=$(find dist -name '*.tar.gz' -print -quit)
           test -n "$beamz_sdist"
           /tmp/beamz-sdist-qualification/bin/python -m pip install "$beamz_sdist" "gdsfactory>=8.0"
-          /tmp/beamz-sdist-qualification/bin/python scripts/execute_markdown_python.py docs/gdsfactory.md
+          (cd /tmp && /tmp/beamz-sdist-qualification/bin/python "$GITHUB_WORKSPACE/scripts/execute_markdown_python.py" "$GITHUB_WORKSPACE/docs/gdsfactory.md")
+          (cd /tmp && JAX_PLATFORMS=cpu /tmp/beamz-sdist-qualification/bin/python "$GITHUB_WORKSPACE/scripts/gdsfactory_package_smoke.py")
 
   github-release:
     needs: [build, package-qualification]
