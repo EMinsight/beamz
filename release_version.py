@@ -139,7 +139,10 @@ def update_version(version):
     # Update pyproject.toml (primary source of truth)
     changes.append(
         update_version_in_file(
-            "pyproject.toml", version, r'version = "[^"]+"', 'version = "{version}"'
+            "pyproject.toml",
+            version,
+            r'(?m)^version\s*=\s*"[^"]+"',
+            'version = "{version}"',
         )
     )
 
