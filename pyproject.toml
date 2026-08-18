@@ -41,7 +41,8 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/beamzorg/beamz"
 Repository = "https://github.com/beamzorg/beamz"
-# Bug Tracker, Documentation etc. can be added here
+Documentation = "https://www.beamz.tech/docs/index"
+"Bug Tracker" = "https://github.com/beamzorg/beamz/issues"
 
 [project.optional-dependencies]
 gds = [

@@ -20,7 +20,7 @@
 
 
 ## Core Features
-- **100% Python**, free (Apache-2.0 license) & open-source.
+- **Python-first**, free (Apache-2.0 license) & open-source, with a native Rust rasterizer.
 - FDTD simulation in **2D and 3D**.
 - **GPU-accelerated**, achieving high **GCUPS performance**.
 - **Multi-GPU** runs, handling **large-scale simulations** with _billions of cells_.

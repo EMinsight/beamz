@@ -74,12 +74,23 @@ def render_badge(label: str, value: str, color: str) -> str:
 """
 
 
+def update_badge(coverage_xml: Path, output_svg: Path) -> bool:
+    """Render the badge and return whether its tracked content changed."""
+    percent = read_coverage_percent(coverage_xml)
+    svg = render_badge("coverage", f"{percent}%", pick_color(percent))
+    output_svg.parent.mkdir(parents=True, exist_ok=True)
+    if output_svg.exists() and output_svg.read_text(encoding="utf-8") == svg:
+        return False
+    output_svg.write_text(svg, encoding="utf-8")
+    return True
+
+
 def main() -> None:
     args = parse_args()
-    percent = read_coverage_percent(args.coverage_xml)
-    svg = render_badge("coverage", f"{percent}%", pick_color(percent))
-    args.output_svg.parent.mkdir(parents=True, exist_ok=True)
-    args.output_svg.write_text(svg, encoding="utf-8")
+    if update_badge(args.coverage_xml, args.output_svg):
+        print(f"Updated {args.output_svg}")
+    else:
+        print(f"Coverage badge already up to date: {args.output_svg}")
 
 
 if __name__ == "__main__":

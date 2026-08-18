@@ -84,6 +84,54 @@ def update_cargo_lock_versions(filepath, version, package_names):
     return True
 
 
+def _version_in_file(filepath, pattern, label):
+    """Return the single version matched by ``pattern`` in ``filepath``."""
+    filepath = Path(filepath)
+    if not filepath.exists():
+        raise FileNotFoundError(f"Required {label} file {filepath} is missing")
+    matches = re.findall(pattern, filepath.read_text())
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"Expected exactly one {label} version in {filepath}, found {len(matches)}"
+        )
+    return matches[0]
+
+
+def verify_version_sync(expected_version=None):
+    """Require Python, Rust, and Rust-lock metadata to share one version."""
+    versions = {
+        "pyproject.toml": _version_in_file(
+            "pyproject.toml", r'(?m)^version = "([^"]+)"$', "Python package"
+        ),
+        "beamz/__init__.py": _version_in_file(
+            "beamz/__init__.py", r'(?m)^__version__ = "([^"]+)"$', "Python runtime"
+        ),
+        "Cargo.toml": _version_in_file(
+            "Cargo.toml",
+            r'(?ms)^\[workspace\.package\].*?^version\s*=\s*"([^"]+)"$',
+            "Rust workspace",
+        ),
+    }
+    for package_name in _RUST_WORKSPACE_PACKAGES:
+        versions[f"Cargo.lock:{package_name}"] = _version_in_file(
+            "Cargo.lock",
+            rf'(?m)^\[\[package\]\]\nname = "{re.escape(package_name)}"\nversion = "([^"]+)"$',
+            f"Rust lockfile package {package_name}",
+        )
+
+    expected = expected_version or versions["pyproject.toml"]
+    mismatches = [
+        f"{source}={version}"
+        for source, version in versions.items()
+        if version != expected
+    ]
+    if mismatches:
+        raise RuntimeError(
+            f"Version metadata must match {expected}: {', '.join(mismatches)}"
+        )
+    return expected
+
+
 def update_version(version):
     """Update version in all relevant files."""
     changes = []
@@ -191,7 +239,16 @@ def main():
         description="Update version and create/push git tag for beamz (triggers CI/CD release)"
     )
     parser.add_argument(
-        "version", type=validate_version, help="Version string (e.g., 0.1.6)"
+        "version",
+        nargs="?",
+        type=validate_version,
+        help="Version string (e.g., 0.1.6)",
+    )
+    parser.add_argument(
+        "--verify",
+        metavar="VERSION",
+        type=validate_version,
+        help="Verify that Python and Rust metadata match VERSION without changing files",
     )
     parser.add_argument(
         "--message", "-m", help="Release message (default: 'Release version X.Y.Z')"
@@ -209,6 +266,15 @@ def main():
     )
 
     args = parser.parse_args()
+
+    if args.verify:
+        if args.version:
+            parser.error("VERSION and --verify cannot be used together")
+        verify_version_sync(args.verify)
+        print(f"Version metadata is synchronized at {args.verify}")
+        return
+    if args.version is None:
+        parser.error("VERSION is required unless --verify is used")
 
     # Check we're on main branch
     branch = get_current_branch()
