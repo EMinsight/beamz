@@ -170,6 +170,7 @@ def commit_version_changes(version):
     """Commit the version changes to git."""
     files_to_add = [
         "pyproject.toml",
+        "uv.lock",
         "beamz/__init__.py",
         "Cargo.toml",
         "Cargo.lock",
@@ -306,6 +307,7 @@ def main():
                 sys.exit(1)
         else:
             # Commit the changes so the tag points to the version bump commit
+            subprocess.run(["uv", "lock"], check=True)
             commit_version_changes(args.version)
 
     # Create git tag

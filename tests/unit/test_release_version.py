@@ -14,6 +14,7 @@ def _write_release_fixture(root: Path) -> None:
         '[tool.ruff]\ntarget-version = "py310"\n'
     )
     (root / "beamz" / "__init__.py").write_text('__version__ = "0.4.3"\n')
+    (root / "uv.lock").write_text("version = 1\n")
     (root / "Cargo.toml").write_text(
         '[workspace]\nmembers = []\n\n[workspace.package]\nversion = "0.4.3"\n'
     )
@@ -106,6 +107,7 @@ def test_commit_version_changes_stages_python_and_rust_metadata(tmp_path, monkey
     staged = [command[-1] for command, _check in calls if command[:2] == ["git", "add"]]
     assert staged == [
         "pyproject.toml",
+        "uv.lock",
         "beamz/__init__.py",
         "Cargo.toml",
         "Cargo.lock",
