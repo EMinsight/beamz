@@ -10,9 +10,11 @@ import release_version
 def _write_release_fixture(root: Path) -> None:
     (root / "beamz").mkdir()
     (root / "pyproject.toml").write_text(
-        '[project]\nname = "beamz"\nversion = "0.4.3"\n'
+        '[project]\nname = "beamz"\nversion = "0.4.3"\n\n'
+        '[tool.ruff]\ntarget-version = "py310"\n'
     )
     (root / "beamz" / "__init__.py").write_text('__version__ = "0.4.3"\n')
+    (root / "uv.lock").write_text("version = 1\n")
     (root / "Cargo.toml").write_text(
         '[workspace]\nmembers = []\n\n[workspace.package]\nversion = "0.4.3"\n'
     )
@@ -42,7 +44,9 @@ def test_update_version_keeps_python_and_native_engine_versions_in_sync(
 
     assert release_version.update_version("0.5.0")
 
-    assert 'version = "0.5.0"' in (tmp_path / "pyproject.toml").read_text()
+    pyproject = (tmp_path / "pyproject.toml").read_text()
+    assert 'version = "0.5.0"' in pyproject
+    assert 'target-version = "py310"' in pyproject
     assert '__version__ = "0.5.0"' in (tmp_path / "beamz" / "__init__.py").read_text()
     assert (
         '[workspace.package]\nversion = "0.5.0"'
@@ -103,6 +107,7 @@ def test_commit_version_changes_stages_python_and_rust_metadata(tmp_path, monkey
     staged = [command[-1] for command, _check in calls if command[:2] == ["git", "add"]]
     assert staged == [
         "pyproject.toml",
+        "uv.lock",
         "beamz/__init__.py",
         "Cargo.toml",
         "Cargo.lock",
