@@ -23,7 +23,7 @@ docs:  ## Build strict docs and execute documentation contracts
 	uv run mkdocs build --strict
 	BEAMZ_DOCS_TEST=1 uv run python -m pytest tests/docs/ -v --tb=short
 
-test-single:  ## Run a single test file (usage: make test-single FILE=test_physics_energy.py)
+test-single:  ## Run a single test file (usage: make test-single FILE=validation/invariants/test_physics_energy.py)
 	uv run python -m pytest tests/$(FILE) -v --tb=short
 
 lint:  ## Run linting checks

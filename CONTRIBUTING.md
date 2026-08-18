@@ -61,15 +61,15 @@ Do not edit `uv.lock` by hand.
 Run the smallest relevant test while iterating:
 
 ```bash
-uv run python -m pytest tests/test_physics_energy.py -v
+uv run python -m pytest tests/validation/invariants/test_physics_energy.py -v
 uv run python -m pytest \
-  tests/test_physics_energy.py::test_energy_conservation -v
-make test-single FILE=test_physics_energy.py
+  tests/validation/invariants/test_physics_energy.py::test_energy_conservation -v
+make test-single FILE=validation/invariants/test_physics_energy.py
 ```
 
-Tests belong in `tests/`, use `test_*.py` names, and should reuse fixtures from
-`tests/conftest.py` where appropriate. Existing markers include `slow`,
-`design`, and `simulation`.
+Tests belong in `tests/`, use `test_*.py` names, and should reuse existing
+fixtures where appropriate. Existing markers include `slow`, `design`, and
+`simulation`.
 
 ## Run the contributor checks
 
@@ -107,6 +107,16 @@ Before submitting, confirm that:
 
 The pull request template asks for the same evidence and must be completed by
 the author.
+
+## Historical contributors
+
+BeamZ gratefully acknowledges contributions that predate the repository's
+current Git history.
+
+- [Joaquin Matres (`@joamatab`)](https://github.com/joamatab) corrected grid
+  dimensions and field-array ordering in BeamZ's original 2D FDTD simulator.
+  His contribution was merged in [PR #4](https://github.com/beamzorg/beamz/pull/4)
+  in 2025, before the repository history was squashed.
 
 ## Repository map
 
