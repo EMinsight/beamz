@@ -29,7 +29,11 @@ def main() -> None:
             f"Expected one BeamZ wheel in {args.wheel_directory}, found {len(wheels)}"
         )
 
-    environment = args.wheel_directory / ".wheel-smoke"
+    # The child process runs outside the checkout to prove it imports the
+    # installed wheel.  Make the interpreter path absolute before changing
+    # its working directory, otherwise a relative wheel directory is resolved
+    # a second time (for example, ``dist/dist/.wheel-smoke/bin/python``).
+    environment = (args.wheel_directory / ".wheel-smoke").resolve()
     venv.EnvBuilder(with_pip=True).create(environment)
     python = _venv_python(environment)
     subprocess.run(
