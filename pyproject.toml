@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "beamz"
-version = "0.4.3"
+version = "0.5.0"
 dynamic = []
 authors = [
     { name = "Quentin Wach", email = "quentin.wach+beamz@gmail.com" },
@@ -89,7 +89,7 @@ test = [ # Adding a 'test' extra that includes pytest and pytest-cov for conveni
 
 [tool.ruff]
 line-length = 88
-target-version = "py310"
+target-version = "0.5.0"
 extend-exclude = ["*.ipynb"]
 
 [tool.ruff.lint]
