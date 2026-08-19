@@ -57,6 +57,7 @@ from beamz.simulation.execute import (
     clear_execution_cache,
     execute_step,
     run_simulation_program,
+    run_simulation_with_progress,
     run_until_terminated,
 )
 from beamz.simulation.execute import (
@@ -1401,14 +1402,25 @@ class Simulation:
         steps = remaining if num_steps is None else int(num_steps)
         if not 0 < steps <= remaining:
             raise ValueError(f"num_steps must be in [1, {remaining}], got {steps}.")
-        program = self.compile(num_steps=steps, sharding=sharding, progress=progress)
+        if progress:
+            return run_simulation_with_progress(
+                self,
+                state,
+                num_steps=steps,
+                sharding=sharding,
+                store_full_materials=bool(store_full_materials),
+                monitor_steps=remaining,
+                donate_state=bool(donate_state),
+            )
+
+        program = self.compile(num_steps=steps, sharding=sharding)
         if state is None:
             state = SimulationState.initial(program.grid, t=float(self.time[0]))
         return run_simulation_program(
             self,
             program,
             state,
-            progress=bool(progress),
+            progress=False,
             store_full_materials=bool(store_full_materials),
             monitor_steps=remaining,
             donate_state=bool(donate_state),
