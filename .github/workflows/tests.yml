@@ -116,7 +116,9 @@ jobs:
     needs: evidence
     runs-on: ubuntu-latest
     permissions:
+      actions: write
       contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -126,18 +128,32 @@ jobs:
         with:
           name: scientific-evidence
           path: evidence
-      - name: Regenerate and commit the badge when coverage changes
+      - name: Regenerate and propose the badge update when coverage changes
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           python scripts/update_coverage_badge.py \
             evidence/coverage.xml .github/badges/coverage.svg
           if git diff --quiet -- .github/badges/coverage.svg; then
             exit 0
           fi
+          branch="coverage-badge/${GITHUB_SHA}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
           git add .github/badges/coverage.svg
           git commit -m "chore: update coverage badge [skip ci]"
-          git push
+          git push --set-upstream origin "$branch"
+          pr_url="$(gh pr create \
+            --base "${GITHUB_REF_NAME}" \
+            --head "$branch" \
+            --title "chore: update coverage badge" \
+            --body "Automated coverage badge update for ${GITHUB_SHA}.")"
+          # Pull requests created with GITHUB_TOKEN do not emit a
+          # pull_request workflow event. Dispatch the Trust Gate explicitly
+          # so the protected-branch checks run for the generated PR.
+          gh workflow run tests.yml --ref "$branch"
+          echo "Created coverage badge update PR: $pr_url"
 
   sharding:
     name: Fake multi-device CPU sharding
