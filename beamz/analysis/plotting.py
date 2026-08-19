@@ -500,6 +500,68 @@ def _material_cmap():
     return cmap, norm
 
 
+# These are deliberately semantic layout colours, rather than colours sampled from
+# the FDTD material grid.  A setup plot is a drawing of the design and should stay
+# clean when the numerical mesh changes.
+_LAYOUT_MATERIAL_COLORS = (
+    "#f7fbff",  # air / lowest-index background
+    "#9ecae1",  # oxide / intermediate-index material
+    "#d81b60",  # silicon / highest-index material in the common SOI stack
+    "#7b2cbf",
+    "#f6bd60",
+    "#2a9d8f",
+)
+
+
+def _material_display_key(material):
+    """Return a stable, physically meaningful colour key for a material."""
+    values = np.asarray(getattr(material, "permittivity", 1.0), dtype=float)
+    values = np.real(values).reshape(-1)
+    return tuple(float(value) for value in np.round(values, decimals=12))
+
+
+def _material_display_value(material) -> float:
+    values = np.asarray(getattr(material, "permittivity", 1.0), dtype=float)
+    finite = np.real(values[np.isfinite(values)])
+    return float(np.max(finite)) if finite.size else 1.0
+
+
+def _layout_material_colors(design) -> dict[tuple[float, ...], str]:
+    """Assign one consistent fake colour to every distinct design material."""
+    materials = [getattr(design, "background", None)]
+    materials.extend(
+        getattr(structure, "material", None) for structure in design.structures
+    )
+    unique = {
+        _material_display_key(material): material
+        for material in materials
+        if material is not None
+    }
+    ordered = sorted(
+        unique.items(), key=lambda item: (_material_display_value(item[1]), item[0])
+    )
+    if len(ordered) == 1:
+        palette = (_LAYOUT_MATERIAL_COLORS[0],)
+    elif len(ordered) == 2:
+        # A two-material SOI design normally means SiO2 + Si, whereas air + Si
+        # should keep its white background.  Both should make the core prominent.
+        palette = (
+            (_LAYOUT_MATERIAL_COLORS[0], _LAYOUT_MATERIAL_COLORS[2])
+            if _material_display_value(ordered[0][1]) <= 1.1
+            else (_LAYOUT_MATERIAL_COLORS[1], _LAYOUT_MATERIAL_COLORS[2])
+        )
+    else:
+        palette = _LAYOUT_MATERIAL_COLORS
+    return {
+        key: palette[index % len(palette)]
+        for index, (key, _material) in enumerate(ordered)
+    }
+
+
+def _layout_color(material, colors) -> str:
+    return colors.get(_material_display_key(material), _LAYOUT_MATERIAL_COLORS[0])
+
+
 def _field_permittivity(sim):
     if isinstance(sim, AnalysisData):
         return (
@@ -528,12 +590,24 @@ def _material_levels(sim):
     return core, substrate
 
 
-def _pml_thickness(sim):
+def _pml_section_layers(sim, normal):
+    """Yield PML thickness and visible edges for a plotted section."""
+    from beamz.devices.boundaries import PML
+
+    edge_map = (
+        {"left": "left", "right": "right", "bottom": "bottom", "top": "top"}
+        if normal == "z"
+        else {"left": "left", "right": "right", "front": "bottom", "back": "top"}
+    )
     for boundary in getattr(sim, "boundaries", ()) or ():
-        thickness = getattr(boundary, "thickness", None)
-        if thickness is not None:
-            return float(thickness)
-    return None
+        if not isinstance(boundary, PML) or boundary.thickness <= 0.0:
+            continue
+        boundary_edges = boundary._get_edges_for_dimensionality(sim.is_3d)
+        visible_edges = tuple(
+            edge_map[edge] for edge in boundary_edges if edge in edge_map
+        )
+        if visible_edges:
+            yield float(boundary.thickness), visible_edges
 
 
 def _field_eps_slice(simulation, *, plane="z", index=None, plane_position=None):
@@ -679,7 +753,7 @@ def _draw_device_slice_overlay(ax, device, *, normal, origin, color, source):
         )
 
 
-def overlay_boundaries(ax, extent, thickness, **style):
+def overlay_boundaries(ax, extent, thickness, *, edges=None, **style):
     """Draw cross-section PML bands without letting side bands cover corners."""
     from matplotlib.patches import Rectangle
 
@@ -694,18 +768,303 @@ def overlay_boundaries(ax, extent, thickness, **style):
     if px <= 0.0 and py <= 0.0:
         return ()
 
+    selected = frozenset(("left", "right", "bottom", "top") if edges is None else edges)
     specs = []
     side_height = max(height - 2.0 * py, 0.0)
     if px > 0.0 and side_height:
-        specs.extend(
-            ((x0, y0 + py, px, side_height), (x1 - px, y0 + py, px, side_height))
-        )
+        if "left" in selected:
+            specs.append((x0, y0 + py, px, side_height))
+        if "right" in selected:
+            specs.append((x1 - px, y0 + py, px, side_height))
     if py > 0.0:
-        specs.extend(((x0, y0, width, py), (x0, y1 - py, width, py)))
+        if "bottom" in selected:
+            specs.append((x0, y0, width, py))
+        if "top" in selected:
+            specs.append((x0, y1 - py, width, py))
     rectangles = tuple(Rectangle(spec[:2], *spec[2:], **style) for spec in specs)
     for rect in rectangles:
         ax.add_patch(rect)
     return rectangles
+
+
+def _layout_slice(normal, position, *, design, origin) -> AxisSlice:
+    """Describe a displayed design plane without quantizing it to the grid."""
+    vertical, horizontal = _PLANE_AXES[normal]
+    extents: dict[str, float] = {
+        "x": float(design.width),
+        "y": float(design.height),
+        "z": float(design.depth),
+    }
+    origin_by_axis: dict[str, float] = dict(zip(("x", "y", "z"), origin, strict=True))
+    extent = (
+        -float(origin_by_axis[horizontal]) / _UM,
+        (extents[horizontal] - float(origin_by_axis[horizontal])) / _UM,
+        -float(origin_by_axis[vertical]) / _UM,
+        (extents[vertical] - float(origin_by_axis[vertical])) / _UM,
+    )
+    return AxisSlice(
+        values=np.empty((0, 0)),
+        normal=normal,
+        vertical=vertical,
+        horizontal=horizontal,
+        index=0,
+        position=float(position),
+        extent=extent,
+    )
+
+
+def _structure_z_bounds(structure, design) -> tuple[float, float]:
+    """Return the physical z extent used by the design rasterization bridge."""
+    lower = float(getattr(structure, "z", 0.0) or 0.0)
+    depth = float(getattr(structure, "depth", 0.0) or 0.0)
+    if depth == 0.0:
+        depth = float(design.depth)
+    return lower, lower + depth
+
+
+def _planar_structure_geometry(structure):
+    """Build a Shapely geometry for a planar BeamZ structure when available."""
+    vertices = _vertices_2d(getattr(structure, "vertices", ()))
+    if len(vertices) < 3:
+        return None
+    from shapely.geometry import Polygon
+    from shapely.geometry.polygon import orient
+
+    holes = [
+        _vertices_2d(interior)
+        for interior in getattr(structure, "interiors", ())
+        if len(interior) >= 3
+    ]
+    geometry = Polygon(vertices, holes=holes)
+    if not geometry.is_valid:
+        geometry = geometry.buffer(0)
+    return orient(geometry, sign=1.0) if not geometry.is_empty else None
+
+
+def _polygon_geometries(geometry):
+    """Yield the polygon leaves of a Shapely geometry collection."""
+    if geometry is None or geometry.is_empty:
+        return
+    if geometry.geom_type == "Polygon":
+        yield geometry
+        return
+    for child in getattr(geometry, "geoms", ()):
+        yield from _polygon_geometries(child)
+
+
+def _line_segments(geometry):
+    """Yield non-zero x spans from a Shapely line intersection."""
+    if geometry is None or geometry.is_empty:
+        return
+    if geometry.geom_type == "LineString":
+        coordinates = np.asarray(geometry.coords, dtype=float)
+        if coordinates.shape[0] >= 2:
+            low = float(np.min(coordinates[:, 0]))
+            high = float(np.max(coordinates[:, 0]))
+            if high > low:
+                yield low, high
+        return
+    for child in getattr(geometry, "geoms", ()):
+        yield from _line_segments(child)
+
+
+def _path_patch(ax, geometry, *, normal, origin, facecolor):
+    """Draw a Shapely polygon as an antialiased vector patch in a layout plane."""
+    from matplotlib.patches import PathPatch
+    from matplotlib.path import Path
+
+    vertical, horizontal = _PLANE_AXES[normal]
+    origin_by_axis: dict[str, float] = dict(zip(("x", "y", "z"), origin, strict=True))
+    axis_index: dict[str, int] = {"x": 0, "y": 1, "z": 2}
+    h_index = axis_index[horizontal]
+    v_index = axis_index[vertical]
+    patches = []
+    for polygon in _polygon_geometries(geometry):
+        coords = []
+        codes = []
+        for ring in (polygon.exterior, *polygon.interiors):
+            ring_coords = np.asarray(ring.coords[:-1], dtype=float)
+            if ring_coords.shape[0] < 3:
+                continue
+            if normal == "z":
+                transformed = np.column_stack(
+                    (
+                        (ring_coords[:, h_index] - origin_by_axis[horizontal]) / _UM,
+                        (ring_coords[:, v_index] - origin_by_axis[vertical]) / _UM,
+                    )
+                )
+            else:
+                # xz sections arrive as x/z polygons, whose two coordinates are
+                # already in the horizontal/vertical order for a y-normal view.
+                transformed = np.column_stack(
+                    (
+                        (ring_coords[:, 0] - origin_by_axis[horizontal]) / _UM,
+                        (ring_coords[:, 1] - origin_by_axis[vertical]) / _UM,
+                    )
+                )
+            coords.extend(transformed)
+            codes.extend(
+                (Path.MOVETO, *(Path.LINETO,) * (len(transformed) - 1), Path.CLOSEPOLY)
+            )
+            coords.append(transformed[0])
+        if not coords:
+            continue
+        patch = PathPatch(
+            Path(np.asarray(coords), np.asarray(codes)),
+            facecolor=facecolor,
+            edgecolor="#ffffff",
+            linewidth=0.7,
+            antialiased=True,
+            joinstyle="round",
+        )
+        ax.add_patch(patch)
+        patches.append(patch)
+    return tuple(patches)
+
+
+def _rectangle_geometry(x0, x1, y0, y1):
+    from shapely.geometry import box
+
+    return box(float(x0), float(y0), float(x1), float(y1))
+
+
+def _draw_sphere_slice(ax, structure, *, normal, position, origin, facecolor):
+    """Draw the exact circular section of a sphere, if it intersects the plane."""
+    from matplotlib.patches import Circle
+
+    center = np.asarray(structure.center, dtype=float)
+    radius = float(structure.radius)
+    fixed_axis = {"x": 0, "y": 1, "z": 2}[normal]
+    squared_radius = radius**2 - (float(position) - center[fixed_axis]) ** 2
+    if squared_radius < 0.0:
+        return None
+    radius = float(np.sqrt(squared_radius))
+    if normal == "z":
+        horizontal, vertical = "x", "y"
+        coordinates = center[0], center[1]
+    elif normal == "y":
+        horizontal, vertical = "x", "z"
+        coordinates = center[0], center[2]
+    else:
+        horizontal, vertical = "y", "z"
+        coordinates = center[1], center[2]
+    origin_by_axis = dict(zip(("x", "y", "z"), origin, strict=True))
+    patch = Circle(
+        (
+            (coordinates[0] - origin_by_axis[horizontal]) / _UM,
+            (coordinates[1] - origin_by_axis[vertical]) / _UM,
+        ),
+        radius / _UM,
+        facecolor=facecolor,
+        edgecolor="#ffffff",
+        linewidth=0.7,
+        antialiased=True,
+    )
+    ax.add_patch(patch)
+    return patch
+
+
+def _draw_structure_slice(
+    ax,
+    structure,
+    *,
+    normal,
+    position,
+    design,
+    origin,
+    facecolor,
+):
+    """Draw one faithful geometric slice of a public structure specification."""
+    from beamz.design.structures import Box, Sphere
+
+    if isinstance(structure, Sphere):
+        return _draw_sphere_slice(
+            ax,
+            structure,
+            normal=normal,
+            position=position,
+            origin=origin,
+            facecolor=facecolor,
+        )
+    if isinstance(structure, Box):
+        lower = structure.lower
+        upper = structure.upper
+        if normal == "z" and lower[2] <= position <= upper[2]:
+            return _path_patch(
+                ax,
+                _rectangle_geometry(lower[0], upper[0], lower[1], upper[1]),
+                normal=normal,
+                origin=origin,
+                facecolor=facecolor,
+            )
+        if normal == "y" and lower[1] <= position <= upper[1]:
+            return _path_patch(
+                ax,
+                _rectangle_geometry(lower[0], upper[0], lower[2], upper[2]),
+                normal=normal,
+                origin=origin,
+                facecolor=facecolor,
+            )
+        return ()
+
+    geometry = _planar_structure_geometry(structure)
+    if geometry is None:
+        return ()
+    z_min, z_max = _structure_z_bounds(structure, design)
+    if normal == "z":
+        if z_min <= position <= z_max:
+            return _path_patch(
+                ax, geometry, normal=normal, origin=origin, facecolor=facecolor
+            )
+        return ()
+    if normal != "y" or not (z_min <= z_max):
+        return ()
+
+    from shapely.geometry import LineString
+
+    x_min, _, x_max, _ = geometry.bounds
+    line = LineString(((x_min, float(position)), (x_max, float(position))))
+    patches = []
+    for left, right in _line_segments(geometry.intersection(line)):
+        patches.extend(
+            _path_patch(
+                ax,
+                _rectangle_geometry(left, right, z_min, z_max),
+                normal=normal,
+                origin=origin,
+                facecolor=facecolor,
+            )
+        )
+    return tuple(patches)
+
+
+def _draw_geometry_cross_section(ax, sim, *, normal, position, origin, colors):
+    """Paint background and structures in painter's order without using the mesh."""
+    design = sim.design
+    if normal == "z":
+        background = _rectangle_geometry(0.0, design.width, 0.0, design.height)
+    else:
+        background = _rectangle_geometry(0.0, design.width, 0.0, design.depth)
+    _path_patch(
+        ax,
+        background,
+        normal=normal,
+        origin=origin,
+        facecolor=_layout_color(design.background, colors),
+    )
+    for structure in design.structures:
+        material = getattr(structure, "material", None)
+        if material is None:
+            continue
+        _draw_structure_slice(
+            ax,
+            structure,
+            normal=normal,
+            position=position,
+            design=design,
+            origin=origin,
+            facecolor=_layout_color(material, colors),
+        )
 
 
 def _plot_simulation_slices(
@@ -808,17 +1167,22 @@ def _plot_simulation_slices(
             source_markers=source_markers,
             monitor_markers=monitor_markers,
         )
-        thickness = _pml_thickness(sim)
-        if thickness is not None and thickness > 0.0:
-            style = dict(
-                facecolor="#9a9a9a",
-                alpha=0.35,
-                hatch="xx",
-                edgecolor="#777777",
-                linewidth=0.0,
-            )
-            for ax, item in zip(axes, slices, strict=True):
-                overlay_boundaries(ax, item.extent, thickness / _UM, **style)
+        style = dict(
+            facecolor="#9a9a9a",
+            alpha=0.35,
+            hatch="xx",
+            edgecolor="#777777",
+            linewidth=0.0,
+        )
+        for ax, item in zip(axes, slices, strict=True):
+            for thickness, edges in _pml_section_layers(sim, item.normal):
+                overlay_boundaries(
+                    ax,
+                    item.extent,
+                    thickness / _UM,
+                    edges=edges,
+                    **style,
+                )
 
     if categorical:
         for ax, item in zip(axes, slices, strict=True):
@@ -857,9 +1221,9 @@ def overlay_simulation_devices(
     """Overlay projected sources and monitors on xy/xz slice axes."""
     groups = []
     if source_markers:
-        groups.append((getattr(sim, "sources", ()), "#66bb6a", True))
+        groups.append((getattr(sim, "sources", ()), "#2ca02c", True))
     if monitor_markers:
-        groups.append((getattr(sim, "monitors", ()), "#f4a51c", False))
+        groups.append((getattr(sim, "monitors", ()), "#ff9800", False))
     for ax, normal in zip(axes, ("z", "y"), strict=True):
         for devices, color, source in groups:
             for device in devices:
@@ -899,6 +1263,100 @@ def _plot_3d_material_cross_sections(
     return fig, np.asarray(axes)
 
 
+def _plot_3d_geometry_cross_sections(
+    sim,
+    *,
+    z,
+    y,
+    origin,
+    source_markers,
+    monitor_markers,
+    width_ratios,
+    figsize,
+    show,
+    xlim,
+    ylim,
+    zlim,
+):
+    """Draw setup cross sections directly from the design geometry.
+
+    This intentionally does not call :meth:`Simulation.compile`: material-grid
+    slices are valuable for inspecting discretization, but a setup plot should
+    preserve the exact polygon edges supplied by the user.
+    """
+    design = sim.design
+    slices = (
+        _layout_slice("z", z, design=design, origin=origin),
+        _layout_slice("y", y, design=design, origin=origin),
+    )
+    fig, axes = _pyplot().subplots(
+        1,
+        2,
+        figsize=figsize,
+        gridspec_kw={"width_ratios": width_ratios} if width_ratios else None,
+        constrained_layout=True,
+    )
+    axes = list(np.ravel(axes))
+    colors = _layout_material_colors(design)
+    for ax, item in zip(axes, slices, strict=True):
+        physical_position = item.position + float(
+            origin[{"x": 0, "y": 1, "z": 2}[item.normal]]
+        )
+        _draw_geometry_cross_section(
+            ax,
+            sim,
+            normal=item.normal,
+            position=physical_position,
+            origin=origin,
+            colors=colors,
+        )
+
+    style = dict(
+        facecolor="#666666",
+        alpha=0.22,
+        hatch="///",
+        edgecolor="#666666",
+        linewidth=0.0,
+    )
+    for ax, item in zip(axes, slices, strict=True):
+        for thickness, edges in _pml_section_layers(sim, item.normal):
+            overlay_boundaries(
+                ax,
+                item.extent,
+                thickness / _UM,
+                edges=edges,
+                **style,
+            )
+
+    overlay_simulation_devices(
+        axes,
+        sim,
+        origin,
+        source_markers=source_markers,
+        monitor_markers=monitor_markers,
+    )
+    for ax, item in zip(axes, slices, strict=True):
+        ax.set(
+            title=f"cross section at {item.normal}={item.position / _UM:.2f} (um)",
+            xlabel=f"{item.horizontal} (um)",
+            ylabel=f"{item.vertical} (um)",
+            xlim=item.extent[:2],
+            ylim=item.extent[2:],
+        )
+        ax.grid(False)
+    axes[0].set_aspect("equal", adjustable="box")
+    axes[1].set_aspect("auto")
+    if xlim is not None:
+        axes[0].set_xlim(*xlim)
+        axes[1].set_xlim(*xlim)
+    if ylim is not None:
+        axes[0].set_ylim(*ylim)
+    if zlim is not None:
+        axes[1].set_ylim(*zlim)
+    _maybe_show(fig, show=show)
+    return fig, axes
+
+
 def _plot_3d_cross_sections(
     sim,
     *,
@@ -916,6 +1374,24 @@ def _plot_3d_cross_sections(
 ):
     if origin is None:
         origin = _simulation_origin(sim)
+    # Imported scenes and user-provided MaterialGrid instances only retain a
+    # rasterized material field, so they keep the established grid-slice view.
+    # Native Design simulations instead use their analytic geometry.
+    if getattr(sim, "material_grid", None) is None:
+        return _plot_3d_geometry_cross_sections(
+            sim,
+            z=z,
+            y=y,
+            origin=origin,
+            source_markers=source_markers,
+            monitor_markers=monitor_markers,
+            width_ratios=width_ratios,
+            figsize=figsize or (11.0, 4.0),
+            show=show,
+            xlim=xlim,
+            ylim=ylim,
+            zlim=zlim,
+        )
     return _plot_simulation_slices(
         sim,
         z=z,
