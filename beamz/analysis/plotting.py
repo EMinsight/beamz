@@ -912,8 +912,10 @@ def _path_patch(ax, geometry, *, normal, origin, facecolor):
         patch = PathPatch(
             Path(np.asarray(coords), np.asarray(codes)),
             facecolor=facecolor,
-            edgecolor="#ffffff",
-            linewidth=0.7,
+            # Filled structures use painter's order. An edge stroke would leave
+            # a light seam when a later structure overlaps an earlier one.
+            edgecolor="none",
+            linewidth=0.0,
             antialiased=True,
             joinstyle="round",
         )
@@ -956,8 +958,8 @@ def _draw_sphere_slice(ax, structure, *, normal, position, origin, facecolor):
         ),
         radius / _UM,
         facecolor=facecolor,
-        edgecolor="#ffffff",
-        linewidth=0.7,
+        edgecolor="none",
+        linewidth=0.0,
         antialiased=True,
     )
     ax.add_patch(patch)

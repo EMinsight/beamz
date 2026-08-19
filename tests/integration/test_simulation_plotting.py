@@ -145,6 +145,8 @@ def test_3d_layout_plot_uses_antialiased_polygon_sections_without_compiling(
         assert len(xz_core) == 2
         assert xy_core[0].get_antialiased()
         assert all(patch.get_antialiased() for patch in xz_core)
+        assert xy_core[0].get_edgecolor()[3] == 0.0
+        assert all(patch.get_edgecolor()[3] == 0.0 for patch in xz_core)
     finally:
         plt.close(fig)
 
