@@ -1069,8 +1069,6 @@ def _plot_image(
         vmax=vmax,
         interpolation=interpolation,
     )
-    if colorbar:
-        fig.colorbar(im, ax=ax)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     if title:
@@ -1079,7 +1077,9 @@ def _plot_image(
         ax.set_xlim(*xlim)
     if ylim is not None:
         ax.set_ylim(*ylim)
-    fig.tight_layout()
+    if colorbar:
+        _add_field_colorbar(fig, ax, im)
+    fig.tight_layout(pad=0.5)
     _maybe_show(fig, show=show)
     return fig, ax
 
@@ -1253,6 +1253,33 @@ def _field_colorbar_label(
     if show_units and units:
         text += f" ({f'({units})^2' if view.power else units})"
     return text
+
+
+def _add_field_colorbar(fig, ax, image, **kwargs):
+    """Add a compact colorbar whose orientation follows the visible field extent."""
+    x0, x1 = ax.get_xlim()
+    y0, y1 = ax.get_ylim()
+    x_span = abs(x1 - x0)
+    y_span = abs(y1 - y0)
+    if y_span >= x_span:
+        return fig.colorbar(
+            image,
+            ax=ax,
+            location="right",
+            fraction=0.05,
+            pad=0.04,
+            aspect=30,
+            **kwargs,
+        )
+    return fig.colorbar(
+        image,
+        ax=ax,
+        location="bottom",
+        fraction=0.075,
+        pad=0.08,
+        aspect=35,
+        **kwargs,
+    )
 
 
 def _overlay_material_slice(
@@ -1524,20 +1551,6 @@ def plot_dft_field(
             alpha=float(grid_alpha),
         )
 
-    cbar_label = _field_colorbar_label(
-        field_key,
-        view,
-        display_field=display_field,
-        units=field_units,
-        show_units=show_units,
-    )
-    if colorbar:
-        fig.colorbar(
-            im,
-            ax=ax,
-            label=cbar_label,
-            extend="max" if view.magnitude else "both",
-        )
     ax.set_xlabel(f"{axis1} (um)")
     ax.set_ylabel(f"{axis0} (um)")
     plane_value = float(getattr(monitor, "plane_position", 0.0)) - origin_by_axis[axis]
@@ -1546,7 +1559,21 @@ def plot_dft_field(
         ax.set_xlim(*xlim)
     if ylim is not None:
         ax.set_ylim(*ylim)
-    fig.tight_layout()
+    if colorbar:
+        _add_field_colorbar(
+            fig,
+            ax,
+            im,
+            label=_field_colorbar_label(
+                field_key,
+                view,
+                display_field=display_field,
+                units=field_units,
+                show_units=show_units,
+            ),
+            extend="max" if view.magnitude else "both",
+        )
+    fig.tight_layout(pad=0.5)
     _maybe_show(fig, show=show)
     return fig, ax
 
