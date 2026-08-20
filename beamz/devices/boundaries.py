@@ -101,8 +101,9 @@ class PML:
     ----------
     edges : "all", str, or sequence of str, default="all"
         Domain faces covered by the layer.
-    thickness : float, default=1 um
-        Physical layer thickness in metres.
+    thickness : float, optional
+        Physical layer thickness in metres. When omitted, the compiler uses
+        exactly 12 grid cells on every selected face.
     sigma_max : float, optional
         Explicit maximum conductivity. When omitted, BeamZ derives it from
         ``target_reflection`` and the layer thickness.
@@ -120,7 +121,7 @@ class PML:
 
     Examples
     --------
-    >>> boundary = PML(thickness=1e-6, formulation="cpml")
+    >>> boundary = PML(formulation="cpml")  # 12 cells per selected face
 
     Notes
     -----
@@ -130,9 +131,10 @@ class PML:
 
     _DEFAULT_CPML_ALPHA_NORMALIZED: ClassVar[float] = 0.1
     _DEFAULT_3D_CPML_ALPHA_NORMALIZED: ClassVar[float] = 0.05
+    DEFAULT_CELLS: ClassVar[int] = 12
 
     edges: BoundaryEdges = "all"
-    thickness: float = 1 * µm
+    thickness: float | None = None
     sigma_max: float | None = None
     m: int = 3
     formulation: str = "sponge"
@@ -141,8 +143,8 @@ class PML:
     target_reflection: float = 1e-6
 
     def __post_init__(self) -> None:
-        thickness = float(self.thickness)
-        if not np.isfinite(thickness) or thickness < 0.0:
+        thickness = None if self.thickness is None else float(self.thickness)
+        if thickness is not None and (not np.isfinite(thickness) or thickness < 0.0):
             raise ValueError("PML thickness must be a non-negative finite value.")
         formulation = str(self.formulation).lower()
         if formulation not in {"sponge", "cpml"}:

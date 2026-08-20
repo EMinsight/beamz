@@ -600,14 +600,17 @@ def _pml_section_layers(sim, normal):
         else {"left": "left", "right": "right", "front": "bottom", "back": "top"}
     )
     for boundary in getattr(sim, "boundaries", ()) or ():
-        if not isinstance(boundary, PML) or boundary.thickness <= 0.0:
+        if not isinstance(boundary, PML):
+            continue
+        thickness = boundary.thickness
+        if thickness is None or thickness <= 0.0:
             continue
         boundary_edges = boundary._get_edges_for_dimensionality(sim.is_3d)
         visible_edges = tuple(
             edge_map[edge] for edge in boundary_edges if edge in edge_map
         )
         if visible_edges:
-            yield float(boundary.thickness), visible_edges
+            yield float(thickness), visible_edges
 
 
 def _field_eps_slice(simulation, *, plane="z", index=None, plane_position=None):

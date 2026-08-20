@@ -3,7 +3,8 @@ import warnings
 import numpy as np
 import pytest
 
-from beamz import EPS_0, MU_0, PML, Absorber, um
+from beamz import EPS_0, MU_0, PML, Absorber
+from beamz.design.grid import RectilinearGrid
 from beamz.devices._boundary_compile import (
     compile_absorber_regions,
 )
@@ -53,13 +54,48 @@ def test_pml_parameter_defaults():
     pml = PML()
 
     assert pml.edges == "all"
-    assert pml.thickness == pytest.approx(1.0 * um)
+    assert pml.thickness is None
+    assert pml.DEFAULT_CELLS == 12
     assert pml.sigma_max is None
     assert pml.m == 3
     assert pml.formulation == "sponge"
     assert pml.kappa_max == pytest.approx(2.0)
     assert pml.alpha_max is None
     assert pml.target_reflection == pytest.approx(1e-6)
+
+
+@pytest.mark.parametrize("rectilinear", (False, True))
+def test_default_cpml_is_exactly_twelve_cells_wide_on_every_3d_face(rectilinear):
+    shape = (32, 34, 36)
+    fields = _make_fields_3d(shape=shape, resolution=0.1)
+    domain_size = _make_design_3d(shape=shape, resolution=0.1)
+    if rectilinear:
+
+        def edges(count, low, high):
+            return np.concatenate(([0.0], np.cumsum(np.linspace(low, high, count))))
+
+        geometry = RectilinearGrid(
+            edges(shape[2], 0.08, 0.12),
+            edges(shape[1], 0.09, 0.13),
+            edges(shape[0], 0.10, 0.14),
+        )
+        fields.geometry = geometry
+        domain_size = geometry.extent
+
+    payload = compile_absorber_regions(
+        PML(formulation="cpml"),
+        fields,
+        domain_size,
+        resolution=0.1,
+        dt=1e-15,
+    )
+
+    for axis, expected_cells in zip(("z", "y", "x"), shape, strict=True):
+        active = np.ravel(np.asarray(payload[f"sigma_{axis}"]) > 0.0)
+        assert np.count_nonzero(active[:12]) == 12
+        assert not active[12]
+        assert not active[expected_cells - 13]
+        assert np.count_nonzero(active[-12:]) == 12
 
 
 def test_sponge_absorber_is_an_explicit_boundary_specification():
