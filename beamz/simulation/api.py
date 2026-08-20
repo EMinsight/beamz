@@ -1492,6 +1492,12 @@ class Simulation:
             ``ax``, ``figsize``, ``z``, ``y``, axis limits, and marker controls.
             ``show`` defaults to ``False`` for this method.
 
+            For a native three-dimensional :class:`~beamz.Design`, passing ``z``
+            or ``y`` creates antialiased geometry cross sections. These setup
+            plots preserve polygon boundaries and do not compile or show the FDTD
+            grid. Pass ``categorical_cross_sections=False`` to inspect the
+            rasterized material field instead.
+
         Returns
         -------
         tuple
@@ -1545,8 +1551,10 @@ class Simulation:
 
         Notes
         -----
-        This method creates static notebook-friendly cross sections; it does not
-        launch an interactive browser viewer.
+        This method creates static notebook-friendly, antialiased geometry cross
+        sections; it does not launch an interactive browser viewer. Pass
+        ``categorical_cross_sections=False`` to inspect the rasterized material
+        field instead of the design layout.
         """
         return _analysis_function("plotting", "view_simulation_3d")(self, **kwargs)
 

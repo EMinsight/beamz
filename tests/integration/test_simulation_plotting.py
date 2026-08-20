@@ -5,6 +5,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
+from matplotlib.colors import to_hex
 
 import beamz as bz
 from beamz.analysis.plotting import (
@@ -93,16 +94,17 @@ def test_3d_simulation_plot_uses_tidy_layout_cross_sections():
         time=np.array([0.0, 1e-15]),
     )
 
-    with pytest.warns(RuntimeWarning, match="PML material varies"):
-        fig, axes = sim.plot(z=0.0, y=0.0, show=False)
+    fig, axes = sim.plot(z=0.0, y=0.0, show=False)
 
     try:
         assert len(axes) == 2
         assert len(fig.axes) == 2
-        assert len(axes[0].images) == 1
-        assert len(axes[1].images) == 1
-        assert len(axes[0].patches) >= 4
-        assert len(axes[1].patches) >= 4
+        # Layout plots use vector geometry rather than a quantized material-grid
+        # image, so curves and polygon edges remain smooth at any grid resolution.
+        assert not axes[0].images
+        assert not axes[1].images
+        assert len(axes[0].patches) >= 6
+        assert len(axes[1].patches) >= 6
         assert len(axes[0].lines) >= 2
         assert len(axes[1].lines) >= 2
         assert axes[0].get_xlim() == (-2.0, 2.0)
@@ -123,6 +125,59 @@ def test_3d_simulation_plot_uses_tidy_layout_cross_sections():
         plt.close(fig)
 
 
+def test_3d_layout_plot_uses_antialiased_polygon_sections_without_compiling(
+    monkeypatch,
+):
+    air = bz.Material(1.0)
+    silicon = bz.Material(12.0)
+    design = bz.Design(
+        width=4 * bz.um, height=4 * bz.um, depth=2 * bz.um, background=air
+    )
+    design += bz.Ring(
+        position=(2 * bz.um, 2 * bz.um, 0.9 * bz.um),
+        inner_radius=0.35 * bz.um,
+        outer_radius=0.8 * bz.um,
+        depth=0.25 * bz.um,
+        material=silicon,
+    )
+    sim = bz.Simulation(
+        design=design,
+        boundaries=[bz.PML(thickness=0.25 * bz.um)],
+        # Deliberately coarse: layout geometry must not inherit these pixels.
+        resolution=1.0 * bz.um,
+        time=np.array([0.0, 1e-15]),
+    )
+
+    def fail_if_compiled(*_args, **_kwargs):
+        raise AssertionError("layout plotting must not compile the FDTD grid")
+
+    monkeypatch.setattr(bz.Simulation, "compile", fail_if_compiled)
+    fig, axes = sim.plot(z=1.0 * bz.um, y=2.0 * bz.um, show=False)
+
+    try:
+        assert not axes[0].images
+        assert not axes[1].images
+        xy_core = [
+            patch
+            for patch in axes[0].patches
+            if to_hex(patch.get_facecolor()) == "#d81b60"
+        ]
+        xz_core = [
+            patch
+            for patch in axes[1].patches
+            if to_hex(patch.get_facecolor()) == "#d81b60"
+        ]
+        assert len(xy_core) == 1
+        # The xz cut preserves the annulus hole as two distinct material spans.
+        assert len(xz_core) == 2
+        assert xy_core[0].get_antialiased()
+        assert all(patch.get_antialiased() for patch in xz_core)
+        assert xy_core[0].get_edgecolor()[3] == 0.0
+        assert all(patch.get_edgecolor()[3] == 0.0 for patch in xz_core)
+    finally:
+        plt.close(fig)
+
+
 def test_3d_simulation_plot_clips_x_pml_overlay_to_active_vertical_span():
     sim = bz.Simulation(
         domain=(4.0 * bz.um, 4.0 * bz.um, 2.0 * bz.um),
@@ -135,8 +190,8 @@ def test_3d_simulation_plot_clips_x_pml_overlay_to_active_vertical_span():
     fig, axes = sim.plot(z=0.0, y=0.0, show=False)
 
     try:
-        xy_pml = [patch for patch in axes[0].patches if patch.get_hatch() == "xx"]
-        xz_pml = [patch for patch in axes[1].patches if patch.get_hatch() == "xx"]
+        xy_pml = [patch for patch in axes[0].patches if patch.get_hatch() == "///"]
+        xz_pml = [patch for patch in axes[1].patches if patch.get_hatch() == "///"]
 
         assert len(xy_pml) == 4
         assert len(xz_pml) == 4
@@ -156,6 +211,29 @@ def test_3d_simulation_plot_clips_x_pml_overlay_to_active_vertical_span():
         assert xz_left.get_x() == pytest.approx(-2.0)
         assert xz_left.get_y() == pytest.approx(-0.5)
         assert xz_left.get_height() == pytest.approx(1.0)
+    finally:
+        plt.close(fig)
+
+
+def test_3d_layout_plot_only_draws_pml_faces_visible_in_each_section():
+    sim = bz.Simulation(
+        domain=(4.0 * bz.um, 4.0 * bz.um, 2.0 * bz.um),
+        design=bz.Design(background=bz.Material(1.0)),
+        boundaries=[bz.PML(edges=("left", "front"), thickness=0.5 * bz.um)],
+        resolution=0.5 * bz.um,
+        time=np.array([0.0, 1e-15]),
+    )
+
+    fig, axes = sim.plot(z=0.0, y=0.0, show=False)
+
+    try:
+        xy_pml = [patch for patch in axes[0].patches if patch.get_hatch() == "///"]
+        xz_pml = [patch for patch in axes[1].patches if patch.get_hatch() == "///"]
+        # ``front`` is normal to the xy view and therefore has no in-plane band.
+        assert len(xy_pml) == 1
+        assert len(xz_pml) == 2
+        assert min(patch.get_x() for patch in xy_pml) == pytest.approx(-2.0)
+        assert min(patch.get_y() for patch in xz_pml) == pytest.approx(-1.0)
     finally:
         plt.close(fig)
 
@@ -190,7 +268,7 @@ def test_3d_plot_keeps_square_limits_for_source_added_by_copy_update():
         assert axes[0].get_xlim() == pytest.approx((-2.0, 2.0))
         assert axes[0].get_ylim() == pytest.approx((-2.0, 2.0))
         source_line = next(
-            line for line in axes[0].lines if line.get_color() == "#66bb6a"
+            line for line in axes[0].lines if line.get_color() == "#2ca02c"
         )
         np.testing.assert_allclose(source_line.get_xdata(), [-1.0, -1.0])
     finally:
