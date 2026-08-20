@@ -7,7 +7,11 @@ import numpy as np
 import pytest
 
 import beamz as bz
-from beamz.analysis.plotting import extract_axis_aligned_slice, plot_field_view
+from beamz.analysis.plotting import (
+    _plot_image,
+    extract_axis_aligned_slice,
+    plot_field_view,
+)
 from beamz.design import MaterialGrid
 from beamz.design.raster import Grid, Material, Scene, rasterize
 
@@ -31,6 +35,29 @@ def test_generic_slice_and_field_primitives_preserve_axis_coordinates():
         image, view = plot_field_view(ax, section.values * (1.0 + 1.0j), val="abs^2")
         np.testing.assert_allclose(image.get_array(), 2.0 * section.values**2)
         assert view.magnitude and view.power
+    finally:
+        plt.close(fig)
+
+
+@pytest.mark.parametrize(
+    ("extent", "location"),
+    (
+        ((0.0, 1.0, 0.0, 3.0), "right"),
+        ((0.0, 3.0, 0.0, 1.0), "bottom"),
+    ),
+)
+def test_field_plot_colorbar_follows_field_aspect_ratio(extent, location):
+    fig, ax = _plot_image(np.ones((2, 2)), extent=extent, colorbar=True, show=False)
+    try:
+        colorbar_ax = fig.axes[-1]
+        plot_bounds = ax.get_position()
+        colorbar_bounds = colorbar_ax.get_position()
+        if location == "right":
+            assert colorbar_bounds.x0 > plot_bounds.x1
+            assert colorbar_bounds.height > colorbar_bounds.width
+        else:
+            assert colorbar_bounds.y1 < plot_bounds.y0
+            assert colorbar_bounds.width > colorbar_bounds.height
     finally:
         plt.close(fig)
 
