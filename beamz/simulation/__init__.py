@@ -10,7 +10,6 @@ from beamz.simulation.model import AutoTermination, SimulationState
 from beamz.simulation.results import (
     MonitorResults,
     RunTermination,
-    SimulationPerformance,
     SimulationResults,
     SimulationRun,
 )
@@ -25,7 +24,6 @@ __all__ = [
     "MonitorResults",
     "SimulationResults",
     "SimulationRun",
-    "SimulationPerformance",
     "SimulationState",
     "AutoTermination",
     "RunTermination",
