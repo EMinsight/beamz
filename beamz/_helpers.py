@@ -280,7 +280,19 @@ def _format_progress_message(
     safe_total = max(int(total), 1)
     safe_completed = min(max(int(completed), 0), safe_total)
     pct = 100.0 * safe_completed / safe_total
-    return f"{label}: {pct:.0f}% ({safe_completed}/{safe_total} {unit})"
+    width = 20
+    filled = round(width * safe_completed / safe_total)
+    bar = f"{'#' * filled}{'-' * (width - filled)}"
+    return f"{label}: [{bar}] {pct:.0f}% ({safe_completed}/{safe_total} {unit})"
+
+
+def _print_inline_status(message: str, *, file: TextIO | None = None) -> None:
+    """Write one dependency-free status message to the active terminal line."""
+    import sys
+
+    output = file if file is not None else sys.stdout
+    output.write(f"\r{_STATUS_MARKER}{message}")
+    output.flush()
 
 
 def _print_inline_progress(
