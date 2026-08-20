@@ -1,8 +1,9 @@
 """Render vector-accurate 3D simulation setup cross sections.
 
-Run this file from the repository root to regenerate the two images in
-``docs/assets``. The images are drawn from design geometry: changing
-``resolution`` will not turn the curved ring or material boundaries into pixels.
+Run this file from the repository root to write preview images to
+``smooth-cross-sections-output``. The images are drawn from design geometry:
+changing ``resolution`` will not turn the curved ring or material boundaries
+into pixels.
 """
 
 from __future__ import annotations
@@ -116,7 +117,7 @@ def plot_setup(*, xlim=None):
 
 def main() -> None:
     """Generate full-layout and curved-geometry setup previews."""
-    output_dir = Path(__file__).resolve().parents[2] / "docs" / "assets"
+    output_dir = Path("smooth-cross-sections-output")
     output_dir.mkdir(parents=True, exist_ok=True)
     for name, xlim in (
         ("smooth-simulation-cross-sections.png", None),
