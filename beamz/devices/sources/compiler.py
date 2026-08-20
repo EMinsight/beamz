@@ -67,37 +67,43 @@ class BatchedSlabGroup:
 def batch_slab_specs(
     specs: tuple[CompiledSourceSpec, ...],
 ) -> tuple[BatchedSlabGroup | None, tuple[CompiledSourceSpec, ...]]:
-    """Split specs into a batched slab group and remaining non-slab specs."""
-    slab: list[tuple[CompiledSourceSpec, tuple[int, ...], tuple[int, ...]]] = []
-    for spec in specs:
+    """Batch one exact slab shape and leave incompatible specs on the general path."""
+    slabs_by_size: dict[
+        tuple[int, ...],
+        list[tuple[int, CompiledSourceSpec, tuple[int, ...], tuple[int, ...]]],
+    ] = {}
+    for index, spec in enumerate(specs):
         if (
             spec.is_slab
             and spec.slab_starts is not None
             and spec.slab_sizes is not None
         ):
-            slab.append((spec, spec.slab_starts, spec.slab_sizes))
-    rest = tuple(
-        s
-        for s in specs
-        if not (s.is_slab and s.slab_starts is not None and s.slab_sizes is not None)
-    )
-    if not slab:
+            slabs_by_size.setdefault(spec.slab_sizes, []).append(
+                (index, spec, spec.slab_starts, spec.slab_sizes)
+            )
+    if not slabs_by_size:
         return None, specs
-    ndim = len(slab[0][2])
-    max_sizes = tuple(max(sizes[d] for _s, _starts, sizes in slab) for d in range(ndim))
-    padded = []
-    for spec, _starts, sizes in slab:
-        pad_width = tuple((0, max_sizes[d] - sizes[d]) for d in range(ndim))
-        padded.append(jnp.pad(spec.coeff, pad_width))
+
+    # A single dynamic-slice size is shared by a batch. Mixing smaller slabs into a
+    # larger padded shape changes their effective origin when JAX clamps a slice near
+    # a high domain edge. Select the largest exact-shape group (stable on ties) and
+    # preserve every incompatible source for the shape-aware general path.
+    slab = max(slabs_by_size.values(), key=len)
+    selected = {index for index, _spec, _starts, _sizes in slab}
+    rest = tuple(spec for index, spec in enumerate(specs) if index not in selected)
+    max_sizes = slab[0][3]
     return (
         BatchedSlabGroup(
-            waveforms=jnp.stack([spec.waveform for spec, _starts, _sizes in slab]),
-            coeffs=jnp.stack(padded),
+            waveforms=jnp.stack(
+                [spec.waveform for _index, spec, _starts, _sizes in slab]
+            ),
+            coeffs=jnp.stack([spec.coeff for _index, spec, _starts, _sizes in slab]),
             starts=jnp.array(
-                [list(starts) for _s, starts, _sizes in slab], dtype=jnp.int32
+                [list(starts) for _index, _spec, starts, _sizes in slab],
+                dtype=jnp.int32,
             ),
             starts_tuple=tuple(
-                tuple(int(v) for v in starts) for _s, starts, _sizes in slab
+                tuple(int(v) for v in starts) for _index, _spec, starts, _sizes in slab
             ),
             max_sizes=max_sizes,
             n=len(slab),

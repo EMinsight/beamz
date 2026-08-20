@@ -6,7 +6,7 @@ import os
 from collections import OrderedDict
 from collections.abc import Mapping
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from dataclasses import fields as dataclass_fields
 from types import MappingProxyType, SimpleNamespace
 from typing import Any, Literal, cast
@@ -72,6 +72,8 @@ class CompiledProgramKey:
     polarization_2d: str
     loop_kind: str
     source_single_slab_dense: bool
+    backend: str
+    cuda_flags: int
     sharding: ShardingToken
     materials: HashToken
     sources: tuple[HashToken, ...]
@@ -91,6 +93,8 @@ class CompiledProgramKey:
             request.domain.polarization_2d,
             request.run.loop_kind,
             request.run.source_single_slab_dense,
+            request.run.backend,
+            request.run.cuda_flags,
             request.run.sharding,
             cache_token(request.materials),
             tuple(cache_token(source) for source in request.sources),
@@ -128,6 +132,59 @@ def _elide_zero_conductivity_grid(value):
     if arr_np.size and not bool(np.any(arr_np != 0.0)):
         return jnp.asarray(0.0, dtype=getattr(value, "dtype", jnp.float32))
     return value
+
+
+def _elide_uniform_grid(value):
+    """Represent an exactly uniform CUDA coefficient with one scalar value."""
+
+    arr_np = np.asarray(value)
+    if arr_np.size and bool(np.all(arr_np == arr_np.flat[0])):
+        return jnp.asarray(arr_np.flat[0], dtype=arr_np.dtype)
+    return value
+
+
+def _pack_cuda_coefficient_ids(value, *, max_values: int = 256):
+    """Pack four low-cardinality FP32 coefficient IDs into each int32 word.
+
+    The CUDA streamed kernel recognizes the resulting one-dimensional S32 array
+    and uses the returned exact FP32 table for lookup.  Keeping this transform at
+    compile time avoids carrying three dense material coefficient grids through
+    DRAM on every electric update.
+    """
+
+    array = np.asarray(value, dtype=np.float32)
+    if array.ndim != 3 or array.size == 0:
+        return None
+    table, ids = np.unique(array, return_inverse=True)
+    if table.size > max_values:
+        return None
+    flat_ids = ids.astype(np.uint32, copy=False).ravel()
+    padded_size = (flat_ids.size + 3) & ~3
+    padded = np.zeros(padded_size, dtype=np.uint32)
+    padded[: flat_ids.size] = flat_ids
+    packed = (
+        padded[0::4]
+        | (padded[1::4] << np.uint32(8))
+        | (padded[2::4] << np.uint32(16))
+        | (padded[3::4] << np.uint32(24))
+    ).view(np.int32)
+    return jnp.asarray(table, dtype=jnp.float32), jnp.asarray(packed)
+
+
+def _pack_cuda_lossless_e_coefficients(decays, sources):
+    """Return table/ID material buffers for a lossless low-cardinality E update."""
+
+    decay_arrays = tuple(np.asarray(value) for value in decays)
+    if not all(
+        value.ndim == 0 and np.float32(value) == np.float32(1.0)
+        for value in decay_arrays
+    ):
+        return None
+    packed = tuple(_pack_cuda_coefficient_ids(value) for value in sources)
+    if any(value is None for value in packed):
+        return None
+    values = tuple(value for value in packed if value is not None)
+    return tuple(value[0] for value in values), tuple(value[1] for value in values)
 
 
 def _inverse_permittivity_components(values):
@@ -341,7 +398,9 @@ def _prepare_compilation(
         polarization_2d=request.domain.polarization_2d,
         loop_kind=loop_kind,
         source_single_slab_dense=bool(request.run.source_single_slab_dense),
+        backend=str(request.run.backend),
         sharding=effective_sharding,
+        cuda_flags=int(request.run.cuda_flags),
     )
     return _CompileSetup(
         dt,
@@ -507,8 +566,30 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
 
     empty3 = jnp.zeros((0, 0, 0), dtype=jnp.float32)
     if use_3d_material_coefficients:
-        h_decay_x = h_source_x = h_decay_y = h_source_y = empty3
-        h_decay_z = h_source_z = empty3
+        if request.run.backend == "cuda_streamed":
+            (
+                (h_decay_x, h_source_x),
+                (h_decay_y, h_source_y),
+                (h_decay_z, h_source_z),
+            ) = (
+                ops.precompute_h_update_coefficients(fields.sigma_m_hx, dt),
+                ops.precompute_h_update_coefficients(fields.sigma_m_hy, dt),
+                ops.precompute_h_update_coefficients(fields.sigma_m_hz, dt),
+            )
+            h_decay_x, h_source_x, h_decay_y, h_source_y, h_decay_z, h_source_z = (
+                _elide_uniform_grid(value)
+                for value in (
+                    h_decay_x,
+                    h_source_x,
+                    h_decay_y,
+                    h_source_y,
+                    h_decay_z,
+                    h_source_z,
+                )
+            )
+        else:
+            h_decay_x = h_source_x = h_decay_y = h_source_y = empty3
+            h_decay_z = h_source_z = empty3
         h_sigma_m_x = _elide_zero_conductivity_grid(fields.sigma_m_hx)
         h_sigma_m_y = _elide_zero_conductivity_grid(fields.sigma_m_hy)
         h_sigma_m_z = _elide_zero_conductivity_grid(fields.sigma_m_hz)
@@ -525,8 +606,61 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
         h_sigma_m_x = h_sigma_m_y = h_sigma_m_z = empty3
 
     if use_3d_material_coefficients:
-        e_decay_x = e_source_x = e_decay_y = e_source_y = empty3
-        e_decay_z = e_source_z = empty3
+        if request.run.backend == "cuda_streamed":
+            (
+                (e_decay_x, e_source_x),
+                (e_decay_y, e_source_y),
+                (e_decay_z, e_source_z),
+            ) = (
+                ops.precompute_e_update_coefficients(
+                    shape=fields.Ex.shape,
+                    conductivity=fields.sig_x,
+                    permittivity=fields.eps_x,
+                    dt=dt,
+                    region=fields.region_x,
+                ),
+                ops.precompute_e_update_coefficients(
+                    shape=fields.Ey.shape,
+                    conductivity=fields.sig_y,
+                    permittivity=fields.eps_y,
+                    dt=dt,
+                    region=fields.region_y,
+                ),
+                ops.precompute_e_update_coefficients(
+                    shape=fields.Ez.shape,
+                    conductivity=fields.sig_z,
+                    permittivity=fields.eps_z,
+                    dt=dt,
+                    region=fields.region_z,
+                ),
+            )
+            e_decay_x, e_source_x, e_decay_y, e_source_y, e_decay_z, e_source_z = (
+                _elide_uniform_grid(value)
+                for value in (
+                    e_decay_x,
+                    e_source_x,
+                    e_decay_y,
+                    e_source_y,
+                    e_decay_z,
+                    e_source_z,
+                )
+            )
+            packed_e = _pack_cuda_lossless_e_coefficients(
+                (e_decay_x, e_decay_y, e_decay_z),
+                (e_source_x, e_source_y, e_source_z),
+            )
+            if packed_e is not None:
+                (
+                    (e_decay_x, e_decay_y, e_decay_z),
+                    (
+                        e_source_x,
+                        e_source_y,
+                        e_source_z,
+                    ),
+                ) = packed_e
+        else:
+            e_decay_x = e_source_x = e_decay_y = e_source_y = empty3
+            e_decay_z = e_source_z = empty3
         e_conductivity_x = _elide_zero_conductivity_grid(fields.sig_x)
         e_conductivity_y = _elide_zero_conductivity_grid(fields.sig_y)
         e_conductivity_z = _elide_zero_conductivity_grid(fields.sig_z)
@@ -664,6 +798,7 @@ def compile_program(
     *,
     num_steps: int | None = None,
     sharding=None,
+    backend: str | None = "auto",
     progress: bool = False,
     setup_context_factory=None,
     compile_factory=None,
@@ -688,14 +823,63 @@ def compile_program(
         "yes",
         "on",
     }
+    from .backend import (
+        CudaBackendUnavailable,
+        cuda_flags_from_env,
+        normalize_backend,
+        resolve_backend,
+    )
+
+    requested_backend = normalize_backend(backend)
+    sharding_token = sharding_cache_token(sharding)
+    metric_kind = simulation.grid.metric_kind_for(
+        ("x", "y", "z") if simulation.is_3d else ("x", "y")
+    )
+    material_grid = simulation._material_grid(progress=progress)
+    cuda_grid_supported = simulation.is_3d and (
+        requested_backend != "cuda_hopper" or metric_kind == "isotropic_uniform"
+    )
+    cuda_material_supported = not material_grid.uses_full_permittivity
+    cuda_sharding_supported = not sharding_token[0] or sharding_token[2] == 1
+    if requested_backend not in {"auto", "jax"} and not cuda_grid_supported:
+        requirement = (
+            "a 3D simulation"
+            if not simulation.is_3d
+            else "isotropic uniform metrics for the Hopper-specific kernel"
+        )
+        raise CudaBackendUnavailable(
+            f"CUDA execution currently requires {requirement}; this simulation "
+            f"requires {metric_kind!r} metrics. Use backend='jax'."
+        )
+    if requested_backend not in {"auto", "jax"} and not cuda_material_supported:
+        raise CudaBackendUnavailable(
+            "CUDA execution does not yet support full-tensor permittivity; "
+            "use backend='jax' for coupled constitutive updates."
+        )
+    if requested_backend not in {"auto", "jax"} and not cuda_sharding_supported:
+        raise CudaBackendUnavailable(
+            "CUDA execution currently supports one GPU; use backend='jax' for "
+            "multi-device sharding."
+        )
+    cuda_problem_supported = (
+        cuda_grid_supported and cuda_material_supported and cuda_sharding_supported
+    )
+    resolved_backend = (
+        "jax"
+        if requested_backend == "auto" and not cuda_problem_supported
+        else resolve_backend(requested_backend)
+    )
+    cuda_flags = cuda_flags_from_env() if resolved_backend != "jax" else 0
     request = simulation.to_request(
         num_steps=steps,
         loop_kind=loop_kind,
         source_single_slab_dense=dense,
-        sharding=sharding_cache_token(sharding),
+        backend=resolved_backend,
+        sharding=sharding_token,
         compiler_sharding=sharding,
         progress=progress,
     )
+    request = replace(request, run=replace(request.run, cuda_flags=cuda_flags))
     signature = CompiledProgramKey.from_request(request)
     if cached := _PROGRAM_CACHE.get(signature):
         _PROGRAM_CACHE.move_to_end(signature)
