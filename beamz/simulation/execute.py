@@ -9,6 +9,7 @@ import sys
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from time import perf_counter
 
 import jax
 import jax.numpy as jnp
@@ -36,7 +37,13 @@ from beamz.simulation.model import (
 from . import kernels as update_runtime
 from . import observe as monitor_runtime
 from . import sharding as sharding_runtime
-from .results import MonitorResults, RunTermination, SimulationResults, SimulationRun
+from .results import (
+    MonitorResults,
+    RunTermination,
+    SimulationPerformance,
+    SimulationResults,
+    SimulationRun,
+)
 
 SOURCE_PHASE_COMPONENTS = {
     "pre_e": ("Ex", "Ey", "Ez"),
@@ -774,6 +781,8 @@ class _ExecutionCache:
     # plan equality prevents compilation artifacts from changing semantic identity.
     compiled_scan: Callable[..., ScanResult] | None = None
     compiled_scan_donating: Callable[..., ScanResult] | None = None
+    executable_ready: bool = False
+    executable_donating_ready: bool = False
 
 
 _MAX_EXECUTION_CACHES = 8
@@ -902,8 +911,10 @@ def build_program_scan(program: CompiledProgram, *, donate_state: bool = False):
     scan = build_scan(program, donate_state=bool(donate_state))
     if donate_state:
         cache.compiled_scan_donating = scan
+        cache.executable_donating_ready = False
     else:
         cache.compiled_scan = scan
+        cache.executable_ready = False
     return scan
 
 
@@ -950,15 +961,32 @@ def compile_program_execution(
         replicated_fields=(*monitor_runtime.MONITOR_FIELDS, "t", "current_step"),
     )
     coeffs = sharding_runtime.place_tree(program, program.coefficients)
+    _compiled_program_execution(program, state, coeffs, donate_state=donate_state)
+
+
+def _compiled_program_execution(
+    program: CompiledProgram,
+    state: SimulationState,
+    coeffs,
+    *,
+    donate_state: bool,
+):
+    """Return an executable after compiling it outside the performance timer."""
     cache = execution_cache(program)
+    ready = cache.executable_donating_ready if donate_state else cache.executable_ready
     compiled_scan = (
         cache.compiled_scan_donating if donate_state else cache.compiled_scan
     ) or build_program_scan(program, donate_state=donate_state)
+    if ready:
+        return compiled_scan
     compiled = compiled_scan.lower(state, coeffs).compile()
     if donate_state:
         cache.compiled_scan_donating = compiled
+        cache.executable_donating_ready = True
     else:
         cache.compiled_scan = compiled
+        cache.executable_ready = True
+    return compiled
 
 
 def step_program(
@@ -1055,6 +1083,47 @@ def _run_program_state(
     return sharding_runtime.crop_state(program, state)
 
 
+def _run_program_state_timed(
+    program: CompiledProgram,
+    state: SimulationState,
+    *,
+    monitor_steps: int,
+    donate_state: bool,
+) -> tuple[SimulationState, float]:
+    """Run a ready executable and measure only its device-complete execution."""
+    state = runtime_inputs(program, state, monitor_steps=monitor_steps)
+    state = sharding_runtime.prepare_state(
+        program,
+        state,
+        replicated_fields=(*monitor_runtime.MONITOR_FIELDS, "t", "current_step"),
+    )
+    coeffs = sharding_runtime.place_tree(program, program.coefficients)
+    executable = _compiled_program_execution(
+        program, state, coeffs, donate_state=donate_state
+    )
+    started = perf_counter()
+    state = executable(state, coeffs)
+    state.ez.block_until_ready()
+    runtime_s = max(perf_counter() - started, np.finfo(float).tiny)
+    return sharding_runtime.crop_state(program, state), runtime_s
+
+
+def _performance_for(
+    program: CompiledProgram, *, runtime_s: float, steps: int
+) -> SimulationPerformance:
+    return SimulationPerformance(
+        runtime_s=runtime_s,
+        cells=int(np.prod(program.grid.permittivity.shape)),
+        steps=steps,
+    )
+
+
+def _print_performance(performance: SimulationPerformance) -> None:
+    """Print the two execution-only statistics reported for a finished run."""
+    print(f"Simulation runtime: {performance.runtime_s:.2f} s")
+    print(f"GCUPS: {performance.gcups:.3f}")
+
+
 def compiled_xla_memory_analysis(
     program: CompiledProgram,
     state: SimulationState,
@@ -1097,14 +1166,22 @@ def run_simulation_program(
     store_full_materials: bool,
     monitor_steps: int,
     donate_state: bool,
+    performance: bool,
+    report_performance: bool,
 ) -> SimulationRun:
     """Execute one continuation and separate durable results from runtime state."""
     compiling = progress and not program_is_compiled(program, donate_state=donate_state)
     if compiling:
         _print_inline_status("Compiling simulation...")
-    state = _run_program_state(
-        program, state, monitor_steps=monitor_steps, donate_state=donate_state
-    )
+    runtime_s = None
+    if performance:
+        state, runtime_s = _run_program_state_timed(
+            program, state, monitor_steps=monitor_steps, donate_state=donate_state
+        )
+    else:
+        state = _run_program_state(
+            program, state, monitor_steps=monitor_steps, donate_state=donate_state
+        )
     if progress:
         if compiling:
             _finish_inline_progress()
@@ -1114,6 +1191,13 @@ def run_simulation_program(
             label="Running simulation",
         )
         _finish_inline_progress()
+    stats = (
+        _performance_for(
+            program, runtime_s=runtime_s, steps=int(program.config.num_steps)
+        )
+        if runtime_s is not None
+        else None
+    )
     results = SimulationResults.from_run(
         simulation,
         runtime_fields=program.grid,
@@ -1122,7 +1206,10 @@ def run_simulation_program(
         source_launch_powers=_compiled_source_launch_powers(
             program, len(simulation.sources)
         ),
+        performance=stats,
     )
+    if stats is not None and report_performance:
+        _print_performance(stats)
     return SimulationRun(results=results, state=state)
 
 
@@ -1145,7 +1232,9 @@ def run_simulation_with_progress(
     store_full_materials: bool,
     monitor_steps: int,
     donate_state: bool,
-    backend: str = "auto",
+    backend: str,
+    performance: bool,
+    report_performance: bool,
 ) -> SimulationRun:
     """Run a segment in compiled chunks and report actual completed timesteps."""
     chunk_lengths = _progress_chunk_lengths(num_steps)
@@ -1174,22 +1263,37 @@ def run_simulation_with_progress(
         _finish_inline_progress()
 
     completed = 0
+    runtime_s = 0.0
     program = programs[chunk_lengths[-1]]
     _print_inline_progress(0, num_steps, label="Running simulation")
     try:
         for length in chunk_lengths:
             program = programs[length]
-            state = _run_program_state(
-                program,
-                state,
-                monitor_steps=monitor_steps,
-                donate_state=donate_state,
-            )
+            if performance:
+                state, elapsed = _run_program_state_timed(
+                    program,
+                    state,
+                    monitor_steps=monitor_steps,
+                    donate_state=donate_state,
+                )
+                runtime_s += elapsed
+            else:
+                state = _run_program_state(
+                    program,
+                    state,
+                    monitor_steps=monitor_steps,
+                    donate_state=donate_state,
+                )
             completed += length
             _print_inline_progress(completed, num_steps, label="Running simulation")
     finally:
         _finish_inline_progress()
 
+    stats = (
+        _performance_for(program, runtime_s=runtime_s, steps=num_steps)
+        if performance
+        else None
+    )
     results = SimulationResults.from_run(
         simulation,
         runtime_fields=program.grid,
@@ -1198,7 +1302,10 @@ def run_simulation_with_progress(
         source_launch_powers=_compiled_source_launch_powers(
             program, len(simulation.sources)
         ),
+        performance=stats,
     )
+    if stats is not None and report_performance:
+        _print_performance(stats)
     return SimulationRun(results=results, state=state)
 
 
@@ -1209,7 +1316,8 @@ def run_until_terminated(
     progress: bool,
     store_full_materials: bool,
     sharding,
-    backend="auto",
+    backend: str,
+    performance: bool,
 ) -> SimulationResults:
     """Run reusable chunks until convergence, failure, or the configured time limit."""
     if not isinstance(policy, AutoTermination):
@@ -1242,6 +1350,7 @@ def run_until_terminated(
     successful_checks = growth_checks = 0
     reason = "time_limit"
     last_run: SimulationRun | None = None
+    runtime_s = 0.0
     compiling = progress and not program_is_compiled(first_program, donate_state=True)
     if compiling:
         _print_inline_status("Compiling simulation...")
@@ -1271,8 +1380,12 @@ def run_until_terminated(
                 store_full_materials=store_full_materials,
                 monitor_steps=remaining,
                 donate_state=True,
+                performance=performance,
+                report_performance=False,
             )
             state = last_run.state
+            if last_run.results.performance is not None:
+                runtime_s += last_run.results.performance.runtime_s
             current_step = int(state.current_step)
             if progress:
                 if compiling:
@@ -1358,7 +1471,17 @@ def run_until_terminated(
     results = last_run.results
     if reason == "converged":
         results = _complete_converged_dft_weights(results, simulation, first_program)
-    return replace(results, termination=report)
+    stats = (
+        _performance_for(
+            first_program, runtime_s=runtime_s, steps=int(state.current_step)
+        )
+        if performance
+        else None
+    )
+    results = replace(results, termination=report, performance=stats)
+    if stats is not None:
+        _print_performance(stats)
+    return results
 
 
 _init_persistent_cache()

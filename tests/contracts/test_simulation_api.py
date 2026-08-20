@@ -135,14 +135,30 @@ def test_run_termination_validates_reason_and_result_attachment():
         SimulationResults(metadata=metadata, termination=object())
 
 
-def test_run_without_progress_is_silent(capsys):
+def test_run_reports_execution_only_performance_by_default(capsys):
     sim = _simulation()
     sim.clear_compiled_cache()
 
-    sim.run(progress=False)
+    result = sim.run(progress=False)
+
+    output = capsys.readouterr().out
+    assert "Simulation runtime:" in output
+    assert "GCUPS:" in output
+    assert result.performance is not None
+    assert result.performance.cells == 16
+    assert result.performance.steps == 3
+    assert result.performance.gcups > 0.0
+
+
+def test_run_can_disable_performance_reporting(capsys):
+    sim = _simulation()
+    sim.clear_compiled_cache()
+
+    result = sim.run(progress=False, performance=False)
 
     captured = capsys.readouterr()
     assert captured.out == captured.err == ""
+    assert result.performance is None
 
 
 def test_run_with_progress_reports_compile_and_running_phases(capsys):

@@ -1346,6 +1346,7 @@ class Simulation:
         sharding=None,
         donate_state=False,
         backend="auto",
+        performance=True,
     ) -> SimulationRun:
         """Execute a fresh or continued segment and return results plus next state.
 
@@ -1370,6 +1371,8 @@ class Simulation:
         backend : {"auto", "jax", "cuda", "cuda_streamed", "cuda_hopper"}, default="auto"
             Execution policy. ``auto`` preserves JAX as the fallback when the
             optional CUDA runtime is not installed.
+        performance : bool, default=True
+            Print JIT- and setup-free runtime and GCUPS after this segment finishes.
 
         Returns
         -------
@@ -1430,6 +1433,8 @@ class Simulation:
                 store_full_materials=bool(store_full_materials),
                 monitor_steps=remaining,
                 donate_state=bool(donate_state),
+                performance=bool(performance),
+                report_performance=bool(performance),
             )
 
         program = self.compile(
@@ -1448,6 +1453,8 @@ class Simulation:
             store_full_materials=bool(store_full_materials),
             monitor_steps=remaining,
             donate_state=bool(donate_state),
+            performance=bool(performance),
+            report_performance=bool(performance),
         )
 
     def run(
@@ -1458,6 +1465,7 @@ class Simulation:
         sharding=None,
         backend="auto",
         termination: AutoTermination | None = None,
+        performance: bool = True,
     ) -> SimulationResults:
         """Execute the complete simulation and return immutable analysis results.
 
@@ -1476,6 +1484,9 @@ class Simulation:
             Bounded convergence policy. When supplied, BeamZ executes reusable
             chunks and may stop before the end of the time grid after sources are
             inactive and the requested field and monitor residuals stabilize.
+        performance : bool, default=True
+            Print JIT- and setup-free runtime and GCUPS after completion. Set to
+            ``False`` to suppress reporting and timing instrumentation.
 
         Returns
         -------
@@ -1512,6 +1523,7 @@ class Simulation:
                 store_full_materials=bool(store_full_materials),
                 sharding=sharding,
                 backend=backend,
+                performance=bool(performance),
             )
         # The initial state is private to this call, so donating it is always safe and
         # avoids retaining a second full set of device buffers during execution.
@@ -1521,6 +1533,7 @@ class Simulation:
             sharding=sharding,
             backend=backend,
             donate_state=True,
+            performance=bool(performance),
         ).results
 
     def plot(self, **kwargs):
