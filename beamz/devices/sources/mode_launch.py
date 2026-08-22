@@ -561,16 +561,28 @@ def _plan_3d_mode_source(
         for name, index in dict(discrete_mode.component_indices).items()
         if name in profiles
     }
-    k_axis = float(discrete_mode.k_num_axis)
+    # ``DiscreteMode.k_num_axis`` is stored as a positive magnitude.  The
+    # incident-field phase, however, must carry the requested propagation sign;
+    # otherwise a ``direction='-'`` source masks the field onto the negative
+    # side while constructing a positive-axis travelling phasor.
+    direction_sign = 1.0 if source.direction == "+" else -1.0
+    k_axis = direction_sign * abs(float(discrete_mode.k_num_axis))
     if dt is None:
-        k_axis = float(np.real(discrete_mode.neff)) * float(omega) / LIGHT_SPEED
+        k_axis = (
+            direction_sign
+            * abs(float(np.real(discrete_mode.neff)))
+            * float(omega)
+            / LIGHT_SPEED
+        )
     elif not np.isfinite(k_axis):
-        k_axis = _numeric_wave_number(omega, dt, resolution, discrete_mode.neff)
+        k_axis = direction_sign * abs(
+            _numeric_wave_number(omega, dt, resolution, discrete_mode.neff)
+        )
     field_profile = FieldProfile3D(
         components=profiles,
         indices=indices,  # type: ignore[arg-type]
         axis=axis,  # type: ignore[arg-type]
-        direction_sign=1.0 if source.direction == "+" else -1.0,
+        direction_sign=direction_sign,
         omega=float(omega),
         k_axis=float(k_axis),
         phase_ref_coord=float(discrete_mode.phase_reference_coord),

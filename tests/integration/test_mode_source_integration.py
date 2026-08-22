@@ -28,8 +28,9 @@ pytestmark = [pytest.mark.integration, pytest.mark.simulation]
 
 @pytest.mark.compiled
 @pytest.mark.parametrize("grid_kind", ("uniform", "rectilinear"))
+@pytest.mark.parametrize("direction", ("+", "-"))
 def test_3d_mode_source_suppresses_counterpropagating_power_on_both_grids(
-    grid_kind,
+    grid_kind, direction,
 ):
     wavelength = 1.55e-6
     frequency = LIGHT_SPEED / wavelength
@@ -55,7 +56,7 @@ def test_3d_mode_source_suppresses_counterpropagating_power_on_both_grids(
     source = ModeSource(
         center=(source_x, 0.0, 0.0),
         size=plane_size,
-        direction="+",
+        direction=direction,
         source_time=GaussianPulse(
             freq0=frequency,
             fwidth=0.1 * frequency,
@@ -63,19 +64,21 @@ def test_3d_mode_source_suppresses_counterpropagating_power_on_both_grids(
         ),
         mode_spec=ModeSpec(num_modes=1, target_neff=0.98 * core_index),
     )
+    negative_monitor = FluxMonitor(
+        center=(source_x - 0.45e-6, 0.0, 0.0),
+        size=plane_size,
+        freqs=[frequency],
+        name="negative",
+    )
+    positive_monitor = FluxMonitor(
+        center=(source_x + 0.45e-6, 0.0, 0.0),
+        size=plane_size,
+        freqs=[frequency],
+        name="positive",
+    )
     monitors = [
-        FluxMonitor(
-            center=(source_x - 0.45e-6, 0.0, 0.0),
-            size=plane_size,
-            freqs=[frequency],
-            name="counter",
-        ),
-        FluxMonitor(
-            center=(source_x + 0.45e-6, 0.0, 0.0),
-            size=plane_size,
-            freqs=[frequency],
-            name="forward",
-        ),
+        negative_monitor,
+        positive_monitor,
     ]
     simulation = Simulation(
         domain=domain,
@@ -100,8 +103,10 @@ def test_3d_mode_source_suppresses_counterpropagating_power_on_both_grids(
     assert sorted(launch_powers) == pytest.approx([source.power], rel=1e-6)
 
     result = simulation.run(progress=False)
-    counter_power = abs(float(result["counter"].flux[0]))
-    forward_power = abs(float(result["forward"].flux[0]))
+    launched_name = "positive" if direction == "+" else "negative"
+    counter_name = "negative" if direction == "+" else "positive"
+    counter_power = abs(float(result[counter_name].flux[0]))
+    forward_power = abs(float(result[launched_name].flux[0]))
 
     assert forward_power > 0.0
     assert counter_power / forward_power < 0.05
