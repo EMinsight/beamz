@@ -405,7 +405,7 @@ def test_compiled_3d_cpml_uses_material_coefficients():
         resolution=dx,
     )
 
-    program = sim.compile(num_steps=1)
+    program = sim.compile(num_steps=1, backend="jax")
     coefficients = program.coefficients
 
     assert program.boundary.cpml.enabled
@@ -451,7 +451,7 @@ def test_compiled_3d_cpml_uses_material_coefficients():
     assert float(coefficients.h_sigma_m_x) == 0.0
     assert float(coefficients.h_sigma_m_y) == 0.0
     assert float(coefficients.h_sigma_m_z) == 0.0
-    sim.advance(num_steps=1, progress=False)
+    sim.advance(num_steps=1, progress=False, backend="jax")
 
 
 def test_compiled_3d_field_recorder_uses_logical_component_shape():
@@ -483,8 +483,8 @@ def test_compiled_3d_field_recorder_uses_logical_component_shape():
         resolution=dx,
     )
 
-    program = sim.compile(num_steps=2)
-    result = sim.advance(num_steps=2, progress=False)
+    program = sim.compile(num_steps=2, backend="jax")
+    result = sim.advance(num_steps=2, progress=False, backend="jax")
     frames = result.results.monitor("frames")
     plane = result.results.monitor("plane")
     assert not hasattr(result.results, "snapshots")
@@ -530,7 +530,7 @@ def test_compiled_3d_sponge_pml_uses_material_coefficients():
         resolution=dx,
     )
 
-    program = sim.compile(num_steps=1)
+    program = sim.compile(num_steps=1, backend="jax")
     assert not program.boundary.cpml.enabled
     coefficients = program.coefficients
     assert coefficients.e_decay_x.shape == (0, 0, 0)
@@ -550,7 +550,7 @@ def test_compiled_3d_sponge_pml_uses_material_coefficients():
         np.asarray(_fields_for_sim(sim).sigma_m_hx),
     )
 
-    sim.advance(num_steps=1, progress=False)
+    sim.advance(num_steps=1, progress=False, backend="jax")
 
 
 def test_simulation_memory_estimate_reports_fields_and_compiled_coefficients():
@@ -620,7 +620,7 @@ def test_compiled_uses_material_coefficients_for_3d_loss():
         resolution=dx,
     )
 
-    program = sim.compile(num_steps=1)
+    program = sim.compile(num_steps=1, backend="jax")
     coefficients = program.coefficients
 
     assert coefficients.e_decay_x.shape == (0, 0, 0)
@@ -640,7 +640,7 @@ def test_compiled_uses_material_coefficients_for_3d_loss():
         np.asarray(_fields_for_sim(sim).sigma_m_hx),
     )
 
-    sim.advance(num_steps=1, progress=False)
+    sim.advance(num_steps=1, progress=False, backend="jax")
 
 
 def test_compiled_3d_cpml_profiles_match_expected_x_boundary_embedding():
@@ -876,9 +876,9 @@ def test_compiled_static_monitor_physical_dft_uses_centered_tm_xy_sampling():
         freq_flux_im=jnp.zeros((1, 1), dtype=jnp.float32),
         freq_phase_re=jnp.ones((1, 1), dtype=jnp.float32),
         freq_phase_im=jnp.zeros((1, 1), dtype=jnp.float32),
-        dft_vec_re=jnp.zeros((1, 6, 1, 1), dtype=jnp.float32),
-        dft_vec_im=jnp.zeros((1, 6, 1, 1), dtype=jnp.float32),
-        dft_weight_sum=jnp.zeros((1, 1), dtype=jnp.float32),
+        dft_vec_re=jnp.zeros((6,), dtype=jnp.float32),
+        dft_vec_im=jnp.zeros((6,), dtype=jnp.float32),
+        dft_weight_sum=jnp.zeros((1,), dtype=jnp.float32),
     )
 
     tm_ez = jnp.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=jnp.float32)
@@ -898,12 +898,8 @@ def test_compiled_static_monitor_physical_dft_uses_centered_tm_xy_sampling():
     )
 
     expected = 2.5 / np.sqrt(2.0 * np.pi)
-    np.testing.assert_allclose(
-        updated.dft_vec_re[0, 2, 0, 0], expected, rtol=1e-6, atol=1e-6
-    )
-    np.testing.assert_allclose(
-        updated.dft_vec_im[0, 2, 0, 0], 0.0, rtol=1e-6, atol=1e-6
-    )
+    np.testing.assert_allclose(updated.dft_vec_re[2], expected, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(updated.dft_vec_im[2], 0.0, rtol=1e-6, atol=1e-6)
 
 
 def test_compiled_program_compiles_once(small_sim_params):
@@ -1227,6 +1223,62 @@ def test_compiled_dft_component_monitor_populated(small_sim_params):
     assert not hasattr(monitor, "_dft_accum")
 
 
+def test_compiled_dft_monitors_use_exact_ragged_state_arenas():
+    monitors = (
+        FieldMonitor(
+            center=(0.3, 0.5, 0.0),
+            size=(0.0, 0.8, 0.0),
+            freqs=(1e9, 2e9, 3e9, 4e9),
+            fields=("Ez",),
+            name="many_points",
+        ),
+        FieldMonitor(
+            center=(0.7, 0.5, 0.0),
+            size=(0.0, 0.2, 0.0),
+            freqs=(2e9,),
+            fields=("Ez",),
+            name="few_points",
+        ),
+    )
+    simulation = Simulation(
+        domain=(1.0, 1.0),
+        resolution=0.1,
+        monitors=monitors,
+        time=np.arange(4, dtype=np.float64) * 1e-11,
+    )
+    program = simulation.compile(backend="jax")
+    first, second = program.monitors
+    state = initial_program_state(program, t=float(simulation.time[0]), current_step=0)
+
+    first_values = 6 * first.freq_count * first.dft_point_count
+    second_values = 6 * second.freq_count * second.dft_point_count
+    assert first.dft_value_offset == 0
+    assert second.dft_value_offset == first_values
+    assert first.dft_weight_offset == 0
+    assert second.dft_weight_offset == first.freq_count
+    assert state.dft_vec_re.shape == (first_values + second_values,)
+    assert state.dft_vec_im.shape == state.dft_vec_re.shape
+    assert state.dft_weight_sum.shape == (first.freq_count + second.freq_count,)
+
+    padded_values = (
+        len(program.monitors)
+        * 6
+        * max(spec.freq_count for spec in program.monitors)
+        * max(spec.dft_point_count for spec in program.monitors)
+    )
+    assert state.dft_vec_re.size < padded_values
+
+    results = simulation.advance(num_steps=4, backend="jax", progress=False).results
+    assert results.monitors["many_points"].dft_fields["Ez"].shape == (
+        first.freq_count,
+        first.dft_point_count,
+    )
+    assert results.monitors["few_points"].dft_fields["Ez"].shape == (
+        second.freq_count,
+        second.dft_point_count,
+    )
+
+
 def test_compiled_static_monitor_dft_uses_current_sample_phase():
     point = jnp.asarray([[0]], dtype=jnp.int32)
     zero = jnp.asarray([[0.0]], dtype=jnp.float32)
@@ -1277,9 +1329,9 @@ def test_compiled_static_monitor_dft_uses_current_sample_phase():
         freq_flux_im=jnp.zeros((1, 1), dtype=jnp.float32),
         freq_phase_re=jnp.ones((1, 1), dtype=jnp.float32),
         freq_phase_im=jnp.zeros((1, 1), dtype=jnp.float32),
-        dft_vec_re=jnp.zeros((1, 6, 1, 1), dtype=jnp.float32),
-        dft_vec_im=jnp.zeros((1, 6, 1, 1), dtype=jnp.float32),
-        dft_weight_sum=jnp.zeros((1, 1), dtype=jnp.float32),
+        dft_vec_re=jnp.zeros((6,), dtype=jnp.float32),
+        dft_vec_im=jnp.zeros((6,), dtype=jnp.float32),
+        dft_weight_sum=jnp.zeros((1,), dtype=jnp.float32),
     )
 
     updated = monitor_runtime.update_monitors(
@@ -1296,11 +1348,7 @@ def test_compiled_static_monitor_dft_uses_current_sample_phase():
         hz=jnp.zeros((1, 1), dtype=jnp.float32),
     )
 
-    np.testing.assert_allclose(
-        updated.dft_vec_re[0, 2, 0, 0], 2.0, rtol=1e-7, atol=1e-7
-    )
-    np.testing.assert_allclose(
-        updated.dft_vec_im[0, 2, 0, 0], 0.0, rtol=1e-7, atol=1e-7
-    )
+    np.testing.assert_allclose(updated.dft_vec_re[2], 2.0, rtol=1e-7, atol=1e-7)
+    np.testing.assert_allclose(updated.dft_vec_im[2], 0.0, rtol=1e-7, atol=1e-7)
     np.testing.assert_allclose(updated.freq_phase_re[0, 0], 0.0, rtol=1e-7, atol=1e-7)
     np.testing.assert_allclose(updated.freq_phase_im[0, 0], -1.0, rtol=1e-7, atol=1e-7)

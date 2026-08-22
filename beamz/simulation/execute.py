@@ -9,6 +9,7 @@ import sys
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from time import perf_counter
 
 import jax
 import jax.numpy as jnp
@@ -25,6 +26,7 @@ from beamz.devices.sources.compiler import (
     CompiledSourceSpec,
     batch_slab_specs,
 )
+from beamz.simulation.backend import CUDA_BF16_PSI
 from beamz.simulation.model import (
     AutoTermination,
     CompiledProgram,
@@ -35,7 +37,13 @@ from beamz.simulation.model import (
 from . import kernels as update_runtime
 from . import observe as monitor_runtime
 from . import sharding as sharding_runtime
-from .results import MonitorResults, RunTermination, SimulationResults, SimulationRun
+from .results import (
+    MonitorResults,
+    RunTermination,
+    SimulationPerformance,
+    SimulationResults,
+    SimulationRun,
+)
 
 SOURCE_PHASE_COMPONENTS = {
     "pre_e": ("Ex", "Ey", "Ez"),
@@ -49,6 +57,11 @@ SourceBatchMap = dict[
     tuple[str, str],
     tuple[BatchedSlabGroup | None, tuple[CompiledSourceSpec, ...]],
 ]
+
+# Native CUDA calls capture one graph node sequence per step. Keep captures small
+# enough to instantiate predictably, then replay the same executable from an XLA loop.
+# The even bound also keeps the temporal ping-pong kernel on its fast return layout.
+CUDA_GRAPH_MAX_STEPS = 256
 
 
 _COMPONENT_OFFSETS_2D = {
@@ -483,11 +496,13 @@ def forward_step(
         "h",
         dense_single_slab=cfg.source_single_slab_dense,
     )
-    hx, hy, hz = update_runtime.apply_post_source_boundaries(
-        (state.hx, state.hy, state.hz),
-        (metallic.hx_mask, metallic.hy_mask, metallic.hz_mask),
-    )
-    state = state._replace(hx=hx, hy=hy, hz=hz)
+    cuda_owns_pec = cfg.backend == "cuda_streamed" and not program.sources
+    if not cuda_owns_pec:
+        hx, hy, hz = update_runtime.apply_post_source_boundaries(
+            (state.hx, state.hy, state.hz),
+            (metallic.hx_mask, metallic.hy_mask, metallic.hz_mask),
+        )
+        state = state._replace(hx=hx, hy=hy, hz=hz)
 
     # 3. Advance E, inject its sources, and restore its masks before observation.
     state = update_kernel.update_e(state, ctx, coeffs)
@@ -498,11 +513,12 @@ def forward_step(
         "e",
         dense_single_slab=cfg.source_single_slab_dense,
     )
-    ex, ey, ez = update_runtime.apply_post_source_boundaries(
-        (state.ex, state.ey, state.ez),
-        (metallic.ex_mask, metallic.ey_mask, metallic.ez_mask),
-    )
-    state = state._replace(ex=ex, ey=ey, ez=ez)
+    if not cuda_owns_pec:
+        ex, ey, ez = update_runtime.apply_post_source_boundaries(
+            (state.ex, state.ey, state.ez),
+            (metallic.ex_mask, metallic.ey_mask, metallic.ez_mask),
+        )
+        state = state._replace(ex=ex, ey=ey, ez=ez)
 
     # 4. Observe only fully constrained end-of-step fields, then advance both clocks.
     t_phys = state.t + ctx.dt_scalar
@@ -558,6 +574,37 @@ def build_scan(program, *, donate_state: bool = False):
         is_3d=is_3d,
     )
     update_kernel = update_runtime.select_update_kernel(step_context)
+    graph_source_groups = tuple(
+        source_batches[(timing, component)][0]
+        for timing, components in SOURCE_PHASE_COMPONENTS.items()
+        for component in components
+    )
+    source_groups_supported = bool(program.sources) and all(
+        not rest for _group, rest in source_batches.values()
+    )
+    graph_monitors_supported = bool(program.monitors) and all(
+        monitor.recorder_index < 0
+        and not monitor.accumulate_power
+        and not monitor.accumulate_frequency
+        and monitor.dft_enabled
+        and monitor.freq_count > 0
+        and monitor.dft_point_count > 0
+        for monitor in program.monitors
+    )
+    packed_graph_monitors = None
+    if (
+        cfg.backend == "cuda_streamed"
+        and graph_monitors_supported
+        and not bool(jax.config.read("jax_enable_x64"))
+    ):
+        from beamz.simulation.cuda import pack_dft_monitors
+
+        packed_graph_monitors = pack_dft_monitors(program.monitors)
+    cuda_multi_step = (
+        cfg.backend == "cuda_streamed"
+        and (not program.monitors or packed_graph_monitors is not None)
+        and (not program.sources or source_groups_supported)
+    )
 
     def run_scan(
         state: SimulationState,
@@ -565,7 +612,74 @@ def build_scan(program, *, donate_state: bool = False):
     ):
         # 4. Run the same transition through scan or fori_loop. The choice changes the
         # lowering strategy, not timestep semantics.
-        if cfg.loop_kind == "scan":
+        if cuda_multi_step:
+            from beamz.simulation.cuda import (
+                run_program_steps,
+                run_source_group_steps,
+                run_steps,
+            )
+
+            def advance_native_chunk(chunk_state, chunk_steps: int, elapsed_steps):
+                elapsed_steps = jnp.asarray(elapsed_steps, dtype=jnp.int32)
+                chunk_state = chunk_state._replace(
+                    # Derive clocks from the immutable run origin. Incrementally
+                    # accumulating float32 chunk times would perturb long-run DFT
+                    # phases relative to one unbounded native launch.
+                    t=state.t + dt_scalar * elapsed_steps,
+                    current_step=state.current_step + elapsed_steps,
+                )
+                chunk_out = (
+                    run_steps(chunk_state, step_context, coeffs, chunk_steps)
+                    if not program.sources and not program.monitors
+                    else run_program_steps(
+                        chunk_state,
+                        step_context,
+                        coeffs,
+                        graph_source_groups,
+                        packed_graph_monitors,
+                        chunk_steps,
+                    )
+                    if program.monitors
+                    else run_source_group_steps(
+                        chunk_state,
+                        step_context,
+                        coeffs,
+                        graph_source_groups,
+                        chunk_steps,
+                    )
+                )
+                completed_steps = elapsed_steps + jnp.asarray(
+                    chunk_steps, dtype=jnp.int32
+                )
+                return chunk_out._replace(
+                    t=state.t + dt_scalar * completed_steps,
+                    current_step=state.current_step + completed_steps,
+                )
+
+            if cfg.num_steps <= CUDA_GRAPH_MAX_STEPS:
+                scan_out = advance_native_chunk(state, cfg.num_steps, 0)
+            else:
+                full_chunks, tail_steps = divmod(cfg.num_steps, CUDA_GRAPH_MAX_STEPS)
+                # The loop body has one fixed native call signature. XLA therefore
+                # reuses its buffers and the CUDA layer hits one bounded graph-cache
+                # entry instead of capturing a graph proportional to the entire run.
+                scan_out = jax.lax.fori_loop(
+                    0,
+                    full_chunks,
+                    lambda _i, chunk_state: advance_native_chunk(
+                        chunk_state,
+                        CUDA_GRAPH_MAX_STEPS,
+                        _i * CUDA_GRAPH_MAX_STEPS,
+                    ),
+                    state,
+                )
+                if tail_steps:
+                    scan_out = advance_native_chunk(
+                        scan_out,
+                        tail_steps,
+                        full_chunks * CUDA_GRAPH_MAX_STEPS,
+                    )
+        elif cfg.loop_kind == "scan":
 
             def _scan_body(carry, _unused):
                 # Emit no per-step output because final state and explicit buffers hold results.
@@ -667,6 +781,8 @@ class _ExecutionCache:
     # plan equality prevents compilation artifacts from changing semantic identity.
     compiled_scan: Callable[..., ScanResult] | None = None
     compiled_scan_donating: Callable[..., ScanResult] | None = None
+    executable_ready: bool = False
+    executable_donating_ready: bool = False
 
 
 _MAX_EXECUTION_CACHES = 8
@@ -705,6 +821,13 @@ def initial_program_state(
 ) -> SimulationState:
     """Allocate or restore every runtime buffer required by a compiled plan."""
     cpml, layout = program.boundary.cpml, program.sharding.layout
+    psi_dtype = None
+    if (
+        program.config.backend == "cuda_streamed"
+        and cpml.enabled
+        and program.config.cuda_flags & CUDA_BF16_PSI
+    ):
+        psi_dtype = jnp.bfloat16
 
     def field(name):
         # Fresh runs use the compiled lattice; continuations supply evolved canonical
@@ -725,12 +848,16 @@ def initial_program_state(
 
     # Continue compatible packed CPML memories; a changed boundary plan starts clean.
     def restore_psi(old, terms, dtype):
+        dtype = dtype if psi_dtype is None else psi_dtype
         shapes = tuple(term.slab.shape for term in terms)
         if len(old) == len(shapes) and all(
             tuple(value.shape) == shape
             for value, shape in zip(old, shapes, strict=True)
         ):
-            return old
+            if all(np.dtype(value.dtype) == np.dtype(dtype) for value in old):
+                return old
+            converter = np.asarray if layout.enabled else jnp.asarray
+            return tuple(converter(value, dtype=dtype) for value in old)
         return tuple(zeros(shape, dtype) for shape in shapes)
 
     old_h = () if continuation is None else continuation.cpml_psi_h_terms
@@ -784,8 +911,10 @@ def build_program_scan(program: CompiledProgram, *, donate_state: bool = False):
     scan = build_scan(program, donate_state=bool(donate_state))
     if donate_state:
         cache.compiled_scan_donating = scan
+        cache.executable_donating_ready = False
     else:
         cache.compiled_scan = scan
+        cache.executable_ready = False
     return scan
 
 
@@ -832,15 +961,32 @@ def compile_program_execution(
         replicated_fields=(*monitor_runtime.MONITOR_FIELDS, "t", "current_step"),
     )
     coeffs = sharding_runtime.place_tree(program, program.coefficients)
+    _compiled_program_execution(program, state, coeffs, donate_state=donate_state)
+
+
+def _compiled_program_execution(
+    program: CompiledProgram,
+    state: SimulationState,
+    coeffs,
+    *,
+    donate_state: bool,
+):
+    """Return an executable after compiling it outside the performance timer."""
     cache = execution_cache(program)
+    ready = cache.executable_donating_ready if donate_state else cache.executable_ready
     compiled_scan = (
         cache.compiled_scan_donating if donate_state else cache.compiled_scan
     ) or build_program_scan(program, donate_state=donate_state)
+    if ready:
+        return compiled_scan
     compiled = compiled_scan.lower(state, coeffs).compile()
     if donate_state:
         cache.compiled_scan_donating = compiled
+        cache.executable_donating_ready = True
     else:
         cache.compiled_scan = compiled
+        cache.executable_ready = True
+    return compiled
 
 
 def step_program(
@@ -937,6 +1083,47 @@ def _run_program_state(
     return sharding_runtime.crop_state(program, state)
 
 
+def _run_program_state_timed(
+    program: CompiledProgram,
+    state: SimulationState,
+    *,
+    monitor_steps: int,
+    donate_state: bool,
+) -> tuple[SimulationState, float]:
+    """Run a ready executable and measure only its device-complete execution."""
+    state = runtime_inputs(program, state, monitor_steps=monitor_steps)
+    state = sharding_runtime.prepare_state(
+        program,
+        state,
+        replicated_fields=(*monitor_runtime.MONITOR_FIELDS, "t", "current_step"),
+    )
+    coeffs = sharding_runtime.place_tree(program, program.coefficients)
+    executable = _compiled_program_execution(
+        program, state, coeffs, donate_state=donate_state
+    )
+    started = perf_counter()
+    state = executable(state, coeffs)
+    state.ez.block_until_ready()
+    runtime_s = max(perf_counter() - started, np.finfo(float).tiny)
+    return sharding_runtime.crop_state(program, state), runtime_s
+
+
+def _performance_for(
+    program: CompiledProgram, *, runtime_s: float, steps: int
+) -> SimulationPerformance:
+    return SimulationPerformance(
+        runtime_s=runtime_s,
+        cells=int(np.prod(program.grid.permittivity.shape)),
+        steps=steps,
+    )
+
+
+def _print_performance(performance: SimulationPerformance) -> None:
+    """Print the two execution-only statistics reported for a finished run."""
+    print(f"Simulation runtime: {performance.runtime_s:.2f} s")
+    print(f"GCUPS: {performance.gcups:.3f}")
+
+
 def compiled_xla_memory_analysis(
     program: CompiledProgram,
     state: SimulationState,
@@ -979,14 +1166,22 @@ def run_simulation_program(
     store_full_materials: bool,
     monitor_steps: int,
     donate_state: bool,
+    performance: bool,
+    report_performance: bool,
 ) -> SimulationRun:
     """Execute one continuation and separate durable results from runtime state."""
     compiling = progress and not program_is_compiled(program, donate_state=donate_state)
     if compiling:
         _print_inline_status("Compiling simulation...")
-    state = _run_program_state(
-        program, state, monitor_steps=monitor_steps, donate_state=donate_state
-    )
+    runtime_s = None
+    if performance:
+        state, runtime_s = _run_program_state_timed(
+            program, state, monitor_steps=monitor_steps, donate_state=donate_state
+        )
+    else:
+        state = _run_program_state(
+            program, state, monitor_steps=monitor_steps, donate_state=donate_state
+        )
     if progress:
         if compiling:
             _finish_inline_progress()
@@ -996,6 +1191,13 @@ def run_simulation_program(
             label="Running simulation",
         )
         _finish_inline_progress()
+    stats = (
+        _performance_for(
+            program, runtime_s=runtime_s, steps=int(program.config.num_steps)
+        )
+        if runtime_s is not None
+        else None
+    )
     results = SimulationResults.from_run(
         simulation,
         runtime_fields=program.grid,
@@ -1004,7 +1206,10 @@ def run_simulation_program(
         source_launch_powers=_compiled_source_launch_powers(
             program, len(simulation.sources)
         ),
+        performance=stats,
     )
+    if stats is not None and report_performance:
+        _print_performance(stats)
     return SimulationRun(results=results, state=state)
 
 
@@ -1027,6 +1232,9 @@ def run_simulation_with_progress(
     store_full_materials: bool,
     monitor_steps: int,
     donate_state: bool,
+    backend: str,
+    performance: bool,
+    report_performance: bool,
 ) -> SimulationRun:
     """Run a segment in compiled chunks and report actual completed timesteps."""
     chunk_lengths = _progress_chunk_lengths(num_steps)
@@ -1034,7 +1242,10 @@ def run_simulation_with_progress(
     try:
         programs = {
             length: simulation.compile(
-                num_steps=length, sharding=sharding, progress=False
+                num_steps=length,
+                sharding=sharding,
+                backend=backend,
+                progress=False,
             )
             for length in set(chunk_lengths)
         }
@@ -1052,22 +1263,37 @@ def run_simulation_with_progress(
         _finish_inline_progress()
 
     completed = 0
+    runtime_s = 0.0
     program = programs[chunk_lengths[-1]]
     _print_inline_progress(0, num_steps, label="Running simulation")
     try:
         for length in chunk_lengths:
             program = programs[length]
-            state = _run_program_state(
-                program,
-                state,
-                monitor_steps=monitor_steps,
-                donate_state=donate_state,
-            )
+            if performance:
+                state, elapsed = _run_program_state_timed(
+                    program,
+                    state,
+                    monitor_steps=monitor_steps,
+                    donate_state=donate_state,
+                )
+                runtime_s += elapsed
+            else:
+                state = _run_program_state(
+                    program,
+                    state,
+                    monitor_steps=monitor_steps,
+                    donate_state=donate_state,
+                )
             completed += length
             _print_inline_progress(completed, num_steps, label="Running simulation")
     finally:
         _finish_inline_progress()
 
+    stats = (
+        _performance_for(program, runtime_s=runtime_s, steps=num_steps)
+        if performance
+        else None
+    )
     results = SimulationResults.from_run(
         simulation,
         runtime_fields=program.grid,
@@ -1076,7 +1302,10 @@ def run_simulation_with_progress(
         source_launch_powers=_compiled_source_launch_powers(
             program, len(simulation.sources)
         ),
+        performance=stats,
     )
+    if stats is not None and report_performance:
+        _print_performance(stats)
     return SimulationRun(results=results, state=state)
 
 
@@ -1087,13 +1316,18 @@ def run_until_terminated(
     progress: bool,
     store_full_materials: bool,
     sharding,
+    backend: str,
+    performance: bool,
 ) -> SimulationResults:
     """Run reusable chunks until convergence, failure, or the configured time limit."""
     if not isinstance(policy, AutoTermination):
         raise TypeError("termination must be an AutoTermination instance or None.")
     chunk_steps = min(int(policy.chunk_steps), int(simulation.num_steps))
     first_program = simulation.compile(
-        num_steps=chunk_steps, sharding=sharding, progress=progress
+        num_steps=chunk_steps,
+        sharding=sharding,
+        backend=backend,
+        progress=progress,
     )
     monitor_names = _selected_monitor_names(first_program, policy)
     monitor_tolerance = (
@@ -1116,6 +1350,7 @@ def run_until_terminated(
     successful_checks = growth_checks = 0
     reason = "time_limit"
     last_run: SimulationRun | None = None
+    runtime_s = 0.0
     compiling = progress and not program_is_compiled(first_program, donate_state=True)
     if compiling:
         _print_inline_status("Compiling simulation...")
@@ -1131,7 +1366,10 @@ def run_until_terminated(
                 first_program
                 if steps == chunk_steps
                 else simulation.compile(
-                    num_steps=steps, sharding=sharding, progress=False
+                    num_steps=steps,
+                    sharding=sharding,
+                    backend=backend,
+                    progress=False,
                 )
             )
             last_run = run_simulation_program(
@@ -1142,8 +1380,12 @@ def run_until_terminated(
                 store_full_materials=store_full_materials,
                 monitor_steps=remaining,
                 donate_state=True,
+                performance=performance,
+                report_performance=False,
             )
             state = last_run.state
+            if last_run.results.performance is not None:
+                runtime_s += last_run.results.performance.runtime_s
             current_step = int(state.current_step)
             if progress:
                 if compiling:
@@ -1229,7 +1471,17 @@ def run_until_terminated(
     results = last_run.results
     if reason == "converged":
         results = _complete_converged_dft_weights(results, simulation, first_program)
-    return replace(results, termination=report)
+    stats = (
+        _performance_for(
+            first_program, runtime_s=runtime_s, steps=int(state.current_step)
+        )
+        if performance
+        else None
+    )
+    results = replace(results, termination=report, performance=stats)
+    if stats is not None:
+        _print_performance(stats)
+    return results
 
 
 _init_persistent_cache()

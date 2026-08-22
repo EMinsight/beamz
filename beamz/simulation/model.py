@@ -33,6 +33,8 @@ class RunSpec:
     loop_kind: str
     source_single_slab_dense: bool
     sharding: ShardingToken
+    backend: str = "jax"
+    cuda_flags: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,9 +245,9 @@ class SimulationState(NamedTuple):
             freq_flux_im=empty2,
             freq_phase_re=empty2,
             freq_phase_im=empty2,
-            dft_vec_re=jnp.zeros((0, 0, 0, 0), dtype=jnp.float32),
-            dft_vec_im=jnp.zeros((0, 0, 0, 0), dtype=jnp.float32),
-            dft_weight_sum=empty2,
+            dft_vec_re=jnp.zeros((0,), dtype=jnp.float32),
+            dft_vec_im=jnp.zeros((0,), dtype=jnp.float32),
+            dft_weight_sum=jnp.zeros((0,), dtype=jnp.float32),
             recorded_fields=(),
             recorded_steps=(),
             recorded_times=(),
@@ -457,7 +459,9 @@ class RunConfig:
     polarization_2d: str = "tm"
     loop_kind: str = "scan"
     source_single_slab_dense: bool = False
+    backend: str = "jax"
     sharding: ShardingConfig = ShardingConfig()
+    cuda_flags: int = 0
 
 
 @dataclass(frozen=True, slots=True, eq=False)

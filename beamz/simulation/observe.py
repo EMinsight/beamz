@@ -400,12 +400,14 @@ def monitor_frequency_size(specs: tuple[CompiledMonitorSpec, ...]) -> int:
     return int(max(int(spec.freq_count) for spec in specs))
 
 
-def monitor_dft_point_size(specs: tuple[CompiledMonitorSpec, ...]) -> int:
-    """Return the largest DFT point count required by any monitor."""
-    # Spatial DFT vectors follow the same padded-row policy as frequencies.
-    if not specs:
-        return 0
-    return int(max(int(getattr(spec, "dft_point_count", 0)) for spec in specs))
+def monitor_dft_value_size(specs: tuple[CompiledMonitorSpec, ...]) -> int:
+    """Return the exact number of real values in one vector-DFT arena."""
+    return sum(6 * int(spec.freq_count) * int(spec.dft_point_count) for spec in specs)
+
+
+def monitor_dft_weight_size(specs: tuple[CompiledMonitorSpec, ...]) -> int:
+    """Return the exact number of normalization weights in the DFT arena."""
+    return sum(int(spec.freq_count) for spec in specs)
 
 
 MONITOR_FIELDS = (
@@ -442,14 +444,14 @@ def empty_monitor_values(program, num_steps: int | None = None) -> dict[str, Any
                 ((0, 0), jnp.float32),
                 ((0, 0), jnp.float32),
                 ((0, 0), jnp.float32),
-                ((0, 0, 0, 0), dft_dtype),
-                ((0, 0, 0, 0), dft_dtype),
-                ((0, 0), dft_dtype),
+                ((0,), dft_dtype),
+                ((0,), dft_dtype),
+                ((0,), dft_dtype),
             )
         ) + ((), (), (), ())
         return dict(zip(MONITOR_FIELDS, values, strict=True))
-    # 2. Derive record, frequency, and point capacities from plan maxima so all monitors
-    # share rectangular buffers and continuation keeps one stable pytree.
+    # 2. Keep scalar histories rectangular, but size vector DFT arenas by the exact sum
+    # of monitor payloads. Offsets live in each immutable CompiledMonitorSpec.
     n = len(specs)
     max_records = max(
         1,
@@ -459,7 +461,8 @@ def empty_monitor_values(program, num_steps: int | None = None) -> dict[str, Any
         ),
     )
     max_freq = monitor_frequency_size(specs)
-    max_points = monitor_dft_point_size(specs)
+    dft_value_count = monitor_dft_value_size(specs)
+    dft_weight_count = monitor_dft_weight_size(specs)
     recorder_specs = tuple(spec for spec in specs if spec.recorder_index >= 0)
     recorder_steps = max(
         1, int(program.config.num_steps if num_steps is None else num_steps)
@@ -473,9 +476,9 @@ def empty_monitor_values(program, num_steps: int | None = None) -> dict[str, Any
         jnp.zeros((n, max_freq), dtype=jnp.float32),
         jnp.ones((n, max_freq), dtype=jnp.float32),
         jnp.zeros((n, max_freq), dtype=jnp.float32),
-        jnp.zeros((n, 6, max_freq, max_points), dtype=dft_dtype),
-        jnp.zeros((n, 6, max_freq, max_points), dtype=dft_dtype),
-        jnp.zeros((n, max_freq), dtype=dft_dtype),
+        jnp.zeros((dft_value_count,), dtype=dft_dtype),
+        jnp.zeros((dft_value_count,), dtype=dft_dtype),
+        jnp.zeros((dft_weight_count,), dtype=dft_dtype),
         tuple(
             jnp.zeros(
                 (
@@ -566,10 +569,19 @@ def _accumulate_dft(mon, carry, field_arrays, t_phys, dt_scalar):
         * component_mask
         * jnp.einsum("f,cp->cfp", phase_im, vectors.astype(dtype))
     )
-    mi, nf, npnt = mon.monitor_index, mon.freq_count, mon.dft_point_count
-    d_re = d_re.at[mi, :, :nf, :npnt].add(delta_re[:, :nf, :npnt])
-    d_im = d_im.at[mi, :, :nf, :npnt].add(delta_im[:, :nf, :npnt])
-    d_w = d_w.at[mi, :nf].add(jnp.asarray(window, dtype=dtype))
+    nf, npnt = mon.freq_count, mon.dft_point_count
+    value_offset = int(mon.dft_value_offset)
+    value_count = 6 * int(nf) * int(npnt)
+    weight_offset = int(mon.dft_weight_offset)
+    d_re = d_re.at[value_offset : value_offset + value_count].add(
+        delta_re[:, :nf, :npnt].reshape(-1)
+    )
+    d_im = d_im.at[value_offset : value_offset + value_count].add(
+        delta_im[:, :nf, :npnt].reshape(-1)
+    )
+    d_w = d_w.at[weight_offset : weight_offset + nf].add(
+        jnp.full((nf,), window, dtype=dtype)
+    )
     return d_re, d_im, d_w
 
 

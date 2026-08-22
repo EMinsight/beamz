@@ -56,6 +56,44 @@ class _RunConfigLike(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class SimulationPerformance:
+    """JIT- and setup-free execution statistics for one simulation run.
+
+    ``runtime_s`` measures only the ready compiled executable, from dispatch until
+    its device work completes. Plan construction, JIT compilation, runtime setup,
+    and result decoding are excluded.
+    """
+
+    runtime_s: float
+    cells: int
+    steps: int
+
+    def __post_init__(self) -> None:
+        runtime_s = float(self.runtime_s)
+        if not np.isfinite(runtime_s) or runtime_s <= 0.0:
+            raise ValueError(
+                "SimulationPerformance.runtime_s must be positive and finite."
+            )
+        for name in ("cells", "steps"):
+            value = getattr(self, name)
+            if (
+                isinstance(value, (bool, np.bool_))
+                or int(value) != value
+                or int(value) <= 0
+            ):
+                raise ValueError(
+                    f"SimulationPerformance.{name} must be a positive integer."
+                )
+            object.__setattr__(self, name, int(value))
+        object.__setattr__(self, "runtime_s", runtime_s)
+
+    @property
+    def gcups(self) -> float:
+        """Billions of cell updates per second for this run."""
+        return self.cells * self.steps / self.runtime_s / 1e9
+
+
+@dataclass(frozen=True, slots=True)
 class RunTermination:
     """Describe why a bounded simulation run stopped and its final residuals.
 
@@ -815,12 +853,22 @@ class MonitorResults:
         if spec.dft_enabled and fc > 0 and pc > 0:
             from beamz.lattice import public_component_2d
 
+            value_offset = int(spec.dft_value_offset)
+            value_count = 6 * fc * pc
+            packed_re = np.asarray(
+                state.dft_vec_re[value_offset : value_offset + value_count],
+                dtype=np.float64,
+            ).reshape(6, fc, pc)
+            packed_im = np.asarray(
+                state.dft_vec_im[value_offset : value_offset + value_count],
+                dtype=np.float64,
+            ).reshape(6, fc, pc)
             comp_mask_arr = np.asarray(spec.dft_component_mask, dtype=np.float32)
             for comp_i, comp_name in enumerate(("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")):
                 if comp_mask_arr[comp_i] <= 0.0:
                     continue
-                re = np.asarray(state.dft_vec_re[i, comp_i, :fc, :pc], dtype=np.float64)
-                im = np.asarray(state.dft_vec_im[i, comp_i, :fc, :pc], dtype=np.float64)
+                re = packed_re[comp_i]
+                im = packed_im[comp_i]
                 if not bool(config.is_3d) and comp_name in (
                     {"Ez", "Hx", "Hy"}
                     if config.polarization_2d == "tm"
@@ -855,7 +903,10 @@ class MonitorResults:
             dft_fields=dft_fields,
             dft_frequencies=dft_frequencies.copy(),
             dft_weight_sum=np.asarray(
-                state.dft_weight_sum[i, :fc], dtype=np.float64
+                state.dft_weight_sum[
+                    spec.dft_weight_offset : spec.dft_weight_offset + fc
+                ],
+                dtype=np.float64,
             ).copy(),
             dft_base_dt=float(config.dt),
             resolution=float(config.resolution),
@@ -891,6 +942,8 @@ class SimulationResults:
         ``None`` means raw monitor data.
     source_launch_powers : tuple of float or None
         Internally calibrated launched powers corresponding to ``sources``.
+    performance : SimulationPerformance or None
+        JIT- and setup-free execution statistics for the completed run.
 
     Examples
     --------
@@ -923,6 +976,7 @@ class SimulationResults:
         default_factory=tuple, repr=False
     )
     termination: RunTermination | None = None
+    performance: SimulationPerformance | None = None
 
     def __post_init__(self):
         if not isinstance(self.metadata, SimulationMetadata):
@@ -964,6 +1018,12 @@ class SimulationResults:
         ):
             raise TypeError(
                 "SimulationResults.termination must be RunTermination or None."
+            )
+        if self.performance is not None and not isinstance(
+            self.performance, SimulationPerformance
+        ):
+            raise TypeError(
+                "SimulationResults.performance must be SimulationPerformance or None."
             )
 
     def __getitem__(self, name):
@@ -1199,6 +1259,7 @@ class SimulationResults:
         monitor_results: Mapping[str, MonitorResults],
         store_full_materials: bool = False,
         source_launch_powers: tuple[float | None, ...] = (),
+        performance: SimulationPerformance | None = None,
     ) -> "SimulationResults":
         """Detach canonical analysis outputs from completed runtime buffers.
 
@@ -1214,6 +1275,8 @@ class SimulationResults:
             Retain the complete material grid instead of monitor-local regions only.
         source_launch_powers : tuple of float or None, optional
             Calibrated launched powers corresponding to simulation sources.
+        performance : SimulationPerformance, optional
+            Execution statistics measured around the compiled simulation executable.
 
         Returns
         -------
@@ -1257,6 +1320,7 @@ class SimulationResults:
             monitors=monitor_results_dict,
             sources=simulation.sources,
             source_launch_powers=source_launch_powers,
+            performance=performance,
         )
         source = simulation.normalize_source
         return result.renormalize(None if not result.sources else source)
