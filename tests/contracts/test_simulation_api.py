@@ -145,6 +145,18 @@ def test_run_without_progress_is_silent(capsys):
     assert captured.out == captured.err == ""
 
 
+def test_run_with_progress_reports_compile_and_running_phases(capsys):
+    sim = _simulation()
+    sim.clear_compiled_cache()
+
+    sim.run(progress=True)
+
+    output = capsys.readouterr().out
+    assert "Compiling simulation..." in output
+    assert "Running simulation: [--------------------] 0% (0/3 steps)" in output
+    assert "Running simulation: [####################] 100% (3/3 steps)" in output
+
+
 def test_run_can_stop_after_consecutive_field_decay_checks():
     sim = _simulation(time=np.arange(20, dtype=float) * 1e-16)
 

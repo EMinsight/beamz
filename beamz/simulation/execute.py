@@ -14,7 +14,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from beamz._helpers import _finish_inline_progress, _print_inline_progress
+from beamz._helpers import (
+    _finish_inline_progress,
+    _print_inline_progress,
+    _print_inline_status,
+)
 from beamz.const import EPS_0, MU_0
 from beamz.devices.sources.compiler import (
     BatchedSlabGroup,
@@ -815,6 +819,30 @@ def run_program(
     return compiled_scan(state, coeffs)
 
 
+def compile_program_execution(
+    program: CompiledProgram,
+    state: SimulationState,
+    *,
+    donate_state: bool = False,
+) -> None:
+    """Compile and cache a program executable without advancing its state."""
+    state = sharding_runtime.prepare_state(
+        program,
+        state,
+        replicated_fields=(*monitor_runtime.MONITOR_FIELDS, "t", "current_step"),
+    )
+    coeffs = sharding_runtime.place_tree(program, program.coefficients)
+    cache = execution_cache(program)
+    compiled_scan = (
+        cache.compiled_scan_donating if donate_state else cache.compiled_scan
+    ) or build_program_scan(program, donate_state=donate_state)
+    compiled = compiled_scan.lower(state, coeffs).compile()
+    if donate_state:
+        cache.compiled_scan_donating = compiled
+    else:
+        cache.compiled_scan = compiled
+
+
 def step_program(
     program: CompiledProgram,
     state: SimulationState,
@@ -892,6 +920,23 @@ def execute_step(
     )
 
 
+def _run_program_state(
+    program: CompiledProgram,
+    state: SimulationState,
+    *,
+    monitor_steps: int,
+    donate_state: bool,
+) -> SimulationState:
+    """Execute a program and return its cropped continuation state."""
+    state = run_program(
+        program,
+        runtime_inputs(program, state, monitor_steps=monitor_steps),
+        donate_state=donate_state,
+    )
+    state.ez.block_until_ready()
+    return sharding_runtime.crop_state(program, state)
+
+
 def compiled_xla_memory_analysis(
     program: CompiledProgram,
     state: SimulationState,
@@ -936,23 +981,93 @@ def run_simulation_program(
     donate_state: bool,
 ) -> SimulationRun:
     """Execute one continuation and separate durable results from runtime state."""
-    compiling = bool(
-        progress and not program_is_compiled(program, donate_state=donate_state)
-    )
+    compiling = progress and not program_is_compiled(program, donate_state=donate_state)
     if compiling:
-        _print_inline_progress(0, 1, label="JIT compilation", unit="programs")
-    state = run_program(
-        program,
-        runtime_inputs(program, state, monitor_steps=monitor_steps),
-        donate_state=donate_state,
+        _print_inline_status("Compiling simulation...")
+    state = _run_program_state(
+        program, state, monitor_steps=monitor_steps, donate_state=donate_state
     )
-    state.ez.block_until_ready()
-    state = sharding_runtime.crop_state(program, state)
     if progress:
         if compiling:
             _finish_inline_progress()
-        _print_inline_progress(program.config.num_steps, program.config.num_steps)
+        _print_inline_progress(
+            program.config.num_steps,
+            program.config.num_steps,
+            label="Running simulation",
+        )
         _finish_inline_progress()
+    results = SimulationResults.from_run(
+        simulation,
+        runtime_fields=program.grid,
+        monitor_results=_decode_monitor_results(simulation, program, state),
+        store_full_materials=store_full_materials,
+        source_launch_powers=_compiled_source_launch_powers(
+            program, len(simulation.sources)
+        ),
+    )
+    return SimulationRun(results=results, state=state)
+
+
+_PROGRESS_CHUNK_COUNT = 20
+
+
+def _progress_chunk_lengths(total_steps: int) -> tuple[int, ...]:
+    """Split a run into a bounded number of visible progress updates."""
+    chunk_steps = max(1, int(np.ceil(total_steps / _PROGRESS_CHUNK_COUNT)))
+    full_chunks, remainder = divmod(total_steps, chunk_steps)
+    return (chunk_steps,) * full_chunks + ((remainder,) if remainder else ())
+
+
+def run_simulation_with_progress(
+    simulation,
+    state: SimulationState | None,
+    *,
+    num_steps: int,
+    sharding,
+    store_full_materials: bool,
+    monitor_steps: int,
+    donate_state: bool,
+) -> SimulationRun:
+    """Run a segment in compiled chunks and report actual completed timesteps."""
+    chunk_lengths = _progress_chunk_lengths(num_steps)
+    _print_inline_status("Compiling simulation...")
+    try:
+        programs = {
+            length: simulation.compile(
+                num_steps=length, sharding=sharding, progress=False
+            )
+            for length in set(chunk_lengths)
+        }
+        if state is None:
+            state = SimulationState.initial(
+                programs[chunk_lengths[0]].grid, t=float(simulation.time[0])
+            )
+        for program in programs.values():
+            compile_program_execution(
+                program,
+                runtime_inputs(program, state, monitor_steps=monitor_steps),
+                donate_state=donate_state,
+            )
+    finally:
+        _finish_inline_progress()
+
+    completed = 0
+    program = programs[chunk_lengths[-1]]
+    _print_inline_progress(0, num_steps, label="Running simulation")
+    try:
+        for length in chunk_lengths:
+            program = programs[length]
+            state = _run_program_state(
+                program,
+                state,
+                monitor_steps=monitor_steps,
+                donate_state=donate_state,
+            )
+            completed += length
+            _print_inline_progress(completed, num_steps, label="Running simulation")
+    finally:
+        _finish_inline_progress()
+
     results = SimulationResults.from_run(
         simulation,
         runtime_fields=program.grid,
@@ -1001,6 +1116,11 @@ def run_until_terminated(
     successful_checks = growth_checks = 0
     reason = "time_limit"
     last_run: SimulationRun | None = None
+    compiling = progress and not program_is_compiled(first_program, donate_state=True)
+    if compiling:
+        _print_inline_status("Compiling simulation...")
+    elif progress:
+        _print_inline_progress(0, int(simulation.num_steps), label="Running simulation")
 
     try:
         while int(state.current_step) < int(simulation.num_steps):
@@ -1026,7 +1146,17 @@ def run_until_terminated(
             state = last_run.state
             current_step = int(state.current_step)
             if progress:
-                _print_inline_progress(current_step, int(simulation.num_steps))
+                if compiling:
+                    _finish_inline_progress()
+                    compiling = False
+                    _print_inline_progress(
+                        0, int(simulation.num_steps), label="Running simulation"
+                    )
+                _print_inline_progress(
+                    current_step,
+                    int(simulation.num_steps),
+                    label="Running simulation",
+                )
 
             energy, max_field, fields_finite = _field_diagnostics(state, terms)
             current_monitor = _monitor_vectors(last_run.results, monitor_names)

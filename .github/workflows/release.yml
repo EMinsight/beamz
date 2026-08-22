@@ -6,7 +6,16 @@ on:
       - 'v*'
 
 jobs:
+  version:
+    name: Verify release version metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require the tag, Python package, and Rust workspace to agree
+        run: python release_version.py --verify "${GITHUB_REF_NAME#v}"
+
   validation:
+    needs: version
     uses: ./.github/workflows/release-validation.yml
 
   build-sdist:
@@ -43,7 +52,7 @@ jobs:
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             manylinux: "2_17"
-          - os: macos-13
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             manylinux: "off"
           - os: macos-14
@@ -68,6 +77,9 @@ jobs:
           args: >-
             --release --locked --compatibility pypi
             --interpreter python3.10 --out dist
+      - name: Smoke test the installed native wheel
+        if: matrix.target != 'aarch64-unknown-linux-gnu'
+        run: python scripts/smoke_installed_wheel.py dist
       - uses: actions/upload-artifact@v4
         with:
           name: python-wheel-${{ matrix.target }}
