@@ -350,14 +350,16 @@ def test_gaussian_beam_source_compiled_engine_support():
     assert np.isfinite(total)
 
 
-def test_gaussian_beam_source_flux_normalizes_by_sampled_waveform():
+def _empty_space_gaussian_flux(*, steps_per_wavelength=8, angle_theta=0.0, angle_phi=0.0):
     wavelength = 1.55 * um
     freq0 = LIGHT_SPEED / wavelength
     source = GaussianBeamSource(
-        center=(0.0, 0.0, 1.2 * um),
+        center=(3.5 * um, 3.5 * um, 2.5 * um),
         size=(5.5 * um, 5.5 * um),
         source_time=GaussianPulse(freq0=freq0, fwidth=freq0 / 5.0, offset=4.0),
         direction="-z",
+        angle_theta=angle_theta,
+        angle_phi=angle_phi,
         pol_angle=np.pi / 2.0,
         waist_radius=1.2 * um,
         wavelength=wavelength,
@@ -367,13 +369,13 @@ def test_gaussian_beam_source_flux_normalizes_by_sampled_waveform():
         Any,
         [
             FluxMonitor(
-                center=(0.0, 0.0, 0.75 * um),
+                center=(3.5 * um, 3.5 * um, 1.25 * um),
                 size=(5.8 * um, 5.8 * um, 0.0),
                 freqs=[freq0],
                 name="forward",
             ),
             FluxMonitor(
-                center=(0.0, 0.0, 1.75 * um),
+                center=(3.5 * um, 3.5 * um, 3.75 * um),
                 size=(5.8 * um, 5.8 * um, 0.0),
                 freqs=[freq0],
                 name="backward",
@@ -391,7 +393,9 @@ def test_gaussian_beam_source_flux_normalizes_by_sampled_waveform():
         sources=[source],
         monitors=monitors,
         boundaries=[PML(thickness=0.6 * um)],
-        grid_spec=GridSpec.uniform(wavelength / 8, courant=0.48),
+        grid_spec=GridSpec.uniform(
+            wavelength / steps_per_wavelength, courant=0.48
+        ),
         run_time=260e-15,
     )
 
@@ -403,9 +407,47 @@ def test_gaussian_beam_source_flux_normalizes_by_sampled_waveform():
     assert backward_result is not None
     forward = -float(np.asarray(forward_result.flux)[0])
     backward = float(np.asarray(backward_result.flux)[0])
+    assert results.launched_power() == pytest.approx(source.power)
+    sim.clear_compiled_cache()
+    return forward, backward
 
-    assert forward == pytest.approx(0.1, rel=0.25)
-    assert backward < 0.04
+
+@pytest.fixture(scope="module")
+def empty_space_gaussian_flux():
+    return _empty_space_gaussian_flux()
+
+
+def test_gaussian_beam_source_is_forward_directional(empty_space_gaussian_flux):
+    forward, backward = empty_space_gaussian_flux
+
+    assert forward > 0.0
+    assert backward >= 0.0
+    assert backward / forward < 0.05
+
+
+def test_grating_angle_gaussian_beam_source_is_forward_directional():
+    forward, backward = _empty_space_gaussian_flux(
+        angle_theta=np.deg2rad(14.5), angle_phi=np.pi
+    )
+
+    assert forward == pytest.approx(1.0, rel=0.15)
+    assert backward >= 0.0
+    assert backward / forward < 0.06
+
+
+def test_gaussian_beam_flux_is_grid_convergent(empty_space_gaussian_flux):
+    coarse_forward, coarse_backward = empty_space_gaussian_flux
+    fine_forward, fine_backward = _empty_space_gaussian_flux(steps_per_wavelength=12)
+
+    assert fine_forward == pytest.approx(coarse_forward, rel=0.25)
+    assert fine_backward / fine_forward < coarse_backward / coarse_forward
+
+
+def test_gaussian_beam_requested_power_matches_normalized_forward_flux(
+    empty_space_gaussian_flux,
+):
+    forward, _backward = empty_space_gaussian_flux
+    assert forward == pytest.approx(1.0, rel=0.15)
 
 
 def test_gaussian_beam_source_grating_coupler_like_compile_smoke():
