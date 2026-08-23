@@ -1757,7 +1757,8 @@ def _add_field_colorbar(fig, ax, image, **kwargs):
         ax=ax,
         location="bottom",
         fraction=0.075,
-        pad=0.08,
+        # Keep the colorbar clear of the x-axis label after tight_layout().
+        pad=0.2,
         aspect=35,
         **kwargs,
     )
