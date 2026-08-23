@@ -59,6 +59,11 @@ def test_field_plot_colorbar_follows_field_aspect_ratio(extent, location):
         else:
             assert colorbar_bounds.y1 < plot_bounds.y0
             assert colorbar_bounds.width > colorbar_bounds.height
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+            assert not ax.xaxis.label.get_window_extent(renderer).overlaps(
+                colorbar_ax.get_tightbbox(renderer)
+            )
     finally:
         plt.close(fig)
 
@@ -121,6 +126,41 @@ def test_3d_simulation_plot_uses_tidy_layout_cross_sections():
     try:
         assert axes[0].get_title() == "cross section at z=0.00 (um)"
         assert axes[1].get_title() == "cross section at y=0.00 (um)"
+    finally:
+        plt.close(fig)
+
+
+def test_3d_simulation_plot_renders_face_on_monitor_as_translucent_rectangle():
+    design = bz.Design(background=bz.Material(2.25))
+    monitor = bz.FluxMonitor(
+        center=(0.0, 0.0, 0.0),
+        size=(1.0 * bz.um, 0.8 * bz.um, 0.0),
+        freqs=[bz.LIGHT_SPEED / (1.55 * bz.um)],
+        name="top_view_flux",
+    )
+    sim = bz.Simulation(
+        domain=(4.0 * bz.um, 4.0 * bz.um, 2.0 * bz.um),
+        design=design,
+        monitors=[monitor],
+        boundaries=[bz.PML(thickness=0.5 * bz.um)],
+        resolution=0.5 * bz.um,
+        time=np.array([0.0, 1e-15]),
+    )
+
+    fig, axes = sim.plot(z=0.0, y=0.0, show=False)
+
+    try:
+        monitor_patches = [
+            patch
+            for patch in axes[0].patches
+            if to_hex(patch.get_edgecolor()) == "#ff9800"
+        ]
+        assert len(monitor_patches) == 1
+        patch = monitor_patches[0]
+        assert patch.get_width() == pytest.approx(1.0)
+        assert patch.get_height() == pytest.approx(0.8)
+        assert to_hex(patch.get_facecolor()) == "#ff9800"
+        assert patch.get_alpha() == pytest.approx(0.25)
     finally:
         plt.close(fig)
 

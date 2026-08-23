@@ -716,6 +716,33 @@ def _draw_device_slice_overlay(ax, device, *, normal, origin, color, source):
         return
     axis, center, size, direction = geometry
     vertical, horizontal = _PLANE_AXES[normal]
+    if not source and axis == normal:
+        # A monitor whose plane is parallel to the displayed cross section is
+        # best represented by its full footprint, rather than the two center
+        # lines used for edge-on devices.
+        from matplotlib.patches import Rectangle
+
+        origin_by_axis = dict(zip(("x", "y", "z"), map(float, origin), strict=True))
+        indices = {"x": 0, "y": 1, "z": 2}
+        horizontal_index = indices[horizontal]
+        vertical_index = indices[vertical]
+        lower = (
+            (center[horizontal_index] - 0.5 * size[horizontal_index])
+            - origin_by_axis[horizontal],
+            (center[vertical_index] - 0.5 * size[vertical_index])
+            - origin_by_axis[vertical],
+        )
+        rectangle = Rectangle(
+            tuple(value / _UM for value in lower),
+            size[horizontal_index] / _UM,
+            size[vertical_index] / _UM,
+            facecolor=color,
+            edgecolor=color,
+            alpha=0.25,
+            linewidth=2.0,
+        )
+        ax.add_patch(rectangle)
+        return rectangle
     if axis == horizontal:
         segments = [(False, vertical, horizontal, True)]
     elif axis == vertical:
@@ -1757,7 +1784,8 @@ def _add_field_colorbar(fig, ax, image, **kwargs):
         ax=ax,
         location="bottom",
         fraction=0.075,
-        pad=0.08,
+        # Keep the colorbar clear of the x-axis label after tight_layout().
+        pad=0.2,
         aspect=35,
         **kwargs,
     )
