@@ -30,18 +30,22 @@ pytestmark = [pytest.mark.integration, pytest.mark.simulation]
 @pytest.mark.parametrize("grid_kind", ("uniform", "rectilinear"))
 @pytest.mark.parametrize("direction", ("+", "-"))
 def test_3d_mode_source_suppresses_counterpropagating_power_on_both_grids(
-    grid_kind, direction,
+    grid_kind,
+    direction,
 ):
     wavelength = 1.55e-6
     frequency = LIGHT_SPEED / wavelength
     core_index = 3.48
-    domain = (4.0e-6, 3.0e-6, 2.5e-6)
+    # Exact grid multiples keep the requested and realized symmetry planes equal.
+    domain = (4.06e-6, 3.01e-6, 2.52e-6)
     source_x = -0.8e-6
     plane_size = (0.0, 1.5e-6, 1.2e-6)
     design = Design(background=Material(permittivity=1.0))
     design += Box(
         center=(0.0, 0.0, 0.0),
-        size=(np.inf, 0.45e-6, 0.22e-6),
+        # Cell-aligned dimensions keep the rasterized cross-section exactly
+        # mirror symmetric on both uniform and auto grids.
+        size=(np.inf, 0.49e-6, 0.28e-6),
         material=Material(permittivity=core_index**2),
     )
     grid_spec = (
@@ -101,6 +105,22 @@ def test_3d_mode_source_suppresses_counterpropagating_power_on_both_grids(
         if spec.launched_power is not None
     }
     assert sorted(launch_powers) == pytest.approx([source.power], rel=1e-6)
+    for spec in program.sources:
+        if spec.component not in {"Ex", "Ey", "Ez", "Hx", "Hy", "Hz"}:
+            continue
+        full = np.zeros(
+            getattr(program.grid, spec.component).shape,
+            dtype=np.asarray(spec.coeff).dtype,
+        )
+        full[spec.index] = spec.coeff
+        peak = float(np.max(np.abs(full)))
+        for transverse_axis in (0, 1):
+            np.testing.assert_allclose(
+                np.abs(full),
+                np.flip(np.abs(full), axis=transverse_axis),
+                rtol=2e-5,
+                atol=max(2e-6 * peak, 1e-15),
+            )
 
     result = simulation.run(progress=False)
     launched_name = "positive" if direction == "+" else "negative"

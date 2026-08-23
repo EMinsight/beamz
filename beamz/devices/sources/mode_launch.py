@@ -67,6 +67,141 @@ def _scale_profiles_for_power(profiles, power):
     return profiles
 
 
+_STORAGE_AXES_3D = ("z", "y", "x")
+_PUBLIC_AXIS_POSITION = {"x": 0, "y": 1, "z": 2}
+
+
+def _centered_transverse_symmetry_axes(source, fields, grid, resolution):
+    """Return transverse storage axes that are physically mirror symmetric."""
+    permittivity = np.asarray(fields.permittivity)
+    normal_position = _STORAGE_AXES_3D.index(source.axis)
+    symmetric = []
+    for storage_position, axis in enumerate(_STORAGE_AXES_3D):
+        if storage_position == normal_position:
+            continue
+        count = int(permittivity.shape[storage_position])
+        edges = (
+            np.asarray(grid.axis_edges(axis), dtype=float)
+            if grid is not None
+            else np.arange(count + 1, dtype=float) * float(resolution)
+        )
+        if edges.size != count + 1:
+            continue
+        symmetry_center = 0.5 * float(edges[0] + edges[-1])
+        minimum_spacing = float(np.min(np.diff(edges)))
+        tolerance = max(
+            1e-6 * minimum_spacing,
+            64.0 * np.finfo(float).eps * max(abs(symmetry_center), 1.0),
+        )
+        source_center = float(source.center[_PUBLIC_AXIS_POSITION[axis]])
+        if abs(source_center - symmetry_center) > tolerance:
+            continue
+        if not np.allclose(
+            edges + edges[::-1],
+            2.0 * symmetry_center,
+            rtol=0.0,
+            atol=tolerance,
+        ):
+            continue
+        material = np.asarray(permittivity, dtype=float)
+        material_scale = max(float(np.max(np.abs(material))), 1.0)
+        if not np.allclose(
+            material,
+            np.flip(material, axis=storage_position),
+            rtol=1e-7,
+            atol=1e-7 * material_scale,
+        ):
+            continue
+        symmetric.append(storage_position)
+    return tuple(symmetric)
+
+
+def _symmetrize_centered_3d_profiles(
+    source,
+    profiles,
+    indices,
+    fields,
+    *,
+    grid,
+    resolution,
+):
+    """Project compact modal profiles onto mirror-closed global Yee supports.
+
+    Native mode fields use compact component supports. A half-staggered support
+    can otherwise omit the high-side sample and place an apparently symmetric
+    local array half a cell away from the physical symmetry plane. Expanding to
+    each component's global transverse support makes the mirror operation
+    coordinate-correct before the compact profile is cropped again.
+    """
+    symmetric_axes = _centered_transverse_symmetry_axes(
+        source, fields, grid, resolution
+    )
+    if not symmetric_axes:
+        return profiles, indices
+
+    normal_position = _STORAGE_AXES_3D.index(source.axis)
+    transverse_positions = tuple(
+        position for position in range(3) if position != normal_position
+    )
+    out_profiles = {}
+    out_indices = {}
+    for component, profile in profiles.items():
+        index = indices.get(component)
+        if index is None:
+            continue
+        component_shape = tuple(
+            int(value) for value in getattr(fields, component).shape
+        )
+        transverse_shape = tuple(
+            component_shape[position] for position in transverse_positions
+        )
+        transverse_index = tuple(index[position] for position in transverse_positions)
+        if not all(isinstance(selector, slice) for selector in transverse_index):
+            out_profiles[component] = profile
+            out_indices[component] = index
+            continue
+
+        values = np.asarray(profile, dtype=np.complex128)
+        expected_shape = tuple(
+            len(range(*selector.indices(size)))
+            for selector, size in zip(transverse_index, transverse_shape, strict=True)
+        )
+        if values.shape != expected_shape:
+            raise ValueError(
+                f"Mode profile {component} has shape {values.shape}, expected "
+                f"{expected_shape} from its Yee support."
+            )
+
+        expanded = np.zeros(transverse_shape, dtype=np.complex128)
+        expanded[transverse_index] = values
+        for storage_position in symmetric_axes:
+            profile_axis = transverse_positions.index(storage_position)
+            mirrored = np.flip(expanded, axis=profile_axis)
+            overlap = float(np.real(np.vdot(expanded, mirrored)))
+            parity = 1.0 if overlap >= 0.0 else -1.0
+            expanded = 0.5 * (expanded + parity * mirrored)
+
+        nonzero = np.abs(expanded) > 0.0
+        if not np.any(nonzero):
+            out_profiles[component] = values
+            out_indices[component] = index
+            continue
+        coordinates = np.argwhere(nonzero)
+        lower = coordinates.min(axis=0)
+        upper = coordinates.max(axis=0) + 1
+        crop = tuple(
+            slice(int(start), int(stop))
+            for start, stop in zip(lower, upper, strict=True)
+        )
+        global_index = list(index)
+        for profile_axis, storage_position in enumerate(transverse_positions):
+            global_index[storage_position] = crop[profile_axis]
+        out_profiles[component] = expanded[crop]
+        out_indices[component] = tuple(global_index)
+
+    return out_profiles, out_indices
+
+
 def _scale_pair_for_power(first, second, power):
     scale = _power_scale(power)
     if scale == 1.0:
@@ -561,6 +696,14 @@ def _plan_3d_mode_source(
         for name, index in dict(discrete_mode.component_indices).items()
         if name in profiles
     }
+    profiles, indices = _symmetrize_centered_3d_profiles(
+        source,
+        profiles,
+        indices,
+        fields,
+        grid=grid,
+        resolution=float(resolution),
+    )
     # ``DiscreteMode.k_num_axis`` is stored as a positive magnitude.  The
     # incident-field phase, however, must carry the requested propagation sign;
     # otherwise a ``direction='-'`` source masks the field onto the negative
