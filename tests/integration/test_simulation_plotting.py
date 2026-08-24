@@ -59,6 +59,11 @@ def test_field_plot_colorbar_follows_field_aspect_ratio(extent, location):
         else:
             assert colorbar_bounds.y1 < plot_bounds.y0
             assert colorbar_bounds.width > colorbar_bounds.height
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+            assert not ax.xaxis.label.get_window_extent(renderer).overlaps(
+                colorbar_ax.get_tightbbox(renderer)
+            )
     finally:
         plt.close(fig)
 
