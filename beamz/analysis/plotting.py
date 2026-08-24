@@ -716,10 +716,10 @@ def _draw_device_slice_overlay(ax, device, *, normal, origin, color, source):
         return
     axis, center, size, direction = geometry
     vertical, horizontal = _PLANE_AXES[normal]
-    if not source and axis == normal:
-        # A monitor whose plane is parallel to the displayed cross section is
-        # best represented by its full footprint, rather than the two center
-        # lines used for edge-on devices.
+    if axis == normal:
+        # A source or monitor whose plane is parallel to the displayed cross
+        # section is best represented by its full footprint, rather than the
+        # two center lines used for edge-on devices.
         from matplotlib.patches import Rectangle
 
         origin_by_axis = dict(zip(("x", "y", "z"), map(float, origin), strict=True))
