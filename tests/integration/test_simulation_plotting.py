@@ -165,6 +165,44 @@ def test_3d_simulation_plot_renders_face_on_monitor_as_translucent_rectangle():
         plt.close(fig)
 
 
+def test_3d_simulation_plot_renders_face_on_source_as_translucent_rectangle():
+    design = bz.Design(background=bz.Material(2.25))
+    source = bz.ModeSource(
+        center=(0.0, 0.0, 0.0),
+        size=(1.0 * bz.um, 0.8 * bz.um, 0.0),
+        source_time=bz.GaussianPulse(
+            freq0=bz.LIGHT_SPEED / (1.55 * bz.um), fwidth=2e13
+        ),
+        direction="+",
+    )
+    sim = bz.Simulation(
+        domain=(4.0 * bz.um, 4.0 * bz.um, 2.0 * bz.um),
+        design=design,
+        sources=[source],
+        boundaries=[bz.PML(thickness=0.5 * bz.um)],
+        resolution=0.5 * bz.um,
+        time=np.array([0.0, 1e-15]),
+    )
+
+    fig, axes = sim.plot(z=0.0, y=0.0, show=False)
+
+    try:
+        source_patches = [
+            patch
+            for patch in axes[0].patches
+            if to_hex(patch.get_edgecolor()) == "#2ca02c"
+        ]
+        assert len(source_patches) == 1
+        patch = source_patches[0]
+        assert patch.get_width() == pytest.approx(1.0)
+        assert patch.get_height() == pytest.approx(0.8)
+        assert to_hex(patch.get_facecolor()) == "#2ca02c"
+        assert patch.get_alpha() == pytest.approx(0.25)
+        assert not [line for line in axes[0].lines if line.get_color() == "#2ca02c"]
+    finally:
+        plt.close(fig)
+
+
 def test_3d_layout_plot_uses_antialiased_polygon_sections_without_compiling(
     monkeypatch,
 ):
