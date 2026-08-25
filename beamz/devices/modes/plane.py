@@ -175,7 +175,11 @@ def solve_modes(
     neffs = np.asarray(result.n_complex.values[0, order], dtype=np.complex128)
     electric = np.stack([fields[name][order] for name in ("Ex", "Ey", "Ez")], axis=1)
     magnetic = np.stack([fields[name][order] for name in ("Hx", "Hy", "Hz")], axis=1)
-    symmetric_axes = _detect_transverse_symmetry_axes(eps_array)
+    # Mirror-closing is required for the two-dimensional transverse planes
+    # used by 3D launches.  Applying it to a one-dimensional profile changes
+    # the staggered 2D ModeSource normalization, even when the material itself
+    # is symmetric.
+    symmetric_axes = _detect_transverse_symmetry_axes(eps_array) if is_plane else ()
     if symmetric_axes:
         for mode_index in range(electric.shape[0]):
             component_map = {
