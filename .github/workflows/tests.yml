@@ -23,7 +23,7 @@ jobs:
           enable-cache: true
       - run: uv python install 3.11
       - name: Install quality dependencies
-        run: uv sync --python 3.11 --extra lint
+        run: uv sync --python 3.11 --extra lint --extra gds
       - name: Verify Python and Rust version metadata
         run: >-
           uv run --no-active --python 3.11 python -c
