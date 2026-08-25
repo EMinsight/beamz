@@ -350,7 +350,9 @@ def test_gaussian_beam_source_compiled_engine_support():
     assert np.isfinite(total)
 
 
-def _empty_space_gaussian_flux(*, steps_per_wavelength=8, angle_theta=0.0, angle_phi=0.0):
+def _empty_space_gaussian_flux(
+    *, steps_per_wavelength=8, angle_theta=0.0, angle_phi=0.0
+):
     wavelength = 1.55 * um
     freq0 = LIGHT_SPEED / wavelength
     source = GaussianBeamSource(
@@ -393,9 +395,7 @@ def _empty_space_gaussian_flux(*, steps_per_wavelength=8, angle_theta=0.0, angle
         sources=[source],
         monitors=monitors,
         boundaries=[PML(thickness=0.6 * um)],
-        grid_spec=GridSpec.uniform(
-            wavelength / steps_per_wavelength, courant=0.48
-        ),
+        grid_spec=GridSpec.uniform(wavelength / steps_per_wavelength, courant=0.48),
         run_time=260e-15,
     )
 

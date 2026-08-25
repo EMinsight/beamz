@@ -132,7 +132,9 @@ def test_grating_coupler_beam_direction_phase_and_polarization():
     expected_k_hat = np.array((-np.sin(theta), 0.0, -np.cos(theta)))
     expected_e_hat = np.array((0.0, 1.0, 0.0))
     expected_h_hat = np.array((np.cos(theta), 0.0, -np.sin(theta)))
-    np.testing.assert_allclose(beam.propagation_unit_vector(), expected_k_hat, atol=1e-12)
+    np.testing.assert_allclose(
+        beam.propagation_unit_vector(), expected_k_hat, atol=1e-12
+    )
     np.testing.assert_allclose(beam.electric_unit_vector(), expected_e_hat, atol=1e-12)
     np.testing.assert_allclose(beam.magnetic_unit_vector(), expected_h_hat, atol=1e-12)
 
@@ -229,16 +231,16 @@ def test_discrete_profile_flux_matches_requested_power(aperture, theta_degrees):
         wavelength=3.0,
         power=requested_power,
     )
-    profile = beam.field_profile(
-        resolution=resolution, grid_shape=(240, 240, 240)
-    )
+    profile = beam.field_profile(resolution=resolution, grid_shape=(240, 240, 240))
     ex = profile.components["Ex"]
     ey = profile.components["Ey"]
     hx = profile.components["Hx"]
     hy = profile.components["Hy"]
-    power_toward_negative_z = -0.5 * np.real(
-        np.sum(ex * np.conjugate(hy) - ey * np.conjugate(hx))
-    ) * resolution**2
+    power_toward_negative_z = (
+        -0.5
+        * np.real(np.sum(ex * np.conjugate(hy) - ey * np.conjugate(hx)))
+        * resolution**2
+    )
 
     assert power_toward_negative_z == pytest.approx(requested_power, rel=1e-2)
 
@@ -261,7 +263,9 @@ def test_waist_distance_matches_paraxial_radius_and_curvature():
     radius, curvature, gouy = beam._beam_radius_curvature_gouy()
     rayleigh = np.pi * waist**2 / wavelength
 
-    assert radius == pytest.approx(waist * np.sqrt(1.0 + (waist_distance / rayleigh) ** 2))
+    assert radius == pytest.approx(
+        waist * np.sqrt(1.0 + (waist_distance / rayleigh) ** 2)
+    )
     assert curvature == pytest.approx(
         waist_distance * (1.0 + (rayleigh / waist_distance) ** 2)
     )

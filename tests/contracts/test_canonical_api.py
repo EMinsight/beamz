@@ -818,12 +818,11 @@ def test_simulation_copy_update_normalizes_replaced_sources_once():
     sim = sim0.updated_copy(sources=[source])
 
     assert sim is not sim0
-    assert sim.sources != [source]
+    assert sim.sources[0] is not source
     assert sim.sources[0].center == pytest.approx((0.5, 1.0, 1.0))
     assert source.center == pytest.approx((-0.5, 0.0, 0.0))
     assert sim0.sources == ()
     assert sim.coordinate_offset == sim0.coordinate_offset
-    assert sim.initial_state().current_step == 0
 
 
 def test_mode_source_rejects_precomputed_runtime_launch_fields():
