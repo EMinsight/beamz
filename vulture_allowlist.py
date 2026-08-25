@@ -76,3 +76,15 @@ _.k_eff
 
 # Public design metadata is consumed by callers and examples outside beamz/.
 _.component_name
+
+# The direct GDSFactory workflow is public API exercised by optional consumers.
+datum_center
+outward_direction
+inward_direction
+_.port_metadata
+_.estimate_resources
+_.preview
+_.run_sparameters
+_.plot_sparameters
+_.check_reciprocity
+_.check_passivity
