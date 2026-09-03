@@ -35,7 +35,10 @@ def test_cosine_crossing_notebook_uses_canonical_monitor_geometry():
     assert "center=(0.0, 0.0, 0.0)" in source
     assert "size=(Lx, Ly, 0.0)" in source
     assert "freqs=[freq0]" in source
-    assert "grid_shape = sim0.to_request(num_steps=1, backend=backend).materials.shape" in source
+    assert (
+        "grid_shape = sim0.to_request(num_steps=1, backend=backend).materials.shape"
+        in source
+    )
     assert ".to_request(num_steps=1).grid" not in source
     assert "source/monitor clearance to x/y CPML" in source
     assert "port_edge_clearance" not in source
@@ -168,7 +171,9 @@ def test_example_notebooks_have_no_cached_outputs(path):
 
 
 def test_mmi_notebook_uses_field_monitor_and_result_analysis():
-    source = _notebook_source(ROOT / "examples" / "notebooks" / "mmi1x4_power_splitter.ipynb")
+    source = _notebook_source(
+        ROOT / "examples" / "notebooks" / "mmi1x4_power_splitter.ipynb"
+    )
 
     assert "bz.FieldMonitor(" in source
     assert "initial_results.plot_field(" in source
