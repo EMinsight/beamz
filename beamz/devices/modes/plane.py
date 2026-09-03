@@ -16,7 +16,14 @@ from beamz.lattice import (
     sample_voxel_grid_at_e_component_3d_centered,
 )
 
-from .discrete import AxisName, DiscreteMode, ModePlaneSpec, solve_beamz_mode
+from .discrete import (
+    AxisName,
+    DiscreteMode,
+    ModePlaneSpec,
+    _detect_transverse_symmetry_axes,
+    _enforce_componentwise_parity,
+    solve_beamz_mode,
+)
 from .solver import solve_grid
 
 _AXIS_POS_3D = {"z": 0, "y": 1, "x": 2}
@@ -168,6 +175,28 @@ def solve_modes(
     neffs = np.asarray(result.n_complex.values[0, order], dtype=np.complex128)
     electric = np.stack([fields[name][order] for name in ("Ex", "Ey", "Ez")], axis=1)
     magnetic = np.stack([fields[name][order] for name in ("Hx", "Hy", "Hz")], axis=1)
+    # Mirror-closing is required for the two-dimensional transverse planes
+    # used by 3D launches.  Applying it to a one-dimensional profile changes
+    # the staggered 2D ModeSource normalization, even when the material itself
+    # is symmetric.
+    symmetric_axes = _detect_transverse_symmetry_axes(eps_array) if is_plane else ()
+    if symmetric_axes:
+        for mode_index in range(electric.shape[0]):
+            component_map = {
+                name: values
+                for name, values in zip(
+                    ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz"),
+                    (*electric[mode_index], *magnetic[mode_index]),
+                    strict=True,
+                )
+            }
+            component_map = _enforce_componentwise_parity(component_map, symmetric_axes)
+            electric[mode_index] = np.stack(
+                [component_map[name] for name in ("Ex", "Ey", "Ez")]
+            )
+            magnetic[mode_index] = np.stack(
+                [component_map[name] for name in ("Hx", "Hy", "Hz")]
+            )
     if axis_index == 1:
         magnetic = -magnetic
     if eps_array.ndim == 1:

@@ -153,6 +153,10 @@ gds = [
     { name = "gdsfactory", version = "8.18.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
     { name = "gdsfactory", version = "9.45.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
 ]
+gdsfactory = [
+    { name = "gdsfactory", version = "8.18.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
+    { name = "gdsfactory", version = "9.45.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
+]
 lint = [
     { name = "pyright" },
     { name = "ruff" },
@@ -179,8 +183,10 @@ ubc = [
 requires-dist = [
     { name = "diff-cover", marker = "extra == 'test'", specifier = ">=9.0.0" },
     { name = "gdsfactory", marker = "python_full_version >= '3.14' and extra == 'gds'", specifier = ">=9.0" },
+    { name = "gdsfactory", marker = "python_full_version >= '3.14' and extra == 'gdsfactory'", specifier = ">=9.0" },
     { name = "gdsfactory", marker = "python_full_version >= '3.14' and extra == 'ubc'", specifier = ">=9.0" },
     { name = "gdsfactory", marker = "python_full_version < '3.14' and extra == 'gds'", specifier = ">=8.0" },
+    { name = "gdsfactory", marker = "python_full_version < '3.14' and extra == 'gdsfactory'", specifier = ">=8.0" },
     { name = "gdsfactory", marker = "python_full_version < '3.14' and extra == 'ubc'", specifier = ">=8.0" },
     { name = "hypothesis", marker = "extra == 'test'", specifier = ">=6.100.0" },
     { name = "ipykernel", marker = "extra == 'dev'", specifier = ">=6.29.0" },
@@ -214,7 +220,7 @@ requires-dist = [
     { name = "vulture", marker = "extra == 'lint'", specifier = ">=2.14" },
     { name = "xarray", specifier = ">=2024.0.0" },
 ]
-provides-extras = ["gds", "mesh", "dev", "lint", "ubc", "test"]
+provides-extras = ["gds", "gdsfactory", "mesh", "dev", "lint", "ubc", "test"]
 
 [[package]]
 name = "beautifulsoup4"

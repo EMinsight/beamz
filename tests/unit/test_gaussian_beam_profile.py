@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from beamz.const import EPS_0, MU_0
 from beamz.devices.sources.compiler import GaussianBeamProfile
 from beamz.devices.sources.specs import FieldProfile3D
 
@@ -112,3 +113,160 @@ def test_gaussian_beam_profile_power_normalization_is_sane():
 
     assert np.isfinite(power)
     assert power == pytest.approx(2.0, rel=0.15)
+
+
+def test_grating_coupler_beam_direction_phase_and_polarization():
+    theta = np.deg2rad(14.5)
+    beam = GaussianBeamProfile(
+        center=(5.0, 5.0, 5.0),
+        size=(8.0, 8.0, 0.0),
+        direction="-z",
+        angle_theta=theta,
+        angle_phi=np.pi,
+        pol_angle=np.pi / 2.0,
+        waist_radius=3.0,
+        waist_distance=0.0,
+        wavelength=10.0,
+    )
+
+    expected_k_hat = np.array((-np.sin(theta), 0.0, -np.cos(theta)))
+    expected_e_hat = np.array((0.0, 1.0, 0.0))
+    expected_h_hat = np.array((np.cos(theta), 0.0, -np.sin(theta)))
+    np.testing.assert_allclose(
+        beam.propagation_unit_vector(), expected_k_hat, atol=1e-12
+    )
+    np.testing.assert_allclose(beam.electric_unit_vector(), expected_e_hat, atol=1e-12)
+    np.testing.assert_allclose(beam.magnetic_unit_vector(), expected_h_hat, atol=1e-12)
+
+    resolution = 0.1
+    profile = beam.field_profile(resolution=resolution, grid_shape=(100, 100, 100))
+    ey = profile.components["Ey"]
+    row = ey[ey.shape[0] // 2]
+    x_slice = profile.indices["Ey"][2]
+    assert isinstance(x_slice, slice)
+    x = (np.arange(x_slice.start, x_slice.stop) + 0.5) * resolution
+    phase_slope, _ = np.polyfit(x, np.unwrap(np.angle(row)), deg=1)
+    assert phase_slope == pytest.approx(
+        -beam.propagation_vector()[0], rel=5e-3, abs=2e-3
+    )
+
+
+@pytest.mark.parametrize("theta_degrees", (0.0, 14.5, 35.0, 45.0))
+def test_unclipped_gaussian_power_normalization_is_angle_invariant(theta_degrees):
+    waist = 1.0
+    power = 2.5
+    background_index = 1.4
+    beam = GaussianBeamProfile(
+        center=(6.0, 6.0, 6.0),
+        size=(10.0, 10.0, 0.0),
+        direction="-z",
+        angle_theta=np.deg2rad(theta_degrees),
+        angle_phi=0.37,
+        pol_angle=0.81,
+        waist_radius=waist,
+        waist_distance=0.0,
+        wavelength=3.0,
+        background_index=background_index,
+        power=power,
+    )
+    resolution = 0.05
+    slices = beam._transverse_slices(resolution, (240, 240, 240))
+    sampled_scale = beam._power_amplitude_scale(
+        resolution,
+        slices,
+        k_normal_abs=abs(beam.propagation_unit_vector()[2]),
+    )
+
+    impedance = np.sqrt(MU_0 / EPS_0) / background_index
+    infinite_plane_flux_per_amplitude_sq = 0.5 / impedance * np.pi * waist**2 / 2.0
+    analytical_scale = np.sqrt(power / infinite_plane_flux_per_amplitude_sq)
+    assert sampled_scale == pytest.approx(analytical_scale, rel=2e-3)
+
+
+def test_gaussian_requested_power_scales_all_fields_by_square_root():
+    common = dict(
+        center=(4.0, 4.0, 4.0),
+        size=(6.0, 6.0, 0.0),
+        direction="-z",
+        angle_theta=0.27,
+        angle_phi=1.2,
+        pol_angle=0.4,
+        waist_radius=1.3,
+        waist_distance=0.2,
+        wavelength=4.0,
+    )
+    unit = GaussianBeamProfile(**common, power=1.0).field_profile(
+        resolution=0.2, grid_shape=(40, 40, 40)
+    )
+    four_watts = GaussianBeamProfile(**common, power=4.0).field_profile(
+        resolution=0.2, grid_shape=(40, 40, 40)
+    )
+
+    for component in unit.components:
+        np.testing.assert_allclose(
+            four_watts.components[component],
+            2.0 * unit.components[component],
+            rtol=1e-13,
+            atol=1e-13,
+        )
+
+
+@pytest.mark.parametrize(
+    ("aperture", "theta_degrees"),
+    ((10.0, 14.5), (2.5, 35.0)),
+    ids=("unclipped_grating_angle", "clipped_oblique_beam"),
+)
+def test_discrete_profile_flux_matches_requested_power(aperture, theta_degrees):
+    requested_power = 2.5
+    resolution = 0.05
+    beam = GaussianBeamProfile(
+        center=(6.0, 6.0, 6.0),
+        size=(aperture, aperture, 0.0),
+        direction="-z",
+        angle_theta=np.deg2rad(theta_degrees),
+        angle_phi=np.pi,
+        pol_angle=np.pi / 2.0,
+        waist_radius=1.0,
+        waist_distance=0.0,
+        wavelength=3.0,
+        power=requested_power,
+    )
+    profile = beam.field_profile(resolution=resolution, grid_shape=(240, 240, 240))
+    ex = profile.components["Ex"]
+    ey = profile.components["Ey"]
+    hx = profile.components["Hx"]
+    hy = profile.components["Hy"]
+    power_toward_negative_z = (
+        -0.5
+        * np.real(np.sum(ex * np.conjugate(hy) - ey * np.conjugate(hx)))
+        * resolution**2
+    )
+
+    assert power_toward_negative_z == pytest.approx(requested_power, rel=1e-2)
+
+
+def test_waist_distance_matches_paraxial_radius_and_curvature():
+    waist = 1.1
+    wavelength = 3.2
+    waist_distance = 1.7
+    beam = GaussianBeamProfile(
+        center=(5.0, 5.0, 5.0),
+        size=(8.0, 8.0, 0.0),
+        direction="+z",
+        angle_theta=0.0,
+        angle_phi=0.0,
+        pol_angle=0.0,
+        waist_radius=waist,
+        waist_distance=waist_distance,
+        wavelength=wavelength,
+    )
+    radius, curvature, gouy = beam._beam_radius_curvature_gouy()
+    rayleigh = np.pi * waist**2 / wavelength
+
+    assert radius == pytest.approx(
+        waist * np.sqrt(1.0 + (waist_distance / rayleigh) ** 2)
+    )
+    assert curvature == pytest.approx(
+        waist_distance * (1.0 + (rayleigh / waist_distance) ** 2)
+    )
+    assert gouy == pytest.approx(np.arctan2(waist_distance, rayleigh))

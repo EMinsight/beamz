@@ -8,6 +8,7 @@ Module to define the design of complex structures parametrically as well as mesh
 - `materials.py`: the homogeneous `Material` value accepted by geometric designs.
 - `raster/`: Rust-backed geometry rasterization and external-format importers.
 - `gds.py`: Optional gdsfactory-backed component and GDS import/export.
+- `gdsfactory.py`: Transparent component-to-native-BeamZ simulation preparation.
 
 Spatial coefficient arrays enter the solver through `MaterialGrid`; geometric
 designs use homogeneous materials and the Rust rasterizer. Geometry errors abort
@@ -50,3 +51,24 @@ input_port = imported.port("o1")
 
 Pass an explicit gdsfactory `LayerStack` when the full PDK stack should define
 the vertical geometry. BeamZ does not discover or patch vendor PDK packages.
+
+For a complete, inspectable local-FDTD workflow, use the design submodule:
+
+```python
+from beamz.design.gdsfactory import Settings, prepare
+
+setup = prepare(
+    "straight",
+    settings=Settings(wavelength_points=21),
+    component_settings={"length": 10.0},
+)
+
+setup.preview()                  # geometry, PML, source, and monitor planes
+simulation = setup.simulation_for("o1")
+result = setup.run_sparameters() # one native BeamZ run per input port
+```
+
+`setup.design`, `setup.ports`, and `simulation` are canonical BeamZ values,
+not a hidden intermediate representation. `setup.port_metadata` records every
+port datum and inward/outward direction, and the result retains native detached
+BeamZ outputs and numerical provenance.

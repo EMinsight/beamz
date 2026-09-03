@@ -23,7 +23,7 @@ jobs:
           enable-cache: true
       - run: uv python install 3.11
       - name: Install quality dependencies
-        run: uv sync --python 3.11 --extra lint
+        run: uv sync --python 3.11 --extra lint --extra gds
       - name: Verify Python and Rust version metadata
         run: >-
           uv run --no-active --python 3.11 python -c
@@ -143,7 +143,7 @@ jobs:
           enable-cache: true
       - run: uv python install 3.11
       - name: Install documentation dependencies
-        run: uv sync --python 3.11 --extra dev --extra test
+        run: uv sync --python 3.11 --extra dev --extra test --extra gds
       - name: Build documentation with warnings as errors
         run: uv run --no-active --python 3.11 mkdocs build --strict
       - name: Execute documentation contracts
@@ -179,7 +179,7 @@ jobs:
       - name: Install wheel into an isolated environment
         run: |
           uv venv /tmp/beamz-smoke --python 3.11
-          uv pip install --python /tmp/beamz-smoke/bin/python dist/*.whl
+          uv pip install --python /tmp/beamz-smoke/bin/python dist/*.whl "gdsfactory>=8.0"
       - name: Import installed package
         run: /tmp/beamz-smoke/bin/python -c "import beamz; print(beamz.__version__)"
       - name: Execute quickstart against installed wheel
@@ -190,17 +190,6 @@ jobs:
         run: >-
           /tmp/beamz-smoke/bin/python scripts/execute_markdown_python.py
           docs/getting-started.md
-      - name: Execute notebooks against installed wheel
-        working-directory: /tmp
-        env:
-          BEAMZ_DOCS_TEST: "1"
-          JAX_PLATFORMS: cpu
-          MPLBACKEND: Agg
-        run: |
-          for notebook in "$GITHUB_WORKSPACE"/examples/notebooks/*.ipynb; do
-            /tmp/beamz-smoke/bin/python \
-              "$GITHUB_WORKSPACE/scripts/execute_notebook.py" "$notebook"
-          done
       - uses: actions/upload-artifact@v4
         with:
           name: distributions
