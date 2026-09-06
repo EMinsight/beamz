@@ -90,6 +90,7 @@
       "output_ports": ["o3", "o4"],
       "cross_port": "o3",
       "through_port": "o4",
+      "absorber_from_ppw": 20,
       "reference_boundaries": {
         "lumerical": "PML on all sides",
         "tidy3d": "PML at 6, 10, and 15 cells per wavelength; Absorber at 20 and 25"
