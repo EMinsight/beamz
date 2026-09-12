@@ -117,6 +117,7 @@ def build_sharding_plan(
     cfg: ShardingConfig,
     *,
     is_3d: bool,
+    aligned_components: bool = False,
 ) -> ShardingPlan:
     # 1. Normalize the material-grid rank to canonical z-y-x order so every later shape
     # calculation starts from the same physical domain contract.
@@ -187,6 +188,15 @@ def build_sharding_plan(
         name: _pad_shape_for_devices(shape, axis, num_devices)
         for name, shape in logical_shapes.items()
     }
+    if aligned_components:
+        # Native stencils use the same local coordinate for every component.
+        # Independent rounding can otherwise put their interfaces on different
+        # global cells (for example 16 versus 18 cells split across two GPUs).
+        extent = max(shape[axis] for shape in padded_shapes.values())
+        padded_shapes = {
+            name: tuple(extent if i == axis else size for i, size in enumerate(shape))
+            for name, shape in padded_shapes.items()
+        }
     # 6. Resolve the mesh once; every later placement reuses this exact object.
     return ShardingPlan(
         ShardingLayout(

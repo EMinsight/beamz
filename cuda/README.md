@@ -51,8 +51,60 @@ result can be used for promotion.
 The wheel compiles SASS for SM80, SM86, SM89, and SM90. `backend="auto"` detects and
 registers it lazily; `backend="cuda_streamed"` requests it explicitly and
 `backend="cuda_hopper"` requests the tiled target. The first
-release supports one GPU and float32 3D grids. Multi-GPU and 2D simulations retain
-the JAX backend; only the explicitly selected CPML recurrence state may use BF16.
+release supports float32 3D grids. `auto` retains JAX for multi-GPU and 2D
+simulations; only the explicitly selected CPML recurrence state may use BF16.
+
+## Experimental sharded streamed execution
+
+Explicit CUDA requests can use the existing sharding API for isotropic uniform
+3D grids with PEC on all six faces and no CPML:
+
+```python
+result = simulation.advance(
+    num_steps=100,
+    backend="cuda_streamed",
+    sharding={"axis": "z", "num_devices": 2, "backend": "gpu"},
+)
+```
+
+This path has CPU orchestration and FFI-lowering coverage, but has **not yet been
+validated on multiple CUDA GPUs**. `auto` continues selecting JAX for sharded
+requests. The optional CUDA extension is still required for actual execution.
+
+All six components share partition interfaces along the selected x, y, or z
+axis. `shard_map` exchanges one-cell neighbor halos before each H/E phase and
+invokes the existing streamed FFI on local arrays. Global JAX source, boundary,
+and monitor operations preserve timestep ordering; results retain their logical
+Yee shapes and continuation interface. The native ABI is unchanged.
+
+Multi-step native graphs and packed material codebooks are disabled on this
+path. They need communication-aware scheduling and local material packing before
+they can be restored. CPML, nonuniform metrics, partial/non-PEC boundaries, and
+Hopper sharding remain unsupported and report an error for explicit requests.
+The first implementation exchanges both halo faces of all three source fields;
+communication overlap and tangential-field-only exchange remain optimizations.
+
+Run the CPU contract checks without CUDA:
+
+```console
+python -m pytest tests/unit/test_cuda_sharding.py
+```
+
+These execute actual collectives on two/four CPU devices with an array reference
+replacing only the FFI call, compare against the existing JAX solver, and lower
+the real FFI to IR without executing it. Cases cover all axes, unequal component
+sizes, heterogeneous materials, sources, DFT accumulators, and continuation.
+They do not establish native memory safety or GPU scaling. With GPUs available:
+
+```console
+python -m pytest tests/hardware/test_cuda_backends.py -k sharded_streamed
+```
+
+The hardware gate requires two/four GPUs and checks fields, monitor state and
+continuation. Before promoting automatic selection, also run Compute Sanitizer
+and inspect device memory/communication in a GPU profile for unintended full-grid
+gathers and scaling. CPML and rectilinear parity need additional native boundary
+and metric handling before those configurations can be enabled.
 
 BeamZ validates the component's explicit ABI version and complete streamed-target
 manifest before registering any FFI handler. An older or partial component makes

@@ -347,6 +347,42 @@ def test_streamed_cuda_matches_jax_complete_state(cpml):
     _assert_state_close(reference, actual)
 
 
+@pytest.mark.parametrize("axis", ["z", "y", "x"])
+@pytest.mark.parametrize("num_devices", [2, 4])
+def test_sharded_streamed_cuda_matches_jax_and_continuation(axis, num_devices):
+    """Real FFI gate: uneven Yee supports, material interfaces, source and DFT."""
+    if len(jax.devices("gpu")) < num_devices:
+        pytest.skip(f"requires {num_devices} CUDA devices")
+    simulation, state = _simulation_and_seed(cpml=False)
+    sharding = dict(axis=axis, num_devices=num_devices, backend="gpu")
+    reference = simulation.advance(
+        state=_copy_state(state), num_steps=32, backend="jax", progress=False
+    ).state
+    actual = simulation.advance(
+        state=_copy_state(state),
+        num_steps=32,
+        backend="cuda_streamed",
+        sharding=sharding,
+        progress=False,
+    ).state
+    first = simulation.advance(
+        state=_copy_state(state),
+        num_steps=16,
+        backend="cuda_streamed",
+        sharding=sharding,
+        progress=False,
+    ).state
+    continued = simulation.advance(
+        state=first,
+        num_steps=16,
+        backend="cuda_streamed",
+        sharding=sharding,
+        progress=False,
+    ).state
+    _assert_state_close(reference, actual)
+    _assert_state_close(actual, continued)
+
+
 def test_bf16_cpml_program_matches_jax_application_state(monkeypatch):
     simulation, seeded = _simulation_and_seed(
         cpml=True,

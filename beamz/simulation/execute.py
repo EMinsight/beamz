@@ -496,7 +496,11 @@ def forward_step(
         "h",
         dense_single_slab=cfg.source_single_slab_dense,
     )
-    cuda_owns_pec = cfg.backend == "cuda_streamed" and not program.sources
+    cuda_owns_pec = (
+        cfg.backend == "cuda_streamed"
+        and not cfg.sharding.enabled
+        and not program.sources
+    )
     if not cuda_owns_pec:
         hx, hy, hz = update_runtime.apply_post_source_boundaries(
             (state.hx, state.hy, state.hz),
@@ -572,6 +576,7 @@ def build_scan(program, *, donate_state: bool = False):
         dt=dt,
         dt_scalar=dt_scalar,
         is_3d=is_3d,
+        sharding_plan=program.sharding,
     )
     update_kernel = update_runtime.select_update_kernel(step_context)
     graph_source_groups = tuple(
@@ -594,6 +599,7 @@ def build_scan(program, *, donate_state: bool = False):
     packed_graph_monitors = None
     if (
         cfg.backend == "cuda_streamed"
+        and not cfg.sharding.enabled
         and graph_monitors_supported
         and not bool(jax.config.read("jax_enable_x64"))
     ):
@@ -602,6 +608,7 @@ def build_scan(program, *, donate_state: bool = False):
         packed_graph_monitors = pack_dft_monitors(program.monitors)
     cuda_multi_step = (
         cfg.backend == "cuda_streamed"
+        and not cfg.sharding.enabled
         and (not program.monitors or packed_graph_monitors is not None)
         and (not program.sources or source_groups_supported)
     )

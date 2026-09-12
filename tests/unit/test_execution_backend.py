@@ -129,7 +129,7 @@ def test_auto_preserves_jax_for_multi_device_sharding(monkeypatch):
     assert program.config.backend == "jax"
 
 
-def test_explicit_cuda_rejects_multi_device_sharding():
+def test_explicit_cuda_rejects_nonuniform_multi_device_sharding():
     with pytest.raises(
         backend_runtime.CudaBackendUnavailable, match="multi-device sharding"
     ):
