@@ -133,6 +133,14 @@ def test_component_import_returns_materialized_design_and_canonical_ports():
     assert all(
         getattr(struct, "material", None) is not None for struct in core_structures
     )
+    polygon_structures = [
+        struct for struct in core_structures if hasattr(struct, "vertices")
+    ]
+    assert polygon_structures
+    assert all(
+        struct.z == pytest.approx(struct.vertices[0][2])
+        for struct in polygon_structures
+    )
 
     assert {"o1", "o2", "o3"}.issubset(ports.keys())
     for port_name in ("o1", "o2", "o3"):

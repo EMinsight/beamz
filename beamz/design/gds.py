@@ -440,6 +440,7 @@ def import_component(
         )
         design += Polygon(
             vertices=vertices,
+            z=profile.core_zmin,
             depth=profile.core_zmax - profile.core_zmin,
             material=core_material,
             sidewall_angle=profile.sidewall_angle,

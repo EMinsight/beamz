@@ -108,6 +108,11 @@ EXPECTED_EXPORTS = {
         "import_component",
         "import_gds",
         "export_gds",
+        "GDSFactorySettings",
+        "ComponentSimulationResults",
+        "PortMetadata",
+        "PreparedComponent",
+        "prepare_gdsfactory",
     ),
     "beamz.devices.monitors": (
         "FieldMonitor",

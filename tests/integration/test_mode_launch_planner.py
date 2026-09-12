@@ -126,6 +126,80 @@ def _fake_discrete_mode():
     )
 
 
+@pytest.mark.parametrize("shape", ((5, 5, 6), (6, 6, 5)))
+@pytest.mark.parametrize("axis", ("x", "y", "z"))
+def test_centered_3d_profiles_are_mirror_closed_on_global_yee_support(shape, axis):
+    fields = _uniform_3d_fields(shape=shape)
+    center = tuple(
+        0.5 * (values[0] + values[-1])
+        for values in (fields.geometry.axis_edges(name) for name in ("x", "y", "z"))
+    )
+    size = tuple(0.0 if name == axis else 2.0 for name in ("x", "y", "z"))
+    source = _mode_source(center=center, size=size)
+    normal_position = {"x": 2, "y": 1, "z": 0}[axis]
+    transverse_positions = tuple(
+        position for position in range(3) if position != normal_position
+    )
+    profiles = {}
+    indices = {}
+    for component in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz"):
+        component_shape = getattr(fields, component).shape
+        index = [slice(1, length - 2) for length in component_shape]
+        index[normal_position] = component_shape[normal_position] // 2
+        transverse_shape = tuple(
+            len(range(*index[position].indices(component_shape[position])))
+            for position in transverse_positions
+        )
+        profiles[component] = np.ones(transverse_shape, dtype=np.complex128)
+        indices[component] = tuple(index)
+
+    corrected, corrected_indices = mode_launch_module._symmetrize_centered_3d_profiles(
+        source,
+        profiles,
+        indices,
+        fields,
+        grid=fields.geometry,
+        resolution=1.0,
+    )
+
+    for component, profile in corrected.items():
+        component_shape = getattr(fields, component).shape
+        full_shape = tuple(
+            component_shape[position] for position in transverse_positions
+        )
+        full = np.zeros(full_shape, dtype=np.complex128)
+        transverse_index = tuple(
+            corrected_indices[component][position] for position in transverse_positions
+        )
+        full[transverse_index] = profile
+        for profile_axis in range(2):
+            np.testing.assert_allclose(
+                np.abs(full),
+                np.flip(np.abs(full), axis=profile_axis),
+                rtol=0.0,
+                atol=0.0,
+            )
+
+
+def test_off_center_3d_profiles_are_not_symmetry_projected():
+    fields = _uniform_3d_fields()
+    source = _mode_source(center=(2.5, 2.0, 2.0))
+    profiles = {"Ey": np.ones((2, 2), dtype=np.complex128)}
+    indices = {"Ey": (slice(1, 3), slice(1, 3), 2)}
+
+    corrected, corrected_indices = mode_launch_module._symmetrize_centered_3d_profiles(
+        source,
+        profiles,
+        indices,
+        fields,
+        grid=fields.geometry,
+        resolution=1.0,
+    )
+
+    assert corrected is profiles
+    assert corrected_indices is indices
+
+
 def test_mode_source_frequency_nodes_cover_tidy_style_band():
     freq0 = 2.0e14
     fwidth = 0.1 * freq0
