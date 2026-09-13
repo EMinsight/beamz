@@ -328,11 +328,24 @@ def _lower_cpml_term(term, layout: ShardingLayout):
         target_shape,
         term.slab.logical_stop,
     )
+
+    def profile(value, neutral):
+        # Separable profiles broadcast across transverse dimensions. Expanding
+        # a singleton with zero padding would turn off CPML everywhere except
+        # the first plane. Only pad dimensions that already carry spatial data.
+        shape = tuple(
+            1 if size == 1 and axis != term.axis else target
+            for axis, (size, target) in enumerate(
+                zip(value.shape, target_shape, strict=True)
+            )
+        )
+        return _pad_high_to_shape(value, shape, pad_value=neutral)
+
     return replace(
         term,
-        a=_pad_high_to_shape(term.a, target_shape, pad_value=0.0),
-        b=_pad_high_to_shape(term.b, target_shape, pad_value=1.0),
-        inv_kappa=_pad_high_to_shape(term.inv_kappa, target_shape, pad_value=1.0),
+        a=profile(term.a, 0.0),
+        b=profile(term.b, 1.0),
+        inv_kappa=profile(term.inv_kappa, 1.0),
         slab=slab,
     )
 
@@ -480,9 +493,25 @@ def crop_state(program, state):
     """Remove backend padding before publishing a continuation state."""
     if not program.sharding.layout.enabled:
         return state
-    return state._replace(
-        **{
-            name.lower(): crop_component(program, name, getattr(state, name.lower()))
-            for name in _COMPONENT_NAMES
-        }
-    )
+    updates = {
+        name.lower(): crop_component(program, name, getattr(state, name.lower()))
+        for name in _COMPONENT_NAMES
+    }
+    for phase in ("h", "e"):
+        terms = getattr(program.boundary.cpml, f"{phase}_terms")
+        updates[f"cpml_psi_{phase}_terms"] = tuple(
+            _crop_high_to_shape(
+                value, logical_cpml_shape(program.sharding.layout, term)
+            )
+            for value, term in zip(
+                getattr(state, f"cpml_psi_{phase}_terms"), terms, strict=True
+            )
+        )
+    return state._replace(**updates)
+
+
+def logical_cpml_shape(layout, term):
+    """Physical packed-slab shape independent of the device partition layout."""
+    shape = list(layout.logical_shapes[term.component])
+    shape[term.axis] = term.slab.low + term.slab.high
+    return tuple(shape)

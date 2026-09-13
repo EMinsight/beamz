@@ -10,7 +10,6 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -19,58 +18,6 @@ from beamz.simulation.cuda import runtime
 from beamz.simulation.cuda import sharding as cuda_sharding
 from beamz.simulation.model import ShardingConfig
 from beamz.simulation.sharding import build_sharding_plan
-
-
-def reference_phase(
-    target,
-    phase,
-    targets,
-    sources,
-    materials,
-    terms,
-    psi,
-    metrics,
-    *,
-    metallic_edges,
-    resolution,
-    **kwargs,
-):
-    """Array reference for the native phase contract, replacing only the FFI.
-
-    Global parity is checked against BeamZ's existing JAX simulation, not this
-    reference. Collectives, device placement, masks and timesteps are real.
-    """
-    assert not terms and not psi
-    faces = (("front", "back"), ("bottom", "top"), ("left", "right"))
-
-    def difference(value, axis, shape):
-        if phase == 1:
-            padding = [(0, 0)] * 3
-            padding[axis] = (1, 1)
-            value = jnp.pad(value, padding)
-        result = jnp.diff(value, axis=axis) / resolution
-        if phase == 1:
-            for face, index in zip(faces[axis], (0, -1), strict=True):
-                if face not in metallic_edges:
-                    sl = [slice(None)] * 3
-                    sl[axis] = index
-                    result = result.at[tuple(sl)].set(0)
-        result = result[tuple(slice(0, size) for size in shape)]
-        return jnp.pad(
-            result,
-            tuple((0, size - n) for n, size in zip(result.shape, shape, strict=True)),
-        )
-
-    outputs = []
-    for c, (a, b, da, db) in enumerate(((2, 1, 1, 0), (0, 2, 0, 2), (1, 0, 2, 1))):
-        curl = difference(sources[a], da, targets[c].shape) - difference(
-            sources[b], db, targets[c].shape
-        )
-        outputs.append(
-            materials[c] * targets[c]
-            + (-1 if phase == 0 else 1) * materials[c + 3] * curl
-        )
-    return tuple(outputs)
 
 
 def make_simulation():
@@ -130,11 +77,12 @@ def run_cpu_contract():
     sim = make_simulation()
     state = seed_state(sim)
     expected = sim.advance(num_steps=6, state=state, backend="jax", progress=False)
-    native_phase = runtime._ffi_phase
+    from tests.unit.cuda_host_contract import register_host_sharded_ffi
+
+    register_host_sharded_ffi()
     with (
         patch.object(backend, "resolve_backend", lambda _: "cuda_streamed"),
         patch.object(cuda_sharding, "_validate_devices", lambda _: None),
-        patch.object(runtime, "_ffi_phase", reference_phase),
         patch.object(
             runtime, "run_steps", side_effect=AssertionError("native graph used")
         ),
@@ -202,15 +150,12 @@ def run_cpu_contract():
                         atol=1e-9,
                     )
                 assert int(continued.state.current_step) == 6
-                # Lower the REAL FFI (without executing it on CPU). This checks
-                # its interaction with shard_map, including variance rules.
-                with patch.object(runtime, "_ffi_phase", native_phase):
-                    ir = (
-                        build_scan(program)
-                        .lower(prepared, place_tree(program, program.coefficients))
-                        .as_text()
-                    )
-                assert "stablehlo.custom_call @beamz_cuda_streamed" in ir
+                ir = (
+                    build_scan(program)
+                    .lower(prepared, place_tree(program, program.coefficients))
+                    .as_text()
+                )
+                assert "stablehlo.custom_call @beamz_cuda_sharded" in ir
                 assert "collective_permute" in ir
                 assert "all_gather" not in ir
 
@@ -304,24 +249,16 @@ def test_cpu_devices_execute_sharded_cuda_orchestration():
     )
 
 
-@pytest.mark.parametrize("unsupported", ["cpml", "metric", "hopper", "faces"])
+@pytest.mark.parametrize("unsupported", ["hopper", "2d"])
 def test_unsupported_sharded_domains_fail_before_execution(unsupported):
-    sim = make_simulation()
-    program = sim.compile(backend="jax")
-    cfg = replace(program.config, backend="cuda_streamed")
-    boundary = program.boundary
-    if unsupported == "cpml":
-        boundary = replace(boundary, cpml=replace(boundary.cpml, enabled=True))
-    elif unsupported == "metric":
-        cfg = replace(cfg, metric_kind="rectilinear")
-    elif unsupported == "hopper":
-        cfg = replace(cfg, backend="cuda_hopper")
-    else:
-        boundary = replace(
-            boundary, cpml=replace(boundary.cpml, metallic_edges=frozenset())
-        )
-    with pytest.raises(RuntimeError, match="PEC on all faces"):
-        cuda_sharding.validate_sharded_config(cfg, boundary, None)
+    program = make_simulation().compile(backend="jax")
+    cfg = replace(
+        program.config,
+        backend="cuda_hopper" if unsupported == "hopper" else "cuda_streamed",
+        is_3d=unsupported != "2d",
+    )
+    with pytest.raises(RuntimeError, match="cuda_streamed and a 3D grid"):
+        cuda_sharding.validate_sharded_config(cfg, program.boundary, None)
 
 
 def test_cpu_mesh_rejected_for_native_cuda():

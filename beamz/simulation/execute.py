@@ -858,13 +858,17 @@ def initial_program_state(
         dtype = dtype if psi_dtype is None else psi_dtype
         shapes = tuple(term.slab.shape for term in terms)
         if len(old) == len(shapes) and all(
-            tuple(value.shape) == shape
-            for value, shape in zip(old, shapes, strict=True)
+            tuple(value.shape)
+            in (shape, sharding_runtime.logical_cpml_shape(layout, term))
+            for value, shape, term in zip(old, shapes, terms, strict=True)
         ):
-            if all(np.dtype(value.dtype) == np.dtype(dtype) for value in old):
-                return old
             converter = np.asarray if layout.enabled else jnp.asarray
-            return tuple(converter(value, dtype=dtype) for value in old)
+            return tuple(
+                sharding_runtime._pad_high_to_shape(
+                    converter(value, dtype=dtype), shape, pad_value=0.0
+                )
+                for value, shape in zip(old, shapes, strict=True)
+            )
         return tuple(zeros(shape, dtype) for shape in shapes)
 
     old_h = () if continuation is None else continuation.cpml_psi_h_terms

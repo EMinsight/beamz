@@ -1,13 +1,8 @@
-"""Explicit slab communication around local CUDA Yee phases.
-
-The first supported domain is a uniform, all-PEC 3D grid without CPML.
-Global masks remain in the JAX timestep; the native call sees a one-cell
-halo and treats the partition axis as an interior axis. No native ABI change
-is needed. Graph programs cannot be used here: every phase needs new halos.
-"""
+"""Halo exchange and packed CPML ownership around native CUDA Yee phases."""
 
 from __future__ import annotations
 
+from dataclasses import replace
 from functools import partial
 
 import jax
@@ -17,8 +12,6 @@ from jax.sharding import PartitionSpec as P
 from beamz.simulation import _cuda_abi as abi
 from beamz.simulation.backend import CudaBackendUnavailable
 
-_FACES = (("front", "back"), ("bottom", "top"), ("left", "right"))
-_ALL_FACES = frozenset(face for pair in _FACES for face in pair)
 _MESH_AXIS = "fdtd"
 
 
@@ -28,18 +21,11 @@ def _validate_devices(mesh):
 
 
 def validate_sharded_config(config, boundary, plan):
-    """Reject combinations whose local native boundary semantics are unsupported."""
-    if (
-        config.backend != "cuda_streamed"
-        or not config.is_3d
-        or config.metric_kind != "isotropic_uniform"
-        or boundary.cpml.enabled
-        or boundary.cpml.metallic_edges != _ALL_FACES
-    ):
+    """Validate the streamed phase and its common component partition layout."""
+    if config.backend != "cuda_streamed" or not config.is_3d:
         raise CudaBackendUnavailable(
-            "CUDA sharding currently requires cuda_streamed, a 3D isotropic "
-            "uniform grid, and PEC on all faces without CPML. Use backend='jax' "
-            "for other sharded configurations."
+            "CUDA sharding requires cuda_streamed and a 3D grid. "
+            "Use backend='jax' for other sharded configurations."
         )
     if plan is None or not plan.layout.enabled or plan.mesh is None:
         raise ValueError("CUDA sharding requires a compiled device layout")
@@ -52,8 +38,8 @@ def validate_sharded_config(config, boundary, plan):
 def exchange_halos(value, *, axis, num_devices):
     """Attach adjacent one-cell faces inside a manual ``fdtd`` mesh.
 
-    The outer faces are zero, never periodic. Input contains only owned cells;
-    callers must discard halo outputs before assembling the global result.
+    The outer faces are zero, never periodic. Only source buffers have halos;
+    the native phase returns owned cells in the original partition layout.
     """
     low = jax.lax.slice_in_dim(value, 0, 1, axis=axis)
     high = jax.lax.slice_in_dim(
@@ -68,12 +54,26 @@ def exchange_halos(value, *, axis, num_devices):
     return jnp.concatenate((from_low, value, from_high), axis=axis)
 
 
-def _pad_local(value, axis):
-    if value.ndim == 0:
-        return value
-    padding = [(0, 0)] * value.ndim
-    padding[axis] = (1, 1)
-    return jnp.pad(value, padding)
+def _owned_psi(value, term, *, axis, origin, extent, logical_shape):
+    """Keep only this rank's physical recurrence entries; neutralize padding."""
+    mask = jnp.asarray(True)
+    for d, size in enumerate(value.shape):
+        positions = jnp.arange(size, dtype=jnp.int32)
+        if d == term.axis:
+            positions = jnp.where(
+                positions < term.slab.low,
+                positions,
+                positions - term.slab.low + logical_shape[d] - term.slab.high,
+            )
+        elif d == axis:
+            positions = positions + origin
+        valid = (positions >= 0) & (positions < logical_shape[d])
+        if d == axis and d == term.axis:
+            valid &= (positions >= origin) & (positions < origin + extent)
+        shape = [1, 1, 1]
+        shape[d] = size
+        mask = mask & valid.reshape(shape)
+    return jnp.where(mask, value, jnp.zeros_like(value))
 
 
 def _phase(state, ctx, coeffs, *, phase):
@@ -84,6 +84,7 @@ def _phase(state, ctx, coeffs, *, phase):
     spec = P(*(_MESH_AXIS if i == axis else None for i in range(3)))
     prefix = "h" if phase == 0 else "e"
     targets = tuple(getattr(state, prefix + c) for c in "xyz")
+    tensor_update = phase == 1 and bool(coeffs.e_inverse_offdiagonal.size)
     sources = tuple(getattr(state, ("e" if phase == 0 else "h") + c) for c in "xyz")
     materials = tuple(
         getattr(coeffs, f"{prefix}_{kind}_{c}")
@@ -91,7 +92,21 @@ def _phase(state, ctx, coeffs, *, phase):
         for c in "xyz"
     )
     material_specs = tuple(P() if value.ndim == 0 else spec for value in materials)
-    edges = ctx.boundary.cpml.metallic_edges - frozenset(_FACES[axis])
+    terms = ctx.boundary.cpml.h_terms if phase == 0 else ctx.boundary.cpml.e_terms
+    psi = state.cpml_psi_h_terms if phase == 0 else state.cpml_psi_e_terms
+    # A normal CPML slab is only a pair of thin faces, never a full field. It is
+    # replicated and reduced over disjoint owners; transverse slabs partition
+    # with the fields. This preserves the public packed continuation layout.
+    psi_specs = tuple(P() if term.axis == axis else spec for term in terms)
+    profiles = tuple(
+        value for term in terms for value in (term.a, term.b, term.inv_kappa)
+    )
+    logical = plan.layout.logical_shapes
+    target_names = tuple(prefix.upper() + c for c in "xyz")
+    source_names = tuple(("E" if phase == 0 else "H") + c for c in "xyz")
+    shapes = jnp.asarray(
+        tuple(logical[name] for name in (*target_names, *source_names)), dtype=jnp.int32
+    )
 
     # Keep the compatibility import local: older supported JAX installations
     # expose shard_map through the experimental module.
@@ -103,36 +118,113 @@ def _phase(state, ctx, coeffs, *, phase):
     @partial(
         shard_map,
         mesh=plan.mesh,
-        in_specs=((spec,) * 3, (spec,) * 3, material_specs),
-        out_specs=(spec,) * 3,
+        in_specs=(
+            (spec,) * 3,
+            (spec,) * 3,
+            material_specs,
+            psi_specs,
+            (P(),) * 3,
+            (P(),) * len(profiles),
+        ),
+        out_specs=(*(spec,) * 3, *psi_specs),
     )
-    def local_update(local_targets, local_sources, local_materials):
+    def local_update(
+        local_targets,
+        local_sources,
+        local_materials,
+        local_psi,
+        metrics,
+        local_profiles,
+    ):
+        extent = local_targets[0].shape[axis]
+        origin = jax.lax.axis_index(_MESH_AXIS) * extent
+        header = jnp.stack((jnp.int32(axis), origin, jnp.int32(tensor_update)))[None, :]
+        geometry = jnp.concatenate((header, shapes), axis=0)
+        local_terms = tuple(
+            replace(
+                term,
+                a=local_profiles[3 * i],
+                b=local_profiles[3 * i + 1],
+                inv_kappa=local_profiles[3 * i + 2],
+            )
+            for i, term in enumerate(terms)
+        )
+        local_psi = tuple(
+            _owned_psi(
+                value,
+                term,
+                axis=axis,
+                origin=origin,
+                extent=extent,
+                logical_shape=logical[term.component],
+            )
+            for value, term in zip(local_psi, terms, strict=True)
+        )
         outputs = runtime._ffi_phase(
-            abi.CUDA_STREAMED_TARGET,
+            abi.CUDA_SHARDED_TARGET,
             phase,
-            tuple(_pad_local(value, axis) for value in local_targets),
+            local_targets,
             tuple(
                 exchange_halos(value, axis=axis, num_devices=count)
                 for value in local_sources
             ),
-            tuple(_pad_local(value, axis) for value in local_materials),
-            (),
-            (),
-            runtime._phase_metrics(ctx, phase),
-            metric_kind=0,
+            local_materials,
+            local_terms,
+            local_psi,
+            metrics,
+            metric_kind=runtime._metric_kind_code(ctx),
             dt=ctx.dt,
             resolution=ctx.resolution,
             cuda_flags=ctx.config.cuda_flags,
-            metallic_edges=edges,
+            metallic_edges=ctx.boundary.cpml.metallic_edges,
+            shard_geometry=geometry,
         )
-        return tuple(
-            jax.lax.slice_in_dim(value, 1, value.shape[axis] - 1, axis=axis)
-            for value in outputs
+        return (
+            *outputs[:3],
+            *(
+                jax.lax.psum(value, _MESH_AXIS) if term.axis == axis else value
+                for value, term in zip(outputs[3:], terms, strict=True)
+            ),
         )
 
-    outputs = local_update(targets, sources, materials)
+    outputs = local_update(
+        targets, sources, materials, psi, runtime._phase_metrics(ctx, phase), profiles
+    )
+    fields = outputs[:3]
+    if tensor_update:
+        from beamz.simulation.kernels import (
+            advance_e_centered_tensor,
+            fit_array_to_shape,
+        )
+
+        # Colocation extrapolates at physical support endpoints. Storage-only
+        # zeros must not move that endpoint or halve an edge's coupled curl.
+        slices = tuple(
+            tuple(slice(0, n) for n in logical[name]) for name in target_names
+        )
+        node_shape = tuple(
+            max(shape[d] for shape in logical.values()) for d in range(3)
+        )
+        node_slice = tuple(slice(0, n) for n in node_shape)
+
+        fields = advance_e_centered_tensor(
+            tuple(value[sl] for value, sl in zip(targets, slices, strict=True)),
+            tuple(value[sl] for value, sl in zip(fields, slices, strict=True)),
+            tuple(
+                getattr(coeffs, f"e_inverse_diagonal_{c}")[sl]
+                for c, sl in zip("xyz", slices, strict=True)
+            ),
+            coeffs.e_inverse_offdiagonal[node_slice],
+            ("Ex", "Ey", "Ez"),
+            ctx.dt_scalar,
+        )
+        fields = tuple(
+            fit_array_to_shape(value, target.shape)
+            for value, target in zip(fields, targets, strict=True)
+        )
     return state._replace(
-        **dict(zip((prefix + c for c in "xyz"), outputs, strict=True))
+        **dict(zip((prefix + c for c in "xyz"), fields, strict=True)),
+        **{f"cpml_psi_{prefix}_terms": outputs[3:]},
     )
 
 

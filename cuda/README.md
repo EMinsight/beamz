@@ -13,14 +13,15 @@ monitor schedules. JAX still owns tracing, buffers, and orchestration around tha
 small native interface, preserving BeamZ's public numerical semantics and JAX
 fallback without duplicating configuration-specific FFI targets.
 
-The native boundary has three typed FFI targets: one phase update, one complete
-multi-step program, and the explicit Hopper experiment. The implementation is
+The native boundary has four typed FFI targets: a phase update, a sharded phase,
+a complete multi-step program, and the explicit Hopper experiment. The implementation is
 split by responsibility:
 
 - `ffi_handler.cc` decodes JAX buffers into a validated `BeamzProgramLaunch`;
 - `program.cu` owns timestep order and selects the in-place or temporal schedule;
 - `graph.cu` owns bounded capture, semantic cache keys, and replay;
 - `update.cu` owns Yee and CPML kernels;
+- `sharded.cu` launches the global-coordinate-aware cells in `sharded_cell.h`;
 - `io.cu` owns source injection and DFT monitor accumulation.
 
 `abi_layout.json` is the source of truth for target names, layout selectors, and
@@ -56,8 +57,11 @@ simulations; only the explicitly selected CPML recurrence state may use BF16.
 
 ## Experimental sharded streamed execution
 
-Explicit CUDA requests can use the existing sharding API for isotropic uniform
-3D grids with PEC on all six faces and no CPML:
+Explicit CUDA requests use the existing sharding API for 3D simulations, including
+CPML, mixed PEC/absorbing faces, sponge layers, conductive materials, axis-uniform
+and rectilinear grids, and full-tensor permittivity. The existing source/monitor
+compiler supports mode, Gaussian-beam, overlapping, and custom phased sources;
+mode/flux/field monitors and field recording use the shared observation path.
 
 ```python
 result = simulation.advance(
@@ -67,34 +71,50 @@ result = simulation.advance(
 )
 ```
 
-This path has CPU orchestration and FFI-lowering coverage, but has **not yet been
+This path has native C++ arithmetic and CPU FFI coverage, but has **not yet been
 validated on multiple CUDA GPUs**. `auto` continues selecting JAX for sharded
-requests. The optional CUDA extension is still required for actual execution.
+requests. Rebuild the optional CUDA extension: this path requires component
+**0.13.0 / ABI 13**, including `beamz_cuda_sharded`.
 
 All six components share partition interfaces along the selected x, y, or z
 axis. `shard_map` exchanges one-cell neighbor halos before each H/E phase and
-invokes the existing streamed FFI on local arrays. Global JAX source, boundary,
+invokes the sharded FFI on local arrays. The native cells use global physical
+coordinates for derivatives, boundary conditions, and CPML profile lookup.
+Global JAX source, boundary,
 and monitor operations preserve timestep ordering; results retain their logical
-Yee shapes and continuation interface. The native ABI is unchanged.
+Yee shapes and continuation interface. Packed CPML state is cropped back to its
+physical support so continuation can change the partition axis/device count or
+resume with JAX without resetting the absorber memory.
+
+CPML slabs transverse to the partition axis are sharded with the fields. Slabs
+normal to it remain compact replicated low/high faces: each device updates only
+its owned entries, then a sum assembles the disjoint results. Full-volume CPML
+state is never allocated. Separable profiles and metric vectors are replicated.
+Full-tensor electric updates use native curls/CPML followed by JAX's coupled
+constitutive operator on physical supports; this can require extra collectives.
+The existing lossless-electric-material restriction for full tensors still applies.
 
 Multi-step native graphs and packed material codebooks are disabled on this
 path. They need communication-aware scheduling and local material packing before
-they can be restored. CPML, nonuniform metrics, partial/non-PEC boundaries, and
-Hopper sharding remain unsupported and report an error for explicit requests.
+they can be restored. Sharding remains 3D-only, as in the existing JAX planner;
+the explicit Hopper variant remains single-device.
 The first implementation exchanges both halo faces of all three source fields;
 communication overlap and tangential-field-only exchange remain optimizations.
 
 Run the CPU contract checks without CUDA:
 
 ```console
-python -m pytest tests/unit/test_cuda_sharding.py
+python -m pytest tests/unit/test_cuda_sharding.py tests/unit/test_cuda_sharded_features.py
 ```
 
-These execute actual collectives on two/four CPU devices with an array reference
-replacing only the FFI call, compare against the existing JAX solver, and lower
-the real FFI to IR without executing it. Cases cover all axes, unequal component
-sizes, heterogeneous materials, sources, DFT accumulators, and continuation.
-They do not establish native memory safety or GPU scaling. With GPUs available:
+These require a C++17 compiler. They compile the production FFI decoder and
+`sharded_cell.h` with a test-only CPU launcher, execute actual collectives on
+two/four CPU devices, and compare complete state against JAX. Cases include all
+axes, uneven supports, asymmetric CPML/PEC intersections, source types, mode and
+flux monitors, recordings, nonuniform metrics, tensor coupling, BF16 recurrence
+state, and continuation. `BEAMZ_CUDA_CPU_SANITIZE=1` compiles this harness with
+AddressSanitizer/UBSan (preload the compiler's ASan runtime when invoking Python).
+The GPU launch wrapper, device races, and scaling still require GPU validation:
 
 ```console
 python -m pytest tests/hardware/test_cuda_backends.py -k sharded_streamed
@@ -103,8 +123,7 @@ python -m pytest tests/hardware/test_cuda_backends.py -k sharded_streamed
 The hardware gate requires two/four GPUs and checks fields, monitor state and
 continuation. Before promoting automatic selection, also run Compute Sanitizer
 and inspect device memory/communication in a GPU profile for unintended full-grid
-gathers and scaling. CPML and rectilinear parity need additional native boundary
-and metric handling before those configurations can be enabled.
+gathers and scaling. Host sanitizer coverage does not replace device checks.
 
 BeamZ validates the component's explicit ABI version and complete streamed-target
 manifest before registering any FFI handler. An older or partial component makes

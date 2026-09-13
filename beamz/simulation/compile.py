@@ -560,6 +560,17 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
         setup.monitor_specs,
         setup.config,
     )
+    if (
+        request.materials.uses_full_permittivity
+        and config.backend != "jax"
+        and not sharding_layout.enabled
+    ):
+        from .backend import CudaBackendUnavailable
+
+        raise CudaBackendUnavailable(
+            "Full-tensor CUDA execution requires an active multi-device sharding "
+            "plan for its coupled constitutive update; use backend='jax'."
+        )
 
     # 4. Precompute ordinary Yee update coefficients. Native 3D material kernels keep
     # material arrays instead because they form coefficients at their exact stagger.
@@ -848,13 +859,14 @@ def compile_program(
     cuda_grid_supported = simulation.is_3d and (
         requested_backend != "cuda_hopper" or metric_kind == "isotropic_uniform"
     )
-    cuda_material_supported = not material_grid.uses_full_permittivity
     multi_device = sharding_token[0] and sharding_token[2] != 1
+    cuda_material_supported = not material_grid.uses_full_permittivity or (
+        multi_device and requested_backend in {"cuda", "cuda_streamed"}
+    )
     # Explicit streamed requests opt into the phase-by-phase sharded path.
     # Auto remains on the established JAX path pending CUDA hardware validation.
     cuda_sharding_supported = not multi_device or (
         requested_backend in {"cuda", "cuda_streamed"}
-        and metric_kind == "isotropic_uniform"
     )
     if requested_backend not in {"auto", "jax"} and not cuda_grid_supported:
         requirement = (
@@ -873,8 +885,7 @@ def compile_program(
         )
     if requested_backend not in {"auto", "jax"} and not cuda_sharding_supported:
         raise CudaBackendUnavailable(
-            "CUDA multi-device sharding requires backend='cuda_streamed' and "
-            "isotropic uniform metrics; "
+            "CUDA multi-device sharding requires backend='cuda_streamed'; "
             "use backend='jax' for other sharded configurations."
         )
     cuda_problem_supported = (

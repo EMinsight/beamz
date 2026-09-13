@@ -349,11 +349,12 @@ def test_streamed_cuda_matches_jax_complete_state(cpml):
 
 @pytest.mark.parametrize("axis", ["z", "y", "x"])
 @pytest.mark.parametrize("num_devices", [2, 4])
-def test_sharded_streamed_cuda_matches_jax_and_continuation(axis, num_devices):
+@pytest.mark.parametrize("cpml", [False, True])
+def test_sharded_streamed_cuda_matches_jax_and_continuation(axis, num_devices, cpml):
     """Real FFI gate: uneven Yee supports, material interfaces, source and DFT."""
     if len(jax.devices("gpu")) < num_devices:
         pytest.skip(f"requires {num_devices} CUDA devices")
-    simulation, state = _simulation_and_seed(cpml=False)
+    simulation, state = _simulation_and_seed(cpml=cpml)
     sharding = dict(axis=axis, num_devices=num_devices, backend="gpu")
     reference = simulation.advance(
         state=_copy_state(state), num_steps=32, backend="jax", progress=False
@@ -381,6 +382,48 @@ def test_sharded_streamed_cuda_matches_jax_and_continuation(axis, num_devices):
     ).state
     _assert_state_close(reference, actual)
     _assert_state_close(actual, continued)
+
+
+@pytest.mark.parametrize("axis", ["z", "y", "x"])
+@pytest.mark.parametrize(
+    "profile", ["asymmetric_cpml", "rectilinear", "mode", "tensor"]
+)
+def test_sharded_streamed_extended_features(axis, profile):
+    if len(jax.devices("gpu")) < 2:
+        pytest.skip("requires two CUDA devices")
+    if profile == "rectilinear":
+        simulation, state = _nonuniform_simulation(metric_kind="rectilinear", cpml=True)
+    else:
+        if profile == "mode":
+            from tests.unit.test_cuda_sharded_features import mode_simulation
+
+            simulation = mode_simulation()
+        elif profile == "tensor":
+            from tests.unit.test_execution_backend import _full_tensor_3d_simulation
+
+            base = _full_tensor_3d_simulation()
+            simulation = bz.Simulation(
+                material_grid=base._material_grid(),
+                time=np.arange(12) * 1e-10,
+                boundaries=[bz.PML(thickness=0.05, formulation="cpml")],
+            )
+        else:
+            simulation = _feature_simulation(profile)
+        from tests.unit.test_cuda_sharding import seed_state
+
+        state = seed_state(simulation)
+    reference = simulation.advance(
+        state=_copy_state(state),
+        backend="jax",
+        progress=False,
+    ).state
+    actual = simulation.advance(
+        state=_copy_state(state),
+        backend="cuda_streamed",
+        progress=False,
+        sharding=dict(axis=axis, num_devices=2, backend="gpu"),
+    ).state
+    _assert_state_close(reference, actual)
 
 
 def test_bf16_cpml_program_matches_jax_application_state(monkeypatch):
