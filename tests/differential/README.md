@@ -58,13 +58,6 @@ solver values at the same PPW, with plot-digitization precision as a floor.
 Reports retain both the converged samples and the same-PPW samples used for the
 run's tolerance.
 
-At 6 PPW, the crossing's published solver values are 0.939 and 0.954 around a
-0.957 converged nominal; the resulting mean-centered tolerance includes the
-BeamZ value of 0.969. The directional coupler's 6-PPW values are 0.493 and
-0.697 around a 0.447 nominal and include BeamZ at 0.676. Crossing at 10 PPW
-remains a strict expected failure: its 0.965 result exceeds the tolerance
-calibrated from the 0.954 and 0.958 same-PPW references.
-
 ## Rectilinear-grid references
 
 `rectilinear_grid_references.json` contains frozen x/y grid-boundary coordinates
