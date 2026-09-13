@@ -493,7 +493,7 @@ def crop_state(program, state):
     """Remove backend padding before publishing a continuation state."""
     if not program.sharding.layout.enabled:
         return state
-    updates = {
+    updates: dict[str, jax.Array | tuple[jax.Array, ...]] = {
         name.lower(): crop_component(program, name, getattr(state, name.lower()))
         for name in _COMPONENT_NAMES
     }

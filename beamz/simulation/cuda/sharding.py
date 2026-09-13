@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from functools import partial
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -60,10 +61,13 @@ def _owned_psi(value, term, *, axis, origin, extent, logical_shape):
     for d, size in enumerate(value.shape):
         positions = jnp.arange(size, dtype=jnp.int32)
         if d == term.axis:
-            positions = jnp.where(
-                positions < term.slab.low,
-                positions,
-                positions - term.slab.low + logical_shape[d] - term.slab.high,
+            positions = cast(
+                jax.Array,
+                jnp.where(
+                    positions < term.slab.low,
+                    positions,
+                    positions - term.slab.low + logical_shape[d] - term.slab.high,
+                ),
             )
         elif d == axis:
             positions = positions + origin
