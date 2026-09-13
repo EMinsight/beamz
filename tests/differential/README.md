@@ -49,6 +49,20 @@ select a backend; reports record the backend that actually ran.
 
 Each broadband run monitors all requested wavelengths at once.
 
+Power validation uses the complete published resolution sweep rather than the
+reference value at the BeamZ run's resolution. Each manifest identifies the
+region the paper describes as converged. The benchmark pools the Lumerical and
+Tidy3D values in that region, uses their mean as the nominal result, and uses
+the largest observed deviation from that mean as the acceptance interval (with
+plot-digitization precision as a floor). Reports retain the samples, mean,
+standard deviation, and empirical envelope.
+
+The retained 6-PPW measurements predate this stricter convergence gate. The
+crossing gives 0.969 through power against a 0.956--0.959 converged envelope;
+the directional coupler gives 0.676 cross power against a 0.411--0.492
+envelope. Their strict expected-failure markers keep collecting numerical and
+performance evidence until a BeamZ resolution enters the reference envelope.
+
 ## Rectilinear-grid references
 
 `rectilinear_grid_references.json` contains frozen x/y grid-boundary coordinates

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
@@ -18,9 +19,10 @@ from tests.differential.passive_soi.common import (
 )
 from tests.differential.passive_soi.directional_coupler import (
     build_directional_coupler_simulation,
-    paper_cross_power_range,
     run_directional_coupler_benchmark,
 )
+from tests.differential.passive_soi.four_port import converged_power_reference
+from tests.validation.tolerances import Tolerance
 
 
 def _port_values(port):
@@ -108,10 +110,34 @@ def test_directional_coupler_simulation_uses_paper_stack_and_domain():
 @pytest.mark.slow
 @pytest.mark.parametrize(
     "resolution_ppw",
-    [6, 10, 15, 20, 25],
+    [
+        pytest.param(
+            6,
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason=(
+                    "BeamZ measures 0.676 TE0 cross power at 6 ppw, above the "
+                    "0.447 converged consensus."
+                ),
+            ),
+        ),
+        pytest.param(
+            10,
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason=(
+                    "BeamZ measures 0.514 TE0 cross power at 10 ppw, above the "
+                    "0.447 converged consensus."
+                ),
+            ),
+        ),
+        15,
+        20,
+        25,
+    ],
     ids=lambda value: f"{value}ppw",
 )
-def test_directional_coupler_cross_power_agrees_with_published_solver_range(
+def test_directional_coupler_cross_power_agrees_with_converged_reference(
     resolution_ppw, validation_metrics
 ):
     case = load_passive_soi_case("directional_coupler")
@@ -126,10 +152,12 @@ def test_directional_coupler_cross_power_agrees_with_published_solver_range(
         progress=True,
         artifact_dir=artifact_dir,
     )
-    lower, upper = paper_cross_power_range(case, resolution_ppw)
+    reference = converged_power_reference(
+        case, "published_converged_cross_power_1550nm_span20nm"
+    )
     metadata = {
         "execution_backend": result.backend,
-        "published_lumerical_tidy3d_range": [lower, upper],
+        "published_converged_reference": asdict(reference),
         "through_te0_power": result.through_power,
         "total_output_te0_power": result.total_output_power,
         "excess_loss": result.excess_loss,
@@ -141,24 +169,22 @@ def test_directional_coupler_cross_power_agrees_with_published_solver_range(
         "termination_reason": result.termination_reason,
         "wavelength_span_nm": result.wavelength_span_nm,
     }
-    validation_metrics.check_lower(
+    validation_metrics.check(
         "directional coupler TE0 cross power at 1550 nm",
         measured=result.cross_power,
-        lower_bound=lower,
-        tolerance="cross_solver",
+        reference=reference.nominal,
+        tolerance=Tolerance(
+            name="published_converged_solver_variance",
+            absolute=reference.absolute_tolerance,
+            relative=0.0,
+            rationale=(
+                "Observed maximum deviation across the converged Lumerical and "
+                "Tidy3D series, with digitization precision as a floor."
+            ),
+        ),
         unit="fraction",
         resolution=f"{resolution_ppw} cells per wavelength",
-        backend="beamz-vs-published-lumerical-tidy3d-range",
-        metadata=metadata,
-    )
-    validation_metrics.check_upper(
-        "directional coupler TE0 cross power at 1550 nm",
-        measured=result.cross_power,
-        upper_bound=upper,
-        tolerance="cross_solver",
-        unit="fraction",
-        resolution=f"{resolution_ppw} cells per wavelength",
-        backend="beamz-vs-published-lumerical-tidy3d-range",
+        backend="beamz-vs-published-converged-consensus",
         metadata=metadata,
     )
     validation_metrics.check_upper(

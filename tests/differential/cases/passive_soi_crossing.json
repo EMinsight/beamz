@@ -153,6 +153,12 @@
           }
         }
       },
+      "published_converged_through_power_1550nm_span20nm": {
+        "series_key": "published_through_power_1550nm_span20nm",
+        "convergence_start_ppw": 15,
+        "digitization_absolute_uncertainty": 0.001,
+        "value_basis": "Section 3.2 identifies convergence by 15 cells per wavelength. The consensus and tolerance use every Lumerical and Tidy3D value from 15 through 25 cells per wavelength."
+      },
       "published_bandwidth_consistency": {
         "resolution_ppw": 15,
         "source_spans_nm": [20.0, 50.0],

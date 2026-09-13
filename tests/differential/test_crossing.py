@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
@@ -18,9 +19,10 @@ from tests.differential.passive_soi.common import (
 )
 from tests.differential.passive_soi.crossing import (
     build_crossing_simulation,
-    paper_through_power,
     run_crossing_benchmark,
 )
+from tests.differential.passive_soi.four_port import converged_power_reference
+from tests.validation.tolerances import Tolerance
 
 
 def _port_values(port):
@@ -107,10 +109,34 @@ def test_crossing_simulation_uses_paper_domain_and_both_silicon_layers():
 @pytest.mark.slow
 @pytest.mark.parametrize(
     "resolution_ppw",
-    [6, 10, 15, 20, 25],
+    [
+        pytest.param(
+            6,
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason=(
+                    "BeamZ measures 0.969 TE0 power at 6 ppw, above the 0.957 "
+                    "converged consensus."
+                ),
+            ),
+        ),
+        pytest.param(
+            10,
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason=(
+                    "BeamZ measures 0.965 TE0 power at 10 ppw, above the 0.957 "
+                    "converged consensus."
+                ),
+            ),
+        ),
+        15,
+        20,
+        25,
+    ],
     ids=lambda value: f"{value}ppw",
 )
-def test_crossing_through_power_matches_published_reference(
+def test_crossing_through_power_matches_converged_reference(
     resolution_ppw, validation_metrics
 ):
     case = load_passive_soi_case("crossing")
@@ -126,15 +152,27 @@ def test_crossing_through_power_matches_published_reference(
         artifact_dir=artifact_dir,
     )
 
+    reference = converged_power_reference(
+        case, "published_converged_through_power_1550nm_span20nm"
+    )
     validation_metrics.check(
         "crossing TE0 through power at 1550 nm",
         measured=result.through_power,
-        reference=paper_through_power(case, resolution_ppw),
-        tolerance="cross_solver",
+        reference=reference.nominal,
+        tolerance=Tolerance(
+            name="published_converged_solver_variance",
+            absolute=reference.absolute_tolerance,
+            relative=0.0,
+            rationale=(
+                "Observed maximum deviation across the converged Lumerical and "
+                "Tidy3D series, with digitization precision as a floor."
+            ),
+        ),
         unit="fraction",
         resolution=f"{resolution_ppw} cells per wavelength",
-        backend="beamz-vs-published-lumerical-tidy3d-reference",
+        backend="beamz-vs-published-converged-consensus",
         metadata={
+            "published_converged_reference": asdict(reference),
             "execution_backend": result.backend,
             "wavelength_span_nm": result.wavelength_span_nm,
             "runtime_s": result.runtime_s,

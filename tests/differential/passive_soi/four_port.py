@@ -44,6 +44,56 @@ class FourPortBenchmarkResult:
     termination_reason: str
 
 
+@dataclass(frozen=True)
+class ConvergedPowerReference:
+    """Consensus and observed spread across a published converged region."""
+
+    nominal: float
+    absolute_tolerance: float
+    standard_deviation: float
+    minimum: float
+    maximum: float
+    resolutions_ppw: tuple[int, ...]
+    samples: tuple[float, ...]
+    digitization_uncertainty: float
+
+
+def converged_power_reference(
+    case: DifferentialCase, key: str
+) -> ConvergedPowerReference:
+    """Estimate consensus from both solvers throughout the converged PPW region."""
+
+    data = case.geometry["simulation"][key]
+    series = case.geometry["simulation"][data["series_key"]]
+    start = int(data["convergence_start_ppw"])
+    resolutions = tuple(
+        sorted(
+            int(value)
+            for value in series
+            if str(value).isdigit() and int(value) >= start
+        )
+    )
+    samples = tuple(
+        float(series[str(resolution)][solver])
+        for resolution in resolutions
+        for solver in ("lumerical", "tidy3d")
+    )
+    nominal = float(np.mean(samples))
+    uncertainty = float(data.get("digitization_absolute_uncertainty", 0.0))
+    return ConvergedPowerReference(
+        nominal=nominal,
+        absolute_tolerance=max(
+            max(abs(value - nominal) for value in samples), uncertainty
+        ),
+        standard_deviation=float(np.std(samples)),
+        minimum=min(samples),
+        maximum=max(samples),
+        resolutions_ppw=resolutions,
+        samples=samples,
+        digitization_uncertainty=uncertainty,
+    )
+
+
 def paper_cross_power_range(
     case: DifferentialCase, resolution_ppw: int
 ) -> tuple[float, float]:
