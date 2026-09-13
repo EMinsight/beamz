@@ -106,31 +106,36 @@ def test_directional_coupler_simulation_uses_paper_stack_and_domain():
     } == {0.0}
 
 
+def test_directional_coupler_reference_uses_the_solver_spread_at_each_ppw():
+    case = load_passive_soi_case("directional_coupler")
+    reference_6 = converged_power_reference(
+        case,
+        "published_converged_cross_power_1550nm_span20nm",
+        resolution_ppw=6,
+    )
+    reference_10 = converged_power_reference(
+        case,
+        "published_converged_cross_power_1550nm_span20nm",
+        resolution_ppw=10,
+    )
+
+    assert reference_6.nominal == pytest.approx(0.4473333333)
+    assert reference_6.samples == pytest.approx((0.493, 0.697))
+    assert reference_6.absolute_tolerance == pytest.approx(0.697 - reference_6.nominal)
+    assert reference_10.samples == pytest.approx((0.451, 0.578))
+    assert reference_10.absolute_tolerance == pytest.approx(
+        0.578 - reference_10.nominal
+    )
+    assert reference_6.absolute_tolerance > reference_10.absolute_tolerance
+
+
 @pytest.mark.hardware
 @pytest.mark.slow
 @pytest.mark.parametrize(
     "resolution_ppw",
     [
-        pytest.param(
-            6,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason=(
-                    "BeamZ measures 0.676 TE0 cross power at 6 ppw, above the "
-                    "0.447 converged consensus."
-                ),
-            ),
-        ),
-        pytest.param(
-            10,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason=(
-                    "BeamZ measures 0.514 TE0 cross power at 10 ppw, above the "
-                    "0.447 converged consensus."
-                ),
-            ),
-        ),
+        6,
+        10,
         15,
         20,
         25,
@@ -153,11 +158,13 @@ def test_directional_coupler_cross_power_agrees_with_converged_reference(
         artifact_dir=artifact_dir,
     )
     reference = converged_power_reference(
-        case, "published_converged_cross_power_1550nm_span20nm"
+        case,
+        "published_converged_cross_power_1550nm_span20nm",
+        resolution_ppw=resolution_ppw,
     )
     metadata = {
         "execution_backend": result.backend,
-        "published_converged_reference": asdict(reference),
+        "published_reference": asdict(reference),
         "through_te0_power": result.through_power,
         "total_output_te0_power": result.total_output_power,
         "excess_loss": result.excess_loss,
@@ -174,17 +181,18 @@ def test_directional_coupler_cross_power_agrees_with_converged_reference(
         measured=result.cross_power,
         reference=reference.nominal,
         tolerance=Tolerance(
-            name="published_converged_solver_variance",
+            name="same_ppw_reference_deviation",
             absolute=reference.absolute_tolerance,
             relative=0.0,
             rationale=(
-                "Observed maximum deviation across the converged Lumerical and "
-                "Tidy3D series, with digitization precision as a floor."
+                "Maximum deviation from the converged nominal among the "
+                "Lumerical and Tidy3D values at the same PPW, with "
+                "digitization precision as a floor."
             ),
         ),
         unit="fraction",
         resolution=f"{resolution_ppw} cells per wavelength",
-        backend="beamz-vs-published-converged-consensus",
+        backend="beamz-vs-resolution-aware-published-reference",
         metadata=metadata,
     )
     validation_metrics.check_upper(

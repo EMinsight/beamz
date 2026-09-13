@@ -51,17 +51,19 @@ Each broadband run monitors all requested wavelengths at once.
 
 Power validation uses the complete published resolution sweep rather than the
 reference value at the BeamZ run's resolution. Each manifest identifies the
-region the paper describes as converged. The benchmark pools the Lumerical and
-Tidy3D values in that region, uses their mean as the nominal result, and uses
-the largest observed deviation from that mean as the acceptance interval (with
-plot-digitization precision as a floor). Reports retain the samples, mean,
-standard deviation, and empirical envelope.
+region the paper describes as converged and pools the Lumerical and Tidy3D
+values there to estimate one nominal result. For each BeamZ resolution, the
+tolerance is the largest deviation from that nominal among the two published
+solver values at the same PPW, with plot-digitization precision as a floor.
+Reports retain both the converged samples and the same-PPW samples used for the
+run's tolerance.
 
-The retained 6-PPW measurements predate this stricter convergence gate. The
-crossing gives 0.969 through power against a 0.956--0.959 converged envelope;
-the directional coupler gives 0.676 cross power against a 0.411--0.492
-envelope. Their strict expected-failure markers keep collecting numerical and
-performance evidence until a BeamZ resolution enters the reference envelope.
+At 6 PPW, the crossing's published solver values are 0.939 and 0.954 around a
+0.957 converged nominal; the resulting mean-centered tolerance includes the
+BeamZ value of 0.969. The directional coupler's 6-PPW values are 0.493 and
+0.697 around a 0.447 nominal and include BeamZ at 0.676. Crossing at 10 PPW
+remains a strict expected failure: its 0.965 result exceeds the tolerance
+calibrated from the 0.954 and 0.958 same-PPW references.
 
 ## Rectilinear-grid references
 

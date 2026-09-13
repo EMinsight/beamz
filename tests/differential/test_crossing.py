@@ -105,28 +105,42 @@ def test_crossing_simulation_uses_paper_domain_and_both_silicon_layers():
     } == {0.0}
 
 
+def test_crossing_reference_uses_the_solver_spread_at_each_ppw():
+    case = load_passive_soi_case("crossing")
+    reference_6 = converged_power_reference(
+        case,
+        "published_converged_through_power_1550nm_span20nm",
+        resolution_ppw=6,
+    )
+    reference_10 = converged_power_reference(
+        case,
+        "published_converged_through_power_1550nm_span20nm",
+        resolution_ppw=10,
+    )
+
+    assert reference_6.nominal == pytest.approx(0.9571666667)
+    assert reference_6.samples == pytest.approx((0.954, 0.939))
+    assert reference_6.absolute_tolerance == pytest.approx(reference_6.nominal - 0.939)
+    assert reference_10.samples == pytest.approx((0.954, 0.958))
+    assert reference_10.absolute_tolerance == pytest.approx(
+        reference_10.nominal - 0.954
+    )
+    assert reference_6.absolute_tolerance > reference_10.absolute_tolerance
+
+
 @pytest.mark.hardware
 @pytest.mark.slow
 @pytest.mark.parametrize(
     "resolution_ppw",
     [
-        pytest.param(
-            6,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason=(
-                    "BeamZ measures 0.969 TE0 power at 6 ppw, above the 0.957 "
-                    "converged consensus."
-                ),
-            ),
-        ),
+        6,
         pytest.param(
             10,
             marks=pytest.mark.xfail(
                 strict=True,
                 reason=(
-                    "BeamZ measures 0.965 TE0 power at 10 ppw, above the 0.957 "
-                    "converged consensus."
+                    "BeamZ measures 0.965 TE0 power at 10 ppw, outside the "
+                    "0.954--0.960 same-PPW-calibrated acceptance interval."
                 ),
             ),
         ),
@@ -153,26 +167,29 @@ def test_crossing_through_power_matches_converged_reference(
     )
 
     reference = converged_power_reference(
-        case, "published_converged_through_power_1550nm_span20nm"
+        case,
+        "published_converged_through_power_1550nm_span20nm",
+        resolution_ppw=resolution_ppw,
     )
     validation_metrics.check(
         "crossing TE0 through power at 1550 nm",
         measured=result.through_power,
         reference=reference.nominal,
         tolerance=Tolerance(
-            name="published_converged_solver_variance",
+            name="same_ppw_reference_deviation",
             absolute=reference.absolute_tolerance,
             relative=0.0,
             rationale=(
-                "Observed maximum deviation across the converged Lumerical and "
-                "Tidy3D series, with digitization precision as a floor."
+                "Maximum deviation from the converged nominal among the "
+                "Lumerical and Tidy3D values at the same PPW, with "
+                "digitization precision as a floor."
             ),
         ),
         unit="fraction",
         resolution=f"{resolution_ppw} cells per wavelength",
-        backend="beamz-vs-published-converged-consensus",
+        backend="beamz-vs-resolution-aware-published-reference",
         metadata={
-            "published_converged_reference": asdict(reference),
+            "published_reference": asdict(reference),
             "execution_backend": result.backend,
             "wavelength_span_nm": result.wavelength_span_nm,
             "runtime_s": result.runtime_s,

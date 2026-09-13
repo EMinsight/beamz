@@ -46,22 +46,25 @@ class FourPortBenchmarkResult:
 
 @dataclass(frozen=True)
 class ConvergedPowerReference:
-    """Consensus and observed spread across a published converged region."""
+    """Converged nominal with a tolerance calibrated at one resolution."""
 
     nominal: float
     absolute_tolerance: float
     standard_deviation: float
     minimum: float
     maximum: float
-    resolutions_ppw: tuple[int, ...]
+    resolution_ppw: int
     samples: tuple[float, ...]
+    converged_resolutions_ppw: tuple[int, ...]
+    converged_samples: tuple[float, ...]
+    converged_standard_deviation: float
     digitization_uncertainty: float
 
 
 def converged_power_reference(
-    case: DifferentialCase, key: str
+    case: DifferentialCase, key: str, *, resolution_ppw: int
 ) -> ConvergedPowerReference:
-    """Estimate consensus from both solvers throughout the converged PPW region."""
+    """Estimate a converged nominal and same-PPW reference tolerance."""
 
     data = case.geometry["simulation"][key]
     series = case.geometry["simulation"][data["series_key"]]
@@ -73,12 +76,18 @@ def converged_power_reference(
             if str(value).isdigit() and int(value) >= start
         )
     )
-    samples = tuple(
+    converged_samples = tuple(
         float(series[str(resolution)][solver])
         for resolution in resolutions
         for solver in ("lumerical", "tidy3d")
     )
-    nominal = float(np.mean(samples))
+    nominal = float(np.mean(converged_samples))
+    resolution_key = str(int(resolution_ppw))
+    if resolution_key not in series:
+        raise ValueError(f"no published reference at {resolution_ppw} PPW")
+    samples = tuple(
+        float(series[resolution_key][solver]) for solver in ("lumerical", "tidy3d")
+    )
     uncertainty = float(data.get("digitization_absolute_uncertainty", 0.0))
     return ConvergedPowerReference(
         nominal=nominal,
@@ -88,8 +97,11 @@ def converged_power_reference(
         standard_deviation=float(np.std(samples)),
         minimum=min(samples),
         maximum=max(samples),
-        resolutions_ppw=resolutions,
+        resolution_ppw=int(resolution_ppw),
         samples=samples,
+        converged_resolutions_ppw=resolutions,
+        converged_samples=converged_samples,
+        converged_standard_deviation=float(np.std(converged_samples)),
         digitization_uncertainty=uncertainty,
     )
 
