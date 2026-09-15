@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
 from tests.differential.case_schema import DifferentialCase
 from tests.differential.passive_soi.common import (
+    component_polygons,
     domain_bounds_um,
     domain_size_um,
     generate_layout,
@@ -49,13 +49,6 @@ def paper_through_power(case: DifferentialCase, resolution_ppw: int) -> float:
     return float(references[str(int(resolution_ppw))]["consensus"])
 
 
-def _component_polygons(component: Any, layer: tuple[int, int]):
-    polygons = component.get_polygons_points(by="tuple").get(tuple(layer), ())
-    if not polygons:
-        raise ValueError(f"component {component.name!r} has no layer {tuple(layer)}")
-    return polygons
-
-
 def _crossing_design(case: DifferentialCase):
     """Extrude both paper GDS layers and extend the four guides to the domain."""
     from beamz import Design, Material, Polygon, Rectangle, µm
@@ -76,7 +69,7 @@ def _crossing_design(case: DifferentialCase):
     for layer in case.geometry["layers"].values():
         thickness = float(layer["thickness_m"])
         beamz_z_um = float(layer["zmin_um"]) - bounds["z"][0]
-        for points in _component_polygons(component, tuple(layer["gds"])):
+        for points in component_polygons(component, tuple(layer["gds"])):
             design += Polygon(
                 vertices=tuple(
                     (

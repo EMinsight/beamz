@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
 from tests.differential.case_schema import DifferentialCase
 from tests.differential.passive_soi.common import (
+    component_polygons,
     domain_bounds_um,
     domain_size_um,
     generate_layout,
@@ -117,13 +117,6 @@ def paper_cross_power_range(
     return min(values), max(values)
 
 
-def _component_polygons(component: Any, layer: tuple[int, int]):
-    polygons = component.get_polygons_points(by="tuple").get(tuple(layer), ())
-    if not polygons:
-        raise ValueError(f"component {component.name!r} has no layer {tuple(layer)}")
-    return polygons
-
-
 def _four_port_design(case: DifferentialCase):
     """Extrude the referenced layer stack and guides through the x boundaries."""
     from beamz import Design, Material, Polygon, Rectangle, µm
@@ -144,7 +137,7 @@ def _four_port_design(case: DifferentialCase):
     for layer in case.geometry["layers"].values():
         thickness = float(layer["thickness_m"])
         beamz_z_um = float(layer["zmin_um"]) - bounds["z"][0]
-        for points in _component_polygons(component, tuple(layer["gds"])):
+        for points in component_polygons(component, tuple(layer["gds"])):
             design += Polygon(
                 vertices=tuple(
                     (

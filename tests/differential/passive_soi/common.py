@@ -185,18 +185,35 @@ def port_center_and_direction(
     )
 
 
+@contextmanager
+def _layout_pdk_scope():
+    """Temporarily activate the benchmark PDK for GDSFactory operations."""
+    gf = _gdsfactory()
+    # get_active_pdk() initializes a generic PDK when none is active. Preserve
+    # that uninitialized state too; GDSFactory has no public non-initializing
+    # getter or deactivation API.
+    previous_pdk = gf.pdk._ACTIVE_PDK
+    try:
+        _layout_pdk().activate()
+        yield
+    finally:
+        if previous_pdk is None:
+            gf.pdk._ACTIVE_PDK = None
+        else:
+            previous_pdk.activate()
+
+
 @cache
 def _generate_layout(component_name: str, settings_json: str) -> Any:
     gf = _gdsfactory()
-
-    _layout_pdk().activate()
-    try:
-        factory = getattr(gf.components, component_name)
-    except AttributeError as error:
-        raise ValueError(
-            f"GDSFactory has no generic component {component_name!r}"
-        ) from error
-    return factory(**json.loads(settings_json))
+    with _layout_pdk_scope():
+        try:
+            factory = getattr(gf.components, component_name)
+        except AttributeError as error:
+            raise ValueError(
+                f"GDSFactory has no generic component {component_name!r}"
+            ) from error
+        return factory(**json.loads(settings_json))
 
 
 def generate_layout(case: DifferentialCase) -> Any:
@@ -213,7 +230,17 @@ def write_layout_gds(case: DifferentialCase, path: str | Path) -> Path:
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     component = generate_layout(case)
-    return Path(component.write_gds(gdspath=destination, with_metadata=True))
+    with _layout_pdk_scope():
+        return Path(component.write_gds(gdspath=destination, with_metadata=True))
+
+
+def component_polygons(component: Any, layer: tuple[int, int]):
+    """Read physical polygons without leaking GDSFactory's layer lookup PDK."""
+    with _layout_pdk_scope():
+        polygons = component.get_polygons_points(by="tuple").get(tuple(layer), ())
+    if not polygons:
+        raise ValueError(f"component {component.name!r} has no layer {tuple(layer)}")
+    return polygons
 
 
 def layer_union_sha256(component: Any, layer: tuple[int, int]) -> str:
@@ -228,9 +255,7 @@ def layer_union_sha256(component: Any, layer: tuple[int, int]) -> str:
     from shapely.geometry import Polygon
     from shapely.ops import unary_union
 
-    polygons = component.get_polygons_points(by="tuple").get(tuple(layer), ())
-    if not polygons:
-        raise ValueError(f"component {component.name!r} has no layer {tuple(layer)}")
+    polygons = component_polygons(component, layer)
     geometry = normalize(
         unary_union(
             [
