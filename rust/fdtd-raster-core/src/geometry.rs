@@ -329,7 +329,7 @@ impl Polygon2 {
             })
     }
 
-    fn to_geo(&self) -> GeoPolygon<f64> {
+    pub(crate) fn to_geo(&self) -> GeoPolygon<f64> {
         fn line(ring: &[[f64; 2]]) -> LineString<f64> {
             let mut coords: Vec<Coord<f64>> =
                 ring.iter().map(|p| Coord { x: p[0], y: p[1] }).collect();
@@ -767,6 +767,18 @@ fn add_extrusion_evidence(
     if z_max > volume.min[2] && z_max < volume.max[2] {
         evidence.add([0.0, 0.0, 1.0], cap_area);
     }
+    add_extrusion_side_evidence(evidence, polygon, z_min, z_max, slope, padding, volume);
+}
+
+pub(crate) fn add_extrusion_side_evidence(
+    evidence: &mut InterfaceEvidence,
+    polygon: &Polygon2,
+    z_min: f64,
+    z_max: f64,
+    slope: f64,
+    padding: f64,
+    volume: &Aabb,
+) {
     let z_overlap = (z_max.min(volume.max[2]) - z_min.max(volume.min[2])).max(0.0);
     if z_overlap <= 0.0 {
         return;
@@ -807,7 +819,7 @@ fn clipped_segment_length(a: [f64; 2], b: [f64; 2], rect: &Aabb) -> Option<f64> 
         (delta[1], rect.max[1] - a[1]),
     ] {
         if p == 0.0 {
-            if q < 0.0 {
+            if q <= 0.0 {
                 return None;
             }
             continue;
