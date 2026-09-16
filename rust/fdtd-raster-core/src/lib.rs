@@ -4,6 +4,7 @@ mod error;
 mod geometry;
 mod grid;
 mod mesh;
+mod ownership;
 mod raster;
 mod scene;
 
