@@ -1,5 +1,8 @@
 # RTX 3090 passive-SOI benchmark evidence
 
+> Historical baseline before the #242 ownership fix. See the
+> [2026-09-16 rerun](../rtx3090-2026-09-16/README.md) for updated results and plots.
+
 These three figures summarize eight local `cuda_streamed` simulations: both
 devices at 6/10/15 PPW with a 20-nm source, plus both devices at 15 PPW with a
 50-nm source. The PR's geometry, solver settings and tolerances were unchanged.

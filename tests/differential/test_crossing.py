@@ -134,16 +134,7 @@ def test_crossing_reference_uses_the_solver_spread_at_each_ppw():
     "resolution_ppw",
     [
         6,
-        pytest.param(
-            10,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason=(
-                    "BeamZ measures 0.965 TE0 power at 10 ppw, outside the "
-                    "0.954--0.960 same-PPW-calibrated acceptance interval."
-                ),
-            ),
-        ),
+        10,
         15,
         20,
         25,
