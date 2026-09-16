@@ -10,6 +10,17 @@ from tests.differential.passive_soi.common import (
 )
 
 
+@pytest.fixture(autouse=True)
+def require_gdsfactory():
+    try:
+        _gdsfactory()
+    except ModuleNotFoundError as exc:
+        # Skip only the absent optional dependency, not a broken installation.
+        if exc.name != "gdsfactory":
+            raise
+        pytest.skip("Requires GDSFactory; install BeamZ with the gds extra.")
+
+
 @pytest.mark.parametrize("device", ["crossing", "directional_coupler"])
 @pytest.mark.parametrize("active", [False, True])
 def test_layout_generation_restores_active_pdk(device, active):
