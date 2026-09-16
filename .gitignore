@@ -78,6 +78,7 @@ validation-results.json
 /benchmarks/results/
 /benchmarks/*-results.json
 /validation-results/
+/validation-artifacts/
 
 # Local scratch files
 NOTES.md
