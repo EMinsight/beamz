@@ -5,7 +5,9 @@
 //! the area not occupied by the same material on the other side of the plane.
 use geo::{BooleanOps, CoordsIter, MapCoords, MultiPolygon, Polygon as GeoPolygon, Rect};
 
-use crate::geometry::{InterfaceAssessment, InterfaceEvidence, add_extrusion_side_evidence};
+use crate::geometry::{
+    InterfaceAssessment, InterfaceEvidence, add_extrusion_side_evidence, strictly_inside,
+};
 use crate::{Aabb, ExtrudedPolygon, Geometry, Object, Polygon2, Scene};
 
 pub(crate) struct ResolvedExtrusions {
@@ -148,7 +150,7 @@ impl ResolvedExtrusions {
                 .into_iter()
                 .zip(&self.caps[index])
             {
-                if height > volume.min[2] && height < volume.max[2] {
+                if strictly_inside(height, volume.min[2], volume.max[2]) {
                     let area = polygons
                         .iter()
                         .map(|polygon| polygon.intersection_area(volume))

@@ -263,12 +263,42 @@ impl Polygon2 {
         {
             return 0.0;
         }
+        // Keep the analytic box path after material unions turn boxes into
+        // polygons. Overlay quantization on an already rectangular clipping
+        // problem can otherwise perturb aligned, mirror-symmetric Yee slices.
+        let rectangular = self.holes.is_empty()
+            && (0..self.exterior.len()).all(|i| {
+                let a = self.exterior[i];
+                let b = self.exterior[(i + 1) % self.exterior.len()];
+                (0..2).any(|axis| {
+                    a[axis] == b[axis] && (a[axis] == minimum[axis] || a[axis] == maximum[axis])
+                })
+            });
+        if rectangular {
+            return (rect.max[0].min(maximum[0]) - rect.min[0].max(minimum[0]))
+                * (rect.max[1].min(maximum[1]) - rect.min[1].max(minimum[1]));
+        }
         if rect.min[0] <= minimum[0]
             && rect.max[0] >= maximum[0]
             && rect.min[1] <= minimum[1]
             && rect.max[1] >= maximum[1]
         {
             return self.area();
+        }
+        let crosses_boundary = std::iter::once(&self.exterior)
+            .chain(self.holes.iter())
+            .any(|ring| {
+                (0..ring.len()).any(|i| {
+                    clipped_segment_length(ring[i], ring[(i + 1) % ring.len()], rect).is_some()
+                })
+            });
+        if !crosses_boundary {
+            let center = rect.center();
+            return if self.contains_half_open([center[0], center[1]]) {
+                (rect.max[0] - rect.min[0]) * (rect.max[1] - rect.min[1])
+            } else {
+                0.0
+            };
         }
         let polygon = self.to_geo();
         let clip = Rect::new(
@@ -742,7 +772,7 @@ fn add_box_evidence(evidence: &mut InterfaceEvidence, bounds: &Aabb, volume: &Aa
             continue;
         }
         for (coordinate, sign) in [(bounds.min[axis], -1.0), (bounds.max[axis], 1.0)] {
-            if coordinate > volume.min[axis] && coordinate < volume.max[axis] {
+            if strictly_inside(coordinate, volume.min[axis], volume.max[axis]) {
                 let mut normal = [0.0; 3];
                 normal[axis] = sign;
                 evidence.add(normal, weight);
@@ -761,10 +791,10 @@ fn add_extrusion_evidence(
     volume: &Aabb,
 ) {
     let cap_area = polygon.intersection_area(volume);
-    if z_min > volume.min[2] && z_min < volume.max[2] {
+    if strictly_inside(z_min, volume.min[2], volume.max[2]) {
         evidence.add([0.0, 0.0, -1.0], cap_area);
     }
-    if z_max > volume.min[2] && z_max < volume.max[2] {
+    if strictly_inside(z_max, volume.min[2], volume.max[2]) {
         evidence.add([0.0, 0.0, 1.0], cap_area);
     }
     add_extrusion_side_evidence(evidence, polygon, z_min, z_max, slope, padding, volume);
@@ -808,7 +838,19 @@ pub(crate) fn add_extrusion_side_evidence(
     }
 }
 
+pub(crate) fn strictly_inside(value: f64, minimum: f64, maximum: f64) -> bool {
+    let tolerance = 64.0 * f64::EPSILON * value.abs().max(minimum.abs()).max(maximum.abs());
+    value > minimum + tolerance && value < maximum - tolerance
+}
+
 fn clipped_segment_length(a: [f64; 2], b: [f64; 2], rect: &Aabb) -> Option<f64> {
+    let tolerance = 64.0
+        * f64::EPSILON
+        * a.iter()
+            .chain(b.iter())
+            .chain(rect.min[..2].iter())
+            .chain(rect.max[..2].iter())
+            .fold(0.0_f64, |scale, value| scale.max(value.abs()));
     let delta = [b[0] - a[0], b[1] - a[1]];
     let mut low: f64 = 0.0;
     let mut high: f64 = 1.0;
@@ -819,7 +861,7 @@ fn clipped_segment_length(a: [f64; 2], b: [f64; 2], rect: &Aabb) -> Option<f64> 
         (delta[1], rect.max[1] - a[1]),
     ] {
         if p == 0.0 {
-            if q <= 0.0 {
+            if q <= tolerance {
                 return None;
             }
             continue;
@@ -834,7 +876,8 @@ fn clipped_segment_length(a: [f64; 2], b: [f64; 2], rect: &Aabb) -> Option<f64> 
             return None;
         }
     }
-    Some((high - low) * (delta[0] * delta[0] + delta[1] * delta[1]).sqrt())
+    let length = (high - low) * (delta[0] * delta[0] + delta[1] * delta[1]).sqrt();
+    (length > tolerance).then_some(length)
 }
 
 fn hypot2(value: [f64; 2]) -> f64 {

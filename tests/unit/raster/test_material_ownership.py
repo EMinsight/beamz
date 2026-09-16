@@ -263,3 +263,48 @@ def test_tiled_diagonal_seams_and_material_aliases_are_hidden():
     )
     compare_results(expected, actual)
     assert actual.diagnostics["fallback_multiple_orientations"] == 0
+
+
+@pytest.mark.parametrize("scale", [1.0, 1e-6])
+def test_uniform_polygon_interior_has_no_phantom_background(scale):
+    polygon = raster.ExtrudedPolygon(
+        raster.Polygon(
+            tuple((scale * x, scale * y) for x, y in ((-3, -3), (3, -3), (-3, 3)))
+        ),
+        -scale,
+        scale,
+    )
+    grid = raster.Grid.uniform(
+        tuple(scale * v for v in (-1.13, -1.27, -0.3)),
+        tuple(scale * v for v in (-0.31, -0.43, 0.4)),
+        (7, 11, 2),
+    )
+    result = raster.rasterize(
+        raster.Scene(
+            MATERIALS,
+            (raster.Object(polygon, 1, id=1), raster.Object(polygon, 1, id=2)),
+        ),
+        grid,
+    )
+    for name, value in result.tensors.items():
+        key = {"epsilon": "epsilon_r", "mu": "mu_r", "conductivity": "conductivity"}[
+            name
+        ]
+        expected = MATERIALS[1].to_dict()[key][0]
+        np.testing.assert_array_equal(value, np.full_like(value, expected))
+    assert result.diagnostics["ambiguous_interface_samples"] == 0
+
+
+def test_rectangular_polygon_clipping_preserves_box_mirror_symmetry():
+    # Non-binary meter coordinates made Boolean clipping introduce tiny material
+    # variations along an otherwise invariant waveguide cross section.
+    shape = raster.Box((0, 1.26e-6, 1.12e-6), (4.06e-6, 1.75e-6, 1.4e-6))
+    grid = raster.Grid.uniform((0, 0, 0), (4.06e-6, 3.01e-6, 2.52e-6), (58, 43, 36))
+    result = raster.rasterize(raster.Scene(MATERIALS, (raster.Object(shape, 1),)), grid)
+    for name in ("epsilon_ex", "epsilon_ey", "epsilon_ez"):
+        value = result.yee_tensors[name]
+        for axis in (1, 2):
+            np.testing.assert_array_equal(value, np.flip(value, axis=axis))
+        np.testing.assert_array_equal(
+            value, np.broadcast_to(value[..., :1], value.shape)
+        )
