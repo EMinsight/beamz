@@ -1913,3 +1913,6 @@ mod tests {
         assert!(result.diagnostics.ambiguous_interface_samples > 0);
     }
 }
+
+#[cfg(test)]
+mod diagnostics;

@@ -67,8 +67,9 @@ contribute normals: duplicate objects and hidden core/slab seams do not disable
 smoothing. Equal material-table entries are treated as one physical material.
 
 Polygon Boolean operations use the `geo` integer overlay lattice (approximately
-29 bits per XY half-extent). Input axis coordinates within two lattice steps
-are restored after each operation to keep aligned faces aligned. This is a
+29 bits per XY half-extent). Input axis coordinates within a scale-derived
+clipping-roundoff tolerance are restored after each operation to keep aligned
+faces aligned. This is a
 clipping precision limit, independent of the adaptive quality preset; features
 below that XY precision are not resolved. Regression tolerances of `2e-6` on
 float32 constitutive outputs cover clipping and output roundoff for the tested
@@ -203,3 +204,23 @@ env -u CONDA_PREFIX uv run maturin develop
 uv run pytest tests/unit/raster \
   tests/integration/test_native_design_rasterization.py
 ```
+
+### Spatial ownership inspection
+
+Development builds can inspect selected cell and Ex/Ey/Ez supports without
+changing the public API or allocating diagnostic volumes in ordinary runs.
+The ignored Rust test `write_spatial_ownership_diagnostics` accepts JSON with
+`scene`, `grid` (`x_edges`, `y_edges`, `z_edges`), and `supports` (component name
+and `[x, y, z]` index). Set `BEAMZ_RASTER_INSPECTION_INPUT` and
+`BEAMZ_RASTER_INSPECTION_OUTPUT` to the input and JSONL output paths, then run:
+
+```bash
+cargo test --release -p fdtd-raster-core write_spatial_ownership_diagnostics -- --ignored
+```
+
+Each output record gives support bounds, material fractions, the resolved normal,
+smoothing status, fallback reason, and epsilon. The crossing-specific
+`scripts/inspect_raster_ownership.py` selects XY/XZ supports, validates fractions
+against GEOS, and plots the physical nonuniform support widths. See
+[issue #242 evidence](../../../tests/differential/results/issue-242/README.md)
+for the selection, denominators, measured S parameters, and reproduction commands.

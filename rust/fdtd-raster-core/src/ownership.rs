@@ -177,8 +177,9 @@ fn from_geo(polygon: &GeoPolygon<f64>) -> Polygon2 {
 }
 
 /// `geo` overlays quantize XY to an integer lattice with roughly 29 bits per
-/// half-extent. Restore original axis coordinates within two lattice steps
-/// after each operation, so quantization cannot move an input-aligned face
+/// half-extent. Restore original axis coordinates within a rounding tolerance
+/// derived from the scene extent after each operation, so quantization cannot
+/// move an input-aligned face
 /// just inside a support and turn a laminar layer into a spurious corner.
 struct CoordinateRestore {
     axes: [Vec<f64>; 2],

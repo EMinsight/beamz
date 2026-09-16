@@ -1,0 +1,30 @@
+{
+  "counts": {
+    "cell": {
+      "selected_supports": 8820,
+      "mixed_supports": 300,
+      "smoothed_supports": 300
+    },
+    "ex": {
+      "selected_supports": 8730,
+      "mixed_supports": 2554,
+      "smoothed_supports": 2044,
+      "MultipleOrientations": 510
+    },
+    "ey": {
+      "selected_supports": 8827,
+      "mixed_supports": 2574,
+      "smoothed_supports": 2060,
+      "MultipleOrientations": 514
+    },
+    "ez": {
+      "selected_supports": 8918,
+      "mixed_supports": 298,
+      "smoothed_supports": 294,
+      "MultipleOrientations": 4
+    }
+  },
+  "max_fraction_error_vs_geos": 1.2530940238786314e-06,
+  "p95_fraction_error_vs_geos": 2.220446049250313e-16,
+  "denominator": "unique selected supports, separately for cell/Ex/Ey/Ez; not all grid cells"
+}
