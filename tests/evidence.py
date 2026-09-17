@@ -15,7 +15,7 @@ def evidence_markers_for_path(path: Path, *, tests_root: Path) -> tuple[str, ...
     category = relative.parts[0]
     name = relative.stem
 
-    if category in {"unit", "contracts", "integration", "docs", "pdk"}:
+    if category in {"unit", "contracts", "integration", "docs", "pdk", "release"}:
         markers = ["contract"]
     elif category == "kernels":
         markers = ["invariant"]

@@ -5,6 +5,17 @@ Design module for BEAMZ - Contains components for designing photonic structures.
 from beamz.design.core import Design
 from beamz.design.discretization import MaterialGrid, build_material_grid
 from beamz.design.gds import ImportedComponent, export_gds, import_component, import_gds
+from beamz.design.gdsfactory import (
+    ComponentSimulationResults,
+    PortMetadata,
+    PreparedComponent,
+)
+from beamz.design.gdsfactory import (
+    Settings as GDSFactorySettings,
+)
+from beamz.design.gdsfactory import (
+    prepare as prepare_gdsfactory,
+)
 from beamz.design.grid import (
     AxisGridQuality,
     Grid,
@@ -45,4 +56,9 @@ __all__ = [
     "import_component",
     "import_gds",
     "export_gds",
+    "GDSFactorySettings",
+    "ComponentSimulationResults",
+    "PortMetadata",
+    "PreparedComponent",
+    "prepare_gdsfactory",
 ]

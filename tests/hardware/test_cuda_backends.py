@@ -213,6 +213,30 @@ def _feature_simulation(profile: str):
                 target_shape=target_shape,
             )
         ]
+    elif profile == "gaussian_beam":
+        carrier = 200e12
+        sources = [
+            bz.GaussianBeamSource(
+                center=(
+                    0.5 * size_xyz[0],
+                    0.5 * size_xyz[1],
+                    0.75 * size_xyz[2],
+                ),
+                size=(8 * resolution, 8 * resolution, 0.0),
+                source_time=bz.GaussianPulse(
+                    freq0=carrier,
+                    fwidth=carrier,
+                    offset=0.5,
+                    remove_dc_component=False,
+                ),
+                direction="-z",
+                angle_theta=np.deg2rad(14.5),
+                angle_phi=np.pi,
+                pol_angle=np.pi / 2.0,
+                waist_radius=2.5 * resolution,
+                wavelength=bz.LIGHT_SPEED / carrier,
+            )
+        ]
     monitors = []
     if profile in {
         "multiple_monitors",
@@ -267,6 +291,7 @@ def _feature_program_state(simulation, backend: str, profile: str, state):
         "multiple_sources",
         "overlapping_sources",
         "h_source",
+        "gaussian_beam",
         "multiple_monitors",
         "cpml_multiple_monitors",
         "scheduled_windowed_monitor",

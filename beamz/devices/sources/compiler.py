@@ -411,6 +411,7 @@ def _lower_gaussian_beam_source(
         waveform,
         ctx,
         max_shift=source.max_shift,
+        launched_power=float(source.power),
     )
 
 
@@ -1186,8 +1187,19 @@ class GaussianBeamProfile:
                 - float(center_xyz[axis_name])
             )
         a, b = np.meshgrid(coords[0], coords[1], indexing="ij")
+        offsets = {
+            self.axis: np.zeros_like(a),
+            t_axes[0]: a,
+            t_axes[1]: b,
+        }
+        displacement = np.stack([offsets[axis] for axis in _AXES], axis=0)
+        e_hat = self.electric_unit_vector()
+        h_hat = self.magnetic_unit_vector()
+        u_coord = np.tensordot(e_hat, displacement, axes=(0, 0))
+        v_coord = np.tensordot(h_hat, displacement, axes=(0, 0))
+        rho2 = u_coord**2 + v_coord**2
         radius, _curvature, _gouy = self._beam_radius_curvature_gouy()
-        envelope2 = np.exp(-2.0 * (a**2 + b**2) / max(radius**2, 1e-300))
+        envelope2 = np.exp(-2.0 * rho2 / max(radius**2, 1e-300))
         eta = float(np.sqrt(MU_0 / EPS_0)) / float(self.background_index)
         flux = (
             0.5
@@ -1254,6 +1266,7 @@ def _field_profile_injection_plan(
     *,
     max_shift: int = 1,
     power: float = 1.0,
+    launched_power: float | None = None,
 ) -> CompiledInjectionPlan:
     profile = scale_field_profile(profile, power)
     return CompiledInjectionPlan(
@@ -1265,6 +1278,7 @@ def _field_profile_injection_plan(
                 values=np.asarray(residual.residual, dtype=np.complex128),
                 waveform=waveform,
                 target_shape=tuple(getattr(ctx.fields, residual.component).shape),
+                launched_power=launched_power,
             )
             for residual in field_profile_phasor_residuals(
                 profile,

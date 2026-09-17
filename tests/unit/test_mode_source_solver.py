@@ -81,6 +81,61 @@ def test_solve_modes_uses_one_signed_axis_for_normal_and_direction(monkeypatch):
     assert calls[0]["direction"] == "-"
 
 
+def test_solve_modes_projects_fields_to_symmetric_material_parity(monkeypatch):
+    dims = ("y", "z", "x", "f", "mode_index")
+    y, z = np.meshgrid(np.arange(5.0), np.arange(4.0), indexing="ij")
+    skewed = (1.0 + y + 2.0 * z)[..., None, None, None].astype(np.complex128)
+    result = SimpleNamespace(
+        n_complex=xr.DataArray([[2.0]], dims=("f", "mode_index")),
+        field_components={
+            name: xr.DataArray(skewed * (index + 1), dims=dims)
+            for index, name in enumerate(("Ex", "Ey", "Ez", "Hx", "Hy", "Hz"))
+        },
+    )
+    monkeypatch.setattr("beamz.devices.modes.plane.solve_grid", lambda **_: result)
+
+    _, electric, magnetic, _ = solve_modes(
+        np.ones((4, 5)),
+        omega=2 * np.pi,
+        dL=1e-7,
+        m=1,
+        return_fields=True,
+    )
+
+    for component in (*electric[0], *magnetic[0]):
+        for axis in (0, 1):
+            np.testing.assert_allclose(
+                np.abs(component),
+                np.flip(np.abs(component), axis=axis),
+                rtol=0.0,
+                atol=0.0,
+            )
+
+
+def test_solve_modes_leaves_2d_launch_line_profiles_unprojected(monkeypatch):
+    dims = ("y", "z", "x", "f", "mode_index")
+    profile = (1.0 + np.arange(5.0))[:, None, None, None, None]
+    result = SimpleNamespace(
+        n_complex=xr.DataArray([[2.0]], dims=("f", "mode_index")),
+        field_components={
+            name: xr.DataArray(profile * (index + 1), dims=dims)
+            for index, name in enumerate(("Ex", "Ey", "Ez", "Hx", "Hy", "Hz"))
+        },
+    )
+    monkeypatch.setattr("beamz.devices.modes.plane.solve_grid", lambda **_: result)
+
+    _, electric, magnetic, _ = solve_modes(
+        np.ones(5),
+        omega=2 * np.pi,
+        dL=1e-7,
+        m=1,
+        return_fields=True,
+    )
+
+    for index, component in enumerate((*electric[0], *magnetic[0])):
+        np.testing.assert_allclose(component, (index + 1) * (1.0 + np.arange(5.0)))
+
+
 def test_solve_modes_rejects_unknown_polarization():
     with pytest.raises(ValueError, match="filter_pol"):
         solve_modes(

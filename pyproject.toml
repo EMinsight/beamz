@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "beamz"
-version = "0.5.0"
+version = "0.5.1"
 dynamic = []
 authors = [
     { name = "Quentin Wach", email = "quentin.wach+beamz@gmail.com" },
@@ -46,6 +46,10 @@ Documentation = "https://www.beamz.tech/docs/index"
 
 [project.optional-dependencies]
 gds = [
+    "gdsfactory>=8.0; python_version < '3.14'",
+    "gdsfactory>=9.0; python_version >= '3.14'",
+]
+gdsfactory = [
     "gdsfactory>=8.0; python_version < '3.14'",
     "gdsfactory>=9.0; python_version >= '3.14'",
 ]
