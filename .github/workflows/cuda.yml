@@ -49,7 +49,7 @@ jobs:
           apt-get update &&
           DEBIAN_FRONTEND=noninteractive apt-get install -y
           build-essential ca-certificates curl git
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v5
         with:
           version: "latest"
@@ -95,7 +95,7 @@ jobs:
     runs-on: [self-hosted, linux, x64, h100]
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v5
