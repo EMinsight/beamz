@@ -14,7 +14,7 @@ rust-version = "1.85"
 
 [workspace.dependencies]
 blake3 = "1.8"
-geo = "0.31"
+geo = "0.33"
 numpy = "0.29"
 parry3d-f64 = "0.29"
 pyo3 = { version = "0.29", features = ["abi3-py310", "extension-module"] }
