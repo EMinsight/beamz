@@ -81,7 +81,7 @@ jobs:
           assert set(cuda.registrations()) == set(schema["targets"].values())
           print(cuda.__version__)
           PY
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: beamz-private-cuda-component
           path: cuda/dist/*.whl
@@ -157,7 +157,7 @@ jobs:
           PY
       - name: Upload H100 evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: h100-cuda-evidence
           path: ${{ runner.temp }}/benchmark-results/*.json
