@@ -10,7 +10,7 @@ jobs:
     name: Verify release version metadata
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Require the tag, Python package, and Rust workspace to agree
         run: python release_version.py --verify "${GITHUB_REF_NAME#v}"
 
@@ -22,7 +22,7 @@ jobs:
     needs: validation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -63,7 +63,7 @@ jobs:
             manylinux: "off"
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - if: matrix.target == 'aarch64-unknown-linux-gnu'
         uses: docker/setup-qemu-action@v3
       - uses: actions/setup-python@v5
@@ -89,7 +89,7 @@ jobs:
     needs: [build-sdist, build-wheels]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -111,7 +111,7 @@ jobs:
     needs: [build-sdist, build-wheels]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v5
         with:
