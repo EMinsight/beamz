@@ -36,6 +36,6 @@
       "modal_sources_monitors.ipynb": "a9b219bd8987f14c0a151f6f1d9dd9d665a901d9f1d7b5977e8e943b52b30564"
     }
   },
-  "final_main": "0b2e4258515023e30320e3db9eb6c68004974d6f",
-  "final_main_delta": "CONTRIBUTING.md only; solver and notebook unchanged from tested main."
+  "final_main": "aa26e533b8acc60e2d8063efbd0149ee1425c901",
+  "final_main_delta": "CONTRIBUTING.md and CPML sharding tests only; solver and notebook unchanged from tested main."
 }

@@ -1,9 +1,9 @@
 # CUDA PR #224 merge validation — 2026-09-24
 
 Merged main `639a1127` into PR head `88142066`; solver merge commit `085387d3`.
-Main advanced to `0b2e4258` during testing with only a `CONTRIBUTING.md`
-acknowledgment; that update was also merged. Its solver and notebook sources are
-identical to the tested main revision.
+Main advanced to `aa26e533` during testing with a `CONTRIBUTING.md`
+acknowledgment and CPML sharding tests; both updates were also merged. Its solver
+and notebook sources are identical to the tested main revision.
 
 Validation used an RTX 3090, freshly built native extensions, and isolated
 checkouts. The user's existing working trees and uncommitted edits were preserved.
@@ -85,6 +85,8 @@ The tracked JSON summaries contain provenance and per-array errors.
 
 - CPU unit, contract, and kernel suites: **1,112 passed, 267 skipped**. Optional
   mesh/GDS packages are absent in this environment; skips are not passing evidence.
+- Latest-main CPML sharding additions: **9 passed** (six unit cases and
+  three simulated multi-device CPU cases).
 - Focused CUDA/sharding/backend/CPML CPU suite: **106 passed**; the updated layout
   eligibility suite was also rerun (**22 passed**).
 - CUDA hardware suite: **382 passed, 26 skipped** in 912.65 seconds. All 49
