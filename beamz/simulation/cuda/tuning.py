@@ -273,6 +273,7 @@ def _eligible(program):
     if not (
         cfg.backend == "cuda_streamed"
         and cfg.is_3d
+        and not cfg.sharding.enabled
         and cfg.metric_kind == "isotropic_uniform"
     ):
         return False

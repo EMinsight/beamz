@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import SimpleNamespace
 
 import numpy as np
@@ -127,6 +127,9 @@ def test_eligibility_handles_packed_lossless_material_tables():
         monitors=(),
     )
     assert tuning._eligible(program)
+    program.config = replace(config, sharding=replace(config.sharding, enabled=True))
+    assert not tuning._eligible(program)
+    program.config = config
     program.grid.conductivity = np.float32(1)
     assert not tuning._eligible(program)
     program.grid.conductivity = np.float32(0)

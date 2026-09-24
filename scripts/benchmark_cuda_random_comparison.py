@@ -60,6 +60,9 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--reference-dir", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=2026091807)
+    parser.add_argument(
+        "--build-description", default="Not supplied; see native hashes"
+    )
     args = parser.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=False)
@@ -86,8 +89,7 @@ def main():
             ).strip(),
             main_source_sha256=main_hash,
             branch_source_sha256=branch_hash,
-            native_build="CUDA13.3.73 SM86 Release fast math OFF GNU16.1.1",
-            main_native_reused_from="c5fe0d88; source unchanged at 3dc23ed5",
+            native_build=args.build_description,
             precision="FP32",
             pml=12,
             branch_selection="Default predictive auto, no manual overrides",

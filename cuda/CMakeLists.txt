@@ -28,6 +28,7 @@ nanobind_add_module(
   src/io.cu
   src/program.cu
   src/update.cu
+  src/sharded.cu
   src/hopper.cu
 )
 target_compile_features(_cuda PRIVATE cxx_std_17)
