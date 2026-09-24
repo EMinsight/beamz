@@ -148,3 +148,24 @@ environment with the CI dependencies installed. The seven GDSFactory type errors
 from the earlier GPU environment do not occur with those dependencies installed.
 These changes do not alter the CUDA kernels, default geometry selection, or
 notebook calculations measured above.
+
+The complete CPU evidence suite with CI dependencies passed: **1,822 passed,
+1 skipped, 1 xfailed**. Its changed-line coverage exposed a gap in CPU coverage
+of the storage adapter and explicit calibration control flow. Eighteen new CPU
+cases now check geometry, packed material tails, ragged monitor lanes, source
+coordinates, state restoration, invalid calibration results, balanced timing,
+cache reuse and invalidation, and headroom aborts. Device compilation and timing
+are deterministic test doubles in the calibration tests; these complement the
+actual CUDA parity tests above.
+
+All **40 focused storage/tuning tests pass**, including the existing 22 tuning
+cases. Combined with the complete evidence run, changed-line coverage is
+**90% (522/575 lines)** against the required 85%, storage adapter statement
+coverage is 100%, and overall statement/branch coverage is **85.58%**. All six
+coverage policy floors pass. Ruff, Pyright, and Vulture also pass. No production
+numerical code changed for this coverage improvement. Final GitHub CI independently
+reruns the complete suite. The latest main update only adds documentation diff
+attributes in `.gitattributes`.
+
+[Focused CPU test log](pr224-merge-2026-09-24/cpu-calibration-storage-tests.log).
+[Changed-line coverage](pr224-merge-2026-09-24/changed-line-coverage.log).
