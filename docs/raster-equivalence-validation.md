@@ -10,7 +10,7 @@ checks passed.
 
 ## Propagation, including a negative control
 
-The [propagation regression](../tests/integration/test_mesh_design_equivalence.py)
+The [propagation regression](https://github.com/beamzorg/beamz/blob/t3code/review-gmesh-rasterization/tests/integration/test_mesh_design_equivalence.py)
 writes and reads real `.msh` and `.gds` files. It compares them with a native
 Box (3D) or Rectangle (2D), using the same grid and simulation settings:
 
@@ -42,7 +42,7 @@ representations; they are not electromagnetic energy measurements.
 
 ## Independent analytical check
 
-The [analytical regression](../tests/unit/raster/test_geometry_equivalence.py)
+The [analytical regression](https://github.com/beamzorg/beamz/blob/t3code/review-gmesh-rasterization/tests/unit/raster/test_geometry_equivalence.py)
 checks imported oblique triangular prisms without using another rasterizer as
 its reference. Inside a unit square, the material occupies `x + y <= a`, so
 its exact area fraction is `f = a² / 2`. The prism extends beyond the grid's
@@ -71,7 +71,7 @@ painter order, and stale raster caches.
 ## Reproduce
 
 Build the current native extension using the instructions in the
-[raster README](../beamz/design/raster/README.md#development).
+[raster README](https://github.com/beamzorg/beamz/blob/t3code/review-gmesh-rasterization/beamz/design/raster/README.md#development).
 The Python environment needs the test dependencies, including `meshio` and
 `gdsfactory`; absent optional dependencies skip the corresponding tests.
 No tests were skipped in the recorded propagation or analytical runs.
@@ -103,7 +103,7 @@ can still legitimately produce different coefficients.
 
 ## Additional hardening and measured performance
 
-The [robustness regressions](../tests/unit/raster/test_mesh_robustness.py) add
+The [robustness regressions](https://github.com/beamzorg/beamz/blob/t3code/review-gmesh-rasterization/tests/unit/raster/test_mesh_robustness.py) add
 36 cases covering unsupported/mixed elements, malformed tetrahedra, region
 priority, coordinate transforms, thin translated features, circular-cylinder
 convergence, planar junctions, and disconnected/nested shells.
@@ -171,7 +171,7 @@ in this checkout, so a device-specific comparison remains unavailable.
 
 ## Review regressions: stretched supports and adaptive aliasing
 
-The [partition-accuracy regressions](../tests/unit/raster/test_partition_accuracy.py)
+The [partition-accuracy regressions](https://github.com/beamzorg/beamz/blob/t3code/review-gmesh-rasterization/tests/unit/raster/test_partition_accuracy.py)
 cover both review findings across coordinate scales 1e-9, 1 and 1e6. The stretched
 support case also runs under all three cyclic axis permutations. Its thin layer
 must contribute to both permittivity and conductivity. Previously, approximate
@@ -247,13 +247,13 @@ exact coplanarity. This avoids re-clipping duplicate planes without introducing 
 proximity tolerance that merges distinct interfaces. Raster cache schema 9 rejects
 results from the earlier implementation.
 
-Tests are in [test_independent_raster_oracles.py](../tests/unit/raster/test_independent_raster_oracles.py),
-[test_3d_overlap_oracles.py](../tests/unit/raster/test_3d_overlap_oracles.py), and
-[test_curved_import_oracles.py](../tests/unit/raster/test_curved_import_oracles.py).
+Tests are in [test_independent_raster_oracles.py](https://github.com/beamzorg/beamz/blob/t3code/review-gmesh-rasterization/tests/unit/raster/test_independent_raster_oracles.py),
+[test_3d_overlap_oracles.py](https://github.com/beamzorg/beamz/blob/t3code/review-gmesh-rasterization/tests/unit/raster/test_3d_overlap_oracles.py), and
+[test_curved_import_oracles.py](https://github.com/beamzorg/beamz/blob/t3code/review-gmesh-rasterization/tests/unit/raster/test_curved_import_oracles.py).
 
 ## Cross-format files and component entry points
 
-[test_cross_format_equivalence.py](../tests/unit/raster/test_cross_format_equivalence.py)
+[test_cross_format_equivalence.py](https://github.com/beamzorg/beamz/blob/t3code/review-gmesh-rasterization/tests/unit/raster/test_cross_format_equivalence.py)
 adds 173 cases that write and read actual files:
 
 | File family | Tested encodings / elements |
@@ -322,7 +322,7 @@ magnitudes as well as its width; an inset that would collapse an axis is not
 applied. Unsupported curved multi-object geometry retains conservative fallback.
 Cache schema 11 invalidates results computed before these corrections.
 
-[test_interface_boundary_roundoff.py](../tests/unit/raster/test_interface_boundary_roundoff.py)
+[test_interface_boundary_roundoff.py](https://github.com/beamzorg/beamz/blob/t3code/review-gmesh-rasterization/tests/unit/raster/test_interface_boundary_roundoff.py)
 adds 114 regression cases:
 
 - 108 combinations of three axes, three scales, positive/negative/zero offsets,

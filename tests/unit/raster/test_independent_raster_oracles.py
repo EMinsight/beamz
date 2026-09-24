@@ -139,11 +139,42 @@ def test_random_overlaps_match_shapely_on_every_yee_support(
     assert result.diagnostics["adaptive_samples"] == 0
 
 
+def tetrahedral_cube(count):
+    """Build a test mesh without depending on checkout-only benchmark scripts."""
+    indices = np.indices((count + 1,) * 3).reshape(3, -1).T
+    points = indices.astype(float) / count
+    origins = np.indices((count,) * 3).reshape(3, -1).T
+    corners = np.array(
+        [
+            [0, 0, 0],
+            [1, 0, 0],
+            [1, 1, 0],
+            [0, 1, 0],
+            [0, 0, 1],
+            [1, 0, 1],
+            [1, 1, 1],
+            [0, 1, 1],
+        ]
+    )
+    addresses = origins[:, None, :] + corners
+    ids = np.ravel_multi_index(addresses.transpose(2, 0, 1), (count + 1,) * 3)
+    pattern = np.array(
+        [
+            [0, 1, 2, 6],
+            [0, 2, 3, 6],
+            [0, 3, 7, 6],
+            [0, 7, 4, 6],
+            [0, 4, 5, 6],
+            [0, 5, 1, 6],
+        ]
+    )
+    return points, ids[:, pattern].reshape(-1, 4).astype(np.uint32)
+
+
 @pytest.mark.parametrize("binary", [False, True])
 @pytest.mark.parametrize("scale", [1e-9, 1.0, 1e6])
 def test_shuffled_tetrahedral_regions_match_box_integrals(tmp_path, binary, scale):
     meshio = pytest.importorskip("meshio")
-    from scripts.benchmark_mesh_import import tetrahedral_cube
 
     points, cells = tetrahedral_cube(3)
     rng = np.random.default_rng(8701)
