@@ -61,13 +61,36 @@ symmetric materials. It does not produce dense material-ID, boundary-mask, or
 error arrays.
 
 Farjadpour smoothing is applied only when the surface patches crossing one Yee
-support form a reliable, sign-invariant lamination axis. Corners, non-coplanar
-mesh patches, unresolved geometry, and overlapping objects without a shared
-lamination axis fall back to tensor volume averaging. Summary diagnostics count each fallback reason without
-allocating dense diagnostic fields.
+support form a reliable, sign-invariant lamination axis. Boxes and straight
+extruded polygons are partitioned at their z boundaries, resolved by priority
+then object ID, and unioned by material before integration. Their disjoint
+volumes are integrated exactly (up to polygon-clipping roundoff), including
+holes and different extrusion heights. Only exposed material boundaries
+contribute normals: duplicate objects and hidden core/slab seams do not disable
+smoothing. Equal material-table entries are treated as one physical material.
 
-Single-object and planar multi-object interface classification share a boundary
-roundoff policy. The normal-evidence query is inset by eight machine epsilons
+Polygon Boolean operations use the `geo` integer overlay lattice (approximately
+29 bits per XY half-extent). Input axis coordinates within a scale-derived
+clipping-roundoff tolerance are restored after each operation to keep aligned
+faces aligned. This is a clipping precision limit, independent of the adaptive quality preset. If distinct
+input axis coordinates are closer than the restoration tolerance can distinguish,
+the rasterizer retains the original geometry and uses the planar partition or
+adaptive path instead of allowing the Boolean union to erase thin layers.
+Regression tolerances of `2e-6` on float32 constitutive outputs cover clipping and output roundoff for the tested
+geometries, rather than promising a universal fraction-error bound.
+
+Corners, multiple nonparallel exposed interfaces, unresolved geometry, and
+unsupported curved/tapered overlaps still fall back to tensor volume averaging. Identical fully occluded primitives are removed before adaptive
+integration; an unrelated curved object does not disable exact extrusion
+integration elsewhere. Adaptive disagreement remains an estimate, not a strict
+error bound. Summary diagnostics count sampled supports across all requested
+components and cells, not physical-cell percentages, and do not allocate dense
+diagnostic fields. Scene hashes retain the original input representation;
+cached results from the older ownership algorithm are invalidated.
+
+The original-geometry fallback shares a boundary roundoff policy between
+single-object and planar multi-object interface classification. Its
+normal-evidence query is inset by eight machine epsilons
 times the larger of each axis's support width and endpoint magnitudes. Including
 coordinate magnitude keeps the inset representable after translation. An inset
 that would collapse an axis is not applied. This avoids spurious corners from
@@ -275,3 +298,23 @@ uv run pytest tests/unit/raster \
 
 Measured import comparisons, analytical checks, negative controls, and rerun
 commands are recorded in the [equivalence validation report](../../../docs/raster-equivalence-validation.md).
+
+### Spatial ownership inspection
+
+Development builds can inspect selected cell and Ex/Ey/Ez supports without
+changing the public API or allocating diagnostic volumes in ordinary runs.
+The ignored Rust test `write_spatial_ownership_diagnostics` accepts JSON with
+`scene`, `grid` (`x_edges`, `y_edges`, `z_edges`), and `supports` (component name
+and `[x, y, z]` index). Set `BEAMZ_RASTER_INSPECTION_INPUT` and
+`BEAMZ_RASTER_INSPECTION_OUTPUT` to the input and JSONL output paths, then run:
+
+```bash
+cargo test --release -p fdtd-raster-core write_spatial_ownership_diagnostics -- --ignored
+```
+
+Each output record gives support bounds, material fractions, the resolved normal,
+smoothing status, fallback reason, and epsilon. The crossing-specific
+`scripts/inspect_raster_ownership.py` selects XY/XZ supports, validates fractions
+against GEOS, and plots the physical nonuniform support widths. See
+[issue #242 evidence](../../../tests/differential/results/issue-242/README.md)
+for the selection, denominators, measured S parameters, and reproduction commands.

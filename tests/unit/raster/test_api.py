@@ -129,7 +129,7 @@ def test_compiled_scene_reuse_and_cache_recovery(tmp_path):
     )
 
 
-@pytest.mark.parametrize("old_schema", [4, 5, 6, 7, 8, 9, 10])
+@pytest.mark.parametrize("old_schema", [4, 5, 6, 7, 8, 9, 10, 11])
 def test_pre_mesh_fix_cache_is_rejected_and_recomputed(tmp_path, old_schema):
     scene = raster.compile_scene(box_scene())
     grid = raster.Grid.uniform((0, 0, 0), (1, 1, 1), (2, 2, 2))

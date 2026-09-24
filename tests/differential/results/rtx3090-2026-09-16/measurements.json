@@ -1,0 +1,1281 @@
+{
+  "date": "2026-09-16",
+  "tested_commit": "29f327762bb93c2eb7cf3cf08e9ed2467c39b914",
+  "source_note": "Fetched PR head including #242 fix; native raster rebuilt in release mode. CUDA and Python solver sources unchanged from prior run.",
+  "gpu": "NVIDIA RTX 3090 24 GiB, shared desktop",
+  "packages": {
+    "beamz": "0.5.1",
+    "beamz-cuda-component": "0.12.0",
+    "jax": "0.9.0",
+    "jaxlib": "0.9.0",
+    "gdsfactory": "8.18.2",
+    "numpy": "2.4.1",
+    "scipy": "1.17.0"
+  },
+  "peak_whole_device_gpu_gib": 17.7568359375,
+  "memory_note": "Whole-device memory sampled once per second, including desktop. Timings are not isolated performance measurements.",
+  "native_raster_sha256": "5f739bdca4e9c5fbca267f02f580cac4cb553a71088938c9dfc5e4d486b73a14",
+  "cuda_extension_sha256": "9900f01bfff1d4d942bd16b8ea364ce7b4d3af3c379bdb476b18a658704cef63",
+  "summary": {
+    "runs": [
+      {
+        "device": "crossing",
+        "ppw": 6,
+        "beamz_power": 0.9639811129301278,
+        "lumerical": 0.954,
+        "tidy3d": 0.939,
+        "nominal": 0.9571666666666666,
+        "lower": 0.939,
+        "upper": 0.9753333333333333,
+        "primary_pass": true,
+        "total_output_power": 0.9639960731277092,
+        "wall_time_s": 22.52573936805129,
+        "runtime_s": 2.130773013457656,
+        "peak_rss_mib": 2873.0625,
+        "peak_gpu_total_mib": 2308.0,
+        "termination": "converged",
+        "backend": "cuda_streamed"
+      },
+      {
+        "device": "crossing",
+        "ppw": 10,
+        "beamz_power": 0.9602831988526827,
+        "lumerical": 0.954,
+        "tidy3d": 0.958,
+        "nominal": 0.9571666666666666,
+        "lower": 0.954,
+        "upper": 0.9603333333333333,
+        "primary_pass": true,
+        "total_output_power": 0.9603350950107911,
+        "wall_time_s": 36.13627703185193,
+        "runtime_s": 7.232542572310194,
+        "peak_rss_mib": 4535.62109375,
+        "peak_gpu_total_mib": 3435.0,
+        "termination": "converged",
+        "backend": "cuda_streamed"
+      },
+      {
+        "device": "crossing",
+        "ppw": 15,
+        "beamz_power": 0.9585873080862914,
+        "lumerical": 0.957,
+        "tidy3d": 0.959,
+        "nominal": 0.9571666666666666,
+        "lower": 0.9553333333333333,
+        "upper": 0.959,
+        "primary_pass": true,
+        "total_output_power": 0.9586350639547289,
+        "wall_time_s": 91.42935104202479,
+        "runtime_s": 32.983894251519814,
+        "peak_rss_mib": 10005.11328125,
+        "peak_gpu_total_mib": 9672.0,
+        "termination": "converged",
+        "backend": "cuda_streamed"
+      },
+      {
+        "device": "directional_coupler",
+        "ppw": 6,
+        "beamz_power": 0.6765056677486906,
+        "lumerical": 0.493,
+        "tidy3d": 0.697,
+        "nominal": 0.4473333333333333,
+        "lower": 0.19766666666666666,
+        "upper": 0.697,
+        "primary_pass": true,
+        "total_output_power": 0.9907869523975896,
+        "wall_time_s": 35.368916637962684,
+        "runtime_s": 9.616421995218843,
+        "peak_rss_mib": 3472.11328125,
+        "peak_gpu_total_mib": 2476.0,
+        "termination": "converged",
+        "backend": "cuda_streamed"
+      },
+      {
+        "device": "directional_coupler",
+        "ppw": 10,
+        "beamz_power": 0.5144672295945089,
+        "lumerical": 0.451,
+        "tidy3d": 0.578,
+        "nominal": 0.4473333333333333,
+        "lower": 0.31666666666666665,
+        "upper": 0.578,
+        "primary_pass": true,
+        "total_output_power": 0.9988872229662098,
+        "wall_time_s": 109.2404807601124,
+        "runtime_s": 56.7065985603258,
+        "peak_rss_mib": 6884.5390625,
+        "peak_gpu_total_mib": 5685.0,
+        "termination": "converged",
+        "backend": "cuda_streamed"
+      },
+      {
+        "device": "directional_coupler",
+        "ppw": 15,
+        "beamz_power": 0.46579277211245784,
+        "lumerical": 0.411,
+        "tidy3d": 0.448,
+        "nominal": 0.4473333333333333,
+        "lower": 0.411,
+        "upper": 0.48366666666666663,
+        "primary_pass": true,
+        "total_output_power": 0.9994076027075042,
+        "wall_time_s": 408.1262866440229,
+        "runtime_s": 277.3143872169312,
+        "peak_rss_mib": 16328.05859375,
+        "peak_gpu_total_mib": 18167.0,
+        "termination": "converged",
+        "backend": "cuda_streamed"
+      }
+    ],
+    "bandwidth": [
+      {
+        "device": "crossing",
+        "ppw": 15,
+        "max_abs_difference": 4.866890893773235e-05,
+        "limit": 0.0011,
+        "passed": true,
+        "published_protocol_resolution": true
+      },
+      {
+        "device": "directional_coupler",
+        "ppw": 15,
+        "max_abs_difference": 8.079123657622755e-05,
+        "limit": 0.03,
+        "passed": true,
+        "published_protocol_resolution": true
+      }
+    ]
+  },
+  "previous_summary": {
+    "runs": [
+      {
+        "device": "crossing",
+        "ppw": 6,
+        "beamz_power": 0.9689648702878807,
+        "lumerical": 0.954,
+        "tidy3d": 0.939,
+        "nominal": 0.9571666666666666,
+        "lower": 0.939,
+        "upper": 0.9753333333333333,
+        "primary_pass": true,
+        "total_output_power": 0.968980355068791,
+        "wall_time_s": 27.394007516093552,
+        "runtime_s": 2.106747644720599,
+        "peak_rss_mib": 2911.8046875,
+        "peak_gpu_total_mib": 3817.0,
+        "termination": "converged",
+        "backend": "cuda_streamed"
+      },
+      {
+        "device": "crossing",
+        "ppw": 10,
+        "beamz_power": 0.9653784365703495,
+        "lumerical": 0.954,
+        "tidy3d": 0.958,
+        "nominal": 0.9571666666666666,
+        "lower": 0.954,
+        "upper": 0.9603333333333333,
+        "primary_pass": false,
+        "total_output_power": 0.9654221648412692,
+        "wall_time_s": 52.78259550803341,
+        "runtime_s": 7.229274884331971,
+        "peak_rss_mib": 4556.109375,
+        "peak_gpu_total_mib": 4903.0,
+        "termination": "converged",
+        "backend": "cuda_streamed"
+      },
+      {
+        "device": "crossing",
+        "ppw": 15,
+        "beamz_power": 0.962227572577328,
+        "lumerical": 0.957,
+        "tidy3d": 0.959,
+        "nominal": 0.9571666666666666,
+        "lower": 0.9553333333333333,
+        "upper": 0.959,
+        "primary_pass": false,
+        "total_output_power": 0.9622720962925055,
+        "wall_time_s": 172.50570762786083,
+        "runtime_s": 32.77448841370642,
+        "peak_rss_mib": 10045.125,
+        "peak_gpu_total_mib": 11255.0,
+        "termination": "converged",
+        "backend": "cuda_streamed"
+      },
+      {
+        "device": "directional_coupler",
+        "ppw": 6,
+        "beamz_power": 0.6762425234335494,
+        "lumerical": 0.493,
+        "tidy3d": 0.697,
+        "nominal": 0.4473333333333333,
+        "lower": 0.19766666666666666,
+        "upper": 0.697,
+        "primary_pass": true,
+        "total_output_power": 0.9905697041750581,
+        "wall_time_s": 36.515084573067725,
+        "runtime_s": 9.671929922420532,
+        "peak_rss_mib": 3492.21484375,
+        "peak_gpu_total_mib": 3954.0,
+        "termination": "converged",
+        "backend": "cuda_streamed"
+      },
+      {
+        "device": "directional_coupler",
+        "ppw": 10,
+        "beamz_power": 0.5144447389835671,
+        "lumerical": 0.451,
+        "tidy3d": 0.578,
+        "nominal": 0.4473333333333333,
+        "lower": 0.31666666666666665,
+        "upper": 0.578,
+        "primary_pass": true,
+        "total_output_power": 0.9987503262865456,
+        "wall_time_s": 120.99359827488661,
+        "runtime_s": 56.6482003191486,
+        "peak_rss_mib": 6876.98046875,
+        "peak_gpu_total_mib": 7170.0,
+        "termination": "converged",
+        "backend": "cuda_streamed"
+      },
+      {
+        "device": "directional_coupler",
+        "ppw": 15,
+        "beamz_power": 0.46577851471719667,
+        "lumerical": 0.411,
+        "tidy3d": 0.448,
+        "nominal": 0.4473333333333333,
+        "lower": 0.411,
+        "upper": 0.48366666666666663,
+        "primary_pass": true,
+        "total_output_power": 0.9993804914626929,
+        "wall_time_s": 622.4101487579755,
+        "runtime_s": 279.5635831041727,
+        "peak_rss_mib": 16334.3046875,
+        "peak_gpu_total_mib": 19606.0,
+        "termination": "converged",
+        "backend": "cuda_streamed"
+      }
+    ],
+    "bandwidth": [
+      {
+        "device": "crossing",
+        "ppw": 15,
+        "max_abs_difference": 5.717460591669887e-05,
+        "limit": 0.0011,
+        "passed": true,
+        "published_protocol_resolution": true
+      },
+      {
+        "device": "directional_coupler",
+        "ppw": 15,
+        "max_abs_difference": 8.127471180235935e-05,
+        "limit": 0.03,
+        "passed": true,
+        "published_protocol_resolution": true
+      }
+    ]
+  },
+  "measurements": [
+    {
+      "resolution_ppw": 10,
+      "wavelength_span_nm": 20.0,
+      "backend": "cuda_streamed",
+      "wavelengths_um": [
+        1.5600000000000003,
+        1.5549514563106797,
+        1.5499354838709678,
+        1.5449517684887464,
+        1.5400000000000003
+      ],
+      "through_power_spectrum": [
+        0.9637303555052245,
+        0.9622049641266326,
+        0.9602831988526827,
+        0.9582516776506294,
+        0.9565289723134408
+      ],
+      "total_output_power_spectrum": [
+        0.9637789414699305,
+        0.9622563147306175,
+        0.9603350950107911,
+        0.9583015543670871,
+        0.9565736091716399
+      ],
+      "excess_loss_spectrum": [
+        0.036221058530069516,
+        0.03774368526938254,
+        0.03966490498920894,
+        0.04169844563291292,
+        0.043426390828360084
+      ],
+      "through_power": 0.9602831988526827,
+      "total_output_power": 0.9603350950107911,
+      "excess_loss": 0.03966490498920894,
+      "runtime_s": 7.232542572310194,
+      "gcups": 4.651126679680917,
+      "cells": 2532330,
+      "steps": 13284,
+      "grid_shape": [
+        226,
+        249,
+        45
+      ],
+      "termination_reason": "converged",
+      "device": "crossing",
+      "wall_time_s": 36.13627703185193
+    },
+    {
+      "resolution_ppw": 15,
+      "wavelength_span_nm": 20.0,
+      "backend": "cuda_streamed",
+      "wavelengths_um": [
+        1.5600000000000003,
+        1.5549514563106797,
+        1.5499354838709678,
+        1.5449517684887464,
+        1.5400000000000003
+      ],
+      "through_power_spectrum": [
+        0.9621311964148009,
+        0.9605675911186455,
+        0.9585873080862914,
+        0.9564113136474651,
+        0.9544548023450505
+      ],
+      "total_output_power_spectrum": [
+        0.9621777024517552,
+        0.9606159336644297,
+        0.9586350639547289,
+        0.9564562561787799,
+        0.9544944612350226
+      ],
+      "excess_loss_spectrum": [
+        0.03782229754824484,
+        0.039384066335570345,
+        0.04136493604527114,
+        0.04354374382122006,
+        0.04550553876497743
+      ],
+      "through_power": 0.9585873080862914,
+      "total_output_power": 0.9586350639547289,
+      "excess_loss": 0.04136493604527114,
+      "runtime_s": 32.983894251519814,
+      "gcups": 4.925407964055497,
+      "cells": 8323128,
+      "steps": 19519,
+      "grid_shape": [
+        339,
+        372,
+        66
+      ],
+      "termination_reason": "converged",
+      "device": "crossing",
+      "wall_time_s": 91.42935104202479
+    },
+    {
+      "resolution_ppw": 15,
+      "wavelength_span_nm": 50.0,
+      "backend": "cuda_streamed",
+      "wavelengths_um": [
+        1.575,
+        1.5698529411764708,
+        1.5647394136807817,
+        1.5596590909090908,
+        1.554611650485437,
+        1.5495967741935486,
+        1.5446141479099678,
+        1.5396634615384615,
+        1.534744408945687,
+        1.5298566878980893,
+        1.5250000000000001
+      ],
+      "through_power_spectrum": [
+        0.9638999844240048,
+        0.9637088660583032,
+        0.9630894374289287,
+        0.9620742809626127,
+        0.9604357381472722,
+        0.958459884871841,
+        0.9562403819415126,
+        0.9543296178050279,
+        0.9530379507254816,
+        0.9524452402977285,
+        0.9524625770470755
+      ],
+      "total_output_power_spectrum": [
+        0.9639337967475488,
+        0.9637467914304407,
+        0.9631321262325719,
+        0.9621208908072214,
+        0.9604840591002173,
+        0.958507499188239,
+        0.9562850647106077,
+        0.9543688571497763,
+        0.9530694025562301,
+        0.952468024847197,
+        0.9524779924082666
+      ],
+      "excess_loss_spectrum": [
+        0.036066203252451245,
+        0.03625320856955927,
+        0.03686787376742806,
+        0.03787910919277859,
+        0.03951594089978272,
+        0.041492500811761035,
+        0.0437149352893923,
+        0.04563114285022374,
+        0.04693059744376993,
+        0.04753197515280305,
+        0.04752200759173342
+      ],
+      "through_power": 0.958459884871841,
+      "total_output_power": 0.958507499188239,
+      "excess_loss": 0.041492500811761035,
+      "runtime_s": 38.768382471520454,
+      "gcups": 4.190505898752513,
+      "cells": 8323128,
+      "steps": 19519,
+      "grid_shape": [
+        339,
+        372,
+        66
+      ],
+      "termination_reason": "converged",
+      "device": "crossing",
+      "wall_time_s": 137.27512931497768
+    },
+    {
+      "resolution_ppw": 6,
+      "wavelength_span_nm": 20.0,
+      "backend": "cuda_streamed",
+      "wavelengths_um": [
+        1.5600000000000003,
+        1.5549514563106797,
+        1.5499354838709678,
+        1.5449517684887464,
+        1.5400000000000003
+      ],
+      "through_power_spectrum": [
+        0.965668257091049,
+        0.9645469765501637,
+        0.9639811129301278,
+        0.9639925663058992,
+        0.9645008714336292
+      ],
+      "total_output_power_spectrum": [
+        0.9656918046813413,
+        0.9645668461930892,
+        0.9639960731277092,
+        0.9640022911059033,
+        0.964506543156678
+      ],
+      "excess_loss_spectrum": [
+        0.034308195318658696,
+        0.03543315380691081,
+        0.036003926872290815,
+        0.0359977088940967,
+        0.03549345684332195
+      ],
+      "through_power": 0.9639811129301278,
+      "total_output_power": 0.9639960731277092,
+      "excess_loss": 0.036003926872290815,
+      "runtime_s": 2.130773013457656,
+      "gcups": 4.368955628405325,
+      "cells": 883650,
+      "steps": 10535,
+      "grid_shape": [
+        137,
+        150,
+        43
+      ],
+      "termination_reason": "converged",
+      "device": "crossing",
+      "wall_time_s": 22.52573936805129
+    },
+    {
+      "resolution_ppw": 10,
+      "wavelength_span_nm": 20.0,
+      "backend": "cuda_streamed",
+      "wavelengths_um": [
+        1.5600000000000003,
+        1.5549514563106797,
+        1.5499354838709678,
+        1.5449517684887464,
+        1.5400000000000003
+      ],
+      "cross_power_spectrum": [
+        0.5498421727828213,
+        0.5319203738630625,
+        0.5144672295945089,
+        0.49723920830497326,
+        0.48056448596504964
+      ],
+      "through_power_spectrum": [
+        0.44904770909694575,
+        0.46699106422029657,
+        0.4844199933717009,
+        0.5014955156888594,
+        0.5180532552959318
+      ],
+      "total_output_power_spectrum": [
+        0.9988898818797671,
+        0.998911438083359,
+        0.9988872229662098,
+        0.9987347239938327,
+        0.9986177412609815
+      ],
+      "excess_loss_spectrum": [
+        0.0011101181202328725,
+        0.0010885619166409732,
+        0.001112777033790202,
+        0.0012652760061673263,
+        0.0013822587390185381
+      ],
+      "cross_power": 0.5144672295945089,
+      "through_power": 0.4844199933717009,
+      "total_output_power": 0.9988872229662098,
+      "excess_loss": 0.001112777033790202,
+      "runtime_s": 56.7065985603258,
+      "gcups": 4.481854985282331,
+      "cells": 5109174,
+      "steps": 49744,
+      "grid_shape": [
+        943,
+        126,
+        43
+      ],
+      "termination_reason": "converged",
+      "device": "directional_coupler",
+      "wall_time_s": 109.2404807601124
+    },
+    {
+      "resolution_ppw": 15,
+      "wavelength_span_nm": 20.0,
+      "backend": "cuda_streamed",
+      "wavelengths_um": [
+        1.5600000000000003,
+        1.5549514563106797,
+        1.5499354838709678,
+        1.5449517684887464,
+        1.5400000000000003
+      ],
+      "cross_power_spectrum": [
+        0.5000912892008297,
+        0.4827150751412963,
+        0.46579277211245784,
+        0.4493058071658278,
+        0.4332450067634045
+      ],
+      "through_power_spectrum": [
+        0.4993975461543247,
+        0.5167373700345006,
+        0.5336148305950463,
+        0.5500672053794158,
+        0.5660964445010227
+      ],
+      "total_output_power_spectrum": [
+        0.9994888353551543,
+        0.9994524451757969,
+        0.9994076027075042,
+        0.9993730125452436,
+        0.9993414512644272
+      ],
+      "excess_loss_spectrum": [
+        0.0005111646448456852,
+        0.0005475548242031003,
+        0.0005923972924958276,
+        0.0006269874547564225,
+        0.0006585487355728059
+      ],
+      "cross_power": 0.46579277211245784,
+      "through_power": 0.5336148305950463,
+      "total_output_power": 0.9994076027075042,
+      "excess_loss": 0.0005923972924958276,
+      "runtime_s": 277.3143872169312,
+      "gcups": 4.60937688458292,
+      "cells": 16747416,
+      "steps": 76325,
+      "grid_shape": [
+        1414,
+        188,
+        63
+      ],
+      "termination_reason": "converged",
+      "device": "directional_coupler",
+      "wall_time_s": 408.1262866440229
+    },
+    {
+      "resolution_ppw": 15,
+      "wavelength_span_nm": 50.0,
+      "backend": "cuda_streamed",
+      "wavelengths_um": [
+        1.575,
+        1.5698529411764708,
+        1.5647394136807817,
+        1.5596590909090908,
+        1.554611650485437,
+        1.5495967741935486,
+        1.5446141479099678,
+        1.5396634615384615,
+        1.534744408945687,
+        1.5298566878980893,
+        1.5250000000000001
+      ],
+      "cross_power_spectrum": [
+        0.5538648528697458,
+        0.534981821577348,
+        0.516671575914661,
+        0.49883714784528466,
+        0.481550323108521,
+        0.46466592163695875,
+        0.4482334204960327,
+        0.4322067819533105,
+        0.41663904306744753,
+        0.40155305402288144,
+        0.3869114742700526
+      ],
+      "through_power_spectrum": [
+        0.44574103956908173,
+        0.46443273437542837,
+        0.48272894985019904,
+        0.5005213893441258,
+        0.5178794740279371,
+        0.5347396085006877,
+        0.5512054388248028,
+        0.5672500149474673,
+        0.5828686414921631,
+        0.5980270377054705,
+        0.6126671515077786
+      ],
+      "total_output_power_spectrum": [
+        0.9996058924388276,
+        0.9994145559527763,
+        0.9994005257648599,
+        0.9993585371894105,
+        0.9994297971364581,
+        0.9994055301376464,
+        0.9994388593208354,
+        0.9994567969007778,
+        0.9995076845596107,
+        0.9995800917283519,
+        0.9995786257778312
+      ],
+      "excess_loss_spectrum": [
+        0.00039410756117241874,
+        0.0005854440472237155,
+        0.0005994742351400628,
+        0.0006414628105895215,
+        0.0005702028635419243,
+        0.0005944698623535638,
+        0.0005611406791645734,
+        0.0005432030992221781,
+        0.0004923154403893015,
+        0.00041990827164806177,
+        0.00042137422216881326
+      ],
+      "cross_power": 0.46466592163695875,
+      "through_power": 0.5347396085006877,
+      "total_output_power": 0.9994055301376464,
+      "excess_loss": 0.0005944698623535638,
+      "runtime_s": 330.2279207315296,
+      "gcups": 3.870800880096373,
+      "cells": 16747416,
+      "steps": 76325,
+      "grid_shape": [
+        1414,
+        188,
+        63
+      ],
+      "termination_reason": "converged",
+      "device": "directional_coupler",
+      "wall_time_s": 544.2516213590279
+    },
+    {
+      "resolution_ppw": 6,
+      "wavelength_span_nm": 20.0,
+      "backend": "cuda_streamed",
+      "wavelengths_um": [
+        1.5600000000000003,
+        1.5549514563106797,
+        1.5499354838709678,
+        1.5449517684887464,
+        1.5400000000000003
+      ],
+      "cross_power_spectrum": [
+        0.714406216917987,
+        0.6947210968680914,
+        0.6765056677486906,
+        0.657912260382737,
+        0.6407368975279948
+      ],
+      "through_power_spectrum": [
+        0.2785214720057528,
+        0.2992251825531872,
+        0.31428128464889904,
+        0.33514693488336594,
+        0.3504870860604896
+      ],
+      "total_output_power_spectrum": [
+        0.9929276889237397,
+        0.9939462794212786,
+        0.9907869523975896,
+        0.993059195266103,
+        0.9912239835884844
+      ],
+      "excess_loss_spectrum": [
+        0.007072311076260274,
+        0.006053720578721444,
+        0.009213047602410374,
+        0.006940804733897021,
+        0.008776016411515597
+      ],
+      "cross_power": 0.6765056677486906,
+      "through_power": 0.31428128464889904,
+      "total_output_power": 0.9907869523975896,
+      "excess_loss": 0.009213047602410374,
+      "runtime_s": 9.616421995218843,
+      "gcups": 3.7561320104253593,
+      "cells": 1207278,
+      "steps": 29919,
+      "grid_shape": [
+        566,
+        79,
+        27
+      ],
+      "termination_reason": "converged",
+      "device": "directional_coupler",
+      "wall_time_s": 35.368916637962684
+    }
+  ],
+  "artifact_checks": [
+    {
+      "run": "crossing/10ppw-20nm",
+      "all_numeric_arrays_finite": true,
+      "all_incident_masks_valid": true
+    },
+    {
+      "run": "crossing/15ppw-20nm",
+      "all_numeric_arrays_finite": true,
+      "all_incident_masks_valid": true
+    },
+    {
+      "run": "crossing/15ppw-50nm",
+      "all_numeric_arrays_finite": true,
+      "all_incident_masks_valid": true
+    },
+    {
+      "run": "crossing/6ppw-20nm",
+      "all_numeric_arrays_finite": true,
+      "all_incident_masks_valid": true
+    },
+    {
+      "run": "directional_coupler/10ppw-20nm",
+      "all_numeric_arrays_finite": true,
+      "all_incident_masks_valid": true
+    },
+    {
+      "run": "directional_coupler/15ppw-20nm",
+      "all_numeric_arrays_finite": true,
+      "all_incident_masks_valid": true
+    },
+    {
+      "run": "directional_coupler/15ppw-50nm",
+      "all_numeric_arrays_finite": true,
+      "all_incident_masks_valid": true
+    },
+    {
+      "run": "directional_coupler/6ppw-20nm",
+      "all_numeric_arrays_finite": true,
+      "all_incident_masks_valid": true
+    }
+  ],
+  "run_metadata": {
+    "crossing/10ppw-20nm": {
+      "boundary_formulation": "sponge",
+      "cells": 2532330,
+      "execution_backend": "cuda_streamed",
+      "gcups": 4.651126679680917,
+      "grid_is_uniform": false,
+      "grid_shape": [
+        226,
+        249,
+        45
+      ],
+      "raster_quality": "balanced",
+      "raster_smoothing": "farjadpour_diagonal",
+      "resolution_m": 3.500000000000009e-08,
+      "runtime_s": 7.232542572310194,
+      "steps": 13284,
+      "termination_field_decay": 1.5043026021312946e-09,
+      "termination_reason": "converged"
+    },
+    "crossing/15ppw-20nm": {
+      "boundary_formulation": "sponge",
+      "cells": 8323128,
+      "execution_backend": "cuda_streamed",
+      "gcups": 4.925407964055497,
+      "grid_is_uniform": false,
+      "grid_shape": [
+        339,
+        372,
+        66
+      ],
+      "raster_quality": "balanced",
+      "raster_smoothing": "farjadpour_diagonal",
+      "resolution_m": 2.333333333333325e-08,
+      "runtime_s": 32.983894251519814,
+      "steps": 19519,
+      "termination_field_decay": 1.360106294623295e-09,
+      "termination_reason": "converged"
+    },
+    "crossing/15ppw-50nm": {
+      "boundary_formulation": "sponge",
+      "cells": 8323128,
+      "execution_backend": "cuda_streamed",
+      "gcups": 4.190505898752513,
+      "grid_is_uniform": false,
+      "grid_shape": [
+        339,
+        372,
+        66
+      ],
+      "raster_quality": "balanced",
+      "raster_smoothing": "farjadpour_diagonal",
+      "resolution_m": 2.333333333333325e-08,
+      "runtime_s": 38.768382471520454,
+      "steps": 19519,
+      "termination_field_decay": 5.381052451325721e-08,
+      "termination_reason": "converged"
+    },
+    "crossing/6ppw-20nm": {
+      "boundary_formulation": "sponge",
+      "cells": 883650,
+      "execution_backend": "cuda_streamed",
+      "gcups": 4.368955628405325,
+      "grid_is_uniform": false,
+      "grid_shape": [
+        137,
+        150,
+        43
+      ],
+      "raster_quality": "balanced",
+      "raster_smoothing": "farjadpour_diagonal",
+      "resolution_m": 3.500000000000009e-08,
+      "runtime_s": 2.130773013457656,
+      "steps": 10535,
+      "termination_field_decay": 2.0230869072671785e-09,
+      "termination_reason": "converged"
+    },
+    "directional_coupler/10ppw-20nm": {
+      "boundary_formulation": "cpml",
+      "cells": 5109174,
+      "execution_backend": "cuda_streamed",
+      "gcups": 4.481854985282331,
+      "grid_is_uniform": false,
+      "grid_shape": [
+        943,
+        126,
+        43
+      ],
+      "raster_quality": "balanced",
+      "raster_smoothing": "farjadpour_diagonal",
+      "resolution_m": 4.399999999999992e-08,
+      "runtime_s": 56.7065985603258,
+      "steps": 49744,
+      "termination_field_decay": 9.799907650791738e-10,
+      "termination_reason": "converged"
+    },
+    "directional_coupler/15ppw-20nm": {
+      "boundary_formulation": "cpml",
+      "cells": 16747416,
+      "execution_backend": "cuda_streamed",
+      "gcups": 4.60937688458292,
+      "grid_is_uniform": false,
+      "grid_shape": [
+        1414,
+        188,
+        63
+      ],
+      "raster_quality": "balanced",
+      "raster_smoothing": "farjadpour_diagonal",
+      "resolution_m": 2.7499999999999737e-08,
+      "runtime_s": 277.3143872169312,
+      "steps": 76325,
+      "termination_field_decay": 6.321202145353978e-10,
+      "termination_reason": "converged"
+    },
+    "directional_coupler/15ppw-50nm": {
+      "boundary_formulation": "cpml",
+      "cells": 16747416,
+      "execution_backend": "cuda_streamed",
+      "gcups": 3.870800880096373,
+      "grid_is_uniform": false,
+      "grid_shape": [
+        1414,
+        188,
+        63
+      ],
+      "raster_quality": "balanced",
+      "raster_smoothing": "farjadpour_diagonal",
+      "resolution_m": 2.7499999999999737e-08,
+      "runtime_s": 330.2279207315296,
+      "steps": 76325,
+      "termination_field_decay": 2.026521362380408e-08,
+      "termination_reason": "converged"
+    },
+    "directional_coupler/6ppw-20nm": {
+      "boundary_formulation": "cpml",
+      "cells": 1207278,
+      "execution_backend": "cuda_streamed",
+      "gcups": 3.7561320104253593,
+      "grid_is_uniform": false,
+      "grid_shape": [
+        566,
+        79,
+        27
+      ],
+      "raster_quality": "balanced",
+      "raster_smoothing": "farjadpour_diagonal",
+      "resolution_m": 7.33333333333332e-08,
+      "runtime_s": 9.616421995218843,
+      "steps": 29919,
+      "termination_field_decay": 2.1640745149496866e-09,
+      "termination_reason": "converged"
+    }
+  },
+  "comparisons": {
+    "crossing/10ppw-20nm": {
+      "primary": {
+        "measured": 0.9602831988526827,
+        "reference": {
+          "nominal": 0.9571666666666666,
+          "absolute_tolerance": 0.003166666666666651,
+          "standard_deviation": 0.0020000000000000018,
+          "minimum": 0.954,
+          "maximum": 0.958,
+          "resolution_ppw": 10,
+          "samples": [
+            0.954,
+            0.958
+          ],
+          "converged_resolutions_ppw": [
+            15,
+            20,
+            25
+          ],
+          "converged_samples": [
+            0.957,
+            0.959,
+            0.957,
+            0.956,
+            0.957,
+            0.957
+          ],
+          "converged_standard_deviation": 0.0008975274678557516,
+          "digitization_uncertainty": 0.001
+        },
+        "passed": true,
+        "applicable_to_published_20nm_run": true
+      },
+      "total_output_upper": {
+        "measured": 0.9603350950107911,
+        "upper": 1.02,
+        "passed": true
+      },
+      "excess_loss_upper": {
+        "measured": 0.03966490498920894,
+        "upper": 0.06,
+        "passed": true
+      }
+    },
+    "crossing/15ppw-20nm": {
+      "primary": {
+        "measured": 0.9585873080862914,
+        "reference": {
+          "nominal": 0.9571666666666666,
+          "absolute_tolerance": 0.0018333333333333535,
+          "standard_deviation": 0.0010000000000000009,
+          "minimum": 0.957,
+          "maximum": 0.959,
+          "resolution_ppw": 15,
+          "samples": [
+            0.957,
+            0.959
+          ],
+          "converged_resolutions_ppw": [
+            15,
+            20,
+            25
+          ],
+          "converged_samples": [
+            0.957,
+            0.959,
+            0.957,
+            0.956,
+            0.957,
+            0.957
+          ],
+          "converged_standard_deviation": 0.0008975274678557516,
+          "digitization_uncertainty": 0.001
+        },
+        "passed": true,
+        "applicable_to_published_20nm_run": true
+      },
+      "total_output_upper": {
+        "measured": 0.9586350639547289,
+        "upper": 1.02,
+        "passed": true
+      },
+      "excess_loss_upper": {
+        "measured": 0.04136493604527114,
+        "upper": 0.06,
+        "passed": true
+      }
+    },
+    "crossing/15ppw-50nm": {
+      "primary": {
+        "measured": 0.958459884871841,
+        "reference": {
+          "nominal": 0.9571666666666666,
+          "absolute_tolerance": 0.0018333333333333535,
+          "standard_deviation": 0.0010000000000000009,
+          "minimum": 0.957,
+          "maximum": 0.959,
+          "resolution_ppw": 15,
+          "samples": [
+            0.957,
+            0.959
+          ],
+          "converged_resolutions_ppw": [
+            15,
+            20,
+            25
+          ],
+          "converged_samples": [
+            0.957,
+            0.959,
+            0.957,
+            0.956,
+            0.957,
+            0.957
+          ],
+          "converged_standard_deviation": 0.0008975274678557516,
+          "digitization_uncertainty": 0.001
+        },
+        "passed": true,
+        "applicable_to_published_20nm_run": false
+      },
+      "total_output_upper": {
+        "measured": 0.958507499188239,
+        "upper": 1.02,
+        "passed": true
+      },
+      "excess_loss_upper": {
+        "measured": 0.041492500811761035,
+        "upper": 0.06,
+        "passed": true
+      }
+    },
+    "crossing/6ppw-20nm": {
+      "primary": {
+        "measured": 0.9639811129301278,
+        "reference": {
+          "nominal": 0.9571666666666666,
+          "absolute_tolerance": 0.018166666666666664,
+          "standard_deviation": 0.007500000000000007,
+          "minimum": 0.939,
+          "maximum": 0.954,
+          "resolution_ppw": 6,
+          "samples": [
+            0.954,
+            0.939
+          ],
+          "converged_resolutions_ppw": [
+            15,
+            20,
+            25
+          ],
+          "converged_samples": [
+            0.957,
+            0.959,
+            0.957,
+            0.956,
+            0.957,
+            0.957
+          ],
+          "converged_standard_deviation": 0.0008975274678557516,
+          "digitization_uncertainty": 0.001
+        },
+        "passed": true,
+        "applicable_to_published_20nm_run": true
+      },
+      "total_output_upper": {
+        "measured": 0.9639960731277092,
+        "upper": 1.02,
+        "passed": true
+      },
+      "excess_loss_upper": {
+        "measured": 0.036003926872290815,
+        "upper": 0.06,
+        "passed": true
+      }
+    },
+    "directional_coupler/10ppw-20nm": {
+      "primary": {
+        "measured": 0.5144672295945089,
+        "reference": {
+          "nominal": 0.4473333333333333,
+          "absolute_tolerance": 0.13066666666666665,
+          "standard_deviation": 0.06349999999999997,
+          "minimum": 0.451,
+          "maximum": 0.578,
+          "resolution_ppw": 10,
+          "samples": [
+            0.451,
+            0.578
+          ],
+          "converged_resolutions_ppw": [
+            15,
+            20,
+            25
+          ],
+          "converged_samples": [
+            0.411,
+            0.448,
+            0.446,
+            0.492,
+            0.431,
+            0.456
+          ],
+          "converged_standard_deviation": 0.024695928589321948,
+          "digitization_uncertainty": 0.001
+        },
+        "passed": true,
+        "applicable_to_published_20nm_run": true
+      },
+      "total_output_upper": {
+        "measured": 0.9988872229662098,
+        "upper": 1.02,
+        "passed": true
+      }
+    },
+    "directional_coupler/15ppw-20nm": {
+      "primary": {
+        "measured": 0.46579277211245784,
+        "reference": {
+          "nominal": 0.4473333333333333,
+          "absolute_tolerance": 0.03633333333333333,
+          "standard_deviation": 0.018500000000000016,
+          "minimum": 0.411,
+          "maximum": 0.448,
+          "resolution_ppw": 15,
+          "samples": [
+            0.411,
+            0.448
+          ],
+          "converged_resolutions_ppw": [
+            15,
+            20,
+            25
+          ],
+          "converged_samples": [
+            0.411,
+            0.448,
+            0.446,
+            0.492,
+            0.431,
+            0.456
+          ],
+          "converged_standard_deviation": 0.024695928589321948,
+          "digitization_uncertainty": 0.001
+        },
+        "passed": true,
+        "applicable_to_published_20nm_run": true
+      },
+      "total_output_upper": {
+        "measured": 0.9994076027075042,
+        "upper": 1.02,
+        "passed": true
+      }
+    },
+    "directional_coupler/15ppw-50nm": {
+      "primary": {
+        "measured": 0.46466592163695875,
+        "reference": {
+          "nominal": 0.4473333333333333,
+          "absolute_tolerance": 0.03633333333333333,
+          "standard_deviation": 0.018500000000000016,
+          "minimum": 0.411,
+          "maximum": 0.448,
+          "resolution_ppw": 15,
+          "samples": [
+            0.411,
+            0.448
+          ],
+          "converged_resolutions_ppw": [
+            15,
+            20,
+            25
+          ],
+          "converged_samples": [
+            0.411,
+            0.448,
+            0.446,
+            0.492,
+            0.431,
+            0.456
+          ],
+          "converged_standard_deviation": 0.024695928589321948,
+          "digitization_uncertainty": 0.001
+        },
+        "passed": true,
+        "applicable_to_published_20nm_run": false
+      },
+      "total_output_upper": {
+        "measured": 0.9994055301376464,
+        "upper": 1.02,
+        "passed": true
+      }
+    },
+    "directional_coupler/6ppw-20nm": {
+      "primary": {
+        "measured": 0.6765056677486906,
+        "reference": {
+          "nominal": 0.4473333333333333,
+          "absolute_tolerance": 0.24966666666666665,
+          "standard_deviation": 0.10199999999999998,
+          "minimum": 0.493,
+          "maximum": 0.697,
+          "resolution_ppw": 6,
+          "samples": [
+            0.493,
+            0.697
+          ],
+          "converged_resolutions_ppw": [
+            15,
+            20,
+            25
+          ],
+          "converged_samples": [
+            0.411,
+            0.448,
+            0.446,
+            0.492,
+            0.431,
+            0.456
+          ],
+          "converged_standard_deviation": 0.024695928589321948,
+          "digitization_uncertainty": 0.001
+        },
+        "passed": true,
+        "applicable_to_published_20nm_run": true
+      },
+      "total_output_upper": {
+        "measured": 0.9907869523975896,
+        "upper": 1.02,
+        "passed": true
+      }
+    }
+  }
+}

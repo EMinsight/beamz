@@ -476,7 +476,6 @@ fn count_self_intersections(vertices: &[Vec3], triangles: &[[u32; 3]]) -> usize 
             vertices[left[1] as usize],
             vertices[left[2] as usize],
         );
-        let left_shape = parry_triangle(vertices, *left);
         for right_index in acceleration.aabb_candidates(&left_bounds) {
             if right_index <= left_index {
                 continue;
@@ -485,7 +484,18 @@ fn count_self_intersections(vertices: &[Vec3], triangles: &[[u32; 3]]) -> usize 
             if left.iter().any(|vertex| right.contains(vertex)) {
                 continue;
             }
-            let right_shape = parry_triangle(vertices, right);
+            // Parry's GJK tolerances are absolute. Recenter and scale each
+            // candidate pair so nanometer geometry is not treated as touching
+            // merely because it is smaller than the solver's distance tolerance.
+            let origin = vertices[left[0] as usize];
+            let scale = left
+                .iter()
+                .chain(right.iter())
+                .flat_map(|&index| sub(vertices[index as usize], origin))
+                .map(f64::abs)
+                .fold(0.0_f64, f64::max);
+            let left_shape = parry_triangle(vertices, *left, origin, scale);
+            let right_shape = parry_triangle(vertices, right, origin, scale);
             if intersection_test(&pose, &left_shape, &pose, &right_shape).unwrap_or(false) {
                 intersections += 1;
             }
@@ -494,8 +504,10 @@ fn count_self_intersections(vertices: &[Vec3], triangles: &[[u32; 3]]) -> usize 
     intersections
 }
 
-fn parry_triangle(vertices: &[Vec3], triangle: [u32; 3]) -> Triangle {
-    let point = |index: u32| Vector::from_array(vertices[index as usize]);
+fn parry_triangle(vertices: &[Vec3], triangle: [u32; 3], origin: Vec3, scale: f64) -> Triangle {
+    let point = |index: u32| {
+        Vector::from_array(sub(vertices[index as usize], origin).map(|value| value / scale))
+    };
     Triangle::new(point(triangle[0]), point(triangle[1]), point(triangle[2]))
 }
 
@@ -1028,8 +1040,33 @@ mod tests {
     }
 
     #[test]
+    fn triangle_intersection_is_invariant_to_scale_and_translation() {
+        for scale in [1e-9, 1.0, 1e6] {
+            for offset in [-7.0, 0.0, 7.0] {
+                for (shift, expected) in [(0.8, 0), (0.2, 1)] {
+                    // Overlapping bounding boxes alone do not imply that the
+                    // coplanar triangles intersect. The second shift does.
+                    let vertices = [
+                        [0.0, 0.0, 0.0],
+                        [1.0, 0.0, 0.0],
+                        [0.0, 1.0, 0.0],
+                        [shift, shift, 0.0],
+                        [shift + 1.0, shift, 0.0],
+                        [shift, shift + 1.0, 0.0],
+                    ]
+                    .map(|point| point.map(|value| (value + offset) * scale));
+                    assert_eq!(
+                        count_self_intersections(&vertices, &[[0, 1, 2], [3, 4, 5]]),
+                        expected
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn rejects_intersecting_closed_components() {
-        let mut vertices = vec![
+        let vertices = [
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
             [0.0, 1.0, 0.0],
@@ -1041,6 +1078,12 @@ mod tests {
         ];
         let mut triangles = vec![[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]];
         triangles.extend([[4, 6, 5], [4, 5, 7], [5, 6, 7], [6, 4, 7]]);
-        assert!(TriangleMesh::new(std::mem::take(&mut vertices), triangles).is_err());
+        for scale in [1e-9, 1.0, 1e6] {
+            let scaled = vertices
+                .iter()
+                .map(|point| point.map(|value| (value + 7.0) * scale))
+                .collect();
+            assert!(TriangleMesh::new(scaled, triangles.clone()).is_err());
+        }
     }
 }

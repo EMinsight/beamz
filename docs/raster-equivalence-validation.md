@@ -339,3 +339,66 @@ its large-offset case also produced 2.5. The new cases retain approximately 1.6
 for every tested representation. They require zero adaptive fallback. These
 checks complement the existing high-contrast thin-layer volume tests; they do
 not assert accuracy for geometry whose dimensions approach coordinate precision.
+
+## PR #238 merge validation (2026-09-24)
+
+The conflict resolution combines the PR's planar mesh integration and boundary
+roundoff policy with `main`'s material-owned extrusion unions. The baseline is
+`51689e2164d0d559d9c140d5140900dbd5850f9c`. Cache schema 12 rejects results from
+both previous policies, including the PR's schema 11.
+
+The rerun exposed two additional numerical issues, now covered by regressions:
+
+- Parry's absolute GJK tolerance rejected valid nanometer-scale triangles as
+  intersecting. Each candidate triangle pair is now translated and uniformly
+  scaled before intersection testing. Actual intersections remain rejected at
+  scales `1e-9`, `1`, and `1e6`, including translated geometry.
+- The integer polygon-overlay lattice could erase high-contrast thin layers in
+  stretched supports. Scenes with input axis coordinates too close for unique
+  coordinate restoration retain their original geometry and use the existing
+  exact planar partition/adaptive paths. All 18 thin-layer cases and the
+  material-ownership and translated-boundary regressions pass together.
+
+### Modal notebook comparison
+
+`examples/notebooks/modal_sources_monitors.ipynb` is byte-for-byte unchanged
+from `main`, including its committed outputs. Its code cells were also executed
+in separate processes against freshly built baseline and merged native
+extensions, with `BEAMZ_DOCS_TEST` unset: 17 monitor frequencies, three candidate
+modes, seven broadband profiles, and all three full-size simulations (single
+profile, broadband straight waveguide, and broadband junction).
+
+On the same RTX 3090, Python 3.11.15, JAX 0.10.2 CUDA environment:
+
+- All **41 captured numerical arrays are exactly equal**, including effective
+  indices, raw/normalized flux, forward/backward mode powers, each simulation's
+  complex mode amplitudes, and each field monitor's complex Ey samples.
+- All **10 figures are pixel-identical**, compared as Agg RGBA canvas arrays.
+- Maximum absolute numerical difference is **0**. Runtime/progress text is
+  excluded from comparison. Saved notebook outputs were not regenerated.
+
+The comparison used NumPy 2.4.6, SciPy 1.17.1, Matplotlib 3.11.2, meshio 5.3.5,
+and gdsfactory 9.45.0. Identical figures are asserted between these two builds
+in this environment, not between different Matplotlib or GPU versions.
+
+### Additional checks
+
+- **767 raster/import/propagation tests passed, no skips**, in 251.98 seconds:
+  the complete `tests/unit/raster` directory plus
+  `tests/integration/test_mesh_design_equivalence.py` and
+  `tests/integration/test_native_design_rasterization.py`. Use the reproduction
+  command above, including `-o junit_family=legacy` when collecting JUnit
+  properties. Together with the mode/source/plotting selection, **906 Python
+  tests passed**.
+- **139 mode/source/plotting tests passed**, selecting `tests/unit/modes`,
+  `test_mode_source_solver.py`, the mode-plane contract, mode-source integration,
+  mode-source monitor y-grid, mode-launch planner, and simulation plotting tests.
+- **52 Rust tests passed**; the one ignored test is the opt-in spatial diagnostic
+  writer. Workspace Clippy with warnings denied and Rust formatting passed.
+- Repository-wide Ruff lint/format and Vulture passed. Source distribution,
+  wheel-from-source-distribution compilation, and distribution-content checks
+  passed.
+- Pyright reports two `gdsfactory.add_polygon` argument-type errors at
+  `beamz/design/gds.py:518` and `:521`. The identical two errors reproduce on
+  baseline `main` with the same environment; that file is unchanged by this PR.
+  A passing complete contributor audit is therefore not claimed.
