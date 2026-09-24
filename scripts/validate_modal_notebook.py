@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -26,6 +27,7 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     os.environ.pop("BEAMZ_DOCS_TEST", None)
     os.environ.update(
+        PATH=str(Path(sys.executable).parent) + os.pathsep + os.environ["PATH"],
         PYTHONPATH=str(root),
         MPLBACKEND="module://matplotlib_inline.backend_inline",
         XLA_PYTHON_CLIENT_PREALLOCATE="false",
@@ -50,7 +52,7 @@ for label, data in (
     arrays[label + "_flux"] = np.asarray(raw["flux"].flux)
     arrays[label + "_amps"] = np.asarray(raw.mode("mode").amps)
     arrays[label + "_mode_flux"] = np.asarray(raw.mode("mode").flux)
-    arrays[label + "_ey"] = np.asarray(raw["field"].Ey)
+    arrays[label + "_ey"] = np.asarray(raw["field"].dft_fields["Ey"])
 arrays["neffs"] = np.asarray(modes.neffs)
 arrays["profile_freqs"] = np.asarray(profile_freqs)
 arrays["freqs"] = np.asarray(freqs)

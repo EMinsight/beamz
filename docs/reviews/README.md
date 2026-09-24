@@ -1,6 +1,7 @@
 # CUDA optimization evidence
 
-Start with the [final random-domain comparison](cuda-random-final-comparison-2026-09-18.md)
+Start with the [main-merge validation and notebook comparison](cuda-merge-validation-2026-09-24.md),
+the [original random-domain comparison](cuda-random-final-comparison-2026-09-18.md),
 and [automatic layout prediction](cuda-layout-prediction-2026-09-18.md).
 The dated studies retain the earlier experiments, including unsuccessful ones;
 their settings and measurements should not be confused with the final defaults.
