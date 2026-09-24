@@ -133,6 +133,8 @@ void AppendBuffer(std::string* key, const BeamzBuffer& value) {
   Append(key, value.data);
   Append(key, value.rank);
   Append(key, value.element_type);
+  Append(key, value.row_stride);
+  Append(key, value.plane_stride);
   for (int axis = 0; axis < 4; ++axis) Append(key, value.dims[axis]);
 }
 
@@ -180,6 +182,7 @@ void AppendMonitors(std::string* key, const BeamzDftGroupLaunch& value) {
   AppendBuffer(key, value.phase_sin);
   AppendBuffer(key, value.phase_cos);
   AppendBuffer(key, value.phase_window);
+  AppendBuffer(key, value.pair_samples);
   AppendBuffer(key, value.time);
   AppendBuffer(key, value.current_step);
   Append(key, value.monitor_count);
@@ -197,10 +200,13 @@ std::string BeamzGraphKey(const char* schedule, void* stream,
   Append(&key, program.schedule_flags);
   AppendLaunch(&key, program.h_ab);
   AppendLaunch(&key, program.e_ab);
-  if (program.field_bank_count == 2) {
+  if (program.field_bank_count >= 2) {
     AppendLaunch(&key, program.h_ba);
     AppendLaunch(&key, program.e_ba);
   }
+  if (program.field_bank_count == 3)
+    for (const auto& field : program.pair_fields) AppendBuffer(&key, field);
+  AppendBuffer(&key, program.pair_publication);
   Append(&key, program.source_group_count);
   for (int32_t index = 0; index < program.source_group_count; ++index) {
     AppendSourceGroup(&key, program.source_groups[index]);

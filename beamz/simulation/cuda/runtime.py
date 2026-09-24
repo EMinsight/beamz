@@ -53,6 +53,8 @@ class NativeSchedulePlan:
     monitor_count: int = 0
     coincident_source_group_mask: int = 0
     disjoint_source_group_mask: int = 0
+    logical_shape: tuple[int, int, int] = (0, 0, 0)
+    temporal_steps: int = 1
 
     @property
     def uses_temporal_fields(self) -> bool:
@@ -154,6 +156,10 @@ def _program_attributes(ctx, nsteps: int, plan: NativeSchedulePlan):
         "coincident_source_group_mask": np.int32(plan.coincident_source_group_mask),
         "disjoint_source_group_mask": np.int32(plan.disjoint_source_group_mask),
         "schedule_flags": np.int32(plan.flags),
+        "logical_z": np.int32(plan.logical_shape[0]),
+        "logical_y": np.int32(plan.logical_shape[1]),
+        "logical_x": np.int32(plan.logical_shape[2]),
+        "temporal_steps": np.int32(plan.temporal_steps),
     }
 
 
@@ -397,9 +403,31 @@ def _replace_graph_outputs(state, outputs) -> SimulationState:
     )
 
 
-def _temporal_cpml_graph_io(state, ctx, coeffs):
+def _field_padding(ctx):
+    flags = ctx.config.cuda_flags
+    x = (
+        64
+        if flags & abi.CUDA_FIELD_PAD64
+        else 32
+        if flags & abi.CUDA_FIELD_PAD32
+        else 1
+    )
+    y = 8 if x > 1 and flags & abi.CUDA_FIELD_PAD_Y8 else 1
+    return y, x
+
+
+def _temporal_cpml_graph_io(state, ctx, coeffs, temporal_steps=1):
     arguments, _, _ = _cpml_graph_io(state, ctx, coeffs)
     fields = _fields(state)
+    py, px = _field_padding(ctx)
+    if px > 1:
+        fields = tuple(
+            jnp.pad(
+                value, ((0, 0), (0, -value.shape[1] % py), (0, -value.shape[2] % px))
+            )
+            for value in fields
+        )
+        arguments = (*fields, *arguments[_FIELD_COUNT:])
     workspace = tuple(jnp.empty_like(value) for value in fields)
     psi = (*state.cpml_psi_h_terms, *state.cpml_psi_e_terms)
     psi_workspace = tuple(jnp.empty_like(value) for value in psi)
@@ -431,15 +459,38 @@ def _temporal_cpml_graph_io(state, ctx, coeffs):
             for index in range(2 * _CPML_TERM_COUNT)
         }
     )
-    return (*arguments, *workspace, *psi_workspace), result_values, aliases
+    arguments = (*arguments, *workspace, *psi_workspace)
+    if temporal_steps == 2:
+        pair_fields = tuple(jnp.empty_like(value) for value in fields)
+        aliases.update(
+            {len(arguments) + i: len(result_values) + i for i in range(_FIELD_COUNT)}
+        )
+        arguments = (*arguments, *pair_fields)
+        result_values = (*result_values, *pair_fields)
+    return arguments, result_values, aliases
 
 
-def _replace_temporal_cpml_outputs(state, outputs, nsteps):
+def _replace_temporal_cpml_outputs(
+    state, outputs, nsteps, temporal_steps=1, cpml_pair=False
+):
     field_start = 0 if nsteps % 2 == 0 else _FIELD_COUNT
+    if temporal_steps == 2 and nsteps % 4 == 2:
+        field_start = 2 * _FIELD_COUNT + 4 * _CPML_TERM_COUNT
     psi_start = 2 * _FIELD_COUNT
-    if nsteps % 2:
+    psi_swaps = (
+        nsteps // 2 + nsteps % 2 if cpml_pair and temporal_steps == 2 else nsteps
+    )
+    if psi_swaps % 2:
         psi_start += 2 * _CPML_TERM_COUNT
-    return _replace_fields(state, outputs, field_start)._replace(
+    fields = tuple(
+        value[tuple(slice(0, n) for n in original.shape)]
+        for value, original in zip(
+            outputs[field_start : field_start + _FIELD_COUNT],
+            _fields(state),
+            strict=True,
+        )
+    )
+    return _replace_fields(state, fields)._replace(
         cpml_psi_h_terms=outputs[psi_start : psi_start + _CPML_TERM_COUNT],
         cpml_psi_e_terms=outputs[
             psi_start + _CPML_TERM_COUNT : psi_start + 2 * _CPML_TERM_COUNT
@@ -506,10 +557,13 @@ def _disjoint_source_group_mask(groups: tuple[Any, ...]) -> int:
 
 def _uniform_cpml_thickness(ctx) -> int:
     """Return the one thickness shared by every H/E recurrence, or zero."""
-    return _boundary_code(
-        ctx.boundary.cpml.metallic_edges,
-        (*ctx.boundary.cpml.h_terms, *ctx.boundary.cpml.e_terms),
-    ) >> 8
+    return (
+        _boundary_code(
+            ctx.boundary.cpml.metallic_edges,
+            (*ctx.boundary.cpml.h_terms, *ctx.boundary.cpml.e_terms),
+        )
+        >> 8
+    )
 
 
 def _packed_e_material(coeffs) -> bool:
@@ -528,24 +582,28 @@ def _packed_e_material(coeffs) -> bool:
 
 
 def _combined_cpml_core_supported(state, ctx, coeffs) -> bool:
-    """Prove the combined CPML queue has a non-empty regular-grid core."""
+    """Prove the combined CPML queue has a non-empty regular-grid core.
+
+    Material encoding is independent of the spatial partition: scalar, dense,
+    and codebook E coefficients all use the same disjoint core/shell boxes.
+    Dense H coefficients retain the general schedule until they benefit.
+    """
     if (
         not ctx.boundary.cpml.enabled
         or ctx.config.metric_kind != "isotropic_uniform"
         or _uniform_cpml_thickness(ctx) <= 0
-        or not _packed_e_material(coeffs)
     ):
         return False
-    h_values = (
-        coeffs.h_decay_x,
-        coeffs.h_decay_y,
-        coeffs.h_decay_z,
-        coeffs.h_source_x,
-        coeffs.h_source_y,
-        coeffs.h_source_z,
-    )
+    # Dense H coefficients did not benefit from the combined queue or a
+    # second bank in the conductive benchmark; retain the general schedule.
+    if any(
+        getattr(coeffs, f"h_{kind}_{axis}").ndim != 0
+        for kind in ("decay", "source")
+        for axis in "xyz"
+    ):
+        return False
     thickness = _uniform_cpml_thickness(ctx)
-    return all(value.ndim == 0 for value in h_values) and all(
+    return all(
         min(int(field.shape[axis]) for field in _fields(state)[:3]) > 2 * thickness
         for axis in range(3)
     )
@@ -570,7 +628,9 @@ def _temporal_cpml_fields_supported(ctx, coeffs, nsteps: int) -> bool:
     )
     e_sources = (coeffs.e_source_x, coeffs.e_source_y, coeffs.e_source_z)
     return all(value.ndim == 0 for value in h_values) and all(
-        value.ndim == 1 and value.dtype == jnp.int32 for value in e_sources
+        value.size > 0
+        and (value.ndim in (0, 3) or (value.ndim == 1 and value.dtype == jnp.int32))
+        for value in e_sources
     )
 
 
@@ -648,7 +708,10 @@ def _native_schedule_plan(
         flags |= abi.NATIVE_SCHEDULE_PACKED_MATERIAL
     if combined_cpml_core:
         flags |= abi.NATIVE_SCHEDULE_COMBINED_CPML_CORE
-    if kind in {"source", "monitor"} or layout == abi.PROGRAM_LAYOUT_SOURCE_TEMPORAL_CPML:
+    if (
+        kind in {"source", "monitor"}
+        or layout == abi.PROGRAM_LAYOUT_SOURCE_TEMPORAL_CPML
+    ):
         flags |= abi.NATIVE_SCHEDULE_SOURCES
     if monitor_count:
         flags |= abi.NATIVE_SCHEDULE_MONITORS
@@ -660,6 +723,19 @@ def _native_schedule_plan(
         monitor_count=monitor_count,
         coincident_source_group_mask=_coincident_source_group_mask(groups),
         disjoint_source_group_mask=_disjoint_source_group_mask(groups),
+        logical_shape=(state.hx.shape[0], state.hx.shape[1], state.hy.shape[2])
+        if temporal_cpml and _field_padding(ctx)[1] > 1
+        else (0, 0, 0),
+        temporal_steps=2
+        if (
+            temporal_cpml
+            and combined_cpml_core
+            and ctx.config.cuda_flags & abi.CUDA_TEMPORAL_PAIR
+            and all(group is None for group in groups[:3])
+            and min(state.hx.shape[0], state.hx.shape[1], state.hy.shape[2])
+            > 2 * (_uniform_cpml_thickness(ctx) + 2)
+        )
+        else 1,
     )
 
 
@@ -673,7 +749,7 @@ def run_source_group_steps(state, ctx, coeffs, groups, nsteps: int) -> Simulatio
     )
     use_temporal_cpml = plan.uses_temporal_fields
     arguments, result_values, aliases = (
-        _temporal_cpml_graph_io(state, ctx, coeffs)
+        _temporal_cpml_graph_io(state, ctx, coeffs, plan.temporal_steps)
         if use_temporal_cpml
         else _graph_io(state, ctx, coeffs)
     )
@@ -685,7 +761,13 @@ def run_source_group_steps(state, ctx, coeffs, groups, nsteps: int) -> Simulatio
         **_program_attributes(ctx, nsteps, plan),
     )
     if use_temporal_cpml:
-        return _replace_temporal_cpml_outputs(state, outputs, nsteps)
+        return _replace_temporal_cpml_outputs(
+            state,
+            outputs,
+            nsteps,
+            plan.temporal_steps,
+            bool(ctx.config.cuda_flags & abi.CUDA_CPML_PAIR),
+        )
     if ctx.boundary.cpml.enabled:
         return _replace_graph_outputs(state, outputs)
     return _replace_fields(state, outputs)
@@ -782,6 +864,27 @@ def pack_dft_monitors(monitors):
     )
 
 
+def _pair_publication_mask(state, packed_monitors):
+    """Conservative 16x8x1 map of intermediate fields read by any DFT gather.
+
+    Includes every component and interpolation neighbor, independent of record
+    interval/window. Static gather plans let XLA fold this once at compilation.
+    Logical coordinates deliberately exclude storage padding.
+    """
+    fields = (state.ex, state.ey, state.ez, state.hx, state.hy, state.hz)
+    nz, ny, nx = (max(field.shape[a] for field in fields) for a in range(3))
+    mask = jnp.zeros((nz, (ny + 7) // 8, (nx + 15) // 16), dtype=jnp.int32)
+    for component, field in enumerate(fields):
+        indices = packed_monitors[0][:, component].reshape(-1)
+        z = indices // (field.shape[1] * field.shape[2])
+        y = (indices // field.shape[2]) % field.shape[1]
+        x = indices % field.shape[2]
+        valid = (indices >= 0) & (indices < field.size)
+        # Invalid indices are dropped; duplicate updates all write the same 1.
+        mask = mask.at[jnp.where(valid, z, nz), y // 8, x // 16].set(1, mode="drop")
+    return mask
+
+
 def run_program_steps(
     state, ctx, coeffs, groups, packed_monitors, nsteps: int
 ) -> SimulationState:
@@ -802,7 +905,7 @@ def run_program_steps(
     )
     use_temporal_cpml = plan.uses_temporal_fields
     arguments, result_values, aliases = (
-        _temporal_cpml_graph_io(state, ctx, coeffs)
+        _temporal_cpml_graph_io(state, ctx, coeffs, plan.temporal_steps)
         if use_temporal_cpml
         else _graph_io(state, ctx, coeffs)
     )
@@ -814,13 +917,26 @@ def run_program_steps(
         state.dft_weight_sum,
     )
     phase_shape = (
-        int(packed_monitors[0].shape[0]),
+        int(packed_monitors[0].shape[0]) * plan.temporal_steps,
         int(packed_monitors[2].shape[1]),
     )
     phase_sin = jnp.empty(phase_shape, dtype=jnp.float32)
     phase_cos = jnp.empty(phase_shape, dtype=jnp.float32)
     phase_window = jnp.empty(phase_shape, dtype=jnp.float32)
     result_values = (*result_values, phase_sin, phase_cos, phase_window)
+    if plan.temporal_steps == 2:
+        result_values = (
+            *result_values,
+            jnp.empty(
+                (
+                    int(packed_monitors[0].shape[0]),
+                    6,
+                    int(packed_monitors[0].shape[2]),
+                    2,
+                ),
+                dtype=jnp.float32,
+            ),
+        )
     monitor_output_start = len(arguments) + len(source_arguments) + len(packed_monitors)
     aliases = {
         **aliases,
@@ -844,10 +960,21 @@ def run_program_steps(
         phase_window,
         state.t,
         state.current_step,
+        *(
+            (_pair_publication_mask(state, packed_monitors),)
+            if plan.temporal_steps == 2
+            else ()
+        ),
         **_program_attributes(ctx, nsteps, plan),
     )
     if use_temporal_cpml:
-        next_state = _replace_temporal_cpml_outputs(state, outputs, nsteps)
+        next_state = _replace_temporal_cpml_outputs(
+            state,
+            outputs,
+            nsteps,
+            plan.temporal_steps,
+            bool(ctx.config.cuda_flags & abi.CUDA_CPML_PAIR),
+        )
     elif ctx.boundary.cpml.enabled:
         next_state = _replace_graph_outputs(state, outputs)
     else:

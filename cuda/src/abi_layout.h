@@ -7,14 +7,21 @@
 
 namespace beamz::cuda::abi {
 
-inline constexpr int32_t kAbiVersion = 15;
-inline constexpr char kComponentVersion[] = "0.15.0";
+inline constexpr int32_t kAbiVersion = 18;
+inline constexpr char kComponentVersion[] = "0.18.0";
 inline constexpr char kStreamedTarget[] = "beamz_cuda_streamed";
 inline constexpr char kProgramTarget[] = "beamz_cuda_program";
 inline constexpr char kHopperTarget[] = "beamz_cuda_hopper";
 
 inline constexpr int32_t kBeamzGraphCache = 1 << 7;
 inline constexpr int32_t kBeamzBf16Psi = 1 << 12;
+inline constexpr int32_t kBeamzFieldPad32 = 1 << 13;
+inline constexpr int32_t kBeamzFieldPad64 = 1 << 14;
+inline constexpr int32_t kBeamzFieldPadY8 = 1 << 15;
+inline constexpr int32_t kBeamzTemporalPair = 1 << 16;
+inline constexpr int32_t kBeamzShell32x8 = 1 << 17;
+inline constexpr int32_t kBeamzShell32x4 = 1 << 18;
+inline constexpr int32_t kBeamzCpmlPair = 1 << 19;
 inline constexpr int32_t kBeamzDefaultFlags = kBeamzGraphCache;
 
 inline constexpr int32_t kNativeScheduleCpml = 1 << 0;

@@ -13,10 +13,17 @@ import jax
 from beamz.simulation._cuda_abi import (
     CUDA_ABI_VERSION,
     CUDA_BF16_PSI,
+    CUDA_CPML_PAIR,
     CUDA_DEFAULT_FLAGS,
+    CUDA_FIELD_PAD32,
+    CUDA_FIELD_PAD64,
+    CUDA_FIELD_PAD_Y8,
     CUDA_GRAPH_CACHE,
     CUDA_HOPPER_TARGET,
+    CUDA_SHELL32X4,
+    CUDA_SHELL32X8,
     CUDA_STREAMED_TARGETS,
+    CUDA_TEMPORAL_PAIR,
 )
 
 ExecutionBackend = Literal[
@@ -46,7 +53,7 @@ def _env_enabled(name: str, *, default: bool) -> bool:
 
 
 def cuda_flags_from_env() -> int:
-    """Snapshot CUDA cache and precision choices into one cacheable bitset."""
+    """Snapshot CUDA execution choices into one cacheable bitset."""
     flags = CUDA_DEFAULT_FLAGS
     if _env_enabled("BEAMZ_CUDA_DISABLE_GRAPH_CACHE", default=False):
         flags &= ~CUDA_GRAPH_CACHE
@@ -55,7 +62,39 @@ def cuda_flags_from_env() -> int:
         flags |= CUDA_BF16_PSI
     elif precision not in {"fp32", "float32", ""}:
         raise ValueError("BEAMZ_CUDA_CPML_PSI_PRECISION must be 'fp32' or 'bf16'")
+    padding = os.environ.get("BEAMZ_CUDA_FIELD_PADDING", "none").lower()
+    layouts = {
+        "none": 0,
+        "32": CUDA_FIELD_PAD32,
+        "64": CUDA_FIELD_PAD64,
+        "32x8": CUDA_FIELD_PAD32 | CUDA_FIELD_PAD_Y8,
+        "64x8": CUDA_FIELD_PAD64 | CUDA_FIELD_PAD_Y8,
+    }
+    if padding not in layouts:
+        raise ValueError("BEAMZ_CUDA_FIELD_PADDING must be none, 32, 64, 32x8, or 64x8")
+    flags |= layouts[padding]
+    temporal_steps = os.environ.get("BEAMZ_CUDA_TEMPORAL_STEPS", "1")
+    if temporal_steps not in {"1", "2"}:
+        raise ValueError("BEAMZ_CUDA_TEMPORAL_STEPS must be 1 or 2")
+    if temporal_steps == "2":
+        flags |= CUDA_TEMPORAL_PAIR
+    if _env_enabled("BEAMZ_CUDA_CPML_TEMPORAL", default=False):
+        flags |= CUDA_TEMPORAL_PAIR | CUDA_CPML_PAIR
+    shell_tile = os.environ.get("BEAMZ_CUDA_CPML_SHELL_TILE", "64x4")
+    shell_tiles = {"64x4": 0, "32x8": CUDA_SHELL32X8, "32x4": CUDA_SHELL32X4}
+    if shell_tile not in shell_tiles:
+        raise ValueError("BEAMZ_CUDA_CPML_SHELL_TILE must be 64x4, 32x8, or 32x4")
+    flags |= shell_tiles[shell_tile]
     return flags
+
+
+def cuda_storage_axes_from_env() -> tuple[int, int, int]:
+    """Snapshot an experimental, right-handed CUDA storage-axis order."""
+    value = os.environ.get("BEAMZ_CUDA_STORAGE_AXES", "012").strip()
+    orders = {"012": (0, 1, 2), "120": (1, 2, 0), "201": (2, 0, 1)}
+    if value not in orders:
+        raise ValueError("BEAMZ_CUDA_STORAGE_AXES must be 012, 120, or 201")
+    return orders[value]
 
 
 def cuda_graph_cache_capacity_from_env() -> int:

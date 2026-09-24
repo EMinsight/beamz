@@ -75,11 +75,13 @@ class CompiledProgramKey:
     backend: str
     cuda_flags: int
     cuda_graph_cache_capacity: int
+    cuda_storage_axes: tuple[int, int, int]
     sharding: ShardingToken
     materials: HashToken
     sources: tuple[HashToken, ...]
     monitors: tuple[HashToken, ...]
     boundaries: tuple[HashToken, ...]
+    cuda_tuning_policy: tuple = ()
 
     @classmethod
     def from_request(cls, request: SimulationRequest) -> CompiledProgramKey:
@@ -97,6 +99,7 @@ class CompiledProgramKey:
             request.run.backend,
             request.run.cuda_flags,
             request.run.cuda_graph_cache_capacity,
+            request.run.cuda_storage_axes,
             request.run.sharding,
             cache_token(request.materials),
             tuple(cache_token(source) for source in request.sources),
@@ -404,6 +407,7 @@ def _prepare_compilation(
         sharding=effective_sharding,
         cuda_flags=int(request.run.cuda_flags),
         cuda_graph_cache_capacity=int(request.run.cuda_graph_cache_capacity),
+        cuda_storage_axes=request.run.cuda_storage_axes,
     )
     return _CompileSetup(
         dt,
@@ -830,6 +834,7 @@ def compile_program(
         CudaBackendUnavailable,
         cuda_flags_from_env,
         cuda_graph_cache_capacity_from_env,
+        cuda_storage_axes_from_env,
         normalize_backend,
         resolve_backend,
     )
@@ -874,6 +879,11 @@ def compile_program(
         else resolve_backend(requested_backend)
     )
     cuda_flags = cuda_flags_from_env() if resolved_backend != "jax" else 0
+    cuda_storage_axes = (
+        cuda_storage_axes_from_env() if resolved_backend != "jax" else (0, 1, 2)
+    )
+    if cuda_storage_axes != (0, 1, 2) and resolved_backend != "cuda_streamed":
+        raise ValueError("CUDA storage-axis permutations require cuda_streamed")
     cuda_graph_cache_capacity = (
         cuda_graph_cache_capacity_from_env() if resolved_backend != "jax" else 0
     )
@@ -892,9 +902,21 @@ def compile_program(
             request.run,
             cuda_flags=cuda_flags,
             cuda_graph_cache_capacity=cuda_graph_cache_capacity,
+            cuda_storage_axes=cuda_storage_axes,
         ),
     )
     signature = CompiledProgramKey.from_request(request)
+    tuning_policy = None
+    if resolved_backend == "cuda_streamed":
+        from .cuda.tuning import tuning_policy_from_env
+
+        tuning_policy = tuning_policy_from_env()
+        if (
+            metric_kind == "isotropic_uniform"
+            and steps >= 32
+            and np.prod(material_grid.shape) >= 8 * 1024 * 1024
+        ):
+            signature = replace(signature, cuda_tuning_policy=tuning_policy)
     if cached := _PROGRAM_CACHE.get(signature):
         _PROGRAM_CACHE.move_to_end(signature)
         return cached
@@ -903,6 +925,10 @@ def compile_program(
     compile_factory = compile_factory or compile_simulation
     with setup_context_factory(simulation.setup_device_resolved):
         program = compile_factory(request)
+    if tuning_policy is not None:
+        from .cuda.tuning import select_program
+
+        program = select_program(program, signature, tuning_policy)
     _PROGRAM_CACHE[signature] = program
     if len(_PROGRAM_CACHE) > _MAX_COMPILED_PROGRAMS:
         _PROGRAM_CACHE.popitem(last=False)

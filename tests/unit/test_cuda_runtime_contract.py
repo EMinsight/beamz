@@ -290,6 +290,10 @@ def test_cuda_multi_step_ffi_aliases_all_fields(monkeypatch):
         "boundary_code": np.int32(63),
         "metric_kind": np.int32(0),
         "program_layout": np.int32(abi.PROGRAM_LAYOUT_YEE_TEMPORAL),
+        "temporal_steps": np.int32(1),
+        "logical_z": np.int32(0),
+        "logical_y": np.int32(0),
+        "logical_x": np.int32(0),
         "cpml_enabled": np.int32(0),
         "monitor_count": np.int32(0),
         "coincident_source_group_mask": np.int32(0),
@@ -551,6 +555,48 @@ def test_cuda_schedule_plan_requires_all_combined_cpml_capabilities():
     assert plan.flags & abi.NATIVE_SCHEDULE_UNIFORM_CPML
 
 
+@pytest.mark.parametrize("dense", [False, True])
+@pytest.mark.parametrize("dense_h", [False, True])
+def test_cuda_cpml_core_schedule_does_not_require_material_codebooks(dense, dense_h):
+    program, state, context = _program_and_state(cpml=True)
+    values = {
+        name: jnp.asarray(1.0, dtype=jnp.float32)
+        for name in (
+            "h_decay_x",
+            "h_decay_y",
+            "h_decay_z",
+            "h_source_x",
+            "h_source_y",
+            "h_source_z",
+            "e_decay_x",
+            "e_decay_y",
+            "e_decay_z",
+        )
+    }
+    for axis, field in zip("xyz", (state.ex, state.ey, state.ez), strict=True):
+        values[f"e_source_{axis}"] = (
+            jnp.arange(field.size, dtype=jnp.float32).reshape(field.shape)
+            if dense
+            else jnp.asarray(1.0, dtype=jnp.float32)
+        )
+    if dense_h:
+        for axis, field in zip("xyz", (state.hx, state.hy, state.hz), strict=True):
+            values[f"h_decay_{axis}"] = jnp.full(field.shape, 0.99, dtype=jnp.float32)
+            values[f"h_source_{axis}"] = jnp.ones(field.shape, dtype=jnp.float32)
+    coefficients = program.coefficients._replace(**values)
+    plan = cuda_runtime._native_schedule_plan(
+        state,
+        context,
+        coefficients,
+        8,
+        kind="source",
+        groups=(None,) * 9,
+    )
+    assert bool(plan.flags & abi.NATIVE_SCHEDULE_COMBINED_CPML_CORE) == (not dense_h)
+    assert bool(plan.flags & abi.NATIVE_SCHEDULE_TEMPORAL) == (not dense_h)
+    assert not plan.flags & abi.NATIVE_SCHEDULE_PACKED_MATERIAL
+
+
 def test_cuda_source_group_graph_uses_temporal_cpml_field_banks(monkeypatch):
     program, state, context = _program_and_state(cpml=True)
     coefficients = program.coefficients._replace(
@@ -792,3 +838,34 @@ def test_uniform_cuda_coefficients_are_compacted_without_rounding():
     assert compact.shape == ()
     assert float(compact) == 1.25
     assert _elide_uniform_grid(varied).shape == varied.shape
+
+
+def test_pair_publication_mask_staggered_arbitrary_gathers():
+    """Every valid neighbor survives coordinate decoding for its Yee extent."""
+    from types import SimpleNamespace
+
+    shapes = [
+        (19, 23, 37),
+        (19, 22, 38),
+        (18, 23, 38),
+        (18, 22, 38),
+        (18, 23, 37),
+        (19, 22, 37),
+    ]
+    fields = [jnp.zeros(shape, dtype=jnp.float32) for shape in shapes]
+    state = SimpleNamespace(
+        **dict(zip(("ex", "ey", "ez", "hx", "hy", "hz"), fields, strict=True))
+    )
+    rng = np.random.default_rng(17)
+    indices = np.empty((2, 6, 11, 4), dtype=np.int32)
+    expected = np.zeros((19, 3, 3), dtype=np.int32)
+    for c, shape in enumerate(shapes):
+        values = rng.integers(0, np.prod(shape), size=(2, 11, 4), dtype=np.int32)
+        values[:, 0, 0] = -1
+        values[:, 0, 1] = np.prod(shape)
+        indices[:, c] = values
+        valid = values[(values >= 0) & (values < np.prod(shape))]
+        z, y, x = np.unravel_index(valid, shape)
+        expected[z, y // 8, x // 16] = 1
+    actual = cuda_runtime._pair_publication_mask(state, (jnp.asarray(indices),))
+    np.testing.assert_array_equal(actual, expected)

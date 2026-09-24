@@ -262,6 +262,14 @@ ffi::Error DecodeBuffer(const ffi::AnyBuffer& value, BeamzBuffer* output) {
   for (size_t index = 0; index < dims.size(); ++index) {
     output->dims[index] = dims[index];
   }
+  if (dims.size() == 3) {
+    if (dims[1] > INT32_MAX || dims[2] > INT32_MAX ||
+        dims[1] * dims[2] > INT32_MAX)
+      return ffi::Error::InvalidArgument(
+          "rank-three pitches exceed int32 offsets");
+    output->row_stride = static_cast<int32_t>(dims[2]);
+    output->plane_stride = static_cast<int32_t>(dims[1] * dims[2]);
+  }
   return ffi::Error::Success();
 }
 
@@ -536,6 +544,37 @@ ffi::Error StreamedSourceGroupsCpmlStepsHandler(
                    std::to_string(error));
 }
 
+// Input/output aliasing has already been established by XLA. Only the six
+// field components in each bank have padded storage; coefficients and
+// compressed CPML recurrences retain their logical indexing and allocations.
+ffi::Error ConfigurePaddedFields(BeamzBuffer* outputs, int nz, int ny, int nx,
+                                 int count = 2 * kFieldCount) {
+  if (nz == 0 && ny == 0 && nx == 0) return ffi::Error::Success();
+  if (nz <= 0 || ny <= 0 || nx <= 0 || nz >= INT32_MAX || ny >= INT32_MAX ||
+      nx >= INT32_MAX)
+    return ffi::Error::InvalidArgument("invalid logical field extents");
+  for (int i = 0; i < count; ++i) {
+    auto& field = outputs[i];
+    const int c = i % kFieldCount;
+    const bool electric = c >= 3;
+    const int axis = c % 3;
+    const int64_t z = nz + (electric ? axis != 2 : axis == 2);
+    const int64_t y = ny + (electric ? axis != 1 : axis == 1);
+    const int64_t x = nx + (electric ? axis != 0 : axis == 0);
+    if (field.rank != 3 || field.element_type != kBeamzF32 ||
+        field.dims[0] != z || field.dims[1] < y || field.dims[2] < x ||
+        field.dims[1] > INT32_MAX || field.dims[2] > INT32_MAX ||
+        field.dims[1] * field.dims[2] > INT32_MAX / z)
+      return ffi::Error::InvalidArgument("invalid padded field allocation");
+    field.row_stride = static_cast<int32_t>(field.dims[2]);
+    field.plane_stride = static_cast<int32_t>(field.dims[1] * field.dims[2]);
+    field.dims[0] = z;
+    field.dims[1] = y;
+    field.dims[2] = x;
+  }
+  return ffi::Error::Success();
+}
+
 // A second XLA-owned field bank lets the CUDA implementation freeze every
 // timestep's inputs.  The native scheduler can then fuse the CPML-free core
 // without racing another block that still needs the old magnetic halo.
@@ -544,7 +583,8 @@ ffi::Error TemporalSourceGroupsCpmlStepsHandler(
     int32_t abi_version, int32_t cuda_flags, int32_t nsteps, float dt,
     float resolution, int32_t boundary_code, int32_t metric_kind,
     int32_t coincident_source_group_mask, int32_t disjoint_source_group_mask,
-    int32_t graph_cache_capacity, int32_t schedule_flags) {
+    int32_t graph_cache_capacity, int32_t schedule_flags, int32_t logical_z,
+    int32_t logical_y, int32_t logical_x, int32_t temporal_steps) {
   constexpr size_t kGraphInputCount = kCpmlGraphInputCount;
   constexpr size_t kWorkspaceInputCount = 3 * kFieldCount;
   constexpr size_t kSourceInputCount =
@@ -563,24 +603,47 @@ ffi::Error TemporalSourceGroupsCpmlStepsHandler(
     return ffi::Error::InvalidArgument(
         "invalid BeamZ CUDA temporal CPML source-group attributes");
   }
-  BeamzBuffer inputs[kInputCount]{};
-  BeamzBuffer outputs[kOutputCount]{};
-  if (auto error = DecodeArgs(args, inputs); error.failure()) return error;
-  if (auto error = DecodeRets(rets, outputs); error.failure()) return error;
+  const size_t extra = temporal_steps == 2 ? kFieldCount : 0;
+  BeamzBuffer inputs[kInputCount + kFieldCount]{};
+  BeamzBuffer outputs[kOutputCount + kFieldCount]{};
+  if (auto error = DecodeArgs(args, inputs, kInputCount + extra);
+      error.failure())
+    return error;
+  if (auto error = DecodeRets(rets, outputs, kOutputCount + extra);
+      error.failure())
+    return error;
 
+  if (auto error =
+          ConfigurePaddedFields(outputs, logical_z, logical_y, logical_x);
+      error.failure())
+    return error;
+
+  if (extra) {
+    if (auto error = ConfigurePaddedFields(
+            outputs + 2 * kFieldCount + 4 * kCpmlTermCount, logical_z,
+            logical_y, logical_x, kFieldCount);
+        error.failure())
+      return error;
+  }
   TemporalCpmlLaunches launches = InitializeTemporalCpmlLaunches(
       abi_version, cuda_flags, dt, resolution, boundary_code, metric_kind,
       inputs, outputs);
 
   BeamzSourceGroupLaunch groups[kSourceGroupCount]{};
-  constexpr size_t kSourceOffset = kGraphInputCount + kWorkspaceInputCount;
+  const size_t kSourceOffset = kGraphInputCount + kWorkspaceInputCount + extra;
   const BeamzBuffer& current_step =
       inputs[kSourceOffset + kSourceGroupBufferCount * kSourceGroupCount];
   InitializeSourceGroups(groups, inputs, kSourceOffset, current_step,
                          coincident_source_group_mask, disjoint_source_group_mask);
-  const int error = BeamzLaunchProgram(
-      stream, TemporalProgram(launches, nsteps, groups, kSourceGroupCount,
-                              nullptr, graph_cache_capacity, schedule_flags));
+  auto program = TemporalProgram(launches, nsteps, groups, kSourceGroupCount,
+                                 nullptr, graph_cache_capacity, schedule_flags);
+  if (extra) {
+    program.field_bank_count = 3;
+    for (int c = 0; c < kFieldCount; ++c)
+      program.pair_fields[c] =
+          outputs[2 * kFieldCount + 4 * kCpmlTermCount + c];
+  }
+  const int error = BeamzLaunchProgram(stream, program);
   return error == 0
              ? ffi::Error::Success()
              : ffi::Error::Internal(
@@ -594,7 +657,8 @@ ffi::Error TemporalProgramCpmlStepsHandler(
     float resolution, int32_t boundary_code, int32_t metric_kind,
     int32_t monitor_count, int32_t coincident_source_group_mask,
     int32_t disjoint_source_group_mask, int32_t graph_cache_capacity,
-    int32_t schedule_flags) {
+    int32_t schedule_flags, int32_t logical_z, int32_t logical_y,
+    int32_t logical_x, int32_t temporal_steps) {
   constexpr size_t kGraphInputCount = kCpmlGraphInputCount;
   constexpr size_t kWorkspaceInputCount = 3 * kFieldCount;
   constexpr size_t kSourceInputCount =
@@ -604,8 +668,8 @@ ffi::Error TemporalProgramCpmlStepsHandler(
   constexpr size_t kStateOutputCount =
       2 * kFieldCount + 4 * kCpmlTermCount;
   constexpr size_t kOutputCount = kStateOutputCount + 6;
-  if (abi_version != kAbiVersion || nsteps < 1 ||
-      metric_kind < 0 || metric_kind > 2 || monitor_count < 1 ||
+  if (abi_version != kAbiVersion || nsteps < 1 || metric_kind < 0 ||
+      metric_kind > 2 || monitor_count < 1 ||
       coincident_source_group_mask < 0 ||
       coincident_source_group_mask >= (1 << kSourceGroupCount) ||
       disjoint_source_group_mask < 0 ||
@@ -614,50 +678,88 @@ ffi::Error TemporalProgramCpmlStepsHandler(
     return ffi::Error::InvalidArgument(
         "invalid BeamZ CUDA temporal CPML program attributes");
   }
-  BeamzBuffer inputs[kInputCount]{};
-  BeamzBuffer outputs[kOutputCount]{};
-  if (auto error = DecodeArgs(args, inputs); error.failure()) return error;
-  if (auto error = DecodeRets(rets, outputs); error.failure()) return error;
+  const size_t extra = temporal_steps == 2 ? kFieldCount : 0;
+  BeamzBuffer inputs[kInputCount + kFieldCount + 1]{};
+  BeamzBuffer outputs[kOutputCount + kFieldCount + 1]{};
+  if (auto error =
+          DecodeArgs(args, inputs, kInputCount + extra + (extra ? 1 : 0));
+      error.failure())
+    return error;
+  if (auto error =
+          DecodeRets(rets, outputs, kOutputCount + extra + (extra ? 1 : 0));
+      error.failure())
+    return error;
 
+  if (auto error =
+          ConfigurePaddedFields(outputs, logical_z, logical_y, logical_x);
+      error.failure())
+    return error;
+
+  if (extra) {
+    if (auto error = ConfigurePaddedFields(
+            outputs + 2 * kFieldCount + 4 * kCpmlTermCount, logical_z,
+            logical_y, logical_x, kFieldCount);
+        error.failure())
+      return error;
+  }
   TemporalCpmlLaunches launches = InitializeTemporalCpmlLaunches(
       abi_version, cuda_flags, dt, resolution, boundary_code, metric_kind,
       inputs, outputs);
 
-  constexpr size_t kSourceOffset = kGraphInputCount + kWorkspaceInputCount;
-  constexpr size_t kMonitorOffset = kSourceOffset + kSourceInputCount;
-  const BeamzBuffer& current_step =
+  const size_t kSourceOffset = kGraphInputCount + kWorkspaceInputCount + extra;
+  const size_t kMonitorOffset = kSourceOffset + kSourceInputCount;
+  const BeamzBuffer &current_step =
       inputs[kMonitorOffset + kMonitorCurrentStepInput];
   BeamzSourceGroupLaunch groups[kSourceGroupCount]{};
   InitializeSourceGroups(groups, inputs, kSourceOffset, current_step,
-                         coincident_source_group_mask, disjoint_source_group_mask);
+                         coincident_source_group_mask,
+                         disjoint_source_group_mask);
   BeamzDftGroupLaunch monitors = InitializeDftGroups(
-      inputs, kMonitorOffset, outputs[kStateOutputCount],
-      outputs[kStateOutputCount + 1], outputs[kStateOutputCount + 2],
-      outputs[kStateOutputCount + 3], outputs[kStateOutputCount + 4],
-      outputs[kStateOutputCount + 5],
-      monitor_count);
+      inputs, kMonitorOffset, outputs[kStateOutputCount + extra],
+      outputs[kStateOutputCount + extra + 1],
+      outputs[kStateOutputCount + extra + 2],
+      outputs[kStateOutputCount + extra + 3],
+      outputs[kStateOutputCount + extra + 4],
+      outputs[kStateOutputCount + extra + 5], monitor_count);
 
-  const int error = BeamzLaunchProgram(
-      stream, TemporalProgram(launches, nsteps, groups, kSourceGroupCount,
-                              &monitors, graph_cache_capacity, schedule_flags));
-  return error == 0
-             ? ffi::Error::Success()
-             : ffi::Error::Internal(
-                   "BeamZ CUDA temporal CPML program launch failed: " +
-                   std::to_string(error));
+  if (extra)
+    monitors.pair_samples = outputs[kStateOutputCount + extra + 6];
+  auto program =
+      TemporalProgram(launches, nsteps, groups, kSourceGroupCount, &monitors,
+                      graph_cache_capacity, schedule_flags);
+  if (extra) {
+    program.field_bank_count = 3;
+    program.pair_publication = inputs[kInputCount + extra];
+    const auto &mask = program.pair_publication;
+    int64_t extent[3] = {};
+    for (int c = 0; c < kFieldCount; ++c)
+      for (int axis = 0; axis < 3; ++axis)
+        extent[axis] = std::max(extent[axis], outputs[c].dims[axis]);
+    if (mask.rank != 3 || mask.element_type != kBeamzS32 ||
+        mask.dims[0] != extent[0] || mask.dims[1] != (extent[1] + 7) / 8 ||
+        mask.dims[2] != (extent[2] + 15) / 16)
+      return ffi::Error::InvalidArgument("invalid temporal publication map");
+    for (int c = 0; c < kFieldCount; ++c)
+      program.pair_fields[c] =
+          outputs[2 * kFieldCount + 4 * kCpmlTermCount + c];
+  }
+  const int error = BeamzLaunchProgram(stream, program);
+  return error == 0 ? ffi::Error::Success()
+                    : ffi::Error::Internal(
+                          "BeamZ CUDA temporal CPML program launch failed: " +
+                          std::to_string(error));
 }
 
 ffi::Error StreamedProgramCpmlStepsHandler(
-    void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
+    void *stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
     int32_t abi_version, int32_t cuda_flags, int32_t nsteps, float dt,
     float resolution, int32_t boundary_code, int32_t metric_kind,
     int32_t cpml_enabled, int32_t monitor_count,
     int32_t coincident_source_group_mask, int32_t disjoint_source_group_mask,
     int32_t graph_cache_capacity, int32_t schedule_flags) {
-  if (abi_version != kAbiVersion || nsteps < 1 ||
-      metric_kind < 0 || metric_kind > 2 || cpml_enabled < 0 ||
-      cpml_enabled > 1 || monitor_count < 1 ||
-      coincident_source_group_mask < 0 ||
+  if (abi_version != kAbiVersion || nsteps < 1 || metric_kind < 0 ||
+      metric_kind > 2 || cpml_enabled < 0 || cpml_enabled > 1 ||
+      monitor_count < 1 || coincident_source_group_mask < 0 ||
       coincident_source_group_mask >= (1 << kSourceGroupCount) ||
       disjoint_source_group_mask < 0 ||
       disjoint_source_group_mask >= (1 << kSourceGroupCount) ||
@@ -717,10 +819,18 @@ ffi::Error ProgramHandler(
     float resolution, int32_t boundary_code, int32_t metric_kind,
     int32_t program_layout, int32_t cpml_enabled, int32_t monitor_count,
     int32_t coincident_source_group_mask, int32_t disjoint_source_group_mask,
-    int32_t graph_cache_capacity, int32_t schedule_flags) {
+    int32_t graph_cache_capacity, int32_t schedule_flags, int32_t logical_z,
+    int32_t logical_y, int32_t logical_x, int32_t temporal_steps) {
+  if (temporal_steps != 1 && temporal_steps != 2)
+    return ffi::Error::InvalidArgument("temporal_steps must be 1 or 2");
   if (graph_cache_capacity < 0 || graph_cache_capacity > 4096) {
     return ffi::Error::InvalidArgument(
         "BeamZ CUDA graph-cache capacity must be from 0 to 4096");
+  }
+  if ((logical_z || logical_y || logical_x || temporal_steps == 2) &&
+      program_layout != kProgramLayoutSourceTemporalCpml &&
+      program_layout != kProgramLayoutMonitorTemporalCpml) {
+    return ffi::Error::InvalidArgument("padded fields require temporal CPML");
   }
   switch (program_layout) {
     case kProgramLayoutYeeInPlace:
@@ -748,7 +858,8 @@ ffi::Error ProgramHandler(
       return TemporalSourceGroupsCpmlStepsHandler(
           stream, args, rets, abi_version, cuda_flags, nsteps, dt, resolution,
           boundary_code, metric_kind, coincident_source_group_mask,
-          disjoint_source_group_mask, graph_cache_capacity, schedule_flags);
+          disjoint_source_group_mask, graph_cache_capacity, schedule_flags,
+          logical_z, logical_y, logical_x, temporal_steps);
     case kProgramLayoutMonitorInPlace:
       return StreamedProgramCpmlStepsHandler(
           stream, args, rets, abi_version, cuda_flags, nsteps, dt, resolution,
@@ -760,7 +871,8 @@ ffi::Error ProgramHandler(
           stream, args, rets, abi_version, cuda_flags, nsteps, dt, resolution,
           boundary_code, metric_kind, monitor_count,
           coincident_source_group_mask, disjoint_source_group_mask,
-          graph_cache_capacity, schedule_flags);
+          graph_cache_capacity, schedule_flags, logical_z, logical_y, logical_x,
+          temporal_steps);
     default:
       return ffi::Error::InvalidArgument(
           "unknown BeamZ CUDA program buffer layout");
@@ -793,26 +905,29 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_streamed, StreamedHandler,
                                   .Attr<int32_t>("boundary_code")
                                   .Attr<int32_t>("metric_kind"));
 
-XLA_FFI_DEFINE_HANDLER_SYMBOL(
-    beamz_cuda_program, ProgramHandler,
-    ffi::Ffi::Bind()
-        .Ctx<ffi::PlatformStream<void*>>()
-        .RemainingArgs()
-        .RemainingRets()
-        .Attr<int32_t>("abi_version")
-        .Attr<int32_t>("cuda_flags")
-        .Attr<int32_t>("nsteps")
-        .Attr<float>("dt")
-        .Attr<float>("resolution")
-        .Attr<int32_t>("boundary_code")
-        .Attr<int32_t>("metric_kind")
-        .Attr<int32_t>("program_layout")
-        .Attr<int32_t>("cpml_enabled")
-        .Attr<int32_t>("monitor_count")
-        .Attr<int32_t>("coincident_source_group_mask")
-        .Attr<int32_t>("disjoint_source_group_mask")
-        .Attr<int32_t>("graph_cache_capacity")
-        .Attr<int32_t>("schedule_flags"));
+XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_program, ProgramHandler,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<void*>>()
+                                  .RemainingArgs()
+                                  .RemainingRets()
+                                  .Attr<int32_t>("abi_version")
+                                  .Attr<int32_t>("cuda_flags")
+                                  .Attr<int32_t>("nsteps")
+                                  .Attr<float>("dt")
+                                  .Attr<float>("resolution")
+                                  .Attr<int32_t>("boundary_code")
+                                  .Attr<int32_t>("metric_kind")
+                                  .Attr<int32_t>("program_layout")
+                                  .Attr<int32_t>("cpml_enabled")
+                                  .Attr<int32_t>("monitor_count")
+                                  .Attr<int32_t>("coincident_source_group_mask")
+                                  .Attr<int32_t>("disjoint_source_group_mask")
+                                  .Attr<int32_t>("graph_cache_capacity")
+                                  .Attr<int32_t>("schedule_flags")
+                                  .Attr<int32_t>("logical_z")
+                                  .Attr<int32_t>("logical_y")
+                                  .Attr<int32_t>("logical_x")
+                                  .Attr<int32_t>("temporal_steps"));
 XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_hopper, HopperHandler,
                               ffi::Ffi::Bind()
                                   .Ctx<ffi::PlatformStream<void*>>()

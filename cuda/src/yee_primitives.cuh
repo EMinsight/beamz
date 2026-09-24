@@ -56,23 +56,32 @@ __host__ __device__ __forceinline__ bool CpmlPackedCoordinate(
   return false;
 }
 
+__device__ __forceinline__ float ScaleYeeDifference(float difference,
+                                                   float inv_spacing) {
+  // Round each derivative before curl subtraction or CPML correction. An
+  // inlined multiply must not contract with a different stage's arithmetic.
+  return __fmul_rn(difference, inv_spacing);
+}
+
 __device__ __forceinline__ float AdvanceYeeField(int phase, float old_field,
                                                   float decay, float source,
                                                   float curl) {
-  return phase == 0 ? decay * old_field - source * curl
-                    : decay * old_field + source * curl;
+  // Fix the multiply/FMA order across ordinary, fused and temporal kernels.
+  // Compiler contraction otherwise depends on inlining and tile specialization.
+  return __fmaf_rn(phase == 0 ? -source : source, curl,
+                   __fmul_rn(decay, old_field));
 }
 
 __device__ __forceinline__ float AdvanceCpmlPsi(float b, float old_psi,
                                                  float a, float derivative) {
-  return b * old_psi + a * derivative;
+  return __fmaf_rn(b, old_psi, __fmul_rn(a, derivative));
 }
 
 __device__ __forceinline__ float CorrectCpmlDerivative(float sign,
                                                         float derivative,
                                                         float inv_kappa,
                                                         float next_psi) {
-  return sign * (derivative * inv_kappa + next_psi);
+  return __fmul_rn(sign, __fmaf_rn(derivative, inv_kappa, next_psi));
 }
 
 __device__ __forceinline__ float PackedMaterialSource(

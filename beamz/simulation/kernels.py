@@ -255,13 +255,20 @@ def compile_cpml_term(*, component, axis, sign, sigma, kappa, alpha, dt, full_sh
 
 
 def correct_cpml_term(derivative, psi, term):
-    """Apply one packed recurrence and return the signed corrected derivative."""
+    """Apply CPML in field precision, rounding only the stored auxiliary state."""
     if not term.slab.low and not term.slab.high:
         return term.sign * derivative, psi
-    derivative_slab = _pack_cpml_slab(derivative.astype(psi.dtype), term.slab)
-    psi = term.b.astype(psi.dtype) * psi + term.a.astype(psi.dtype) * derivative_slab
-    corrected = derivative_slab * term.inv_kappa.astype(psi.dtype) + psi
-    return term.sign * _unpack_cpml_slab(derivative, corrected, term.slab), psi
+    arithmetic_dtype = jnp.result_type(derivative.dtype, psi.dtype, jnp.float32)
+    derivative_slab = _pack_cpml_slab(derivative.astype(arithmetic_dtype), term.slab)
+    next_psi = (
+        term.b.astype(arithmetic_dtype) * psi.astype(arithmetic_dtype)
+        + term.a.astype(arithmetic_dtype) * derivative_slab
+    )
+    corrected = derivative_slab * term.inv_kappa.astype(arithmetic_dtype) + next_psi
+    return (
+        term.sign * _unpack_cpml_slab(derivative, corrected, term.slab),
+        next_psi.astype(psi.dtype),
+    )
 
 
 def fused_update_h_lossy_3d_material(

@@ -1,6 +1,6 @@
 {
-  "abi_version": 15,
-  "component_version": "0.15.0",
+  "abi_version": 18,
+  "component_version": "0.18.0",
   "targets": {
     "streamed": "beamz_cuda_streamed",
     "program": "beamz_cuda_program",
@@ -12,7 +12,14 @@
   ],
   "flags": {
     "graph_cache": 7,
-    "bf16_psi": 12
+    "bf16_psi": 12,
+    "field_pad32": 13,
+    "field_pad64": 14,
+    "field_pad_y8": 15,
+    "temporal_pair": 16,
+    "shell32x8": 17,
+    "shell32x4": 18,
+    "cpml_pair": 19
   },
   "default_flags": [
     "graph_cache"
