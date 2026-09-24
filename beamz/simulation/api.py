@@ -1216,8 +1216,9 @@ class Simulation:
         Returns
         -------
         CompiledProgram
-            Immutable numerical plan. The backend executable itself is JIT-compiled
-            lazily on first execution and cached outside the simulation value.
+            Immutable numerical plan. Executables are normally JIT-compiled lazily.
+            Eligible CUDA workloads select storage from domain geometry during
+            this call, without calibration runs.
 
         Examples
         --------
@@ -1229,6 +1230,12 @@ class Simulation:
         -----
         Calling :meth:`compile` is optional. :meth:`run`, :meth:`advance`, and
         :meth:`step` compile and reuse the appropriate plan automatically.
+        On RTX3090, large lossless CPML12 programs of at least 32 steps estimate
+        a storage layout from domain geometry, without executing timing trials.
+        Set ``BEAMZ_CUDA_AUTOTUNE=off`` to retain canonical storage, or
+        ``BEAMZ_CUDA_AUTOTUNE=calibrate`` to explicitly measure candidates and
+        cache the result. Explicit CUDA layout or kernel overrides take
+        precedence. Opt-in calibration probes at most 256 steps for long runs.
         """
         # Lower an immutable request and cache by every value that changes generated code or storage.
         return compile_program(

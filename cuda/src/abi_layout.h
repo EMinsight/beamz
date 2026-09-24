@@ -7,8 +7,8 @@
 
 namespace beamz::cuda::abi {
 
-inline constexpr int32_t kAbiVersion = 13;
-inline constexpr char kComponentVersion[] = "0.13.0";
+inline constexpr int32_t kAbiVersion = 19;
+inline constexpr char kComponentVersion[] = "0.19.0";
 inline constexpr char kStreamedTarget[] = "beamz_cuda_streamed";
 inline constexpr char kShardedTarget[] = "beamz_cuda_sharded";
 inline constexpr char kProgramTarget[] = "beamz_cuda_program";
@@ -16,7 +16,23 @@ inline constexpr char kHopperTarget[] = "beamz_cuda_hopper";
 
 inline constexpr int32_t kBeamzGraphCache = 1 << 7;
 inline constexpr int32_t kBeamzBf16Psi = 1 << 12;
+inline constexpr int32_t kBeamzFieldPad32 = 1 << 13;
+inline constexpr int32_t kBeamzFieldPad64 = 1 << 14;
+inline constexpr int32_t kBeamzFieldPadY8 = 1 << 15;
+inline constexpr int32_t kBeamzTemporalPair = 1 << 16;
+inline constexpr int32_t kBeamzShell32x8 = 1 << 17;
+inline constexpr int32_t kBeamzShell32x4 = 1 << 18;
+inline constexpr int32_t kBeamzCpmlPair = 1 << 19;
 inline constexpr int32_t kBeamzDefaultFlags = kBeamzGraphCache;
+
+inline constexpr int32_t kNativeScheduleCpml = 1 << 0;
+inline constexpr int32_t kNativeScheduleTemporal = 1 << 1;
+inline constexpr int32_t kNativeScheduleUniformCpml = 1 << 2;
+inline constexpr int32_t kNativeSchedulePackedMaterial = 1 << 3;
+inline constexpr int32_t kNativeScheduleCombinedCpmlCore = 1 << 4;
+inline constexpr int32_t kNativeScheduleSources = 1 << 5;
+inline constexpr int32_t kNativeScheduleMonitors = 1 << 6;
+inline constexpr int32_t kNativeScheduleGraphCache = 1 << 7;
 
 inline constexpr int32_t kProgramLayoutYeeInPlace = 0;
 inline constexpr int32_t kProgramLayoutYeeTemporal = 1;
@@ -33,7 +49,7 @@ inline constexpr size_t kSourceGroupBufferCount = 3;
 inline constexpr size_t kSourceGroupCoefficientsInput = 0;
 inline constexpr size_t kSourceGroupWaveformsInput = 1;
 inline constexpr size_t kSourceGroupStartsInput = 2;
-inline constexpr size_t kMonitorInputCount = 12;
+inline constexpr size_t kMonitorInputCount = 15;
 inline constexpr size_t kMonitorIndicesInput = 0;
 inline constexpr size_t kMonitorWeightsInput = 1;
 inline constexpr size_t kMonitorFrequenciesInput = 2;
@@ -44,8 +60,11 @@ inline constexpr size_t kMonitorWindowsInput = 6;
 inline constexpr size_t kMonitorDftReInput = 7;
 inline constexpr size_t kMonitorDftImInput = 8;
 inline constexpr size_t kMonitorDftWeightInput = 9;
-inline constexpr size_t kMonitorTimeInput = 10;
-inline constexpr size_t kMonitorCurrentStepInput = 11;
+inline constexpr size_t kMonitorPhaseSinInput = 10;
+inline constexpr size_t kMonitorPhaseCosInput = 11;
+inline constexpr size_t kMonitorPhaseWindowInput = 12;
+inline constexpr size_t kMonitorTimeInput = 13;
+inline constexpr size_t kMonitorCurrentStepInput = 14;
 inline constexpr size_t kYeeGraphInputCount = 24;
 inline constexpr size_t kYeeGraphOutputCount = 6;
 inline constexpr size_t kCpmlGraphInputCount = 74;

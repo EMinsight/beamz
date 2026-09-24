@@ -612,6 +612,28 @@ def build_scan(program, *, donate_state: bool = False):
         and (not program.monitors or packed_graph_monitors is not None)
         and (not program.sources or source_groups_supported)
     )
+    native_graph_calls = None
+    if cfg.cuda_storage_axes != (0, 1, 2):
+        if not (
+            cuda_multi_step
+            and cfg.is_3d
+            and cfg.metric_kind == "isotropic_uniform"
+            and boundary.cpml.enabled
+        ):
+            raise ValueError(
+                "CUDA storage-axis permutations require a 3D uniform-grid CPML "
+                "native graph with supported slab sources and DFT monitors"
+            )
+        from beamz.simulation.cuda import (
+            run_program_steps,
+            run_source_group_steps,
+            run_steps,
+        )
+        from beamz.simulation.cuda.storage import wrap_native_calls
+
+        native_graph_calls = wrap_native_calls(
+            run_steps, run_program_steps, run_source_group_steps, cfg.cuda_storage_axes
+        )
 
     def run_scan(
         state: SimulationState,
@@ -625,6 +647,11 @@ def build_scan(program, *, donate_state: bool = False):
                 run_source_group_steps,
                 run_steps,
             )
+
+            if native_graph_calls is not None:
+                run_steps, run_program_steps, run_source_group_steps = (
+                    native_graph_calls
+                )
 
             def advance_native_chunk(chunk_state, chunk_steps: int, elapsed_steps):
                 elapsed_steps = jnp.asarray(elapsed_steps, dtype=jnp.int32)
