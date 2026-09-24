@@ -33,7 +33,7 @@ physical domain or count inactive allocation cells as useful updates.
 The two-step path requires uniform CPML, scalar H coefficients, a nonempty deep
 interior, and no before-H source groups. Unsupported cases retain one-step
 execution. Padding also applies only to eligible temporal-CPML programs.
-Controls and eligibility are documented in [cuda/README.md](../../cuda/README.md).
+Controls and eligibility are documented in [cuda/README.md](https://github.com/beamzorg/beamz/blob/fa151d28/cuda/README.md).
 
 ## Controlled reference measurements
 

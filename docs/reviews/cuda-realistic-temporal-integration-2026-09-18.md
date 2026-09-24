@@ -38,9 +38,9 @@ No dispatch defaults were promoted, and nothing was pushed.
   The source-only path retains its prior arity. Scratch pointers and tile choices
   participate in native graph-cache keys.
 
-The source is in [temporal_pair.cuh](../../cuda/src/temporal_pair.cuh),
-[program.cu](../../cuda/src/program.cu), [io.cu](../../cuda/src/io.cu) and
-[runtime.py](../../beamz/simulation/cuda/runtime.py).
+The source is in [temporal_pair.cuh](https://github.com/beamzorg/beamz/blob/fa151d28/cuda/src/temporal_pair.cuh),
+[program.cu](https://github.com/beamzorg/beamz/blob/fa151d28/cuda/src/program.cu), [io.cu](https://github.com/beamzorg/beamz/blob/fa151d28/cuda/src/io.cu) and
+[runtime.py](https://github.com/beamzorg/beamz/blob/fa151d28/beamz/simulation/cuda/runtime.py).
 
 ## Measurements
 
@@ -246,7 +246,7 @@ BEAMZ_CUDA_TEMPORAL_STEPS=2 BEAMZ_CUDA_PAIR_TILE=16x8x16 <simulation command>
 
 The default remains `BEAMZ_CUDA_TEMPORAL_STEPS=1`. The paired schedules require
 uniform CPML, scalar H coefficients and no before-H source groups; unsupported
-programs retain the ordinary path. See [CUDA controls](../../cuda/README.md).
+programs retain the ordinary path. See [CUDA controls](https://github.com/beamzorg/beamz/blob/fa151d28/cuda/README.md).
 
 The next substantial temporal optimization must include CPML's auxiliary psi
 state and reduce the core/absorber coupling passes. Simply batching two existing

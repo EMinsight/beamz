@@ -131,3 +131,20 @@ All initial states, material coefficients, and source arrays must match exactly.
 [CPU and static-check logs](pr224-merge-2026-09-24/).
 [Pre-merge comparison records](rtx3090-2026-09-24-merge-before/).
 [Current-main comparison records](rtx3090-2026-09-24-merge-main/).
+
+## CI cleanup before merging
+
+The first GitHub run exposed three CI integration issues: the optional native
+module was imported statically in the tuning identity helper, hardware and unit
+tuning files shared an unqualified pytest module name, and eight review-document
+links pointed outside the MkDocs documentation tree. The helper now uses the
+same dynamic import mechanism as backend discovery; the hardware test file has
+a unique name; source links are pinned to the validated GitHub revision.
+
+After these changes, full test collection succeeds, all 22 tuning unit tests and
+six tuning hardware tests pass, and both executable documentation tests pass.
+Full Ruff, Pyright, Vulture, and the strict MkDocs build pass in an isolated
+environment with the CI dependencies installed. The seven GDSFactory type errors
+from the earlier GPU environment do not occur with those dependencies installed.
+These changes do not alter the CUDA kernels, default geometry selection, or
+notebook calculations measured above.

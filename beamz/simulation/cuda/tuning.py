@@ -8,6 +8,7 @@ private state; precision, physical shape and CPML stay unchanged in either mode.
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import operator
 import os
@@ -179,7 +180,7 @@ def choose_winner(samples, *, minimum_gain=0.03):
 
 @lru_cache(maxsize=1)
 def _implementation_identity():
-    import beamz._cuda as extension
+    extension = importlib.import_module("beamz._cuda")
 
     assert extension.__file__ is not None
     digest = hashlib.sha256(Path(extension.__file__).read_bytes())

@@ -14,5 +14,5 @@ solver and benchmark sources are versioned in the repository.
 
 FP32 remains the default. Consistent 9 GCUPS and complete CPML numerical parity
 with origin/main have not been established. H100 numbers discussed so far are
-estimates; the [RunPod setup](../../docker/runpod/H100.md) has not yet been tested
+estimates; the [RunPod setup](https://github.com/beamzorg/beamz/blob/fa151d28/docker/runpod/H100.md) has not yet been tested
 end to end on H100.
