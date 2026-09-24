@@ -5,6 +5,29 @@ use crate::{RasterError, Result, TriangleMesh};
 
 pub type Vec3 = [f64; 3];
 
+/// A plane containing a positive-area surface patch inside a raster support.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PlanarPatch {
+    pub point: Vec3,
+    pub normal: Vec3,
+    pub plane_points: [Vec3; 3],
+}
+
+impl PlanarPatch {
+    pub(crate) fn coplanar_with(&self, other: &Self) -> bool {
+        let coord = |p: Vec3| robust::Coord3D {
+            x: p[0],
+            y: p[1],
+            z: p[2],
+        };
+        let [a, b, c] = self.plane_points.map(coord);
+        other
+            .plane_points
+            .iter()
+            .all(|point| robust::orient3d(a, b, c, coord(*point)) == 0.0)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum InterfaceAssessment {
     Missing,
@@ -263,12 +286,42 @@ impl Polygon2 {
         {
             return 0.0;
         }
+        // Keep the analytic box path after material unions turn boxes into
+        // polygons. Overlay quantization on an already rectangular clipping
+        // problem can otherwise perturb aligned, mirror-symmetric Yee slices.
+        let rectangular = self.holes.is_empty()
+            && (0..self.exterior.len()).all(|i| {
+                let a = self.exterior[i];
+                let b = self.exterior[(i + 1) % self.exterior.len()];
+                (0..2).any(|axis| {
+                    a[axis] == b[axis] && (a[axis] == minimum[axis] || a[axis] == maximum[axis])
+                })
+            });
+        if rectangular {
+            return (rect.max[0].min(maximum[0]) - rect.min[0].max(minimum[0]))
+                * (rect.max[1].min(maximum[1]) - rect.min[1].max(minimum[1]));
+        }
         if rect.min[0] <= minimum[0]
             && rect.max[0] >= maximum[0]
             && rect.min[1] <= minimum[1]
             && rect.max[1] >= maximum[1]
         {
             return self.area();
+        }
+        let crosses_boundary = std::iter::once(&self.exterior)
+            .chain(self.holes.iter())
+            .any(|ring| {
+                (0..ring.len()).any(|i| {
+                    clipped_segment_length(ring[i], ring[(i + 1) % ring.len()], rect).is_some()
+                })
+            });
+        if !crosses_boundary {
+            let center = rect.center();
+            return if self.contains_half_open([center[0], center[1]]) {
+                (rect.max[0] - rect.min[0]) * (rect.max[1] - rect.min[1])
+            } else {
+                0.0
+            };
         }
         let polygon = self.to_geo();
         let clip = Rect::new(
@@ -329,7 +382,7 @@ impl Polygon2 {
             })
     }
 
-    fn to_geo(&self) -> GeoPolygon<f64> {
+    pub(crate) fn to_geo(&self) -> GeoPolygon<f64> {
         fn line(ring: &[[f64; 2]]) -> LineString<f64> {
             let mut coords: Vec<Coord<f64>> =
                 ring.iter().map(|p| Coord { x: p[0], y: p[1] }).collect();
@@ -569,10 +622,8 @@ impl Geometry {
                 .max(0.0);
                 Some(extrusion.polygon.intersection_area(volume) * z_overlap)
             }
-            Self::Sphere { .. }
-            | Self::Cylinder { .. }
-            | Self::TaperedExtrudedPolygon(_)
-            | Self::TriangleMesh(_) => None,
+            Self::TriangleMesh(mesh) => mesh.exact_overlap_volume(volume),
+            Self::Sphere { .. } | Self::Cylinder { .. } | Self::TaperedExtrudedPolygon(_) => None,
         }
     }
 
@@ -630,6 +681,77 @@ impl Geometry {
             }
             Self::TriangleMesh(mesh) => mesh.surface_may_intersect(volume),
         }
+    }
+
+    pub(crate) fn planar_patches(&self, volume: &Aabb) -> Option<Vec<PlanarPatch>> {
+        if !self.surface_may_intersect(volume) {
+            return Some(Vec::new());
+        }
+        let mut patches = Vec::new();
+        match self {
+            Self::Box { bounds } => {
+                for axis in 0..3 {
+                    for coordinate in [bounds.min[axis], bounds.max[axis]] {
+                        if coordinate > volume.min[axis] && coordinate < volume.max[axis] {
+                            let mut point = volume.min;
+                            point[axis] = coordinate;
+                            let mut normal = [0.0; 3];
+                            normal[axis] = 1.0;
+                            let mut b = point;
+                            let mut c = point;
+                            b[(axis + 1) % 3] = volume.max[(axis + 1) % 3];
+                            c[(axis + 2) % 3] = volume.max[(axis + 2) % 3];
+                            patches.push(PlanarPatch {
+                                point,
+                                normal,
+                                plane_points: [point, b, c],
+                            });
+                        }
+                    }
+                }
+            }
+            Self::ExtrudedPolygon(extrusion) => {
+                if extrusion.polygon.intersection_area(volume) > 0.0 {
+                    for z in [extrusion.z_min, extrusion.z_max] {
+                        if z > volume.min[2] && z < volume.max[2] {
+                            patches.push(PlanarPatch {
+                                point: [volume.min[0], volume.min[1], z],
+                                normal: [0.0, 0.0, 1.0],
+                                plane_points: [
+                                    [volume.min[0], volume.min[1], z],
+                                    [volume.max[0], volume.min[1], z],
+                                    [volume.min[0], volume.max[1], z],
+                                ],
+                            });
+                        }
+                    }
+                }
+                for ring in
+                    std::iter::once(&extrusion.polygon.exterior).chain(&extrusion.polygon.holes)
+                {
+                    for index in 0..ring.len() {
+                        let a = ring[index];
+                        let b = ring[(index + 1) % ring.len()];
+                        if clipped_segment_length(a, b, volume).is_some() {
+                            patches.push(PlanarPatch {
+                                point: [a[0], a[1], volume.min[2]],
+                                normal: [b[1] - a[1], a[0] - b[0], 0.0],
+                                plane_points: [
+                                    [a[0], a[1], volume.min[2]],
+                                    [b[0], b[1], volume.min[2]],
+                                    [a[0], a[1], volume.max[2]],
+                                ],
+                            });
+                        }
+                    }
+                }
+            }
+            Self::TriangleMesh(mesh) => return Some(mesh.planar_patches(volume)),
+            // Curved or tapered geometry retains the adaptive path. Its
+            // averaged interface normal cannot certify an exact partition.
+            _ => return None,
+        }
+        Some(patches)
     }
 
     pub(crate) fn interface_evidence(
@@ -742,7 +864,7 @@ fn add_box_evidence(evidence: &mut InterfaceEvidence, bounds: &Aabb, volume: &Aa
             continue;
         }
         for (coordinate, sign) in [(bounds.min[axis], -1.0), (bounds.max[axis], 1.0)] {
-            if coordinate > volume.min[axis] && coordinate < volume.max[axis] {
+            if strictly_inside(coordinate, volume.min[axis], volume.max[axis]) {
                 let mut normal = [0.0; 3];
                 normal[axis] = sign;
                 evidence.add(normal, weight);
@@ -761,12 +883,24 @@ fn add_extrusion_evidence(
     volume: &Aabb,
 ) {
     let cap_area = polygon.intersection_area(volume);
-    if z_min > volume.min[2] && z_min < volume.max[2] {
+    if strictly_inside(z_min, volume.min[2], volume.max[2]) {
         evidence.add([0.0, 0.0, -1.0], cap_area);
     }
-    if z_max > volume.min[2] && z_max < volume.max[2] {
+    if strictly_inside(z_max, volume.min[2], volume.max[2]) {
         evidence.add([0.0, 0.0, 1.0], cap_area);
     }
+    add_extrusion_side_evidence(evidence, polygon, z_min, z_max, slope, padding, volume);
+}
+
+pub(crate) fn add_extrusion_side_evidence(
+    evidence: &mut InterfaceEvidence,
+    polygon: &Polygon2,
+    z_min: f64,
+    z_max: f64,
+    slope: f64,
+    padding: f64,
+    volume: &Aabb,
+) {
     let z_overlap = (z_max.min(volume.max[2]) - z_min.max(volume.min[2])).max(0.0);
     if z_overlap <= 0.0 {
         return;
@@ -796,7 +930,26 @@ fn add_extrusion_evidence(
     }
 }
 
+pub(crate) fn strictly_inside(value: f64, minimum: f64, maximum: f64) -> bool {
+    let tolerance = 64.0 * f64::EPSILON * value.abs().max(minimum.abs()).max(maximum.abs());
+    value > minimum + tolerance && value < maximum - tolerance
+}
+
 fn clipped_segment_length(a: [f64; 2], b: [f64; 2], rect: &Aabb) -> Option<f64> {
+    // A sidewall on a support boundary does not divide its interior. Match
+    // the strict face test used for boxes and extrusion caps.
+    if (0..2).any(|axis| {
+        a[axis].max(b[axis]) <= rect.min[axis] || a[axis].min(b[axis]) >= rect.max[axis]
+    }) {
+        return None;
+    }
+    let tolerance = 64.0
+        * f64::EPSILON
+        * a.iter()
+            .chain(b.iter())
+            .chain(rect.min[..2].iter())
+            .chain(rect.max[..2].iter())
+            .fold(0.0_f64, |scale, value| scale.max(value.abs()));
     let delta = [b[0] - a[0], b[1] - a[1]];
     let mut low: f64 = 0.0;
     let mut high: f64 = 1.0;
@@ -807,7 +960,7 @@ fn clipped_segment_length(a: [f64; 2], b: [f64; 2], rect: &Aabb) -> Option<f64> 
         (delta[1], rect.max[1] - a[1]),
     ] {
         if p == 0.0 {
-            if q < 0.0 {
+            if q <= tolerance {
                 return None;
             }
             continue;
@@ -822,7 +975,8 @@ fn clipped_segment_length(a: [f64; 2], b: [f64; 2], rect: &Aabb) -> Option<f64> 
             return None;
         }
     }
-    Some((high - low) * (delta[0] * delta[0] + delta[1] * delta[1]).sqrt())
+    let length = (high - low) * (delta[0] * delta[0] + delta[1] * delta[1]).sqrt();
+    (length > tolerance).then_some(length)
 }
 
 fn hypot2(value: [f64; 2]) -> f64 {
@@ -919,11 +1073,8 @@ fn normalize_ring(mut ring: Vec<[f64; 2]>, ccw: bool, name: &str) -> Result<Vec<
                 let b = ring[i];
                 let c = ring[(i + 1) % ring.len()];
                 let cross = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
-                let scale = (b[0] - a[0]).abs()
-                    + (b[1] - a[1]).abs()
-                    + (c[0] - b[0]).abs()
-                    + (c[1] - b[1]).abs();
-                if cross.abs() <= f64::EPSILON * scale.max(1.0) {
+                let scale = (b[0] - a[0]).hypot(b[1] - a[1]) * (c[0] - b[0]).hypot(c[1] - b[1]);
+                if cross.abs() <= f64::EPSILON * scale {
                     ring.remove(i);
                     changed = true;
                     break;
@@ -955,11 +1106,12 @@ fn normalize_ring(mut ring: Vec<[f64; 2]>, ccw: bool, name: &str) -> Result<Vec<
 }
 
 fn signed_area(ring: &[[f64; 2]]) -> f64 {
+    let origin = ring[0];
     0.5 * (0..ring.len())
         .map(|i| {
             let a = ring[i];
             let b = ring[(i + 1) % ring.len()];
-            a[0] * b[1] - b[0] * a[1]
+            (a[0] - origin[0]) * (b[1] - origin[1]) - (b[0] - origin[0]) * (a[1] - origin[1])
         })
         .sum::<f64>()
 }
@@ -1027,6 +1179,36 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
+
+    #[test]
+    fn coplanarity_is_exact_even_for_nearby_interfaces() {
+        for scale in [1e-9, 1.0, 1e6] {
+            let a = [0.0, 0.0, 0.12922938711858142 * scale];
+            let b = [0.38 * scale, a[1], a[2]];
+            let c = [
+                0.0,
+                0.10917430392031627 * scale,
+                0.16249274769930494 * scale,
+            ];
+            let d = [b[0], c[1], c[2]];
+            let first = PlanarPatch {
+                point: a,
+                normal: [0.0, -0.3, 1.0],
+                plane_points: [a, b, c],
+            };
+            let mut second = PlanarPatch {
+                point: d,
+                normal: [0.0, 0.3, -1.0],
+                plane_points: [d, c, b],
+            };
+            assert!(first.coplanar_with(&second));
+            assert!(second.coplanar_with(&first));
+            // Moving just one coordinate by one representable step makes a
+            // distinct plane. No distance/angle tolerance may merge it back.
+            second.plane_points[0][2] = f64::from_bits(d[2].to_bits() + 1);
+            assert!(!first.coplanar_with(&second));
+        }
+    }
 
     #[test]
     fn normalizes_winding_and_removes_collinear_points() {
