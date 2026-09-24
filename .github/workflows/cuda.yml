@@ -107,7 +107,7 @@ jobs:
         run: |
           uv sync --python 3.11 --extra test --no-install-project
           uv pip install --python .venv/bin/python "jax[cuda12]>=0.4.31"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: beamz-private-cuda-component
           path: ${{ runner.temp }}/cuda-dist
