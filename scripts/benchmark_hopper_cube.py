@@ -25,6 +25,10 @@ def main():
     p.add_argument("--steps", type=int, default=256)
     p.add_argument("--samples", type=int, default=7)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--expected-device", default="H100")
+    p.add_argument(
+        "--state-output", type=Path, help="Save final leaves for small parity cases"
+    )
     a = p.parse_args()
     if a.side <= 24 or a.samples < 3 or a.steps < 1:
         p.error("Need nonempty interior, >=3 samples and positive steps")
@@ -50,7 +54,7 @@ def main():
     from scripts.benchmark_cuda_realistic import build_simulation
 
     device = jax.devices()[0]
-    assert len(jax.devices()) == 1 and "H100" in device.device_kind
+    assert len(jax.devices()) == 1 and a.expected_device in device.device_kind
     data = dict(
         side=a.side,
         shape=[a.side] * 3,
@@ -191,15 +195,33 @@ def main():
         if i == 2 + a.samples:
             finite = True
             max_abs_fields = {}
-            # Transfer one leaf at a time, outside timing, avoiding a second full state.
-            for leaf in jax.tree.leaves(result):
-                host = np.asarray(leaf)
-                finite = finite and bool(np.isfinite(host).all())
-                del host
+            saved_leaves = {}
+
+            def host_chunks(leaf):
+                # np.asarray(leaf) caches a host copy on the JAX array itself.
+                # Slice large leaves so validation cannot retain a second full
+                # state in host RAM even after the local NumPy reference dies.
+                if not leaf.ndim or a.state_output:
+                    yield np.asarray(leaf)
+                    return
+                plane_bytes = max(1, int(np.prod(leaf.shape[1:])) * leaf.dtype.itemsize)
+                stride = max(1, (4 << 20) // plane_bytes)
+                for start in range(0, leaf.shape[0], stride):
+                    yield np.asarray(leaf[start : start + stride])
+
+            for leaf_index, leaf in enumerate(jax.tree.leaves(result)):
+                for host in host_chunks(leaf):
+                    finite = finite and bool(np.isfinite(host).all())
+                    if a.state_output:
+                        saved_leaves[f"leaf_{leaf_index}"] = host
+                    del host
+            if a.state_output:
+                np.savez_compressed(a.state_output, **saved_leaves)
             for name in ("ex", "ey", "ez", "hx", "hy", "hz"):
-                host = np.asarray(getattr(result, name))
-                max_abs_fields[name] = float(np.max(np.abs(host)))
-                del host
+                max_abs_fields[name] = max(
+                    float(np.max(np.abs(host)))
+                    for host in host_chunks(getattr(result, name))
+                )
             data["finite_complete_state"] = finite
             data["max_abs_fields"] = max_abs_fields
             data["final_step"] = int(result.current_step)
