@@ -62,3 +62,5 @@ backend policy, hardware, device count, shape, or timestep count are deliberatel
 not comparable.
 See `H100.md` for measurement protocol and the pre-harness observations that
 motivate the CUDA work.
+
+For the realistic cosine-crossing resolution sweep, see [COSINE_H100.md](COSINE_H100.md).
