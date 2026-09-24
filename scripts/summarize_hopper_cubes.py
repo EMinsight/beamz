@@ -108,7 +108,7 @@ def main():
     if not rows:
         return
     with (a.directory / "summary.csv").open("w") as f:
-        w = csv.DictWriter(f, fieldnames=rows[0].keys())
+        w = csv.DictWriter(f, fieldnames=rows[0].keys(), lineterminator="\n")
         w.writeheader()
         w.writerows(rows)
     for r in rows:
