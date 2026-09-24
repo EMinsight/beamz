@@ -76,7 +76,7 @@ jobs:
           enable-cache: true
       - run: uv python install 3.11
       - name: Install test dependencies
-        run: uv sync --python 3.11 --extra test --extra gds
+        run: uv sync --python 3.11 --extra test --extra gds --extra mesh
       - name: Run PR evidence suite with branch coverage
         run: >-
           uv run --no-active --python 3.11 python -m pytest tests/
