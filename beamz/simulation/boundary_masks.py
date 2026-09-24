@@ -38,7 +38,7 @@ def compact_mask(mask):
         return mask
     profiles = tuple(profile for profile in profiles if np.any(profile))
     for profile in profiles:
-        profile.flags.writeable = False
+        profile.setflags(write=False)
     return AxisMask(profiles)
 
 
