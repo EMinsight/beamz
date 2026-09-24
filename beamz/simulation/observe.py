@@ -359,9 +359,14 @@ def monitor_dft_sample_scale(
 
 def _sample_components(fields, indices, weights):
     """Apply one canonical weighted-gather plan to Ex, Ey, Ez, Hx, Hy, and Hz."""
+    # Retain the spatial axes so SPMD can gather sparse samples locally. Flattening
+    # a sharded field can instead all-gather the complete volume on every device.
     return jnp.stack(
         tuple(
-            jnp.sum(field.reshape(-1)[flat_idx] * component_weights, axis=-1)
+            jnp.sum(
+                field[jnp.unravel_index(flat_idx, field.shape)] * component_weights,
+                axis=-1,
+            )
             for field, flat_idx, component_weights in zip(
                 fields, indices, weights, strict=True
             )
