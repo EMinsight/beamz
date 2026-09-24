@@ -13,6 +13,7 @@ from beamz.lattice import (
     adjacent_difference as _adjacent_difference,
 )
 from beamz.lattice import build_h_boundary_views_for_e_3d, component_axis_offsets_3d
+from beamz.simulation.boundary_masks import AxisMask
 from beamz.simulation.model import (
     BoundaryPlan,
     CpmlPackedSlabSpec,
@@ -154,6 +155,11 @@ def advance_e_from_coefficients(field, curl, decay, source):
 
 def apply_zero_mask(field, mask):
     """Apply a compiled PEC mask without changing the field representation."""
+    if isinstance(mask, AxisMask):
+        combined = jnp.asarray(False)
+        for profile in mask.profiles:
+            combined = combined | jnp.asarray(profile)
+        return jnp.where(combined, 0.0, field)
     return field if mask is None else jnp.where(mask, 0.0, field)
 
 
