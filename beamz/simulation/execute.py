@@ -27,6 +27,7 @@ from beamz.devices.sources.compiler import (
     batch_slab_specs,
 )
 from beamz.simulation.backend import CUDA_BF16_PSI
+from beamz.simulation.boundary_masks import compact_boundary_masks
 from beamz.simulation.model import (
     AutoTermination,
     CompiledProgram,
@@ -575,6 +576,8 @@ def build_scan(program, *, donate_state: bool = False):
 
     cfg = program.config
     boundary = program.boundary
+    if cfg.backend == "jax":
+        boundary = compact_boundary_masks(boundary)
     resolution = float(cfg.resolution)
     dt = float(cfg.dt)
     dt_scalar = jnp.asarray(dt, dtype=jnp.float32)
