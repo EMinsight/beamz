@@ -419,9 +419,27 @@ def _apply_batched_slabs(
             )
             dense_coeff = jnp.pad(group.coeffs[0], pad_width)
             return arr + (dense_coeff * amp).astype(arr.dtype)
-        patch = (group.coeffs[0] * amp).astype(arr.dtype)
-        cur = jax.lax.dynamic_slice(arr, starts_0, group.max_sizes)
-        return jax.lax.dynamic_update_slice(arr, cur + patch, starts_0)
+    if group.n <= 2:
+        # Static scatter-add keeps a small source plane local to its field shard.
+        # A dynamic read/modify/write can gather the entire distributed field.
+        out = arr
+        for index, starts in enumerate(group.starts_tuple):
+            clamped_starts = tuple(
+                min(
+                    max(start if start >= 0 else start + int(arr.shape[axis]), 0),
+                    int(arr.shape[axis]) - group.max_sizes[axis],
+                )
+                for axis, start in enumerate(starts)
+            )
+            region = tuple(
+                slice(start, start + size)
+                for start, size in zip(clamped_starts, group.max_sizes, strict=True)
+            )
+            patch = (group.coeffs[index] * group.waveforms[index, safe_idx]).astype(
+                out.dtype
+            )
+            out = out.at[region].add(patch)
+        return out
 
     def body(i, out):
         # Carry prior additions so overlapping slabs accumulate rather than overwrite.
