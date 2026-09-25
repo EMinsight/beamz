@@ -21,6 +21,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--expected-device", help="Require this substring in the JAX GPU name"
+    )
     args = parser.parse_args()
     root = args.root.resolve()
     output = args.output.resolve()
@@ -39,8 +42,13 @@ def main():
         nbformat.v4.new_code_cell(
             """
 import json
+import hashlib
+import jax
 import beamz._cuda as extension
 assert not test_mode
+assert any(device.platform == "gpu" for device in jax.devices())
+if EXPECTED_DEVICE:
+    assert EXPECTED_DEVICE in jax.devices()[0].device_kind
 assert Path(bz.__file__).resolve().parent.parent == Path(ROOT)
 assert Path(extension.__file__).resolve().parent.parent == Path(ROOT)
 arrays = {}
@@ -53,6 +61,16 @@ for label, data in (
     arrays[label + "_amps"] = np.asarray(raw.mode("mode").amps)
     arrays[label + "_mode_flux"] = np.asarray(raw.mode("mode").flux)
     arrays[label + "_ey"] = np.asarray(raw["field"].dft_fields["Ey"])
+    arrays[label + "_normalized_flux"] = np.asarray(data["flux"].flux)
+    arrays[label + "_normalized_amps"] = np.asarray(data.mode("mode").amps)
+    arrays[label + "_normalized_ey"] = np.asarray(data["field"].dft_fields["Ey"])
+for name in (
+    "flux_single", "flux_single_pulse", "mode_power_f_single", "mode_power_b_single",
+    "mode_power_f_single_pulse", "flux_bb", "mode_power_f_bb", "mode_power_b_bb",
+    "net_guided_single", "unresolved_single", "net_guided_bb", "unresolved_bb",
+):
+    arrays["plotted_" + name] = np.asarray(globals()[name])
+arrays["plotted_junction_mode_power"] = np.abs(amps_jct_bb.values) ** 2
 arrays["neffs"] = np.asarray(modes.neffs)
 arrays["profile_freqs"] = np.asarray(profile_freqs)
 arrays["freqs"] = np.asarray(freqs)
@@ -64,11 +82,17 @@ metadata = {
     "grid_shape": list(sim0.grid.shape), "steps": sim0.num_steps,
     "nfreqs": nfreqs, "broadband_profiles": broadband_profile_count,
     "extension_version": extension.__version__,
+    "extension_sha256": hashlib.sha256(Path(extension.__file__).read_bytes()).hexdigest(),
+    "jax_version": jax.__version__, "python": sys.executable,
+    "devices": [device.device_kind for device in jax.devices()],
+    "metric_kind": sim0.grid.metric_kind,
     "arrays": {name: list(value.shape) for name, value in arrays.items()},
 }
 (Path(OUTPUT) / "results.json").write_text(json.dumps(metadata, indent=2))
 print(metadata)
-""".replace("ROOT", repr(str(root))).replace("OUTPUT", repr(str(output)))
+""".replace("ROOT", repr(str(root)))
+            .replace("OUTPUT", repr(str(output)))
+            .replace("EXPECTED_DEVICE", repr(args.expected_device))
         )
     )
     start = time.monotonic()

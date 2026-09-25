@@ -1,0 +1,405 @@
+{
+  "arrays": 37,
+  "exact_arrays": 37,
+  "within_tolerance": true,
+  "figures_baseline": 10,
+  "figures_current": 10,
+  "figures_identical": true,
+  "comparisons": [
+    {
+      "name": "single_flux",
+      "shape": [
+        17
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "single_amps",
+      "shape": [
+        17,
+        2,
+        3
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "single_mode_flux",
+      "shape": [
+        17
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "single_ey",
+      "shape": [
+        1,
+        13860
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "single_normalized_flux",
+      "shape": [
+        17
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "single_normalized_amps",
+      "shape": [
+        17,
+        2,
+        3
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "single_normalized_ey",
+      "shape": [
+        1,
+        13860
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "broadband_flux",
+      "shape": [
+        17
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "broadband_amps",
+      "shape": [
+        17,
+        2,
+        3
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "broadband_mode_flux",
+      "shape": [
+        17
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "broadband_ey",
+      "shape": [
+        1,
+        13860
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "broadband_normalized_flux",
+      "shape": [
+        17
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "broadband_normalized_amps",
+      "shape": [
+        17,
+        2,
+        3
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "broadband_normalized_ey",
+      "shape": [
+        1,
+        13860
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "junction_flux",
+      "shape": [
+        17
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "junction_amps",
+      "shape": [
+        17,
+        2,
+        3
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "junction_mode_flux",
+      "shape": [
+        17
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "junction_ey",
+      "shape": [
+        1,
+        16020
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "junction_normalized_flux",
+      "shape": [
+        17
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "junction_normalized_amps",
+      "shape": [
+        17,
+        2,
+        3
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "junction_normalized_ey",
+      "shape": [
+        1,
+        16020
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "plotted_flux_single",
+      "shape": [
+        17
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "plotted_flux_single_pulse",
+      "shape": [
+        17
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "plotted_mode_power_f_single",
+      "shape": [
+        17,
+        3
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "plotted_mode_power_b_single",
+      "shape": [
+        17,
+        3
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "plotted_mode_power_f_single_pulse",
+      "shape": [
+        17,
+        3
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "plotted_flux_bb",
+      "shape": [
+        17
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "plotted_mode_power_f_bb",
+      "shape": [
+        17,
+        3
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "plotted_mode_power_b_bb",
+      "shape": [
+        17,
+        3
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "plotted_net_guided_single",
+      "shape": [
+        17
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "plotted_unresolved_single",
+      "shape": [
+        17
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "plotted_net_guided_bb",
+      "shape": [
+        17
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "plotted_unresolved_bb",
+      "shape": [
+        17
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "plotted_junction_mode_power",
+      "shape": [
+        17,
+        3
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "neffs",
+      "shape": [
+        1,
+        3
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "profile_freqs",
+      "shape": [
+        7
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    },
+    {
+      "name": "freqs",
+      "shape": [
+        17
+      ],
+      "exact": true,
+      "max_abs_error": 0.0,
+      "max_error_relative_to_peak": 0.0,
+      "within_tolerance": true
+    }
+  ]
+}
