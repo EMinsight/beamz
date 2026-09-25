@@ -84,7 +84,7 @@ def _require_k_axis(field_profile: FieldProfile3D) -> float:
 
 def _field_arrays_like(fields, *, dtype) -> dict[str, np.ndarray]:
     return {
-        component: np.zeros_like(np.asarray(getattr(fields, component)), dtype=dtype)
+        component: np.zeros(getattr(fields, component).shape, dtype=dtype)
         for component in _FIELD_COMPONENTS_3D
     }
 
@@ -463,9 +463,9 @@ def local_3d_phasor_context(
         slices: tuple[slice, slice, slice],
     ) -> np.ndarray:
         value = getattr(fields, attr)
-        arr = np.asarray(value)
         local_shape = tuple(int(s.stop or 0) - int(s.start or 0) for s in slices)
-        if arr.ndim == 0:
+        if np.ndim(value) == 0:
+            arr = np.asarray(value)
             return np.full(local_shape, arr.item(), dtype=arr.dtype)
         return np.asarray(value[slices])
 

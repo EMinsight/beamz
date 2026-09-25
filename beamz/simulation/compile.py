@@ -148,6 +148,9 @@ def _elide_uniform_grid(value):
     return value
 
 
+_CUDA_CODEBOOK_CHUNK_CELLS = 1 << 20
+
+
 def _pack_cuda_coefficient_ids(value, *, max_values: int = 256):
     """Pack four low-cardinality FP32 coefficient IDs into each int32 word.
 
@@ -160,20 +163,28 @@ def _pack_cuda_coefficient_ids(value, *, max_values: int = 256):
     array = np.asarray(value, dtype=np.float32)
     if array.ndim != 3 or array.size == 0:
         return None
-    table, ids = np.unique(array, return_inverse=True)
-    if table.size > max_values:
-        return None
-    flat_ids = ids.astype(np.uint32, copy=False).ravel()
-    padded_size = (flat_ids.size + 3) & ~3
-    padded = np.zeros(padded_size, dtype=np.uint32)
-    padded[: flat_ids.size] = flat_ids
-    packed = (
-        padded[0::4]
-        | (padded[1::4] << np.uint32(8))
-        | (padded[2::4] << np.uint32(16))
-        | (padded[3::4] << np.uint32(24))
-    ).view(np.int32)
-    return jnp.asarray(table, dtype=jnp.float32), jnp.asarray(packed)
+    # Discover the small sorted table without full-volume int64 inverse/sort
+    # arrays. A second bounded pass writes directly into the final packed buffer.
+    # This is setup-only chunking; the time-stepping executable is unchanged.
+    flat = array.ravel()
+    chunk = _CUDA_CODEBOOK_CHUNK_CELLS  # A multiple of four packed IDs.
+    table = np.empty(0, dtype=np.float32)
+    for start in range(0, flat.size, chunk):
+        table = np.union1d(table, np.unique(flat[start : start + chunk]))
+        if table.size > min(max_values, 256):
+            return None
+    packed = np.empty((flat.size + 3) // 4, dtype=np.uint32)
+    for start in range(0, flat.size, chunk):
+        block = flat[start : start + chunk]
+        ids = np.zeros((block.size + 3) & ~3, dtype=np.uint32)
+        ids[: block.size] = np.searchsorted(table, block)
+        packed[start // 4 : (start + block.size + 3) // 4] = (
+            ids[0::4]
+            | (ids[1::4] << np.uint32(8))
+            | (ids[2::4] << np.uint32(16))
+            | (ids[3::4] << np.uint32(24))
+        )
+    return jnp.asarray(table, dtype=jnp.float32), jnp.asarray(packed.view(np.int32))
 
 
 def _pack_cuda_lossless_e_coefficients(decays, sources):

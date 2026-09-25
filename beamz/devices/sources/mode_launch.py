@@ -837,9 +837,7 @@ def _reconstructed_3d_launch_phasor_state(
 
 def _expand_3d_residuals(residuals, fields, components):
     expanded = {
-        component: np.zeros_like(
-            np.asarray(getattr(fields, component)), dtype=np.complex128
-        )
+        component: np.zeros(getattr(fields, component).shape, dtype=np.complex128)
         for component in components
     }
     for residual in residuals:
@@ -865,25 +863,58 @@ def _launch_power_diagnostics_3d(
     launched_power = None
     if dt is not None and float(dt) > 0.0 and residuals:
         try:
+            # The launch is local: one Yee update and a plane quadrature do not
+            # need complex fields spanning the simulation volume. Reuse the
+            # residual compiler's stagger-aware crop (including its halo).
+            context = planar_tfsf.local_3d_phasor_context(
+                field_profile, fields, resolution=float(resolution), max_shift=12
+            )
+            diagnostic_source = source
+            diagnostic_profile = field_profile
+            diagnostic_fields = fields
+            diagnostic_residuals = residuals
+            if context is not None:
+                diagnostic_profile, diagnostic_fields, slices = context
+                diagnostic_residuals = tuple(
+                    replace(
+                        residual,
+                        index=planar_tfsf.shift_3d_component_index_to_local(
+                            residual.index,
+                            slices[residual.component],
+                            getattr(fields, residual.component).shape,
+                        ),
+                    )
+                    for residual in residuals
+                )
+                origin = tuple(int(s.start or 0) for s in slices["Ex"])
+                diagnostic_source = replace(
+                    source,
+                    center=tuple(
+                        float(coord) - offset * float(resolution)
+                        for coord, offset in zip(
+                            source.center, reversed(origin), strict=True
+                        )
+                    ),
+                )
             state = _reconstructed_3d_launch_phasor_state(
-                field_profile,
-                residuals,
-                fields,
+                diagnostic_profile,
+                diagnostic_residuals,
+                diagnostic_fields,
                 resolution=float(resolution),
                 dt=float(dt),
             )
             profiles = planar_tfsf.deembed_3d_phasor_profiles(
-                field_profile,
+                diagnostic_profile,
                 state,
-                fields,
+                diagnostic_fields,
                 resolution=float(resolution),
                 t_e=float(dt),
                 t_h=0.5 * float(dt),
             )
             launched_power = _yee_plane_power_3d(
-                source,
-                replace(field_profile, components=profiles),
-                fields,
+                diagnostic_source,
+                replace(diagnostic_profile, components=profiles),
+                diagnostic_fields,
                 resolution=float(resolution),
             )
         except Exception:

@@ -207,24 +207,36 @@ def run_cpu_contract():
                 "hx",
                 "hy",
                 "hz",
-                "dft_vec_re",
-                "dft_vec_im",
+                "dft_vec",
                 "dft_weight_sum",
             ):
-                expected = np.asarray(getattr(reference.state, name))
-                # DFT sums can nearly cancel. Use a sub-ppm absolute floor
-                # relative to each leaf's dynamic range, as in CUDA parity tests.
+                if name == "dft_vec":
+                    # Real/imaginary sums can cancel independently. Compare the
+                    # complex signal so its error budget does not depend on phase.
+                    # JAX 0.6.2 on AVX2 differs from the portable host kernel by
+                    # ~4e-9 here, below 1 ppm of the complex signal's peak.
+                    expected, actual, resumed = (
+                        np.asarray(result.state.dft_vec_re)
+                        + 1j * np.asarray(result.state.dft_vec_im)
+                        for result in (reference, got, continued)
+                    )
+                else:
+                    expected, actual, resumed = (
+                        np.asarray(getattr(result.state, name))
+                        for result in (reference, got, continued)
+                    )
+                # Use a one-ppm absolute floor relative to the signal's range.
                 atol = max(1e-12, 1e-6 * float(np.max(np.abs(expected), initial=0)))
                 np.testing.assert_allclose(
-                    getattr(got.state, name),
+                    actual,
                     expected,
                     rtol=3e-5,
                     atol=atol,
                     err_msg=name,
                 )
                 np.testing.assert_allclose(
-                    getattr(continued.state, name),
-                    getattr(got.state, name),
+                    resumed,
+                    actual,
                     rtol=3e-5,
                     atol=atol,
                     err_msg=name,
