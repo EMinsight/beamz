@@ -92,8 +92,6 @@ that continuation; `initial-pod-notes.json` identifies the earlier missing artif
 | cuda_async | 740³ | 405.2 | 74.93 | 94.1% | 26.377 | 25.892–26.739 |
 | cuda_async | 748³ | 418.5 | 77.39 | 97.2% | 26.692 | 26.162–26.763 |
 
-![H100 cube size sweep](hopper-cubes/gcups-vs-memory.png)
-
 **Larger cubes did not reach 30 GCUPS.** The best completed result is 27.317 GCUPS at 720³ with BFC. The largest tested cube, 748³ (418.5 million cells), reaches 97.2% peak live allocation and 26.692 GCUPS with `cuda_async`. The default-allocator 512³→720³ increase is about 8%; the `cuda_async` 720³→748³ results are essentially flat. These are observations for this configuration, not a global kernel optimum.
 
 **The 97.2% figure is a preparation peak, not 97.2% active runtime occupancy.** At 748³, peak live allocation is 77.39 GiB, while the largest NVML reading inside timed samples is 39.85 GiB (about 50% of the device). BFC retains its pool and therefore shows about 99% reservation during timing even though much of it is reusable space. This experiment does not cover a 50–100% active-runtime-memory sweep: normal preparation approaches device capacity first. Reducing its full-volume temporaries is needed to test that larger runtime range.

@@ -63,4 +63,8 @@ not comparable.
 See `H100.md` for measurement protocol and the pre-harness observations that
 motivate the CUDA work.
 
-For the realistic cosine-crossing resolution sweep, see [COSINE_H100.md](COSINE_H100.md).
+For the realistic cosine-crossing resolution sweep, see [the cosine-crossing report](../../benchmarks/reports/COSINE_H100.md).
+
+Historical GPU experiment reports and compact result tables live in
+[`benchmarks/reports/`](../../benchmarks/reports/README.md); generated run artifacts
+belong in the ignored `benchmarks/results/` directory.

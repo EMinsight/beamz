@@ -38,8 +38,8 @@ state parity recorded in [the memory report](../CUDA_PREPARATION_MEMORY.md).
 
 ## Artifacts and reproduction
 
-The [per-array comparison](comparison.json) is committed. Executed notebooks,
-HTML preview, NPZ arrays, native hashes, logs, environment, and provenance are in
+The aggregate comparison is recorded above. Executed notebooks, HTML preview,
+NPZ arrays, native hashes, logs, environment, and provenance are local artifacts in
 `benchmarks/results/modal-notebook-memory-fixes/`.
 
 - Current notebook: `current/modal_sources_monitors.ipynb`
@@ -47,11 +47,6 @@ HTML preview, NPZ arrays, native hashes, logs, environment, and provenance are i
 - Baseline notebook: `baseline/modal_sources_monitors.ipynb`
 - Notebook input SHA256: `8022c0ccbeda914218f1455744174b761e602bebd58eaea4bb56981253e21574`
 - Native CUDA SHA256: `541d6c6d27fb905fe27ed53b8711c0b56f37bd3b566c2b92d2b37f452077aca1`
-
-The initial baseline attempt lacked the untracked Rust rasterizer extension in
-its temporary checkout. It was copied from the current checkout, then the
-baseline was rerun successfully. That setup failure is retained separately in
-`baseline-missing-raster/` and excluded from the comparison.
 
 Run each checkout sequentially in a fresh kernel, using the same native binaries:
 
