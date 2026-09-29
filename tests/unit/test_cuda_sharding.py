@@ -105,6 +105,11 @@ def run_cpu_contract():
                     getattr(program.coefficients, f"e_source_{c}").ndim != 1
                     for c in "xyz"
                 )
+                assert all(
+                    getattr(program.coefficients, f"{kind}_{c}").size == 0
+                    for kind in ("h_sigma_m", "e_conductivity", "e_permittivity")
+                    for c in "xyz"
+                ), "CUDA runtime must not retain redundant constitutive grids"
                 prepared = prepare_state(
                     program,
                     runtime_inputs(program, state, monitor_steps=6),
@@ -261,12 +266,12 @@ def test_cpu_devices_execute_sharded_cuda_orchestration():
     )
 
 
-@pytest.mark.parametrize("unsupported", ["hopper", "2d"])
+@pytest.mark.parametrize("unsupported", ["jax", "2d"])
 def test_unsupported_sharded_domains_fail_before_execution(unsupported):
     program = make_simulation().compile(backend="jax")
     cfg = replace(
         program.config,
-        backend="cuda_hopper" if unsupported == "hopper" else "cuda_streamed",
+        backend="jax" if unsupported == "jax" else "cuda_streamed",
         is_3d=unsupported != "2d",
     )
     with pytest.raises(RuntimeError, match="cuda_streamed and a 3D grid"):

@@ -179,6 +179,7 @@ def _ffi_phase(
     cuda_flags,
     metallic_edges,
     shard_geometry=None,
+    shard_halos=(),
 ):
     if len(terms) != len(psi_terms):
         raise ValueError(
@@ -199,6 +200,7 @@ def _ffi_phase(
         *psi_terms,
         *metrics,
         *((shard_geometry,) if shard_geometry is not None else ()),
+        *shard_halos,
     )
     psi_start = 13 + 3 * len(terms)
     aliases = {0: 0, 1: 1, 2: 2}
@@ -220,11 +222,7 @@ def _ffi_phase(
 
 def update_h(state, ctx, coeffs) -> SimulationState:
     """Advance the three magnetic fields and optional CPML memory on CUDA."""
-    target = (
-        abi.CUDA_HOPPER_TARGET
-        if ctx.config.backend == "cuda_hopper"
-        else abi.CUDA_STREAMED_TARGET
-    )
+    target = abi.CUDA_STREAMED_TARGET
     terms = ctx.boundary.cpml.h_terms
     materials = (
         coeffs.h_decay_x,
@@ -259,11 +257,7 @@ def update_h(state, ctx, coeffs) -> SimulationState:
 
 def update_e(state, ctx, coeffs) -> SimulationState:
     """Advance the three electric fields and optional CPML memory on CUDA."""
-    target = (
-        abi.CUDA_HOPPER_TARGET
-        if ctx.config.backend == "cuda_hopper"
-        else abi.CUDA_STREAMED_TARGET
-    )
+    target = abi.CUDA_STREAMED_TARGET
     terms = ctx.boundary.cpml.e_terms
     materials = (
         coeffs.e_decay_x,
@@ -614,7 +608,8 @@ def _combined_cpml_core_supported(state, ctx, coeffs) -> bool:
 def _temporal_cpml_fields_supported(ctx, coeffs, nsteps: int) -> bool:
     """Prove that a second field bank can preserve the CPML timestep order."""
     if (
-        nsteps < 2
+        getattr(ctx, "low_memory", False)
+        or nsteps < 2
         or not ctx.boundary.cpml.enabled
         or ctx.config.metric_kind != "isotropic_uniform"
         or _uniform_cpml_thickness(ctx) <= 0
@@ -638,7 +633,11 @@ def _temporal_cpml_fields_supported(ctx, coeffs, nsteps: int) -> bool:
 
 def _temporal_yee_supported(ctx, coeffs, nsteps: int) -> bool:
     """Prove that the frozen-field Yee kernel supports this material layout."""
-    if nsteps < 4 or _metallic_edge_mask(ctx.boundary.cpml.metallic_edges) != 63:
+    if (
+        getattr(ctx, "low_memory", False)
+        or nsteps < 4
+        or _metallic_edge_mask(ctx.boundary.cpml.metallic_edges) != 63
+    ):
         return False
     values = (
         coeffs.h_decay_x,
@@ -779,6 +778,12 @@ def pack_dft_monitors(monitors):
     """Pack DFT gather plans with offsets into ragged accumulator arenas."""
     if not monitors:
         raise ValueError("CUDA DFT graph requires at least one monitor")
+    if any(
+        np.any(np.asarray(indices) > np.iinfo(np.int32).max)
+        for monitor in monitors
+        for indices in monitor.dft_flat_idx
+    ):
+        raise ValueError("Native DFT graph indices exceed int32; use a sharded run")
     max_points = max(int(monitor.dft_point_count) for monitor in monitors)
     max_frequencies = max(int(monitor.freq_count) for monitor in monitors)
     max_neighbors = max(
@@ -888,7 +893,15 @@ def _pair_publication_mask(state, packed_monitors):
 
 
 def run_program_steps(
-    state, ctx, coeffs, groups, packed_monitors, nsteps: int
+    state,
+    ctx,
+    coeffs,
+    groups,
+    packed_monitors,
+    nsteps: int,
+    *,
+    observation_origin=None,
+    observation_step_offset: int | jax.Array = 0,
 ) -> SimulationState:
     """Advance arbitrary slab sources and packed vector DFTs in one CUDA graph."""
     if nsteps < 1:
@@ -960,8 +973,9 @@ def run_program_steps(
         phase_sin,
         phase_cos,
         phase_window,
-        state.t,
+        state.t if observation_origin is None else observation_origin,
         state.current_step,
+        jnp.asarray(observation_step_offset, dtype=jnp.int32),
         *(
             (_pair_publication_mask(state, packed_monitors),)
             if plan.temporal_steps == 2

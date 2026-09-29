@@ -5,6 +5,8 @@ report records its workload, code revision, hardware, limitations, and commands.
 The benchmark tools remain in `scripts/`; automated contracts remain in
 `tests/performance/`.
 
+- [Streamed CUDA and JAX scaling](H100_SCALING.md): final PR #287 results,
+  limitations, reproduction commands, and the archived experiment evidence.
 - [CUDA preparation memory](CUDA_PREPARATION_MEMORY.md): the memory diagnosis,
   fixes, and local RTX3090 capacity measurements supporting PR #285.
 - [Modal notebook parity](modal-notebook-memory-fixes/README.md): unchanged
