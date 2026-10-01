@@ -898,11 +898,15 @@ def test_streamed_cuda_continuation_preserves_absolute_dft_clock():
     reference = simulation.advance(
         state=_copy_state(state), num_steps=771, backend="cuda_streamed"
     ).state
+    reference_program = simulation.compile(num_steps=771, backend="cuda_streamed")
     actual = _copy_state(state)
     for _ in range(3):
         actual = simulation.advance(
             state=actual, num_steps=257, backend="cuda_streamed"
         ).state
+    continued_program = simulation.compile(num_steps=257, backend="cuda_streamed")
+    assert continued_program.coefficients is reference_program.coefficients
+    assert continued_program.boundary is reference_program.boundary
     _assert_state_close(reference, actual)
     np.testing.assert_array_equal(actual.dft_vec_re, reference.dft_vec_re)
     np.testing.assert_array_equal(actual.dft_vec_im, reference.dft_vec_im)

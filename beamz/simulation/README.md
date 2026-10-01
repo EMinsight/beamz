@@ -160,6 +160,13 @@ next_run = sim.advance(
 single-timestep debugging and numerical verification; normal simulations should use
 `run()`, and chunked simulations should use `advance()`.
 
+Changing only a continuation chunk's length reuses prepared materials,
+coefficients, derivative metrics, and boundaries on both single-device and
+sharded paths. Source and monitor plans are rebuilt for the requested horizon.
+Changes to materials, timestep, boundaries, backend, or layout invalidate that
+reuse. In particular, an automatic-termination run's short final chunk need not
+allocate a second material bank.
+
 ## Dependency direction
 
 Keep dependencies flowing toward orchestration:
