@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from beamz import LIGHT_SPEED
-from tests.differential.passive_soi.common import load_passive_soi_case
+from tests.differential.passive_soi.common import _gdsfactory, load_passive_soi_case
 from tests.differential.passive_soi.experiments import (
     ExperimentOptions,
     FieldDecayFailure,
@@ -14,6 +14,18 @@ from tests.differential.passive_soi.experiments import (
 from tests.differential.passive_soi.ring_resonator import (
     build_ring_resonator_simulation,
 )
+
+
+@pytest.fixture
+def require_gdsfactory():
+    try:
+        _gdsfactory()
+    except ModuleNotFoundError as exc:
+        # The compatibility environment intentionally omits this optional extra.
+        # A broken installed dependency must still fail rather than be skipped.
+        if exc.name != "gdsfactory":
+            raise
+        pytest.skip("Requires GDSFactory; install BeamZ with the gds extra.")
 
 
 def test_coarse_grid_is_not_evidence_of_converged_reference_agreement():
@@ -51,6 +63,7 @@ def test_invalid_experiment_controls_are_rejected(kwargs):
         ExperimentOptions(**kwargs)
 
 
+@pytest.mark.usefixtures("require_gdsfactory")
 def test_ring_duration_and_boundary_sweeps_preserve_grid():
     baseline, _, frequencies = build_ring_resonator_simulation()
     changed, ports, changed_frequencies = build_ring_resonator_simulation(
@@ -82,6 +95,7 @@ def test_known_failure_wrapper_does_not_mask_runtime_errors():
         check_known_failure(infrastructure_failure, FieldDecayFailure)
 
 
+@pytest.mark.usefixtures("require_gdsfactory")
 def test_thicker_absorber_requires_domain_padding():
     with pytest.raises(ValueError, match="extend the domain"):
         build_ring_resonator_simulation(
@@ -89,6 +103,7 @@ def test_thicker_absorber_requires_domain_padding():
         )
 
 
+@pytest.mark.usefixtures("require_gdsfactory")
 def test_empty_bus_preserves_ring_grid_and_measurement_planes():
     from tests.differential.passive_soi.straight_control import build_ring_bus_control
 
