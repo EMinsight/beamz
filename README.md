@@ -15,6 +15,7 @@
   [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](https://github.com/beamzorg/beamz/blob/main/LICENSE)
   [![Tests](https://github.com/beamzorg/beamz/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/beamzorg/beamz/actions/workflows/tests.yml)
   [![Coverage](https://raw.githubusercontent.com/beamzorg/beamz/main/.github/badges/coverage.svg)](https://github.com/beamzorg/beamz/actions/workflows/tests.yml)
+  [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23085101.svg)](https://doi.org/10.5281/zenodo.23085101)
 </div>
 
 
@@ -96,22 +97,26 @@ The simplest way to support the project of course is by **giving this repo a sta
 
 If you use BeamZ in your research, please cite:
 
-Quentin Wach. *BeamZ: CUDA-accelerated Differentiable FDTD for Photonics*.
-https://github.com/beamzorg/beamz
+Quentin Wach (2026). *BeamZ: CUDA-accelerated Differentiable FDTD for Photonics*
+(v0.5.2). Zenodo. https://doi.org/10.5281/zenodo.23085102
 
 ```bibtex
 @software{wach_beamz,
   author = {Wach, Quentin},
   title = {{BeamZ}: {CUDA}-accelerated Differentiable {FDTD} for Photonics},
-  url = {https://github.com/beamzorg/beamz}
+  year = {2026},
+  version = {v0.5.2},
+  publisher = {Zenodo},
+  doi = {10.5281/zenodo.23085102},
+  url = {https://doi.org/10.5281/zenodo.23085102}
 }
 ```
 
-Citation metadata is available in [CITATION.cff](CITATION.cff). Please also
-report the version or commit used in your work. Zenodo archiving is planned
-to begin with the next release; its DOI and a DOI badge will be added once
-the archive is published. For reproducible research, use the DOI of the
-specific release you used.
+Citation metadata is available in [CITATION.cff](CITATION.cff). For reproducible
+research, cite the DOI of the specific release you used; the citation above is
+for v0.5.2. If using an unreleased version, also report the commit hash.
+To reference BeamZ across all versions, use the
+[all-versions DOI](https://doi.org/10.5281/zenodo.23085101).
 
 ---
 

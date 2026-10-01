@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: >-
   If you use BeamZ in your research, please cite this software.
-  When available, cite the Zenodo DOI for the version you used.
+  Cite the Zenodo DOI for the version you used.
 type: software
 title: "BeamZ: CUDA-accelerated Differentiable FDTD for Photonics"
 authors:
