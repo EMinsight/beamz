@@ -13,6 +13,7 @@ from beamz.lattice import (
     adjacent_difference as _adjacent_difference,
 )
 from beamz.lattice import build_h_boundary_views_for_e_3d, component_axis_offsets_3d
+from beamz.simulation.boundary_masks import AxisMask
 from beamz.simulation.model import (
     BoundaryPlan,
     CpmlPackedSlabSpec,
@@ -154,6 +155,11 @@ def advance_e_from_coefficients(field, curl, decay, source):
 
 def apply_zero_mask(field, mask):
     """Apply a compiled PEC mask without changing the field representation."""
+    if isinstance(mask, AxisMask):
+        combined = jnp.asarray(False)
+        for profile in mask.profiles:
+            combined = combined | jnp.asarray(profile)
+        return jnp.where(combined, 0.0, field)
     return field if mask is None else jnp.where(mask, 0.0, field)
 
 
@@ -255,13 +261,20 @@ def compile_cpml_term(*, component, axis, sign, sigma, kappa, alpha, dt, full_sh
 
 
 def correct_cpml_term(derivative, psi, term):
-    """Apply one packed recurrence and return the signed corrected derivative."""
+    """Apply CPML in field precision, rounding only the stored auxiliary state."""
     if not term.slab.low and not term.slab.high:
         return term.sign * derivative, psi
-    derivative_slab = _pack_cpml_slab(derivative.astype(psi.dtype), term.slab)
-    psi = term.b.astype(psi.dtype) * psi + term.a.astype(psi.dtype) * derivative_slab
-    corrected = derivative_slab * term.inv_kappa.astype(psi.dtype) + psi
-    return term.sign * _unpack_cpml_slab(derivative, corrected, term.slab), psi
+    arithmetic_dtype = jnp.result_type(derivative.dtype, psi.dtype, jnp.float32)
+    derivative_slab = _pack_cpml_slab(derivative.astype(arithmetic_dtype), term.slab)
+    next_psi = (
+        term.b.astype(arithmetic_dtype) * psi.astype(arithmetic_dtype)
+        + term.a.astype(arithmetic_dtype) * derivative_slab
+    )
+    corrected = derivative_slab * term.inv_kappa.astype(arithmetic_dtype) + next_psi
+    return (
+        term.sign * _unpack_cpml_slab(derivative, corrected, term.slab),
+        next_psi.astype(psi.dtype),
+    )
 
 
 def fused_update_h_lossy_3d_material(
@@ -468,6 +481,7 @@ def cpml_update_h_from_e_3d(
     psi_terms,
     dt,
     magnetic_conductivities,
+    source_scales=None,
 ):
     """Advance 3D H fields and their six packed CPML memories."""
     derivatives = (
@@ -492,6 +506,14 @@ def cpml_update_h_from_e_3d(
         strict=True,
     )
     curls = tuple(corrected[index] + corrected[index + 1] for index in (0, 2, 4))
+    if source_scales is not None:
+        updated = tuple(
+            field - scale * (curl + sigma * field)
+            for field, curl, sigma, scale in zip(
+                (hx, hy, hz), curls, magnetic_conductivities, source_scales, strict=True
+            )
+        )
+        return *updated, tuple(next_psi)
     one = jnp.asarray(1.0, dtype=hx.dtype)
     dt_over_mu = jnp.asarray(dt, dtype=hx.dtype) / jnp.asarray(MU_0, dtype=hx.dtype)
     updated = []
@@ -569,6 +591,7 @@ def cpml_update_e_from_h_3d(
     inverse_diagonals=None,
     inverse_offdiagonal=None,
     logical_shapes=None,
+    source_scales=None,
 ):
     """Advance 3D E fields and their six packed CPML memories."""
     views = build_h_boundary_views_for_e_3d(
@@ -606,6 +629,14 @@ def cpml_update_e_from_h_3d(
             inverse_offdiagonal,
             ("Ex", "Ey", "Ez"),
             dt,
+        )
+        return *updated, tuple(next_psi)
+    if source_scales is not None:
+        updated = tuple(
+            field + scale * (curl - sigma * field)
+            for field, curl, sigma, scale in zip(
+                (ex, ey, ez), curls, conductivities, source_scales, strict=True
+            )
         )
         return *updated, tuple(next_psi)
     one = jnp.asarray(1.0, dtype=ex.dtype)
@@ -1086,6 +1117,11 @@ def update_h_3d_cpml(eng, ctx, coeffs):
         terms=cpml.h_terms,
         psi_terms=eng.cpml_psi_h_terms,
         dt=ctx.dt_scalar,
+        source_scales=(
+            (coeffs.h_source_x, coeffs.h_source_y, coeffs.h_source_z)
+            if coeffs.h_source_x.size
+            else None
+        ),
         magnetic_conductivities=(
             coeffs.h_sigma_m_x,
             coeffs.h_sigma_m_y,
@@ -1133,6 +1169,11 @@ def update_e_3d_cpml(eng, ctx, coeffs):
         psi_terms=eng.cpml_psi_e_terms,
         metallic_edges=cpml.metallic_edges,
         dt=ctx.dt_scalar,
+        source_scales=(
+            (coeffs.e_source_x, coeffs.e_source_y, coeffs.e_source_z)
+            if coeffs.e_source_x.size
+            else None
+        ),
         conductivities=(
             coeffs.e_conductivity_x,
             coeffs.e_conductivity_y,
@@ -1567,6 +1608,9 @@ class CompiledStepContext:
     dt: float
     dt_scalar: jnp.ndarray
     is_3d: bool
+    sharding_plan: Any = None
+    # Capacity scheduling is selected separately from buffer donation.
+    low_memory: bool = False
 
 
 @dataclass(frozen=True)
@@ -1593,10 +1637,9 @@ def select_update_kernel(ctx: CompiledStepContext) -> StepUpdateKernel:
                 "CUDA execution currently requires a three-dimensional grid"
             )
         if ctx.config.sharding.enabled:
-            raise ValueError(
-                "CUDA execution currently supports one GPU; use backend='jax' "
-                "for sharded multi-GPU execution"
-            )
+            from beamz.simulation.cuda.sharding import select_sharded_kernel
+
+            return select_sharded_kernel(ctx)
         from beamz.simulation.cuda import update_e, update_h
 
         return StepUpdateKernel(ctx.config.backend, update_h, update_e)

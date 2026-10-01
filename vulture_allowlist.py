@@ -88,3 +88,7 @@ _.run_sparameters
 _.plot_sparameters
 _.check_reciprocity
 _.check_passivity
+
+# CUDA diagnostics are consumed by benchmark scripts; cache fields are serialized.
+tuning_report
+_.cuda_tuning_policy

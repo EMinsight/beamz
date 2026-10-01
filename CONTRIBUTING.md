@@ -117,6 +117,10 @@ current Git history.
   dimensions and field-array ordering in BeamZ's original 2D FDTD simulator.
   His contribution was merged in [PR #4](https://github.com/beamzorg/beamz/pull/4)
   in 2025, before the repository history was squashed.
+- [Vahid Ansari (`@vvahidd`)](https://github.com/vvahidd) independently
+  identified the CPML broadcast-profile padding issue in device sharding and
+  supplied focused regression evidence in
+  [PR #276](https://github.com/beamzorg/beamz/pull/276) in 2026.
 
 ## Repository map
 

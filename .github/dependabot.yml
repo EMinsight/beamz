@@ -1,0 +1,42 @@
+version: 2
+
+# Routine updates run weekly; major upgrades remain separate PRs for review.
+# CUDA component pins in /cuda are maintained manually with GPU validation.
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    groups:
+      github-actions-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    groups:
+      # Review JAX changes together, separately from routine Python updates.
+      jax:
+        patterns: ["jax", "jaxlib"]
+        update-types: ["minor", "patch"]
+      python-minor-patch:
+        patterns: ["*"]
+        exclude-patterns: ["jax", "jaxlib"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    groups:
+      rust-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]

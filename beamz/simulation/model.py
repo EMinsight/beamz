@@ -7,9 +7,11 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Literal, NamedTuple, TypeAlias
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
+from beamz._region_array import RegionArray
 from beamz.design.discretization import MaterialGrid
 from beamz.design.grid import RectilinearGrid
 from beamz.devices._immutable import immutable_snapshot
@@ -35,6 +37,9 @@ class RunSpec:
     sharding: ShardingToken
     backend: str = "jax"
     cuda_flags: int = 0
+    cuda_graph_cache_capacity: int = 32
+    cuda_storage_axes: tuple[int, int, int] = (0, 1, 2)
+    cuda_memory_policy: str = "auto"
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +127,15 @@ class CompiledGrid:
     mu_hx: jnp.ndarray
     mu_hy: jnp.ndarray
     mu_hz: jnp.ndarray
+
+
+def _copy_initial_field(value):
+    # Commit placement before copying: jnp.array(..., device=source.sharding)
+    # can execute the copy on the default accelerator before moving it back.
+    placement = getattr(value, "sharding", None)
+    if placement is not None:
+        value = jax.device_put(value, placement)
+    return jnp.array(value)
 
 
 class SimulationState(NamedTuple):
@@ -227,15 +241,16 @@ class SimulationState(NamedTuple):
         Application code should normally use ``Simulation.initial_state()`` so the
         state is guaranteed to match the simulation's compiled lattice.
         """
+
         empty2 = jnp.zeros((0, 0), dtype=jnp.float32)
         return cls(
             # Copies keep the compiled lattice reusable when JAX donates runtime buffers.
-            ex=jnp.array(fields.Ex),
-            ey=jnp.array(fields.Ey),
-            ez=jnp.array(fields.Ez),
-            hx=jnp.array(fields.Hx),
-            hy=jnp.array(fields.Hy),
-            hz=jnp.array(fields.Hz),
+            ex=_copy_initial_field(fields.Ex),
+            ey=_copy_initial_field(fields.Ey),
+            ez=_copy_initial_field(fields.Ez),
+            hx=_copy_initial_field(fields.Hx),
+            hy=_copy_initial_field(fields.Hy),
+            hz=_copy_initial_field(fields.Hz),
             cpml_psi_h_terms=(),
             cpml_psi_e_terms=(),
             powers=empty2,
@@ -260,31 +275,31 @@ class SimulationState(NamedTuple):
 # The compiler plans below are values in the same lifecycle as SimulationRequest and
 # SimulationState. Keeping them here removes the former second, compiled-only type model.
 class UpdateCoefficients(NamedTuple):
-    h_decay_x: jnp.ndarray
-    h_source_x: jnp.ndarray
-    h_sigma_m_x: jnp.ndarray
-    h_decay_y: jnp.ndarray
-    h_source_y: jnp.ndarray
-    h_sigma_m_y: jnp.ndarray
-    h_decay_z: jnp.ndarray
-    h_source_z: jnp.ndarray
-    h_sigma_m_z: jnp.ndarray
-    e_decay_x: jnp.ndarray
-    e_source_x: jnp.ndarray
-    e_conductivity_x: jnp.ndarray
-    e_permittivity_x: jnp.ndarray
-    e_inverse_diagonal_x: jnp.ndarray
-    e_decay_y: jnp.ndarray
-    e_source_y: jnp.ndarray
-    e_conductivity_y: jnp.ndarray
-    e_permittivity_y: jnp.ndarray
-    e_inverse_diagonal_y: jnp.ndarray
-    e_decay_z: jnp.ndarray
-    e_source_z: jnp.ndarray
-    e_conductivity_z: jnp.ndarray
-    e_permittivity_z: jnp.ndarray
-    e_inverse_diagonal_z: jnp.ndarray
-    e_inverse_offdiagonal: jnp.ndarray
+    h_decay_x: jax.Array | np.ndarray | RegionArray
+    h_source_x: jax.Array | np.ndarray | RegionArray
+    h_sigma_m_x: jax.Array | np.ndarray | RegionArray
+    h_decay_y: jax.Array | np.ndarray | RegionArray
+    h_source_y: jax.Array | np.ndarray | RegionArray
+    h_sigma_m_y: jax.Array | np.ndarray | RegionArray
+    h_decay_z: jax.Array | np.ndarray | RegionArray
+    h_source_z: jax.Array | np.ndarray | RegionArray
+    h_sigma_m_z: jax.Array | np.ndarray | RegionArray
+    e_decay_x: jax.Array | np.ndarray | RegionArray
+    e_source_x: jax.Array | np.ndarray | RegionArray
+    e_conductivity_x: jax.Array | np.ndarray | RegionArray
+    e_permittivity_x: jax.Array | np.ndarray | RegionArray
+    e_inverse_diagonal_x: jax.Array | np.ndarray | RegionArray
+    e_decay_y: jax.Array | np.ndarray | RegionArray
+    e_source_y: jax.Array | np.ndarray | RegionArray
+    e_conductivity_y: jax.Array | np.ndarray | RegionArray
+    e_permittivity_y: jax.Array | np.ndarray | RegionArray
+    e_inverse_diagonal_y: jax.Array | np.ndarray | RegionArray
+    e_decay_z: jax.Array | np.ndarray | RegionArray
+    e_source_z: jax.Array | np.ndarray | RegionArray
+    e_conductivity_z: jax.Array | np.ndarray | RegionArray
+    e_permittivity_z: jax.Array | np.ndarray | RegionArray
+    e_inverse_diagonal_z: jax.Array | np.ndarray | RegionArray
+    e_inverse_offdiagonal: jax.Array | np.ndarray | RegionArray
 
 
 class DerivativeMetricPlan(NamedTuple):
@@ -463,6 +478,9 @@ class RunConfig:
     backend: str = "jax"
     sharding: ShardingConfig = ShardingConfig()
     cuda_flags: int = 0
+    cuda_graph_cache_capacity: int = 32
+    cuda_storage_axes: tuple[int, int, int] = (0, 1, 2)
+    cuda_memory_policy: str = "auto"
 
 
 @dataclass(frozen=True, slots=True, eq=False)
