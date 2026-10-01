@@ -20,6 +20,7 @@
 
 ### Fixed
 
+- Fixed package imports on Windows by making Unix process-memory tracing optional.
 - Improved material-coefficient equivalence across mesh, GDS, and native Design
   imports, including mesh-region ownership, clipping, adaptive sampling, and
   boundary classification.
