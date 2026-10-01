@@ -1073,8 +1073,7 @@ def compile_program(
                 (
                     old_program
                     for old_key, old_program in reversed(_PROGRAM_CACHE.items())
-                    if isinstance(old_program.grid.eps_x, RegionArray)
-                    and _preparation_key(old_key) == preparation_key
+                    if _preparation_key(old_key) == preparation_key
                 ),
                 None,
             )
