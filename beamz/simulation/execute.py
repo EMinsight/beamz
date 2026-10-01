@@ -11,6 +11,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from time import perf_counter
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -765,8 +766,8 @@ def build_scan(program, *, donate_state: bool = False):
             jnp.abs(grid_time), jnp.finfo(jnp.float32).tiny
         )
         on_grid = jnp.abs(state.t - grid_time) <= clock_tolerance
-        observation_origin = jnp.where(on_grid, t0, state.t)
-        observation_offset = jnp.where(on_grid, state.current_step, 0)
+        observation_origin = cast(jax.Array, jnp.where(on_grid, t0, state.t))
+        observation_offset = cast(jax.Array, jnp.where(on_grid, state.current_step, 0))
         if local_dft:
             state = distributed_monitors.scan_local_dft(state, program)
         local_cuda_cpml = (
