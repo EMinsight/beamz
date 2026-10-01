@@ -178,3 +178,6 @@ step count. They must not be advanced by repeated float32 additions: small clock
 errors accumulate into large optical DFT phase errors in long simulations. The
 same rule applies across `advance()` calls and automatic-termination chunks.
 The source and monitor clocks therefore share the same absolute time grid.
+An explicitly supplied continuation state whose time differs from that grid
+retains its supplied time as the invocation origin. Grid-aligned continuation
+states use the absolute step to avoid rounding the origin again at every chunk.

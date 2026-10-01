@@ -36,6 +36,7 @@ def test_long_run_clock_preserves_optical_phase(origin, chunked):
         program, t=origin, current_step=0, monitor_steps=steps
     )
     state = state._replace(hx=jnp.ones_like(state.hx))
+    initial_state = state
     sizes = [10000] * 6 if chunked else [steps]
     for size in sizes:
         run = simulation.advance(
@@ -46,3 +47,12 @@ def test_long_run_clock_preserves_optical_phase(origin, chunked):
     expected_time = origin + steps * simulation.dt
     phase_error = 2 * np.pi * frequency * abs(float(state.t) - expected_time)
     assert phase_error < 0.002, f"Optical DFT phase error is {phase_error:.6g} rad"
+    if chunked:
+        reference = simulation.advance(
+            state=initial_state, num_steps=steps, backend="jax", performance=False
+        ).state
+        # A correct final clock alone cannot detect a different DFT time origin
+        # in each continuation call. The constant field has identical samples,
+        # so partitioning the run must preserve the accumulated complex DFT.
+        np.testing.assert_array_equal(state.dft_vec_re, reference.dft_vec_re)
+        np.testing.assert_array_equal(state.dft_vec_im, reference.dft_vec_im)

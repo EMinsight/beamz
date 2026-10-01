@@ -756,6 +756,17 @@ def build_scan(program, *, donate_state: bool = False):
         state: SimulationState,
         coeffs: UpdateCoefficients,
     ):
+        # Normal continuations keep one absolute integer clock. Explicit states
+        # may intentionally supply a different time origin; preserve that API
+        # contract without accumulating rounding at ordinary chunk boundaries.
+        t0 = jnp.asarray(cfg.t0, dtype=jnp.float32)
+        grid_time = t0 + dt_scalar * state.current_step.astype(jnp.float32)
+        clock_tolerance = jnp.finfo(jnp.float32).eps * jnp.maximum(
+            jnp.abs(grid_time), jnp.finfo(jnp.float32).tiny
+        )
+        on_grid = jnp.abs(state.t - grid_time) <= clock_tolerance
+        observation_origin = jnp.where(on_grid, t0, state.t)
+        observation_offset = jnp.where(on_grid, state.current_step, 0)
         if local_dft:
             state = distributed_monitors.scan_local_dft(state, program)
         local_cuda_cpml = (
@@ -804,9 +815,9 @@ def build_scan(program, *, donate_state: bool = False):
                 chunk_state = chunk_state._replace(
                     # Derive clocks from the simulation origin, including across
                     # separate advance() calls and automatic-termination chunks.
-                    t=jnp.asarray(cfg.t0, dtype=jnp.float32)
+                    t=observation_origin
                     + dt_scalar
-                    * (state.current_step + elapsed_steps).astype(jnp.float32),
+                    * (observation_offset + elapsed_steps).astype(jnp.float32),
                     current_step=state.current_step + elapsed_steps,
                 )
                 chunk_out = (
@@ -819,8 +830,8 @@ def build_scan(program, *, donate_state: bool = False):
                         graph_source_groups,
                         packed_graph_monitors,
                         chunk_steps,
-                        observation_origin=jnp.asarray(cfg.t0, dtype=jnp.float32),
-                        observation_step_offset=state.current_step + elapsed_steps,
+                        observation_origin=observation_origin,
+                        observation_step_offset=observation_offset + elapsed_steps,
                     )
                     if program.monitors
                     else run_source_group_steps(
@@ -835,9 +846,9 @@ def build_scan(program, *, donate_state: bool = False):
                     chunk_steps, dtype=jnp.int32
                 )
                 return chunk_out._replace(
-                    t=jnp.asarray(cfg.t0, dtype=jnp.float32)
+                    t=observation_origin
                     + dt_scalar
-                    * (state.current_step + completed_steps).astype(jnp.float32),
+                    * (observation_offset + completed_steps).astype(jnp.float32),
                     current_step=state.current_step + completed_steps,
                 )
 
@@ -877,9 +888,9 @@ def build_scan(program, *, donate_state: bool = False):
                         coeffs=coeffs,
                         program=program,
                         update_kernel=update_kernel,
-                        observation_time=jnp.asarray(cfg.t0, dtype=jnp.float32)
+                        observation_time=observation_origin
                         + dt_scalar
-                        * (state.current_step + step_index + 1).astype(jnp.float32),
+                        * (observation_offset + step_index + 1).astype(jnp.float32),
                     ),
                     None,
                 )
@@ -899,8 +910,8 @@ def build_scan(program, *, donate_state: bool = False):
                     coeffs=coeffs,
                     program=program,
                     update_kernel=update_kernel,
-                    observation_time=jnp.asarray(cfg.t0, dtype=jnp.float32)
-                    + dt_scalar * (state.current_step + _i + 1).astype(jnp.float32),
+                    observation_time=observation_origin
+                    + dt_scalar * (observation_offset + _i + 1).astype(jnp.float32),
                 ),
                 state,
             )
