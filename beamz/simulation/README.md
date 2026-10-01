@@ -48,6 +48,9 @@ Pass `AutoTermination` to `run(termination=...)` when the configured time grid
 should be a maximum rather than a mandatory duration. Execution reuses a fixed
 chunk program, waits for all sources to become inactive, and then requires the
 configured energy and frequency-monitor residuals to pass for consecutive checks.
+Checks inspect raw acquisitions; source normalization and durable material metadata
+are constructed once after the stopping decision, avoiding repeated full-record
+Fourier transforms during long runs.
 `SimulationResults.termination` contains the executed step count, stop reason,
 and final diagnostics. It remains `None` for an ordinary full-grid run.
 

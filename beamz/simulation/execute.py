@@ -280,12 +280,12 @@ def _selected_monitor_names(program: CompiledProgram, policy: AutoTermination):
 
 
 def _monitor_vectors(
-    results: SimulationResults, names: tuple[str, ...]
+    monitors: dict[str, MonitorResults], names: tuple[str, ...]
 ) -> dict[tuple[str, str, int], np.ndarray]:
     """Return one raw DFT convergence vector per monitor, component, and frequency."""
     values = {}
     for name in names:
-        monitor = results.monitors[name]
+        monitor = monitors[name]
         fields = monitor._raw_dft_fields or monitor.dft_fields
         for component in sorted(fields):
             field = np.asarray(fields[component], dtype=np.complex128)
@@ -1603,7 +1603,8 @@ def run_until_terminated(
     source_decay = _source_residual(source_activity, 0)
     successful_checks = growth_checks = 0
     reason = "time_limit"
-    last_run: SimulationRun | None = None
+    monitor_results: dict[str, MonitorResults] | None = None
+    program = first_program
     runtime_s = 0.0
     compiling = progress and not program_is_compiled(first_program, donate_state=True)
     if compiling:
@@ -1626,20 +1627,18 @@ def run_until_terminated(
                     progress=False,
                 )
             )
-            last_run = run_simulation_program(
-                simulation,
-                program,
-                state,
-                progress=False,
-                store_full_materials=store_full_materials,
-                monitor_steps=remaining,
-                donate_state=True,
-                performance=performance,
-                report_performance=False,
-            )
-            state = last_run.state
-            if last_run.results.performance is not None:
-                runtime_s += last_run.results.performance.runtime_s
+            if performance:
+                state, elapsed = _run_program_state_timed(
+                    program, state, monitor_steps=remaining, donate_state=True
+                )
+                runtime_s += elapsed
+            else:
+                state = _run_program_state(
+                    program, state, monitor_steps=remaining, donate_state=True
+                )
+            # Convergence uses raw acquisitions. Building a durable result here
+            # repeatedly normalizes the full source record and copies metadata.
+            monitor_results = _decode_monitor_results(simulation, program, state)
             current_step = int(state.current_step)
             if progress:
                 if compiling:
@@ -1655,7 +1654,7 @@ def run_until_terminated(
                 )
 
             energy, max_field, fields_finite = _field_diagnostics(state, terms)
-            current_monitor = _monitor_vectors(last_run.results, monitor_names)
+            current_monitor = _monitor_vectors(monitor_results, monitor_names)
             monitors_finite = all(
                 np.isfinite(value).all() for value in current_monitor.values()
             )
@@ -1707,7 +1706,7 @@ def run_until_terminated(
         if progress:
             _finish_inline_progress()
 
-    if last_run is None:
+    if monitor_results is None:
         raise RuntimeError("Automatic termination executed no simulation steps.")
     report = RunTermination(
         reason=reason,
@@ -1722,7 +1721,15 @@ def run_until_terminated(
         max_field=max_field,
         consecutive_checks=successful_checks,
     )
-    results = last_run.results
+    results = SimulationResults.from_run(
+        simulation,
+        runtime_fields=program.grid,
+        monitor_results=monitor_results,
+        store_full_materials=store_full_materials,
+        source_launch_powers=_compiled_source_launch_powers(
+            program, len(simulation.sources)
+        ),
+    )
     if reason == "converged":
         results = _complete_converged_dft_weights(results, simulation, first_program)
     stats = (
