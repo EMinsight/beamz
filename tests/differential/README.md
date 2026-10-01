@@ -172,4 +172,9 @@ The older crossing/coupler comparisons retain their historical rule.
 Expected failures are restricted to the known output-power or field-decay
 assertion; unrelated exceptions are ordinary failures. Artifact files additionally
 retain complex incoming/outgoing modal amplitudes and all realized grid edges.
+
+The [RTX 3090 main-refresh report](results/pr245-main-refresh/README.md) records
+the merged-main reruns, finer-grid comparisons, capacity attempts, paired
+memory/runtime measurements, and validation evidence.
+
 AI-assisted implementation and investigation: OpenAI Codex.
