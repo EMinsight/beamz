@@ -91,6 +91,28 @@ BeamZ aims to become the FDTD engine of choice for **photonic simulations** in i
 
 The simplest way to support the project of course is by **giving this repo a star.** Thank you!
 
+
+## Citation
+
+If you use BeamZ in your research, please cite:
+
+Quentin Wach. *BeamZ: CUDA-accelerated Differentiable FDTD for Photonics*.
+https://github.com/beamzorg/beamz
+
+```bibtex
+@software{wach_beamz,
+  author = {Wach, Quentin},
+  title = {{BeamZ}: {CUDA}-accelerated Differentiable {FDTD} for Photonics},
+  url = {https://github.com/beamzorg/beamz}
+}
+```
+
+Citation metadata is available in [CITATION.cff](CITATION.cff). Please also
+report the version or commit used in your work. Zenodo archiving is planned
+to begin with the next release; its DOI and a DOI badge will be added once
+the archive is published. For reproducible research, use the DOI of the
+specific release you used.
+
 ---
 
 Copyright © 2026 Quentin Wach — [Apache-2.0](https://github.com/beamzorg/beamz/blob/HEAD/LICENSE)
