@@ -1,0 +1,729 @@
+{
+  "SiO2": {
+    "name": "Silica",
+    "default": "Malitson1965",
+    "variants": {
+      "Malitson1965": {
+        "medium": {
+          "epsilon_inf": 1.0,
+          "frequency_range": [
+            428274940000000.0,
+            749481145000000.0
+          ],
+          "poles": [
+            [
+              [
+                0.0,
+                -2.753703447457036e+16
+              ],
+              [
+                0.0,
+                9585177701567046.0
+              ]
+            ],
+            [
+              [
+                0.0,
+                -1.6204653138286818e+16
+              ],
+              [
+                0.0,
+                3305284166665442.0
+              ]
+            ],
+            [
+              [
+                0.0,
+                -190341645341951.62
+              ],
+              [
+                0.0,
+                85413852828253.77
+              ]
+            ]
+          ]
+        },
+        "nk_file": "SiO2-Malitson.csv",
+        "description": "Silica, visible band (400\u2013700 nm).",
+        "source": "https://raw.githubusercontent.com/polyanskiy/refractiveindex.info-database/c5c2f188e848453def5970e347399d653df2ffc2/database/data/main/SiO2/nk/Malitson.yml",
+        "license": "CC0-1.0",
+        "source_file": "SiO2-Malitson.yml",
+        "source_sha256": "c587670f397241ecb93a1af3279d6fe7ed67888e587e399074b0eab729c92b52",
+        "references": "1) I. H. Malitson.\nInterspecimen comparison of the refractive index of fused silica.\n<a href=\"https://doi.org/10.1364/JOSA.55.001205\"><i>J. Opt. Soc. Am.</i> <b>55</b>, 1205-1208 (1965)</a><br>\n2) C. Z. Tan.\nDetermination of refractive index of silica glass for infrared wavelengths by IR spectroscopy.\n<a href=\"https://doi.org/10.1016/S0022-3093(97)00438-9\"><i>J. Non-Cryst. Solids</i> <b>223</b>, 158-163 (1998)</a><br>\n* Sellmeier formula is reported in Ref. 1 for the 0.21\u20133.71 \u03bcm wavelength range. Ref. 2 verifies the validity of the formula up to 6.7 \u03bcm.\n",
+        "conditions": "Fused silica, 20 \u00b0C\n",
+        "fit": {
+          "method": "Exact Sellmeier conversion",
+          "rms_n": 0.0,
+          "rms_k": 0.0,
+          "max_abs_n": 2.220446049250313e-16,
+          "max_abs_k": 0.0
+        }
+      }
+    }
+  },
+  "SiN": {
+    "name": "Silicon nitride",
+    "default": "Philipp1973",
+    "variants": {
+      "Philipp1973": {
+        "medium": {
+          "epsilon_inf": 1.0,
+          "frequency_range": [
+            428274940000000.0,
+            749481145000000.0
+          ],
+          "poles": [
+            [
+              [
+                0.0,
+                -1.3486443526232214e+16
+              ],
+              [
+                0.0,
+                1.95142094602817e+16
+              ]
+            ]
+          ]
+        },
+        "nk_file": "Si3N4-Philipp.csv",
+        "description": "Silicon nitride, visible band (400\u2013700 nm).",
+        "source": "https://raw.githubusercontent.com/polyanskiy/refractiveindex.info-database/c5c2f188e848453def5970e347399d653df2ffc2/database/data/main/Si3N4/nk/Philipp.yml",
+        "license": "CC0-1.0",
+        "source_file": "Si3N4-Philipp.yml",
+        "source_sha256": "0f100f6291db2ace85cf342d34cac0ece7dd5b7140c39020b4559003d36bbb23",
+        "references": "1) H. R. Philipp.\nOptical properties of silicon nitride.\n<a href=\"https://doi.org/10.1149/1.2403440\"><i>J. Electrochim. Soc.</i> <b>120</b>, 295-300 (1973)</a><br>\n2) T. B\u00e5\u00e5k.\nSilicon oxynitride; a material for GRIN optics.\n<a href=\"https://doi.org/10.1364/AO.21.001069\"><i>Appl. Opt.</i> <b>21</b>, 1069-1072 (1982)</a><br>\n* Ref.2 provides a dispersion formula based on data from Ref. 1\n",
+        "conditions": "",
+        "fit": {
+          "method": "Exact Sellmeier conversion",
+          "rms_n": 0.0,
+          "rms_k": 0.0,
+          "max_abs_n": 4.440892098500626e-16,
+          "max_abs_k": 0.0
+        }
+      }
+    }
+  },
+  "aSi": {
+    "name": "Amorphous silicon",
+    "default": "Pierce1972",
+    "variants": {
+      "Pierce1972": {
+        "medium": {
+          "epsilon_inf": 5.936937461121036,
+          "frequency_range": [
+            428274940000000.0,
+            749481145000000.0
+          ],
+          "poles": [
+            [
+              [
+                -137201083378.0,
+                0.0
+              ],
+              [
+                2369279074.49535,
+                0.0
+              ]
+            ],
+            [
+              [
+                -8261034036293059.0,
+                0.0
+              ],
+              [
+                -2369279074.49535,
+                0.0
+              ]
+            ],
+            [
+              [
+                -745373950620942.6,
+                4094909198925310.0
+              ],
+              [
+                0.0,
+                -4899165735649315.0
+              ]
+            ],
+            [
+              [
+                -674213018333252.6,
+                5075828517891152.0
+              ],
+              [
+                0.0,
+                -1.4031034915692434e+16
+              ]
+            ]
+          ]
+        },
+        "nk_file": "Si-Pierce.csv",
+        "description": "Amorphous silicon, visible band (400\u2013700 nm).",
+        "source": "https://raw.githubusercontent.com/polyanskiy/refractiveindex.info-database/c5c2f188e848453def5970e347399d653df2ffc2/database/data/main/Si/nk/Pierce.yml",
+        "license": "CC0-1.0",
+        "source_file": "Si-Pierce.yml",
+        "source_sha256": "b17a9b9b9a274bf4e565835f10784bdd0a0d299c3bd601209e4f99e1956914f9",
+        "references": "1) D. T. Pierce and W. E. Spicer.\nElectronic structure of amorphous Si from photoemission and optical studies.\n<a href=\"https://doi.org/10.1103/PhysRevB.5.3017\"><i>Phys. Rev. B</i> <b>5</b>, 3017-3029 (1972)</a><br>\n2) Handbook of Optical Constants of Solids, Edward D. Palik, ed. Academic Press, Boston, 1985<br>\n* Ref. 2 provides numerical values for the graphical data reported in Ref. 1\n",
+        "conditions": "Amorphous silicon (\u03b1-Si or a-Si). 60-nm film.\n",
+        "fit": {
+          "rms_epsilon": 0.3530687458214442,
+          "rms_n": 0.017361452502920014,
+          "rms_k": 0.036355782947980635,
+          "optimizer_success": true,
+          "evaluations": 37,
+          "method": "Positive Lorentz fit to linearly interpolated n,k",
+          "interpolation_samples": 151,
+          "oscillators": 3,
+          "max_abs_n": 0.05103838046939568,
+          "max_abs_k": 0.0880297618812591
+        }
+      }
+    }
+  },
+  "Al": {
+    "name": "Aluminum",
+    "default": "Rakic1995",
+    "variants": {
+      "Rakic1995": {
+        "medium": {
+          "epsilon_inf": 1.0,
+          "frequency_range": [
+            428274940000000.0,
+            749481145000000.0
+          ],
+          "poles": [
+            [
+              [
+                -27107594.32820393,
+                328278727233296.7
+              ],
+              [
+                0.0,
+                -4.8929254696099725e+17
+              ]
+            ],
+            [
+              [
+                -920553631354115.2,
+                1820108820886640.0
+              ],
+              [
+                0.0,
+                -5.7623654390828456e+16
+              ]
+            ],
+            [
+              [
+                -133489585220442.95,
+                9.475750866287224e+16
+              ],
+              [
+                0.0,
+                -721579887.9595431
+              ]
+            ],
+            [
+              [
+                -21969662557.5,
+                0.0
+              ],
+              [
+                3242.80649703324,
+                0.0
+              ]
+            ],
+            [
+              [
+                -2451073834132097.0,
+                0.0
+              ],
+              [
+                -3242.80649703324,
+                0.0
+              ]
+            ]
+          ]
+        },
+        "nk_file": "Al-Rakic.csv",
+        "description": "Aluminum, visible band (400\u2013700 nm).",
+        "source": "https://raw.githubusercontent.com/polyanskiy/refractiveindex.info-database/c5c2f188e848453def5970e347399d653df2ffc2/database/data/main/Al/nk/Rakic.yml",
+        "license": "CC0-1.0",
+        "source_file": "Al-Rakic.yml",
+        "source_sha256": "e93b31fe821551836e5b000949c67c633b8a1ca1f2c5549f4db0f1c03b24844d",
+        "references": "A. D. Raki\u0107.\nAlgorithm for the determination of intrinsic optical constants of metal films: application to aluminum.\n<a href=\"https://doi.org/10.1364/AO.34.004755\"><i>Appl. Opt.</i> <b>34</b>, 4755-4767 (1995)</a>\n",
+        "conditions": "\\Optical and electron-energy-loss data for evaporated-aluminum films have been critically analyzed and used in an iterative, self-consistent algorithm that represents a combination of the Kramers-Kronig analysis and the semiquantum-model application.\"\"\n",
+        "fit": {
+          "rms_epsilon": 0.2515659270709244,
+          "rms_n": 0.015222769294335373,
+          "rms_k": 0.008769053912232027,
+          "optimizer_success": true,
+          "evaluations": 103,
+          "method": "Positive Lorentz fit to linearly interpolated n,k",
+          "interpolation_samples": 151,
+          "oscillators": 4,
+          "max_abs_n": 0.04968962780261488,
+          "max_abs_k": 0.015389631712982244
+        }
+      }
+    }
+  },
+  "CMOS_RGB": {
+    "name": "Synthetic RGB filters",
+    "default": "green",
+    "variants": {
+      "red": {
+        "medium": {
+          "epsilon_inf": 1.0,
+          "frequency_range": [
+            428274940000000.0,
+            749481145000000.0
+          ],
+          "poles": [
+            [
+              [
+                -260298577766834.3,
+                -856205257867660.5
+              ],
+              [
+                -837132255127129.6,
+                6842333134582539.0
+              ]
+            ],
+            [
+              [
+                -627561313071132.5,
+                -858555618563993.0
+              ],
+              [
+                -186952805977951.34,
+                -1231876453153766.5
+              ]
+            ],
+            [
+              [
+                -29273724603532.83,
+                -2986136930383130.0
+              ],
+              [
+                48999935911222.99,
+                90259945320610.62
+              ]
+            ],
+            [
+              [
+                -29536205106127.61,
+                -2986287869783782.0
+              ],
+              [
+                -51513393370371.516,
+                -92868653960942.81
+              ]
+            ],
+            [
+              [
+                -400452245322713.94,
+                -3009900731914008.5
+              ],
+              [
+                184607458545138.28,
+                -86503036019331.16
+              ]
+            ],
+            [
+              [
+                -75225343713919.06,
+                -3065072949605627.0
+              ],
+              [
+                86290407357959.62,
+                19897627998830.508
+              ]
+            ],
+            [
+              [
+                -1365872236665674.8,
+                -3713540141948248.5
+              ],
+              [
+                -2719203550376953.5,
+                695298401098127.4
+              ]
+            ],
+            [
+              [
+                -1924415472150042.0,
+                -4556647720178092.0
+              ],
+              [
+                6084484652530684.0,
+                4848378219275983.0
+              ]
+            ],
+            [
+              [
+                -656182589105546.0,
+                -5787995232891684.0
+              ],
+              [
+                -2835799149958480.5,
+                -5288086417362250.0
+              ]
+            ],
+            [
+              [
+                -1616164043665259.2,
+                -4976482596781560.0
+              ],
+              [
+                7071401275876696.0,
+                1800905672432596.2
+              ]
+            ],
+            [
+              [
+                -1465956989589788.5,
+                -5449409861371566.0
+              ],
+              [
+                -1.2810381984172948e+16,
+                -2101973302546517.8
+              ]
+            ],
+            [
+              [
+                -596420763092838.6,
+                -5424647382445283.0
+              ],
+              [
+                6683427453189855.0,
+                3560926353102824.5
+              ]
+            ]
+          ]
+        },
+        "nk_file": "red.csv",
+        "description": "Synthetic red filter fitted to smooth absorption targets.",
+        "source": "Analytic definition in scripts/build_material_library.py",
+        "license": "Apache-2.0",
+        "fit": {
+          "method": "Passivity-constrained pole-residue fit to analytic RGB targets",
+          "optimizer_success": true,
+          "pole_pairs": 12,
+          "fitting_samples": 301,
+          "validation_samples": 3001,
+          "thickness_m": 1e-06,
+          "rms_n": 0.11154003786042883,
+          "rms_k": 0.001740309036732689,
+          "max_passband_index_error": 0.22381103873868358,
+          "max_passband_transmission_error": 0.0026979724269281524,
+          "transmission_target_met": true,
+          "index_target_met": false,
+          "passivity_audit_min": 0.0009990718963452693,
+          "max_transmission_error": 0.0030679510176828684
+        }
+      },
+      "green": {
+        "medium": {
+          "epsilon_inf": 1.5699462980198855,
+          "frequency_range": [
+            428274940000000.0,
+            749481145000000.0
+          ],
+          "poles": [
+            [
+              [
+                -173256897245721.06,
+                -2760029461826597.5
+              ],
+              [
+                -73766868458476.45,
+                50082112866614.13
+              ]
+            ],
+            [
+              [
+                -104521397882572.78,
+                -3063824493344763.0
+              ],
+              [
+                -97927732645869.69,
+                -40372634034153.375
+              ]
+            ],
+            [
+              [
+                -733433992126827.2,
+                -3315994962204092.5
+              ],
+              [
+                -525264416852829.7,
+                281148527609184.5
+              ]
+            ],
+            [
+              [
+                -26866132909693.938,
+                -3131021216943898.0
+              ],
+              [
+                544247720759.9674,
+                -1182126176084.5432
+              ]
+            ],
+            [
+              [
+                -227475527438653.28,
+                -3125707471466770.5
+              ],
+              [
+                -95648590895086.72,
+                57582863222504.19
+              ]
+            ],
+            [
+              [
+                -35419488691685.36,
+                -3778028806798317.5
+              ],
+              [
+                -1082280626274.1951,
+                -1739456500567.408
+              ]
+            ],
+            [
+              [
+                -153048988348728.7,
+                -3859114202805249.0
+              ],
+              [
+                -1994110926334128.8,
+                -2495401627430031.0
+              ]
+            ],
+            [
+              [
+                -153836533054970.8,
+                -3862886368563171.5
+              ],
+              [
+                2130816112898603.2,
+                2586993129873255.0
+              ]
+            ],
+            [
+              [
+                -251494418373145.4,
+                -4800489827972384.0
+              ],
+              [
+                -3164480039031573.5,
+                1616625032813796.2
+              ]
+            ],
+            [
+              [
+                -309325335121820.06,
+                -4789372003885247.0
+              ],
+              [
+                3627637116119980.0,
+                -4401421967484510.5
+              ]
+            ],
+            [
+              [
+                -711403103125340.1,
+                -5140563039238646.0
+              ],
+              [
+                8718970491547996.0,
+                6807893238708425.0
+              ]
+            ],
+            [
+              [
+                -477706242604095.7,
+                -5120290895355080.0
+              ],
+              [
+                -8192111337973452.0,
+                -1888333584855551.0
+              ]
+            ]
+          ]
+        },
+        "nk_file": "green.csv",
+        "description": "Synthetic green filter fitted to smooth absorption targets.",
+        "source": "Analytic definition in scripts/build_material_library.py",
+        "license": "Apache-2.0",
+        "fit": {
+          "method": "Passivity-constrained pole-residue fit to analytic RGB targets",
+          "optimizer_success": true,
+          "pole_pairs": 12,
+          "fitting_samples": 301,
+          "validation_samples": 3001,
+          "thickness_m": 1e-06,
+          "rms_n": 0.18869516428324984,
+          "rms_k": 0.0032801007113219577,
+          "max_passband_index_error": 0.26062466699426445,
+          "max_passband_transmission_error": 0.003840674872168992,
+          "transmission_target_met": true,
+          "index_target_met": false,
+          "passivity_audit_min": 0.001000425806483464,
+          "max_transmission_error": 0.004584054059388443
+        }
+      },
+      "blue": {
+        "medium": {
+          "epsilon_inf": 3.483233413219288,
+          "frequency_range": [
+            428274940000000.0,
+            749481145000000.0
+          ],
+          "poles": [
+            [
+              [
+                -390176849301818.2,
+                -1214196005145614.0
+              ],
+              [
+                -195022098683093.44,
+                7910058607974021.0
+              ]
+            ],
+            [
+              [
+                -1269386221989717.2,
+                -2163731160865891.8
+              ],
+              [
+                -84973205060542.34,
+                -2965674322674058.0
+              ]
+            ],
+            [
+              [
+                -941091676579493.9,
+                -2679145291994216.0
+              ],
+              [
+                365912787953760.7,
+                1569696213007118.8
+              ]
+            ],
+            [
+              [
+                -1003801482724295.6,
+                -2964147994704059.5
+              ],
+              [
+                -154182636837878.03,
+                288417823140712.6
+              ]
+            ],
+            [
+              [
+                -737808167832840.8,
+                -3464496136993633.0
+              ],
+              [
+                92965647738088.19,
+                427408273058783.25
+              ]
+            ],
+            [
+              [
+                -144391611741215.94,
+                -3883733695476326.0
+              ],
+              [
+                -125519028701593.72,
+                -24636234922219.523
+              ]
+            ],
+            [
+              [
+                -39534194673984.77,
+                -3993387406976208.0
+              ],
+              [
+                531769603945.19946,
+                -1704378755227.803
+              ]
+            ],
+            [
+              [
+                -300550701802591.75,
+                -4095410956015226.0
+              ],
+              [
+                -27739597034421.72,
+                -10610677440703.258
+              ]
+            ],
+            [
+              [
+                -555172393213059.0,
+                -4892873073715337.0
+              ],
+              [
+                23259845761730.645,
+                79640747365190.36
+              ]
+            ],
+            [
+              [
+                -315803534705466.8,
+                -5516396760754428.0
+              ],
+              [
+                199595866237963.0,
+                164899124706908.6
+              ]
+            ],
+            [
+              [
+                -93070142482513.88,
+                -5789255922517004.0
+              ],
+              [
+                16277485141707.547,
+                -55737457393268.73
+              ]
+            ],
+            [
+              [
+                -251595815041350.28,
+                -6517294776051432.0
+              ],
+              [
+                66278643098065.65,
+                -65271449946523.54
+              ]
+            ]
+          ]
+        },
+        "nk_file": "blue.csv",
+        "description": "Synthetic blue filter fitted to smooth absorption targets.",
+        "source": "Analytic definition in scripts/build_material_library.py",
+        "license": "Apache-2.0",
+        "fit": {
+          "method": "Passivity-constrained pole-residue fit to analytic RGB targets",
+          "optimizer_success": true,
+          "pole_pairs": 12,
+          "fitting_samples": 301,
+          "validation_samples": 3001,
+          "thickness_m": 1e-06,
+          "rms_n": 0.10296118222384866,
+          "rms_k": 0.0021998203901783878,
+          "max_passband_index_error": 0.1910469713623939,
+          "max_passband_transmission_error": 0.0036647247351455636,
+          "transmission_target_met": true,
+          "index_target_met": false,
+          "passivity_audit_min": 0.0009378872299053835,
+          "max_transmission_error": 0.004867782680245014
+        }
+      }
+    }
+  }
+}
