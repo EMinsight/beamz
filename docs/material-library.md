@@ -22,11 +22,16 @@ model currently declares **400–700 nm**, even when its source covers a wider b
 | `SiN` (silicon nitride) | `Philipp1973` | Exact Sellmeier conversion |
 | `aSi` (amorphous silicon, 60 nm film) | `Pierce1972` | Three-oscillator passive fit |
 | `Al` (aluminum) | `Rakic1995` | Four-oscillator passive fit |
-| `CMOS_RGB` | `red`, `green`, `blue` | Passive fits to analytic filter targets |
+| `SiN`, `aSi` | `Horiba2006` | Exact conversion of published Lorentz formulas |
+| `CMOS_RGB` | `red`, `green`, `blue` | Passive vector fits to analytic filter targets |
 
 The first four materials use CC0 data from the
 [refractiveindex.info database](https://github.com/polyanskiy/refractiveindex.info-database).
-The three filters are original hypothetical materials, not measured products.
+The `Horiba2006` variants independently implement the scalar parameters and Lorentz
+equation in HORIBA Jobin Yvon Technical Note 08 (2006), equation 9 and page 4.
+They bundle neither the publication nor a transcribed measured-data table. Their
+Apache-2.0 label covers the implementation and calculated samples, not the
+publication. The three filters are hypothetical materials, not measured products.
 
 ## Inspect data and fit quality
 
@@ -58,16 +63,43 @@ The filter targets have n = 1.45, passband k = 0.01, and stopband k = 0.46.
 Raised-cosine transitions span 470–500 nm and/or 600–630 nm. Red passes above
 630 nm, green from 500–600 nm, and blue below 470 nm, within the 400–700 nm band.
 
-Twelve stable pole pairs are fitted per filter, prioritizing extinction and
-absorption-only transmission through 1 µm. Each fit must pass an independent
-dense passivity audit and keep the maximum full-spectrum transmission error below
-0.02 (two percentage points). The catalog records the actual errors.
+The builder uses BeamZ's independent scalar vector fitter: at most nine stored
+poles (each complex pole represents a conjugate pair), epsilon_inf = 1, up to
+200 relocation iterations, and weights (0.1, 1.9) on real/imaginary permittivity.
+It tries standard and relaxed relocation with real/complex initial poles and
+linear/log spacing. Passive residue fitting follows pole relocation. The
+training set has 200 samples; a separate 3001-point grid measures n,k and
+absorption-only transmission errors through 1 µm.
 
-The constant-index target is not met within 0.01: the fitted media retain index
-dispersion, particularly near band edges. `index_target_met` and
-`transmission_target_met` report these separate outcomes explicitly. The fits
-are not equivalent to a hypothetical constant-index filter. Fresnel reflections
-and interference also affect the transmission of a complete film or device.
+The weighted permittivity RMS target is 0.02. `tolerance_met` reports whether
+it was achieved; returning a model does not mean the target was met. This
+objective allows refractive-index dispersion. Index and transmission errors
+are reported separately, including `index_target_met` and
+`transmission_target_met`; neither is an additional optimization objective.
+Fresnel reflections and interference also affect full-film transmission.
+
+## Fit a material
+
+```python
+wavelengths_m, n, k = material_library["aSi"].variants["Pierce1972"].nk_data.T
+model, report = bz.fit_nk_vector(
+    wavelengths_m, n, k, max_poles=9, epsilon_inf=1.0,
+    weights=(0.1, 1.9), num_iters=200, tolerance_rms=0.02,
+)
+print(report["weighted_rms_epsilon"], report["tolerance_met"])
+```
+
+`fit_nk_vector` uses NumPy/SciPy and independently implements
+[Gustavsen and Semlyen's vector fitting](https://doi.org/10.1109/61.772353)
+and [Gustavsen's relaxed pole relocation](https://doi.org/10.1109/TPWRD.2005.860281).
+It does not import or vendor another fitter. Weights are normalized to mean one;
+the reported RMS is `sqrt(mean((wr*delta_Re_eps)**2 + (wi*delta_Im_eps)**2))`.
+Stable poles enforce causality. Constrained residue optimization enforces sampled
+nonnegative loss. A broad independent grid and refinement of local loss minima
+check passivity outside the fit band; this is not a global passivity proof.
+Different initializations or numerical libraries can produce different fits.
+The existing `fit_nk` function remains available for positive Lorentz fits with
+an n,k objective.
 
 ## Rebuild or extend the catalog
 
@@ -81,8 +113,8 @@ To add a variant, select and pin a suitable source, normalize its units, choose
 a use band, and convert its analytic formula or fit passive causal oscillators.
 Validate optical constants against the source and exercise the model in an
 analytical slab test before adding it to the curated catalog. The generator
-currently supports Sellmeier formula 1 and tabulated n,k; it rejects other
-formats. It does not automatically import the entire upstream database.
+supports Sellmeier formula 1, the named Lorentz formulas, and tabulated n,k;
+it rejects other formats. It does not automatically import the entire upstream database.
 
 These are scalar bulk models for single-device JAX execution. A larger source
 catalog alone does not add dispersive anisotropy, surface-conductivity models,

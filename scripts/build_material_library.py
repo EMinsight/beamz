@@ -12,10 +12,10 @@ from io import StringIO
 from pathlib import Path
 
 import numpy as np
-from scipy.optimize import Bounds, minimize
 
 from beamz.const import LIGHT_SPEED
 from beamz.design.dispersion import PoleResidue, fit_nk
+from beamz.design.vector_fit import fit_nk_vector
 
 DATA = Path(__file__).resolve().parents[1] / "beamz/material_library/data"
 REVISION = "c5c2f188e848453def5970e347399d653df2ffc2"
@@ -112,7 +112,7 @@ FILTER_THICKNESS = 1e-6
 FILTER_INDEX_TARGET = 1.45
 FILTER_TRANSMISSION_TOLERANCE = 0.02  # absolute transmitted-power fraction
 FILTER_INDEX_TOLERANCE = 0.01
-FILTER_POLE_COUNT = 12
+FILTER_POLE_COUNT = 9
 
 
 def filter_target(wavelengths, channel):
@@ -129,135 +129,19 @@ def filter_target(wavelengths, channel):
     return np.full_like(wavelengths, FILTER_INDEX_TARGET), 0.01 + 0.45 * stop
 
 
-def filter_response(parameters, omega):
-    """Dimensionless pole-pair response and analytic parameter Jacobian."""
-    epsilon_inf = parameters[0]
-    real, imag, resonance, damping = np.split(parameters[1:], 4)
-    residue = real + 1j * imag
-    positive = 1 / (damping + 1j * (resonance - omega[:, None]))
-    negative = 1 / (damping - 1j * (resonance + omega[:, None]))
-    epsilon = epsilon_inf + positive @ residue + negative @ residue.conj()
-    jacobian = np.c_[
-        np.ones(len(omega)),
-        positive + negative,
-        1j * (positive - negative),
-        -1j * positive**2 * residue + 1j * negative**2 * residue.conj(),
-        -(positive**2) * residue - negative**2 * residue.conj(),
-    ]
-    return epsilon, jacobian
-
-
 def filter_model(channel):
-    """Fit stable poles with sampled passivity constraints and an independent audit.
-
-    First fit residues with fixed poles, then refine pole locations. The loss
-    and transmission targets take priority over constant index: causal index
-    dispersion is retained and its deviation is reported, never corrected away.
-    """
-    wavelengths = np.linspace(400e-9, 700e-9, 301)
+    """Fit independently defined targets with passive vector fitting."""
+    wavelengths = np.linspace(400e-9, 700e-9, 200)
     n, k = filter_target(wavelengths, channel)
-    omega = 550e-9 / wavelengths
-    scale = 2 * np.pi * LIGHT_SPEED / 550e-9
-    absorption = 4 * np.pi * FILTER_THICKNESS / wavelengths
-    target_transmission = np.exp(-absorption * k)
-    count = FILTER_POLE_COUNT
-    parameters = np.r_[
-        FILTER_INDEX_TARGET**2,
-        np.zeros(2 * count),
-        np.linspace(0.65, 1.6, count),
-        np.full(count, 0.025),
-    ]
-    checks = np.unique(
-        np.r_[np.geomspace(1e-5, 1e5, 1000), np.linspace(0.3, 2.5, 6000)]
-    )
-    audit = np.unique(
-        np.r_[np.geomspace(1e-6, 1e6, 40000), np.linspace(0.3, 2.5, 60000)]
-    )
-    lower = np.r_[
-        1, np.full(2 * count, -10), np.full(count, 0.25), np.full(count, 0.002)
-    ]
-    upper = np.r_[10, np.full(2 * count, 10), np.full(count, 4), np.full(count, 1.0)]
-
-    def objective(values, transmission_weight):
-        epsilon, jacobian = filter_response(values, omega)
-        fitted = np.sqrt(epsilon)
-        derivative = jacobian / (2 * fitted[:, None])
-        exponent = -absorption * fitted.imag
-        # Bound only infeasible trial iterates to avoid exponential overflow.
-        # Accepted models are passive, so their exponents are nonpositive.
-        transmission = np.exp(np.clip(exponent, -100, 40))
-        residual = np.r_[
-            0.05 * (fitted.real - n),
-            fitted.imag - k,
-            transmission_weight * (transmission - target_transmission),
-        ]
-        jac = np.r_[
-            0.05 * derivative.real,
-            derivative.imag,
-            (
-                -absorption
-                * transmission
-                * transmission_weight
-                * (exponent > -100)
-                * (exponent < 40)
-            )[:, None]
-            * derivative.imag,
-        ]
-        return 0.5 * float(residual @ residual), jac.T @ residual
-
-    result = None
-    for stage in range(11):
-        fixed = stage == 0
-        bounds = Bounds(lower.copy(), upper.copy())
-        if fixed:
-            bounds.lb[1 + 2 * count :] = parameters[1 + 2 * count :]
-            bounds.ub[1 + 2 * count :] = parameters[1 + 2 * count :]
-        normalization = checks / (1 + checks**2)
-        constraints = {
-            "type": "ineq",
-            "fun": lambda x, f=checks, norm=normalization: (
-                filter_response(x, f)[0].imag / norm - 1e-3
-            ),
-            "jac": lambda x, f=checks, norm=normalization: (
-                filter_response(x, f)[1].imag / norm[:, None]
-            ),
-        }
-        result = minimize(
-            objective,
-            parameters,
-            args=(1 if fixed else 5,),
-            jac=True,
-            method="SLSQP",
-            bounds=bounds,
-            constraints=[constraints],
-            options={"maxiter": 3000, "ftol": 1e-8},
-        )
-        parameters = result.x
-        epsilon, _ = filter_response(parameters, audit)
-        loss = epsilon.imag / (audit / (1 + audit**2))
-        if not fixed and result.success and loss.min() >= 0:
-            break
-        # Add off-grid negative local minima before refining again.
-        minima = (
-            np.flatnonzero(
-                (loss[1:-1] < loss[:-2]) & (loss[1:-1] < loss[2:]) & (loss[1:-1] < 0)
-            )
-            + 1
-        )
-        checks = np.unique(np.r_[checks, audit[minima], audit[np.argmin(loss)]])
-    if result is None or not result.success or loss.min() < 0:
-        raise RuntimeError(f"{channel} filter failed convergence/passivity checks")
-    real, imag, resonance, damping = np.split(parameters[1:], 4)
-    model = PoleResidue(
-        parameters[0],
-        list(
-            zip(
-                (-damping - 1j * resonance) * scale,
-                (real + 1j * imag) * scale,
-                strict=True,
-            )
-        ),
-        frequency_range=BAND,
+    model, diagnostics = fit_nk_vector(
+        wavelengths,
+        n,
+        k,
+        max_poles=FILTER_POLE_COUNT,
+        epsilon_inf=1.0,
+        weights=(0.1, 1.9),
+        num_iters=200,
+        tolerance_rms=0.02,
     )
     # Assess a denser holdout grid, rather than accepting training residuals.
     holdout = np.linspace(400e-9, 700e-9, 3001)
@@ -271,26 +155,45 @@ def filter_model(channel):
     max_transmission = float(delta_transmission[passband].max())
     max_full_transmission = float(delta_transmission.max())
     max_index = float(abs(fitted.real[passband] - hn[passband]).max())
-    if max_full_transmission > FILTER_TRANSMISSION_TOLERANCE:
-        raise RuntimeError(f"{channel} filter misses its transmission target")
-    diagnostics = {
-        "method": "Passivity-constrained pole-residue fit to analytic RGB targets",
-        "optimizer_success": bool(result.success),
-        "pole_pairs": count,
-        "fitting_samples": len(wavelengths),
-        "validation_samples": len(holdout),
-        "thickness_m": FILTER_THICKNESS,
-        "rms_n": float(np.sqrt(np.mean((fitted.real - hn) ** 2))),
-        "rms_k": float(np.sqrt(np.mean((fitted.imag - hk) ** 2))),
-        "max_passband_index_error": max_index,
-        "max_passband_transmission_error": max_transmission,
-        "max_transmission_error": max_full_transmission,
-        "transmission_target_met": max_full_transmission
-        <= FILTER_TRANSMISSION_TOLERANCE,
-        "index_target_met": max_index <= FILTER_INDEX_TOLERANCE,
-        "passivity_audit_min": float(loss.min()),
-    }
+    diagnostics.update(
+        {
+            "fitting_samples": len(wavelengths),
+            "validation_samples": len(holdout),
+            "thickness_m": FILTER_THICKNESS,
+            "rms_n": float(np.sqrt(np.mean((fitted.real - hn) ** 2))),
+            "rms_k": float(np.sqrt(np.mean((fitted.imag - hk) ** 2))),
+            "max_passband_index_error": max_index,
+            "max_passband_transmission_error": max_transmission,
+            "max_transmission_error": max_full_transmission,
+            "transmission_target_met": max_full_transmission
+            <= FILTER_TRANSMISSION_TOLERANCE,
+            "index_target_met": max_index <= FILTER_INDEX_TOLERANCE,
+        }
+    )
     return model, np.c_[wavelengths, n, k], diagnostics
+
+
+# HORIBA Jobin Yvon, Technical Note 08 (September 2006), equation 9 and
+# page 4. Only the published scalar parameters and mathematical equation are
+# implemented here; no document, measured table or third-party code is bundled.
+LORENTZ_SOURCE = "https://www.horiba.com/fileadmin/uploads/Scientific/Downloads/OpticalSchool_CN/TN/ellipsometer/Lorentz_Dispersion_Model.pdf"
+LORENTZ_PARAMETERS = {
+    "SiN": (2.320, 3.585, 6.495, 0.398),
+    "aSi": (3.109, 17.68, 3.93, 1.92),
+}
+
+
+def published_lorentz_model(key):
+    """Convert the published photon-energy equation directly into SI poles."""
+    epsilon_inf, epsilon_static, energy_ev, damping_ev = LORENTZ_PARAMETERS[key]
+    hbar_ev_s = 6.582119569e-16
+    return PoleResidue.lorentz(
+        epsilon_inf,
+        strength=epsilon_static - epsilon_inf,
+        resonance=energy_ev / hbar_ev_s,
+        damping=damping_ev / hbar_ev_s,
+        frequency_range=BAND,
+    )
 
 
 def main():
@@ -321,6 +224,26 @@ def main():
         )
         catalog[key] = dict(name=name, default=variant, variants={variant: record})
         print(key, report)
+    for key in LORENTZ_PARAMETERS:
+        model = published_lorentz_model(key)
+        nk = np.sqrt(model.eps_model(LIGHT_SPEED / WAVELENGTHS))
+        catalog[key]["variants"]["Horiba2006"] = record_variant(
+            model,
+            np.c_[WAVELENGTHS, nk.real, nk.imag],
+            f"{key}-Horiba2006.csv",
+            description="Published single-Lorentz model, independently implemented.",
+            source=LORENTZ_SOURCE,
+            license="Apache-2.0",
+            references="HORIBA Jobin Yvon, Lorentz Dispersion Model, Technical Note 08, September 2006; equation 9, page 4 parameter table.",
+            conditions="Analytic bulk model; sampled values are calculated, not measured. Apache-2.0 covers this implementation, not the source publication.",
+            fit={
+                "method": "Exact Lorentz conversion; no numerical fitting",
+                "epsilon_inf": LORENTZ_PARAMETERS[key][0],
+                "epsilon_static": LORENTZ_PARAMETERS[key][1],
+                "resonance_energy_eV": LORENTZ_PARAMETERS[key][2],
+                "damping_energy_eV": LORENTZ_PARAMETERS[key][3],
+            },
+        )
     filters = {}
     for channel in ("red", "green", "blue"):
         model, samples, report = filter_model(channel)

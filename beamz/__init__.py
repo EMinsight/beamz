@@ -44,6 +44,7 @@ from beamz.design.structures import (
     Sphere,
     Taper,
 )
+from beamz.design.vector_fit import fit_nk_vector
 from beamz.devices.boundaries import PEC, PML, Absorber, Periodic
 from beamz.devices.monitors import FieldMonitor, FieldRecorder, FluxMonitor, ModeMonitor
 from beamz.devices.ports import Port
@@ -89,6 +90,7 @@ __all__ = [
     "Material",
     "PoleResidue",
     "fit_nk",
+    "fit_nk_vector",
     "material_library",
     "design",
     "optimization",

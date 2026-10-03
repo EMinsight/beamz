@@ -41,6 +41,7 @@ MODULE_EXPORTS = ("design", "optimization")
 
 FUNCTION_EXPORTS = (
     "fit_nk",
+    "fit_nk_vector",
     "ramped_cosine",
     "display_status",
     "create_plain_progress",

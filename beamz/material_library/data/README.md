@@ -31,20 +31,24 @@ is 600–630 nm, the blue transition is 470–500 nm, and green passes 500–600
 with those two transitions on either side. CSVs contain these targets, not the
 fitted response. No copied filter tables or fitted coefficients are used.
 
-The builder fits 12 stable conjugate pole pairs per filter using constrained
-nonlinear least squares (SciPy SLSQP). It first fits residues with fixed poles,
-then refines the poles. The objective weights index, extinction, and full-spectrum
-absorption-only transmission by 0.05, 1, and 5 respectively in the final stage.
-Transmission is evaluated through a 1 µm thickness. Sampled passivity constraints
-cover frequencies beyond the use band; a separate dense audit adds missed
-negative-loss minima to the constraints before accepting a model. This is a
-numerical passivity check, not a global mathematical certificate.
+The builder fits the synthetic targets with BeamZ's independent vector fitter,
+using at most nine stored poles, epsilon_inf=1, weights=(0.1,1.9) on real and
+imaginary permittivity, and up to 200 relocation iterations. The requested
+weighted RMS tolerance is 0.02. Actual errors and whether the target was met
+are retained in the catalog. Passivity is checked on a broad frequency grid
+and by refinement of local loss minima. This is a numerical check, not a global
+mathematical certificate. No device-efficiency data enter the fitting objective.
+Transmission and index errors are reported separately, not optimized directly.
 
-Acceptance requires convergence, the passivity audit, and at most 0.02 absolute
-full-spectrum transmission error on a 3001-point validation grid. The constant-index
-target of 0.01 error is **not met**: index dispersion is retained and reported
-rather than removed. Both target statuses and maximum errors appear in the
-catalog. No device-efficiency data enter the fitting objective.
+The `Horiba2006` variants are independent implementations of equation 9 and the
+page 4 scalar parameter table in HORIBA Jobin Yvon, *Lorentz Dispersion Model*,
+Technical Note 08 (September 2006). The catalog retains the primary source URL,
+parameters and citation. Only the mathematical model and calculated samples are
+bundled; the publication and measured tables are not. These variants require no
+numerical fitting. Their Apache-2.0 label applies to this implementation and
+its calculated samples, not to the source publication.
 
-The generator, synthetic targets, and synthetic models use the project's
-Apache-2.0 license. Physical source data retain CC0.
+The generator, synthetic targets, synthetic fits and independently implemented
+Lorentz models use the project's Apache-2.0 license. The four source YAML files
+retain CC0. Glass uses the bundled CC0 Malitson source; no archival glass table
+or fit derived from one is included.

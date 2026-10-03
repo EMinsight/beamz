@@ -100,6 +100,40 @@
           "max_abs_n": 4.440892098500626e-16,
           "max_abs_k": 0.0
         }
+      },
+      "Horiba2006": {
+        "medium": {
+          "epsilon_inf": 2.32,
+          "frequency_range": [
+            428274940000000.0,
+            749481145000000.0
+          ],
+          "poles": [
+            [
+              [
+                -302334222151229.4,
+                -9863009385232970.0
+              ],
+              [
+                0.0,
+                6244215164693548.0
+              ]
+            ]
+          ]
+        },
+        "nk_file": "SiN-Horiba2006.csv",
+        "description": "Published single-Lorentz model, independently implemented.",
+        "source": "https://www.horiba.com/fileadmin/uploads/Scientific/Downloads/OpticalSchool_CN/TN/ellipsometer/Lorentz_Dispersion_Model.pdf",
+        "license": "Apache-2.0",
+        "references": "HORIBA Jobin Yvon, Lorentz Dispersion Model, Technical Note 08, September 2006; equation 9, page 4 parameter table.",
+        "conditions": "Analytic bulk model; sampled values are calculated, not measured. Apache-2.0 covers this implementation, not the source publication.",
+        "fit": {
+          "method": "Exact Lorentz conversion; no numerical fitting",
+          "epsilon_inf": 2.32,
+          "epsilon_static": 3.585,
+          "resonance_energy_eV": 6.495,
+          "damping_energy_eV": 0.398
+        }
       }
     }
   },
@@ -176,6 +210,40 @@
           "oscillators": 3,
           "max_abs_n": 0.05103838046939568,
           "max_abs_k": 0.0880297618812591
+        }
+      },
+      "Horiba2006": {
+        "medium": {
+          "epsilon_inf": 3.109,
+          "frequency_range": [
+            428274940000000.0,
+            749481145000000.0
+          ],
+          "poles": [
+            [
+              [
+                -1458496750076282.2,
+                -5789844327200832.0
+              ],
+              [
+                0.0,
+                4.485863370051097e+16
+              ]
+            ]
+          ]
+        },
+        "nk_file": "aSi-Horiba2006.csv",
+        "description": "Published single-Lorentz model, independently implemented.",
+        "source": "https://www.horiba.com/fileadmin/uploads/Scientific/Downloads/OpticalSchool_CN/TN/ellipsometer/Lorentz_Dispersion_Model.pdf",
+        "license": "Apache-2.0",
+        "references": "HORIBA Jobin Yvon, Lorentz Dispersion Model, Technical Note 08, September 2006; equation 9, page 4 parameter table.",
+        "conditions": "Analytic bulk model; sampled values are calculated, not measured. Apache-2.0 covers this implementation, not the source publication.",
+        "fit": {
+          "method": "Exact Lorentz conversion; no numerical fitting",
+          "epsilon_inf": 3.109,
+          "epsilon_static": 17.68,
+          "resonance_energy_eV": 3.93,
+          "damping_energy_eV": 1.92
         }
       }
     }
@@ -281,122 +349,52 @@
           "poles": [
             [
               [
-                -260298577766834.3,
-                -856205257867660.5
+                -1425613759675896.0,
+                0.0
               ],
               [
-                -837132255127129.6,
-                6842333134582539.0
+                5503399910120744.0,
+                0.0
               ]
             ],
             [
               [
-                -627561313071132.5,
-                -858555618563993.0
+                -436759478786111.6,
+                -2298915226928268.0
               ],
               [
-                -186952805977951.34,
-                -1231876453153766.5
+                -1593860044370003.5,
+                -636983493301969.8
               ]
             ],
             [
               [
-                -29273724603532.83,
-                -2986136930383130.0
+                -49460287570462.7,
+                -2789887641559467.5
               ],
               [
-                48999935911222.99,
-                90259945320610.62
+                -960151307560.172,
+                -1006505667920.5693
               ]
             ],
             [
               [
-                -29536205106127.61,
-                -2986287869783782.0
+                -77854380462795.19,
+                -3052404800216077.5
               ],
               [
-                -51513393370371.516,
-                -92868653960942.81
+                65882676741204.3,
+                -22159936666625.668
               ]
             ],
             [
               [
-                -400452245322713.94,
-                -3009900731914008.5
+                -131999171084961.33,
+                -3055353906916116.5
               ],
               [
-                184607458545138.28,
-                -86503036019331.16
-              ]
-            ],
-            [
-              [
-                -75225343713919.06,
-                -3065072949605627.0
-              ],
-              [
-                86290407357959.62,
-                19897627998830.508
-              ]
-            ],
-            [
-              [
-                -1365872236665674.8,
-                -3713540141948248.5
-              ],
-              [
-                -2719203550376953.5,
-                695298401098127.4
-              ]
-            ],
-            [
-              [
-                -1924415472150042.0,
-                -4556647720178092.0
-              ],
-              [
-                6084484652530684.0,
-                4848378219275983.0
-              ]
-            ],
-            [
-              [
-                -656182589105546.0,
-                -5787995232891684.0
-              ],
-              [
-                -2835799149958480.5,
-                -5288086417362250.0
-              ]
-            ],
-            [
-              [
-                -1616164043665259.2,
-                -4976482596781560.0
-              ],
-              [
-                7071401275876696.0,
-                1800905672432596.2
-              ]
-            ],
-            [
-              [
-                -1465956989589788.5,
-                -5449409861371566.0
-              ],
-              [
-                -1.2810381984172948e+16,
-                -2101973302546517.8
-              ]
-            ],
-            [
-              [
-                -596420763092838.6,
-                -5424647382445283.0
-              ],
-              [
-                6683427453189855.0,
-                3560926353102824.5
+                35478153934632.26,
+                12409549833735.219
               ]
             ]
           ]
@@ -406,25 +404,41 @@
         "source": "Analytic definition in scripts/build_material_library.py",
         "license": "Apache-2.0",
         "fit": {
-          "method": "Passivity-constrained pole-residue fit to analytic RGB targets",
+          "method": "Independent scalar vector fitting with constrained passive residues",
+          "weighted_rms_epsilon": 0.04621267263655295,
+          "tolerance_rms": 0.02,
+          "tolerance_met": false,
+          "weights": [
+            0.1,
+            1.9
+          ],
+          "epsilon_inf": 1.0,
+          "max_poles": 9,
+          "rational_order": 9,
+          "pole_entries": 5,
+          "num_iters": 200,
+          "selected_iteration": 100,
+          "trials": 72,
+          "relaxed": false,
+          "real_initial_poles": true,
+          "logspacing": true,
+          "passivity_audit_min": 0.030015852925532827,
           "optimizer_success": true,
-          "pole_pairs": 12,
-          "fitting_samples": 301,
+          "rms_n": 0.13176827646342468,
+          "rms_k": 0.022916091772430116,
+          "fitting_samples": 200,
           "validation_samples": 3001,
           "thickness_m": 1e-06,
-          "rms_n": 0.11154003786042883,
-          "rms_k": 0.001740309036732689,
-          "max_passband_index_error": 0.22381103873868358,
-          "max_passband_transmission_error": 0.0026979724269281524,
-          "transmission_target_met": true,
-          "index_target_met": false,
-          "passivity_audit_min": 0.0009990718963452693,
-          "max_transmission_error": 0.0030679510176828684
+          "max_passband_index_error": 0.3238289851296958,
+          "max_passband_transmission_error": 0.08780438727022777,
+          "max_transmission_error": 0.08780438727022777,
+          "transmission_target_met": false,
+          "index_target_met": false
         }
       },
       "green": {
         "medium": {
-          "epsilon_inf": 1.5699462980198855,
+          "epsilon_inf": 1.0,
           "frequency_range": [
             428274940000000.0,
             749481145000000.0
@@ -432,122 +446,72 @@
           "poles": [
             [
               [
-                -173256897245721.06,
-                -2760029461826597.5
+                -634532177340016.6,
+                -2402472876404406.0
               ],
               [
-                -73766868458476.45,
-                50082112866614.13
+                1139821141146829.0,
+                -92849638353470.3
               ]
             ],
             [
               [
-                -104521397882572.78,
-                -3063824493344763.0
+                -82947533703654.69,
+                -3051740524744878.0
               ],
               [
-                -97927732645869.69,
-                -40372634034153.375
+                -43166225617555.91,
+                58364940336173.55
               ]
             ],
             [
               [
-                -733433992126827.2,
-                -3315994962204092.5
+                -83934369196636.9,
+                -3079206627418378.5
               ],
               [
-                -525264416852829.7,
-                281148527609184.5
+                -16968301708733.418,
+                -56353608254458.66
               ]
             ],
             [
               [
-                -26866132909693.938,
-                -3131021216943898.0
+                -605510453421549.0,
+                -3198066017163828.5
               ],
               [
-                544247720759.9674,
-                -1182126176084.5432
+                -505764919829369.7,
+                -883484982734591.8
               ]
             ],
             [
               [
-                -227475527438653.28,
-                -3125707471466770.5
+                -4697229781871829.0,
+                -3591834216063042.5
               ],
               [
-                -95648590895086.72,
-                57582863222504.19
+                35057334064125.773,
+                7645403115837134.0
               ]
             ],
             [
               [
-                -35419488691685.36,
-                -3778028806798317.5
+                -157119764245881.97,
+                -3849715390102523.0
               ],
               [
-                -1082280626274.1951,
-                -1739456500567.408
+                33765507447719.156,
+                -46219087157495.664
               ]
             ],
             [
               [
-                -153048988348728.7,
-                -3859114202805249.0
+                -122307486610389.45,
+                -3884053691001177.5
               ],
               [
-                -1994110926334128.8,
-                -2495401627430031.0
-              ]
-            ],
-            [
-              [
-                -153836533054970.8,
-                -3862886368563171.5
-              ],
-              [
-                2130816112898603.2,
-                2586993129873255.0
-              ]
-            ],
-            [
-              [
-                -251494418373145.4,
-                -4800489827972384.0
-              ],
-              [
-                -3164480039031573.5,
-                1616625032813796.2
-              ]
-            ],
-            [
-              [
-                -309325335121820.06,
-                -4789372003885247.0
-              ],
-              [
-                3627637116119980.0,
-                -4401421967484510.5
-              ]
-            ],
-            [
-              [
-                -711403103125340.1,
-                -5140563039238646.0
-              ],
-              [
-                8718970491547996.0,
-                6807893238708425.0
-              ]
-            ],
-            [
-              [
-                -477706242604095.7,
-                -5120290895355080.0
-              ],
-              [
-                -8192111337973452.0,
-                -1888333584855551.0
+                94685918985185.7,
+                16059522035362.83
               ]
             ]
           ]
@@ -557,25 +521,41 @@
         "source": "Analytic definition in scripts/build_material_library.py",
         "license": "Apache-2.0",
         "fit": {
-          "method": "Passivity-constrained pole-residue fit to analytic RGB targets",
+          "method": "Independent scalar vector fitting with constrained passive residues",
+          "weighted_rms_epsilon": 0.059124320588102984,
+          "tolerance_rms": 0.02,
+          "tolerance_met": false,
+          "weights": [
+            0.1,
+            1.9
+          ],
+          "epsilon_inf": 1.0,
+          "max_poles": 9,
+          "rational_order": 14,
+          "pole_entries": 7,
+          "num_iters": 200,
+          "selected_iteration": 4,
+          "trials": 72,
+          "relaxed": true,
+          "real_initial_poles": false,
+          "logspacing": true,
+          "passivity_audit_min": 8.003849981824061e-10,
           "optimizer_success": true,
-          "pole_pairs": 12,
-          "fitting_samples": 301,
+          "rms_n": 0.1960954853217951,
+          "rms_k": 0.04087446950080132,
+          "fitting_samples": 200,
           "validation_samples": 3001,
           "thickness_m": 1e-06,
-          "rms_n": 0.18869516428324984,
-          "rms_k": 0.0032801007113219577,
-          "max_passband_index_error": 0.26062466699426445,
-          "max_passband_transmission_error": 0.003840674872168992,
-          "transmission_target_met": true,
-          "index_target_met": false,
-          "passivity_audit_min": 0.001000425806483464,
-          "max_transmission_error": 0.004584054059388443
+          "max_passband_index_error": 0.3395622331217414,
+          "max_passband_transmission_error": 0.1555697407197726,
+          "max_transmission_error": 0.19562247737065896,
+          "transmission_target_met": false,
+          "index_target_met": false
         }
       },
       "blue": {
         "medium": {
-          "epsilon_inf": 3.483233413219288,
+          "epsilon_inf": 1.0,
           "frequency_range": [
             428274940000000.0,
             749481145000000.0
@@ -583,122 +563,52 @@
           "poles": [
             [
               [
-                -390176849301818.2,
-                -1214196005145614.0
+                -1.1066577972236234e+16,
+                0.0
               ],
               [
-                -195022098683093.44,
-                7910058607974021.0
+                1.1254977394853072e+16,
+                0.0
               ]
             ],
             [
               [
-                -1269386221989717.2,
-                -2163731160865891.8
+                -50768486488588.75,
+                0.0
               ],
               [
-                -84973205060542.34,
-                -2965674322674058.0
+                871497027615525.8,
+                0.0
               ]
             ],
             [
               [
-                -941091676579493.9,
-                -2679145291994216.0
+                -137326272539643.44,
+                -3901117599129586.5
               ],
               [
-                365912787953760.7,
-                1569696213007118.8
+                -202705335139279.3,
+                -53380550786151.58
               ]
             ],
             [
               [
-                -1003801482724295.6,
-                -2964147994704059.5
+                -187874016367126.72,
+                -3919888970140521.0
               ],
               [
-                -154182636837878.03,
-                288417823140712.6
+                92876236258619.47,
+                53888713210172.17
               ]
             ],
             [
               [
-                -737808167832840.8,
-                -3464496136993633.0
+                -816437413153060.2,
+                -4143777071401880.0
               ],
               [
-                92965647738088.19,
-                427408273058783.25
-              ]
-            ],
-            [
-              [
-                -144391611741215.94,
-                -3883733695476326.0
-              ],
-              [
-                -125519028701593.72,
-                -24636234922219.523
-              ]
-            ],
-            [
-              [
-                -39534194673984.77,
-                -3993387406976208.0
-              ],
-              [
-                531769603945.19946,
-                -1704378755227.803
-              ]
-            ],
-            [
-              [
-                -300550701802591.75,
-                -4095410956015226.0
-              ],
-              [
-                -27739597034421.72,
-                -10610677440703.258
-              ]
-            ],
-            [
-              [
-                -555172393213059.0,
-                -4892873073715337.0
-              ],
-              [
-                23259845761730.645,
-                79640747365190.36
-              ]
-            ],
-            [
-              [
-                -315803534705466.8,
-                -5516396760754428.0
-              ],
-              [
-                199595866237963.0,
-                164899124706908.6
-              ]
-            ],
-            [
-              [
-                -93070142482513.88,
-                -5789255922517004.0
-              ],
-              [
-                16277485141707.547,
-                -55737457393268.73
-              ]
-            ],
-            [
-              [
-                -251595815041350.28,
-                -6517294776051432.0
-              ],
-              [
-                66278643098065.65,
-                -65271449946523.54
+                -729675972316040.0,
+                -478516790678585.9
               ]
             ]
           ]
@@ -708,20 +618,36 @@
         "source": "Analytic definition in scripts/build_material_library.py",
         "license": "Apache-2.0",
         "fit": {
-          "method": "Passivity-constrained pole-residue fit to analytic RGB targets",
+          "method": "Independent scalar vector fitting with constrained passive residues",
+          "weighted_rms_epsilon": 0.0477086416097823,
+          "tolerance_rms": 0.02,
+          "tolerance_met": false,
+          "weights": [
+            0.1,
+            1.9
+          ],
+          "epsilon_inf": 1.0,
+          "max_poles": 9,
+          "rational_order": 8,
+          "pole_entries": 5,
+          "num_iters": 200,
+          "selected_iteration": 5,
+          "trials": 72,
+          "relaxed": true,
+          "real_initial_poles": true,
+          "logspacing": true,
+          "passivity_audit_min": 0.026312993478362134,
           "optimizer_success": true,
-          "pole_pairs": 12,
-          "fitting_samples": 301,
+          "rms_n": 0.15833293130770465,
+          "rms_k": 0.03726940823816155,
+          "fitting_samples": 200,
           "validation_samples": 3001,
           "thickness_m": 1e-06,
-          "rms_n": 0.10296118222384866,
-          "rms_k": 0.0021998203901783878,
-          "max_passband_index_error": 0.1910469713623939,
-          "max_passband_transmission_error": 0.0036647247351455636,
-          "transmission_target_met": true,
-          "index_target_met": false,
-          "passivity_audit_min": 0.0009378872299053835,
-          "max_transmission_error": 0.004867782680245014
+          "max_passband_index_error": 0.2944586482328788,
+          "max_passband_transmission_error": 0.2490021404773834,
+          "max_transmission_error": 0.2490021404773834,
+          "transmission_target_met": false,
+          "index_target_met": false
         }
       }
     }

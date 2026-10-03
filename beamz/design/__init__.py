@@ -34,11 +34,13 @@ from beamz.design.structures import (
     Ring,
     Taper,
 )
+from beamz.design.vector_fit import fit_nk_vector
 
 __all__ = [
     "Material",
     "PoleResidue",
     "fit_nk",
+    "fit_nk_vector",
     "Design",
     "MaterialGrid",
     "build_material_grid",
