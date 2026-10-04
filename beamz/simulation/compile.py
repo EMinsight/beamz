@@ -24,7 +24,7 @@ from beamz.devices._boundary_compile import (
     BoundaryData,
     lower_boundaries,
 )
-from beamz.devices.boundaries import Periodic
+from beamz.devices.boundaries import Periodic, bloch_storage_phases, bloch_wavevector
 from beamz.devices.monitors.compiler import compile_monitor_specs
 from beamz.devices.sources.compiler import compile_source_specs
 from beamz.lattice import (
@@ -408,6 +408,18 @@ def _prepare_compilation(
             backend=sharding_cfg.backend,
         )
     )
+    from beamz.devices.sources.specs import PlaneWaveSource
+
+    vector = bloch_wavevector(
+        request.boundaries, is_3d=request.domain.is_3d, plane_2d=request.domain.plane_2d
+    )
+    for source in request.sources:
+        if isinstance(source, PlaneWaveSource) and not np.allclose(
+            source.transverse_wavevector, vector, rtol=1e-10, atol=1e-10
+        ):
+            raise ValueError(
+                "PlaneWaveSource transverse_wavevector must match the Bloch boundaries."
+            )
     source_specs = compile_source_specs(
         request.sources,
         logical_fields,
@@ -497,11 +509,15 @@ def _compile_grid(
     shapes = MappingProxyType(
         dict(component_shapes(material_grid.shape, request.domain.polarization_2d))
     )
+    vector = bloch_wavevector(
+        request.boundaries, is_3d=request.domain.is_3d, plane_2d=request.domain.plane_2d
+    )
+    field_dtype = jnp.complex64 if any(vector) else jnp.float32
     components = {
         component: (
             constant_array(shape, 0)
             if region_setup
-            else jnp.zeros(shape, dtype=jnp.float32)
+            else jnp.zeros(shape, dtype=field_dtype)
         )
         for component, shape in shapes.items()
     }
@@ -624,6 +640,9 @@ def _compile_boundary(fields, cpml, boundary_data, *, is_3d: bool) -> BoundaryPl
     return BoundaryPlan(
         metallic_edges_2d=(frozenset() if is_3d else boundary_data.metallic_edges),
         periodic_axes=boundary_data.periodic_axes,
+        periodic_phases=bloch_storage_phases(
+            fields.boundaries, fields.geometry, is_3d=is_3d, plane_2d=fields.plane_2d
+        ),
         cpml=cpml,
         metallic=MetallicPlan(
             masks["Ex"],
@@ -641,6 +660,23 @@ def _compile_boundary(fields, cpml, boundary_data, *, is_3d: bool) -> BoundaryPl
 @trace_preparation("compile_plan")
 def compile_simulation(request: SimulationRequest) -> CompiledProgram:
     """Build an immutable executable plan from a simulation request."""
+    vector = bloch_wavevector(
+        request.boundaries, is_3d=request.domain.is_3d, plane_2d=request.domain.plane_2d
+    )
+    if any(vector) and (request.run.backend != "jax" or request.run.sharding[0]):
+        raise ValueError(
+            "Nonzero Bloch wavevectors require single-device JAX execution."
+        )
+    if any(vector):
+        from beamz.devices.monitors.monitors import ModeMonitor
+        from beamz.devices.sources.specs import ModeSource
+
+        if any(isinstance(s, ModeSource) for s in request.sources) or any(
+            isinstance(m, ModeMonitor) for m in request.monitors
+        ):
+            raise ValueError(
+                "Bloch mode sources/monitors are not supported; use field monitors."
+            )
     if request.materials.dispersion:
         from beamz.devices.monitors.monitors import ModeMonitor
         from beamz.devices.sources.specs import ModeSource
@@ -973,7 +1009,9 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
         validate_sharded_config(config, boundary, sharding)
     from beamz.simulation.dispersion import compile_dispersion
 
-    dispersion = compile_dispersion(logical_grid, dt, boundary_data.periodic_axes)
+    dispersion = compile_dispersion(
+        logical_grid, dt, boundary_data.periodic_axes, complex_fields=any(vector)
+    )
     program = CompiledProgram(
         grid=logical_grid,
         config=config,

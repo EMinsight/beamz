@@ -198,7 +198,7 @@ def _field_diagnostics(state: SimulationState, plan) -> tuple[float, float, bool
         values = jnp.asarray(getattr(state, field_name))
         finite = finite & jnp.all(jnp.isfinite(values))
         max_field = jnp.maximum(max_field, jnp.max(jnp.abs(values), initial=0.0))
-        density = jnp.asarray(material) * values * values
+        density = jnp.asarray(material) * jnp.abs(values) ** 2
         energy_density = energy_density + 0.5 * float(constant) * jnp.sum(
             density * jnp.asarray(measure)
         )
@@ -222,8 +222,7 @@ def _field_diagnostics(state: SimulationState, plan) -> tuple[float, float, bool
                 )
         energy_density = energy_density + float(EPS_0) * jnp.sum(
             material
-            * centered[left_component]
-            * centered[right_component]
+            * jnp.real(centered[left_component] * jnp.conj(centered[right_component]))
             * jnp.asarray(measure)
         )
     return float(energy_density) * domain_measure, float(max_field), bool(finite)
@@ -236,7 +235,7 @@ def _remaining_source_activity(
     total_steps = int(total_steps)
     activity = np.zeros(total_steps, dtype=np.float64)
     for source in program.sources:
-        waveform = np.abs(np.asarray(source.waveform, dtype=np.float64).reshape(-1))
+        waveform = np.abs(np.asarray(source.waveform).reshape(-1))
         if waveform.size == 0:
             continue
         peak = float(np.max(waveform, initial=0.0))
@@ -542,6 +541,7 @@ def forward_step(
             (metallic.ex_mask, metallic.ey_mask, metallic.ez_mask),
             components=("Ex", "Ey", "Ez"),
             periodic_axes=ctx.boundary.periodic_axes,
+            periodic_phases=ctx.boundary.periodic_phases,
             material_shape=ctx.boundary.material_shape,
             logical_shapes=ctx.boundary.logical_component_shapes,
         )
@@ -582,6 +582,7 @@ def forward_step(
             (metallic.hx_mask, metallic.hy_mask, metallic.hz_mask),
             components=("Hx", "Hy", "Hz"),
             periodic_axes=ctx.boundary.periodic_axes,
+            periodic_phases=ctx.boundary.periodic_phases,
             material_shape=ctx.boundary.material_shape,
             logical_shapes=ctx.boundary.logical_component_shapes,
         )
@@ -609,6 +610,7 @@ def forward_step(
             (metallic.ex_mask, metallic.ey_mask, metallic.ez_mask),
             components=("Ex", "Ey", "Ez"),
             periodic_axes=ctx.boundary.periodic_axes,
+            periodic_phases=ctx.boundary.periodic_phases,
             material_shape=ctx.boundary.material_shape,
             logical_shapes=ctx.boundary.logical_component_shapes,
         )

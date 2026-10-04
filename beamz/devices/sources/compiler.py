@@ -224,7 +224,12 @@ def _lower_custom_source(
                 index=source.index,
                 values=coeff,
                 waveform=TemporalWaveform(
-                    jnp.asarray(source.waveform, dtype=jnp.float32)
+                    jnp.asarray(
+                        source.waveform,
+                        dtype=jnp.complex64
+                        if np.iscomplexobj(source.waveform)
+                        else jnp.float32,
+                    )
                 ),
                 target_shape=target_shape,
             ),
@@ -264,7 +269,8 @@ def _as_slab_spec(
                 continue
             break
         else:
-            coeff_np = np.asarray(coeff, dtype=np.float32)
+            coeff_dtype = np.complex64 if np.iscomplexobj(coeff) else np.float32
+            coeff_np = np.asarray(coeff, dtype=coeff_dtype)
             slab_sizes = tuple(sizes)
             expected = int(np.prod(slab_sizes))
             if coeff_np.size == expected:
@@ -273,7 +279,7 @@ def _as_slab_spec(
                     component=component,
                     timing=timing,
                     index=index,
-                    coeff=jnp.asarray(coeff_np, dtype=jnp.float32),
+                    coeff=jnp.asarray(coeff_np),
                     waveform=waveform,
                     is_slab=True,
                     slab_starts=tuple(starts),
@@ -284,7 +290,9 @@ def _as_slab_spec(
         component=component,
         timing=timing,
         index=index,
-        coeff=jnp.asarray(coeff, dtype=jnp.float32),
+        coeff=jnp.asarray(
+            coeff, dtype=jnp.complex64 if np.iscomplexobj(coeff) else jnp.float32
+        ),
         waveform=waveform,
     )
 
@@ -316,6 +324,7 @@ def _compile_injection_plan(
     *,
     source_index: int = -1,
     imag_tol: float = 1e-30,
+    complex_fields: bool = False,
 ) -> tuple[CompiledSourceSpec, ...]:
     """Emit runtime specs through the single source scheduling path."""
     specs: list[CompiledSourceSpec] = []
@@ -323,9 +332,20 @@ def _compile_injection_plan(
         profile = entry.profile
         support = entry.support
         values = np.asarray(profile.values, dtype=np.complex128)
-        parts = [(np.real(values), entry.waveform.values)]
+        parts: list[tuple[Any, jnp.ndarray]] = [
+            (np.real(values), entry.waveform.values)
+        ]
+        if complex_fields:
+            waveform = entry.waveform.values
+            if entry.waveform.quadrature is not None:
+                waveform = waveform - 1j * entry.waveform.quadrature
+            parts = [(values, waveform)]
         imag_peak = float(np.max(np.abs(np.imag(values)))) if values.size else 0.0
-        if entry.waveform.quadrature is not None and imag_peak > float(imag_tol):
+        if (
+            not complex_fields
+            and entry.waveform.quadrature is not None
+            and imag_peak > float(imag_tol)
+        ):
             parts.append((-np.imag(values), entry.waveform.quadrature))
 
         for coeff, waveform in parts:
@@ -390,7 +410,9 @@ def compile_source_specs(
     for source_index, source in enumerate(source_specs):
         specs.extend(
             _compile_injection_plan(
-                lower_source(source, ctx), source_index=source_index
+                lower_source(source, ctx),
+                source_index=source_index,
+                complex_fields=jnp.iscomplexobj(fields.Ex),
             )
         )
 
@@ -405,6 +427,10 @@ def _lower_plane_wave_source(source: PlaneWaveSource, ctx: SourceLoweringContext
     incident E and H waveforms are evaluated at their own Yee positions and
     times; no single-frequency phase approximation is used.
     """
+    if any(source.transverse_wavevector):
+        from .bloch import lower_bloch_plane_wave
+
+        return lower_bloch_plane_wave(source, ctx)
     if not _source_requires_rectilinear_operator(ctx):
         return _lower_gaussian_beam_source(source, ctx)
     grid = ctx.grid

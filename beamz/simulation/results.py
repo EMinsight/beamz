@@ -632,6 +632,7 @@ class MonitorResults:
     )
     dft_weight_sum: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=float))
     dft_base_dt: float = 0.0
+    dft_amplitude_scale: float = 2.0
     resolution: float = 0.0
     normal_axis: int = -1
     normal_sign: float = 1.0
@@ -942,6 +943,9 @@ class MonitorResults:
                 dtype=np.float64,
             ).copy(),
             dft_base_dt=float(config.dt),
+            dft_amplitude_scale=1.0
+            if np.iscomplexobj(getattr(state, "ex", 0.0))
+            else 2.0,
             resolution=float(config.resolution),
             normal_axis=int(spec.normal_axis),
             normal_sign=float(spec.normal_sign),

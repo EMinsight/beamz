@@ -514,6 +514,8 @@ class BoundaryPlan:
     material_shape: tuple[int, ...]
     logical_component_shapes: Mapping[str, tuple[int, ...]]
 
+    periodic_phases: tuple[complex | float, ...] = ()
+
     def __post_init__(self) -> None:
         object.__setattr__(
             self,

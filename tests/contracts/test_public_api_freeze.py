@@ -71,6 +71,7 @@ EXPECTED_EXPORTS = {
         "PEC",
         "Absorber",
         "Periodic",
+        "Bloch",
         "display_status",
         "create_plain_progress",
         "get_si_scale_and_label",
@@ -174,6 +175,7 @@ EXPECTED_EXPORTS = {
         "PEC",
         "Absorber",
         "Periodic",
+        "Bloch",
     ),
 }
 

@@ -501,18 +501,40 @@ class CustomSource:
 
 @dataclass(frozen=True, slots=True)
 class PlaneWaveSource(GaussianBeamSource):
-    """Uniform normally incident plane wave over a finite source aperture.
+    """Uniform plane wave with an optional transverse wavevector in rad/m.
 
     Uses the same staggered Huygens injection and power normalization as
     GaussianBeamSource, with an exactly uniform transverse envelope. For a
-    periodic cell, set size to cover the whole cell. Angled Bloch incidence is
-    intentionally unsupported. ``power`` is total power through the aperture.
+    periodic cell, set size to cover the whole cell. For oblique incidence,
+    ``transverse_wavevector`` must match the Bloch boundary and ``source_time``
+    must supply narrowband in-phase/quadrature samples (fwidth <= 0.1 * freq0).
+    The polarization angle mixes s and p relative to the incidence plane.
+    The transverse wavevector is fixed across the pulse spectrum; fixed-angle
+    spectra require separate frequency runs. ``power`` is total power through the aperture.
     """
+
+    transverse_wavevector: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     def __post_init__(self):
         GaussianBeamSource.__post_init__(self)
+        if not np.isfinite(self.power) or self.power < 0:
+            raise ValueError("PlaneWaveSource power must be finite and nonnegative.")
+        if not np.isfinite(self.background_index) or self.background_index <= 0:
+            raise ValueError(
+                "PlaneWaveSource background_index must be positive and finite."
+            )
+        vector = tuple(float(k) for k in self.transverse_wavevector)
+        if len(vector) != 3 or not all(np.isfinite(k) for k in vector):
+            raise ValueError(
+                "transverse_wavevector must contain three finite values in rad/m."
+            )
+        if vector["xyz".index(self.direction[-1])] != 0:
+            raise ValueError(
+                "transverse_wavevector must be zero along the source normal."
+            )
+        object.__setattr__(self, "transverse_wavevector", vector)
         if self.angle_theta != 0 or self.waist_distance != 0:
             raise ValueError(
-                "PlaneWaveSource currently requires normal incidence and zero waist_distance."
+                "Use transverse_wavevector for PlaneWaveSource incidence; angle_theta and waist_distance must be zero."
             )
         object.__setattr__(self, "waist_radius", float("inf"))
