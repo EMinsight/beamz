@@ -1117,17 +1117,19 @@ def initial_program_state(
                 )()
         # Fresh runs use the compiled lattice; continuations supply evolved canonical
         # arrays without reconstructing a mutable field container.
-        return (
-            _copy_initial_field(getattr(program.grid, name))
-            if continuation is None
-            else getattr(continuation, name.lower())
-        )
+        if continuation is None:
+            return _copy_initial_field(getattr(program.grid, name))
+        value = getattr(continuation, name.lower())
+        dtype = field_dtype(name)
+        return value if value.dtype == dtype else value.astype(dtype)
 
     def field_dtype(name):
         # Query metadata without copying two additional full fields just to
         # choose the CPML dtype during fresh-state construction.
-        owner = program.grid if continuation is None else continuation
-        return getattr(owner, name if continuation is None else name.lower()).dtype
+        dtype = getattr(program.grid, name).dtype
+        if continuation is not None:
+            dtype = jnp.result_type(dtype, getattr(continuation, name.lower()).dtype)
+        return dtype
 
     def zeros(shape, dtype):
         shape = tuple(int(value) for value in shape)

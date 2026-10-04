@@ -632,6 +632,8 @@ class MonitorResults:
     )
     dft_weight_sum: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=float))
     dft_base_dt: float = 0.0
+    # A real carrier contains half its phasor at positive frequency; a complex
+    # exp(-i omega t) carrier contains the full phasor.
     dft_amplitude_scale: float = 2.0
     resolution: float = 0.0
     normal_axis: int = -1

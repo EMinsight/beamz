@@ -381,13 +381,16 @@ def bloch_storage_phases(boundaries, geometry, *, is_3d, plane_2d="xy"):
     """Compile forward seam phases in canonical storage-axis order."""
     vector = bloch_wavevector(boundaries, is_3d=is_3d, plane_2d=plane_2d)
     axes = _AXES if is_3d else active_physical_axes(False, plane_2d)
+    grid_axes = _AXES if is_3d else ("x", "y")
     return tuple(
         complex(
-            np.exp(1j * vector[_AXES.index(axis)] * np.ptp(geometry.axis_edges(axis)))
+            np.exp(
+                1j * vector[_AXES.index(axis)] * np.ptp(geometry.axis_edges(grid_axis))
+            )
         )
         if vector[_AXES.index(axis)] != 0
         else 1.0
-        for axis in reversed(axes)
+        for axis, grid_axis in reversed(tuple(zip(axes, grid_axes, strict=True)))
     )
 
 

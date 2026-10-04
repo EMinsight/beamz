@@ -634,14 +634,16 @@ def _compile_grid(
     )
 
 
-def _compile_boundary(fields, cpml, boundary_data, *, is_3d: bool) -> BoundaryPlan:
+def _compile_boundary(
+    fields, cpml, boundary_data, *, is_3d: bool, plane_2d="xy"
+) -> BoundaryPlan:
     """Assemble canonical CPML and metallic values on the logical lattice."""
     masks = fields.metallic_masks
     return BoundaryPlan(
         metallic_edges_2d=(frozenset() if is_3d else boundary_data.metallic_edges),
         periodic_axes=boundary_data.periodic_axes,
         periodic_phases=bloch_storage_phases(
-            fields.boundaries, fields.geometry, is_3d=is_3d, plane_2d=fields.plane_2d
+            fields.boundaries, fields.geometry, is_3d=is_3d, plane_2d=plane_2d
         ),
         cpml=cpml,
         metallic=MetallicPlan(
@@ -995,6 +997,7 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
         cpml,
         boundary_data,
         is_3d=bool(request.domain.is_3d),
+        plane_2d=request.domain.plane_2d,
     )
     update_coefficients, boundary = lower_compiled_arrays(
         update_coefficients, boundary, sharding_layout
