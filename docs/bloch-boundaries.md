@@ -55,6 +55,11 @@ lossless, nondispersive background. `pol_angle=0` selects s polarization and
 `pol_angle=pi/2` selects p at oblique incidence. At normal incidence the existing
 Cartesian polarization convention remains in effect.
 
+Normal-incidence plane-wave sheets also require a homogeneous, lossless,
+nondispersive injection background on uniform and rectilinear grids. Its
+refractive index must match `background_index`; materials away from the active
+injection support may be lossy or dispersive.
+
 ## Fixed angle and frequency
 
 A fixed transverse wavevector gives different incidence angles at different

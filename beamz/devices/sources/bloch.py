@@ -8,7 +8,12 @@ from beamz.lattice import component_axis_offsets_3d, component_material_at
 
 def lower_bloch_plane_wave(source, ctx):
     # Import plan records lazily to keep the singledispatch compiler acyclic.
-    from .compiler import CompiledInjectionPlan, TemporalWaveform, _injection_entry
+    from .compiler import (
+        CompiledInjectionPlan,
+        TemporalWaveform,
+        _injection_entry,
+        _validate_plane_wave_background,
+    )
     from .time import sample_source_waveforms
 
     if np.asarray(ctx.fields.permittivity).ndim != 3:
@@ -101,30 +106,7 @@ def lower_bloch_plane_wave(source, ctx):
             index[array_axis] = slice(plane, plane + 1)
             index = tuple(index)
             material = np.asarray(component_material_at(ctx.fields, component, index))
-            expected = 1.0 if kind == "H" else source.background_index**2
-            if not np.allclose(material, expected, rtol=1e-5, atol=1e-6):
-                raise ValueError(
-                    "Plane-wave injection sheet must be in the homogeneous background."
-                )
-            if kind == "E":
-                conductivity = np.asarray(getattr(ctx.fields, "sig_" + "xyz"[i]))
-                sigma = conductivity if conductivity.ndim == 0 else conductivity[index]
-                dispersive = any(
-                    component in supports and np.any(supports[component][index] > 1e-7)
-                    for _, supports in ctx.fields.material_grid.dispersion
-                )
-                interfaces = any(
-                    interface.component == component
-                    and np.any(
-                        np.unravel_index(interface.indices, target.shape)[array_axis]
-                        == plane
-                    )
-                    for interface in ctx.fields.material_grid.dispersion_interfaces
-                )
-                if np.any(sigma != 0) or dispersive or interfaces:
-                    raise ValueError(
-                        "Plane-wave injection sheet must be in a lossless nondispersive background."
-                    )
+            _validate_plane_wave_background(source, ctx, component, index)
             # E currents sample incident H, and H currents sample incident E.
             # Their transverse offsets coincide for each tangential component.
             phase = np.zeros(target[index].shape)
