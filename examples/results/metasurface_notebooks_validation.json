@@ -4,25 +4,60 @@
     "saved_figures": 5,
     "notebook_schema_valid": true,
     "execution_errors": 0,
-    "saved_spectra_finite": true
+    "saved_spectra_finite": true,
+    "source_cells_unchanged": true,
+    "saved_spectra_identical_to_previous_results": true,
+    "saved_figures_identical_to_previous_results": true,
+    "spectrum_arrays_compared": 9
   },
   "dielectric_metasurface_absorber": {
     "code_cells_executed": 13,
     "saved_figures": 9,
     "notebook_schema_valid": true,
     "execution_errors": 0,
-    "saved_spectra_finite": true
+    "saved_spectra_finite": true,
+    "source_cells_unchanged": true,
+    "saved_spectra_identical_to_previous_results": true,
+    "saved_figures_identical_to_previous_results": true,
+    "spectrum_arrays_compared": 15
   },
   "runtime": {
     "python": "3.11.15",
     "jax": "0.10.2",
     "device": "cuda:0",
     "numpy": "2.4.6",
-    "note": "Notebook simulations ran with single-device JAX on an NVIDIA RTX 3090 (24 GB); focused solver regression tests ran with the project CPU JAX 0.9.0 environment."
+    "note": "All three full notebooks ran in the same single-device GPU validation environment on an NVIDIA RTX 3090 (24 GB); solver regression tests and the CPU PR gate ran with project CPU JAX 0.9.0."
   },
   "checks": {
-    "focused_solver_tests_passed": 93,
+    "focused_solver_tests_passed": 109,
     "lint": "make lint passed",
-    "documentation": "mkdocs build --strict passed"
-  }
+    "documentation": "mkdocs build --strict passed",
+    "expanded_regression_tests_passed": 27,
+    "cpu_pr_gate_tests_passed": 2282,
+    "cpu_pr_gate_tests_xfailed": 1,
+    "cpu_pr_gate_tests_deselected": 486,
+    "coverage_policy": "all scopes passed",
+    "global_statement_and_branch_coverage_percent": 86.77,
+    "solver_core_coverage_percent": 92.06,
+    "typecheck": "pyright: 0 errors",
+    "notebook_figures": "PNG figures and rendered HTML previews inspected"
+  },
+  "modal_sources_monitors": {
+    "code_cells_executed": 14,
+    "saved_figures": 10,
+    "notebook_schema_valid": true,
+    "execution_errors": 0,
+    "saved_spectra_finite": true,
+    "source_cells_unchanged": true,
+    "full_workflow": true,
+    "monitor_frequencies": 17,
+    "broadband_source_profiles": 7,
+    "modal_arrays_compared": 10,
+    "modal_arrays_identical_to_fresh_pre_fix_run": true,
+    "saved_figures_identical_to_fresh_pre_fix_run": true,
+    "baseline_code_commit": "af014923889d41209184fbea622d7d9fe18bf6dd",
+    "note": "Older stored modal outputs differ from a fresh run of the pre-fix code in this environment. Fresh pre-fix and post-fix modal arrays and all ten figures are exactly identical; saved outputs have been refreshed."
+  },
+  "validated_at_utc": "2026-10-09T14:50:54.088865+00:00",
+  "validated_code_commit": "aba7113ba312909ed1b20416996f6b78890efc64"
 }
