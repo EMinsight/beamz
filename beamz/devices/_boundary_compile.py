@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from beamz._region_array import SeparableMask, tiles
-from beamz.const import EPS_0, MU_0
+from beamz.const import EPS_0, LIGHT_SPEED, MU_0
 from beamz.design.discretization import MaterialGrid
 from beamz.devices.boundaries import (
     PEC,
@@ -286,13 +286,10 @@ class _AbsorberCompiler:
             )
         alpha_max = self.spec.alpha_max
         if self.spec.formulation == "cpml" and alpha_max is None:
-            # Scale the CFS shift with the physical conductivity profile, not
-            # 1/dt: refining a fixed physical absorber must not increase its
-            # frequency shift and suppress attenuation in the measured band.
-            alpha_normalized = self.spec._DEFAULT_CPML_ALPHA_NORMALIZED
-            if getattr(fields.permittivity, "ndim", 0) == 3:
-                alpha_normalized = self.spec._DEFAULT_3D_CPML_ALPHA_NORMALIZED
-            alpha_max = alpha_normalized * float(sigma_max)
+            # Use the physical layer transit time so mesh/timestep refinement
+            # preserves the shift. Zero-thickness layers have no active samples.
+            thickness = self._physical_thickness() or float(resolution)
+            alpha_max = 0.1 * EPS_0 * LIGHT_SPEED / thickness
         return float(sigma_max), None if alpha_max is None else float(alpha_max)
 
     def _pml_material_variation_edges(self, fields, pml_data):

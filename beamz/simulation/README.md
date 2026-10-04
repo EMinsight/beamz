@@ -51,6 +51,9 @@ Pass `AutoTermination` to `run(termination=...)` when the configured time grid
 should be a maximum rather than a mandatory duration. Execution reuses a fixed
 chunk program, waits for all sources to become inactive, and then requires the
 configured energy and frequency-monitor residuals to pass for consecutive checks.
+Checks inspect raw acquisitions; source normalization and durable material metadata
+are constructed once after the stopping decision, avoiding repeated full-record
+Fourier transforms during long runs.
 `SimulationResults.termination` contains the executed step count, stop reason,
 and final diagnostics. It remains `None` for an ordinary full-grid run.
 
@@ -163,6 +166,13 @@ next_run = sim.advance(
 single-timestep debugging and numerical verification; normal simulations should use
 `run()`, and chunked simulations should use `advance()`.
 
+Changing only a continuation chunk's length reuses prepared materials,
+coefficients, derivative metrics, and boundaries on both single-device and
+sharded paths. Source and monitor plans are rebuilt for the requested horizon.
+Changes to materials, timestep, boundaries, backend, or layout invalidate that
+reuse. In particular, an automatic-termination run's short final chunk need not
+allocate a second material bank.
+
 ## Dependency direction
 
 Keep dependencies flowing toward orchestration:
@@ -222,3 +232,14 @@ compare continued spectral acquisitions.
 The CMOS notebook uses one broadband device run for 200 frequencies, plus one
 empty-cell broadband reference for incident-power calibration. Its material data,
 filter-fit diagnostics, GPU runner, and analytical film checks are checked in.
+
+### Long-run monitor time
+
+Monitor timestamps are derived from the simulation's time origin and integer
+step count. They must not be advanced by repeated float32 additions: small clock
+errors accumulate into large optical DFT phase errors in long simulations. The
+same rule applies across `advance()` calls and automatic-termination chunks.
+The source and monitor clocks therefore share the same absolute time grid.
+An explicitly supplied continuation state whose time differs from that grid
+retains its supplied time as the invocation origin. Grid-aligned continuation
+states use the absolute step to avoid rounding the origin again at every chunk.
