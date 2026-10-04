@@ -1,0 +1,28 @@
+{
+  "huygens_surface": {
+    "code_cells_executed": 9,
+    "saved_figures": 5,
+    "notebook_schema_valid": true,
+    "execution_errors": 0,
+    "saved_spectra_finite": true
+  },
+  "dielectric_metasurface_absorber": {
+    "code_cells_executed": 13,
+    "saved_figures": 9,
+    "notebook_schema_valid": true,
+    "execution_errors": 0,
+    "saved_spectra_finite": true
+  },
+  "runtime": {
+    "python": "3.11.15",
+    "jax": "0.10.2",
+    "device": "cuda:0",
+    "numpy": "2.4.6",
+    "note": "Notebook simulations ran with single-device JAX on an NVIDIA RTX 3090 (24 GB); focused solver regression tests ran with the project CPU JAX 0.9.0 environment."
+  },
+  "checks": {
+    "focused_solver_tests_passed": 93,
+    "lint": "make lint passed",
+    "documentation": "mkdocs build --strict passed"
+  }
+}

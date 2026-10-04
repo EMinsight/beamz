@@ -171,7 +171,9 @@ def plot_setup(
 
 def field_intensity(result, name, *, frequency=None, title=None):
     """Plot the vector electric intensity from an actual DFT acquisition."""
-    fig, ax = plt.subplots(figsize=(7, 4))
+    spans = [extent for extent in result[name].monitor.size if extent > 0]
+    figsize = (10, 3) if spans[0] / spans[1] > 4 else (6, 5)
+    fig, ax = plt.subplots(figsize=figsize)
     result.plot_field(
         monitor_name=name,
         field_name="E",
@@ -181,9 +183,8 @@ def field_intensity(result, name, *, frequency=None, title=None):
         show=False,
     )
     if title:
-        ax.set_title("")
-        fig.suptitle(title)
-        fig.tight_layout(rect=(0, 0, 1, 0.90))
+        ax.set_title(title.replace(": ", ":\n"), fontsize=11)
+        fig.tight_layout()
     return fig, ax
 
 

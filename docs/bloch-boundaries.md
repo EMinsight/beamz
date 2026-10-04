@@ -113,3 +113,28 @@ Fresnel reflection and complex transmission for s and p polarization. Additional
 tests cover extended-domain seam updates, zero-phase equivalence, constitutive
 transfer functions, continuation, complex DFT/recording, graded meshes, and
 separation of known diffraction orders.
+
+## Metasurface notebooks
+
+`examples/notebooks/huygens_surface.ipynb` follows the
+[Tidy3D Huygens’ surfaces community example](https://home.flexcompute.com/tidy3d/community/notebooks/Huygens/):
+reference-calibrated transmission and complex phase in its two original
+background configurations, followed by a seven-resolution lateral mesh study.
+The power-flux ratio is used directly rather than squared a second time.
+
+`examples/notebooks/dielectric_metasurface_absorber.ipynb` follows the
+[Tidy3D dielectric absorber example](https://www.flexcompute.com/tidy3d/examples/notebooks/DielectricMetasurfaceAbsorber/):
+Drude silicon on conductive PDMS, periodic R/T/A and resonant fields, and a
+15 × 15 Gaussian-illuminated array. The unit-cell mesh preserves the published
+40-cell wavelength target; the saved finite array uses a clearly labeled coarse
+8-cell target, with the source’s 30-cell target available as a parameter.
+The Gaussian-beam array and its equally coarse periodic comparison use cubic
+uniform cells; the main periodic case uses a graded grid. The uniform mesh
+represents the thin PDMS sheet with subpixel material fractions. The comparison
+makes mesh shifts visible. Finite-array
+`1 - R - T` is apparent absorptance and includes uncollected lateral scattering.
+
+The periodic sections use normal incidence and zero-phase periodic boundaries. They
+complement the oblique Bloch script above and retain computed plots and portable
+NPZ spectra. See `examples/notebooks/README.md` for execution commands and the
+explicit differences in mesh generation, normalization, and collection aperture.
