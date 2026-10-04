@@ -3,9 +3,6 @@
 ### `analysis/` - Modal Analysis, S-Parameters, and Plotting
 Contains modal projection, port/S-parameter extraction, compact plotting helpers, and small result adapters used by examples and notebooks.
 
-For radiating devices, check [monitor-plane, aperture, and mesh convergence](../docs/modal-monitor-convergence.md)
-before reporting modal transmission. Time-domain termination alone does not establish these.
-
 ### `design/` - Parametric Design and Geometry
 Defines the physical structure of the device through parametric geometry and materials.
 
