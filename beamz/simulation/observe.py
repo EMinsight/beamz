@@ -176,7 +176,7 @@ def monitor_dft_component(monitor, component):
     weights = np.maximum(
         np.asarray(monitor.dft_weight_sum, dtype=float), 1e-18
     ).reshape(nfreq, 1)
-    return (monitor.dft_amplitude_scale / weights) * values
+    return (getattr(monitor, "dft_amplitude_scale", 2.0) / weights) * values
 
 
 def _flux_component(monitor, component):
