@@ -4,12 +4,78 @@ from types import SimpleNamespace
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import beamz as bz
 from beamz.simulation.execute import initial_program_state
 from beamz.simulation.observe import update_monitors
 from beamz.simulation.results import MonitorResults
 from examples.meta_atom_bloch import diffraction_powers
+
+
+@pytest.mark.parametrize(
+    "plane,polarization,component,name,sign",
+    [
+        ("xy", "tm", "Ez", "ez", 1),
+        ("xy", "te", "Ex", "ex", 1),
+        ("xz", "tm", "Ey", "ez", -1),
+        ("xz", "te", "Ex", "ex", 1),
+        ("yz", "tm", "Ex", "ez", 1),
+        ("yz", "te", "Ey", "ex", 1),
+    ],
+)
+@pytest.mark.parametrize(
+    "transition", ["real_to_bloch", "complex_to_real", "complex_seed"]
+)
+def test_recorder_continuation_preserves_complex_fields(
+    plane, polarization, component, name, sign, transition
+):
+    kwargs = dict(
+        design=bz.Design(width=160e-9, height=160e-9),
+        plane_2d=plane,
+        resolution=40e-9,
+        time=np.arange(12) * 1e-17,
+        polarization=polarization,
+        monitors=[bz.FieldRecorder((component,), interval=1, name="frames")],
+    )
+    vector = tuple(1e6 if axis == plane[0] else 0 for axis in "xyz")
+    real = bz.Simulation(**kwargs, boundaries=[bz.Periodic(axes=tuple(plane))])
+    bloch = bz.Simulation(
+        **kwargs, boundaries=[bz.Bloch(axes=tuple(plane), wavevector=vector)]
+    )
+    original = bloch if transition == "complex_to_real" else real
+    resumed = bloch if transition == "real_to_bloch" else real
+    seed = original.initial_state()
+    if transition != "real_to_bloch":
+        seed = seed._replace(
+            **{
+                c: getattr(seed, c).astype(jnp.complex64)
+                for c in ("ex", "ey", "ez", "hx", "hy", "hz")
+            }
+        )
+    value = getattr(seed, name)
+    seed = seed._replace(
+        **{name: value.at[1, 1].set(1 if transition == "real_to_bloch" else 1 + 2j)}
+    )
+    first = original.advance(
+        state=seed, num_steps=3, backend="jax", performance=False
+    ).state
+    final = resumed.advance(
+        state=first, num_steps=3, backend="jax", performance=False
+    ).state
+    frames = np.asarray(final.recorded_fields[0])
+    count = int(final.recorded_counts[0])
+    assert count == 6
+    assert np.iscomplexobj(frames)
+    np.testing.assert_array_equal(frames[:3], first.recorded_fields[0][:3])
+    np.testing.assert_allclose(
+        frames[count - 1], sign * getattr(final, name), atol=1e-7
+    )
+    assert np.max(np.abs(frames[3:count].imag)) > 1e-7
+    np.testing.assert_array_equal(
+        final.recorded_times[0][:3], first.recorded_times[0][:3]
+    )
+    np.testing.assert_array_equal(final.recorded_steps[0][:count], np.arange(1, 7))
 
 
 def test_complex_dft_and_recorder_preserve_both_quadratures():

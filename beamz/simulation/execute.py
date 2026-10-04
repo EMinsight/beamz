@@ -1193,6 +1193,20 @@ def initial_program_state(
         monitor_values = {
             name: getattr(continuation, name) for name in monitor_runtime.MONITOR_FIELDS
         }
+    # A continuation can promote the fields (for example, Periodic -> Bloch).
+    # Promote recorder storage too, retaining all previous samples and metadata.
+    recorded_fields = list(monitor_values["recorded_fields"])
+    for spec in program.monitors:
+        if spec.recorder_index < 0:
+            continue
+        for component, index in zip(
+            spec.canonical_components, spec.field_buffer_indices, strict=True
+        ):
+            value = recorded_fields[index]
+            dtype = jnp.result_type(value.dtype, field_dtype(component))
+            if value.dtype != dtype:
+                recorded_fields[index] = value.astype(dtype)
+    monitor_values["recorded_fields"] = tuple(recorded_fields)
     from beamz.simulation.dispersion import initial_polarization
 
     return SimulationState(
