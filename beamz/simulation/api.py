@@ -1038,11 +1038,7 @@ class Simulation:
         -------
         mapping or None
             Grid-aligned PML/absorber coefficient arrays, or ``None`` when no
-            absorber profile is present. ``resolved_parameters`` contains an
-            immutable mapping per absorbing boundary, in specification order,
-            with resolved edges, formulation, thickness (m), sigma/alpha maxima
-            (S/m), kappa maximum, grading order, and target reflection. These
-            are profile parameters, not maxima over the sampled Yee arrays.
+            absorber profile is present.
 
         Notes
         -----
