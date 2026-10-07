@@ -29,3 +29,20 @@ simulation.
 These files separate public values, numerical planning, and runtime execution. Avoid
 adding per-device facade modules; a new file should own a distinct numerical stage or
 be folded into the nearest existing owner.
+
+For CPML, the automatic complex-frequency shift is
+`alpha_max = 0.1 * EPS_0 * LIGHT_SPEED / thickness` in S/m. Its decay rate is
+one tenth of the inverse vacuum transit time through the layer; changing `dt`
+does not change it. This is a nonzero heuristic, not a universal optimum.
+Explicit `alpha_max` values (including zero) are used unchanged.
+
+Use a fixed physical `thickness` for mesh convergence. Omitting thickness still
+selects 12 cells, so refinement changes that layer's physical width and automatic
+parameters. A thickness sweep changes both automatic sigma and alpha; specify
+`alpha_max` explicitly when alpha must remain fixed. Inspect
+`sim.pml_data["resolved_parameters"]` for the resolved parameters of each boundary;
+`alpha_x`, `sigma_x`, `kappa_x`, etc. contain the sampled profiles. The specification
+itself remains immutable. `PML()` continues to select the sponge formulation.
+
+The [CPML validation report](../../docs/reviews/cpml-physical-alpha-2026-10-07.md)
+records the convergence controls and their limits.
