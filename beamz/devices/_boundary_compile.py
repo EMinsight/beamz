@@ -5,7 +5,6 @@ from __future__ import annotations
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import Any, cast
 
 import jax
@@ -13,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from beamz._region_array import SeparableMask, tiles
-from beamz.const import EPS_0, LIGHT_SPEED, MU_0
+from beamz.const import EPS_0, MU_0
 from beamz.design.discretization import MaterialGrid
 from beamz.devices.boundaries import (
     PEC,
@@ -191,8 +190,6 @@ def compile_metallic_masks(
 
 def _merge_profiles(lhs, rhs, *, key: str | None = None):
     """Merge contributions using the physical operation for each coefficient family."""
-    if key == "resolved_parameters":
-        return (*lhs, *rhs)
     if isinstance(lhs, Mapping) and isinstance(rhs, Mapping):
         merged = dict(lhs)
         for child_key, child_value in rhs.items():
@@ -246,27 +243,10 @@ class _AbsorberCompiler:
             else:
                 out = profile._create_cpml_profiles_2d(fields, domain_size)
             self._extend_cpml_materials_to_absorber(fields, out)
-        else:
-            out = profile._create_sponge_profiles(fields, domain_size)
-            self._warn_if_material_not_extruded(fields, out)
-        out["resolved_parameters"] = (
-            MappingProxyType(
-                {
-                    "edges": tuple(
-                        profile._get_edges_for_dimensionality(
-                            fields.permittivity.ndim == 3
-                        )
-                    ),
-                    "formulation": profile.spec.formulation,
-                    "thickness": profile.spec.thickness,
-                    "sigma_max": profile.spec.sigma_max,
-                    "alpha_max": profile.spec.alpha_max,
-                    "kappa_max": profile.spec.kappa_max,
-                    "m": profile.spec.m,
-                    "target_reflection": profile.spec.target_reflection,
-                }
-            ),
-        )
+            return out
+
+        out = profile._create_sponge_profiles(fields, domain_size)
+        self._warn_if_material_not_extruded(fields, out)
         return out
 
     def _resolved_profile_boundary(self, fields, resolution, dt):
@@ -301,14 +281,12 @@ class _AbsorberCompiler:
             )
         alpha_max = self.spec.alpha_max
         if self.spec.formulation == "cpml" and alpha_max is None:
-            # Set the CFS decay rate by the vacuum transit time through the layer,
-            # not the numerical timestep. A fixed physical thickness therefore
-            # preserves the absorber under both timestep and mesh refinement.
-            # A zero-thickness layer has no active samples; keep its metadata finite.
-            thickness = self._physical_thickness() or float(resolution)
-            alpha_max = (
-                PML._DEFAULT_CPML_ALPHA_TRANSIT * EPS_0 * LIGHT_SPEED / thickness
-            )
+            # Convert a conservative normalized CFS alpha into the solver's
+            # conductivity-like units so default CPML keeps a nonzero CFS shift.
+            alpha_normalized = self.spec._DEFAULT_CPML_ALPHA_NORMALIZED
+            if getattr(fields.permittivity, "ndim", 0) == 3:
+                alpha_normalized = self.spec._DEFAULT_3D_CPML_ALPHA_NORMALIZED
+            alpha_max = 2.0 * EPS_0 * alpha_normalized / max(float(dt), 1e-30)
         return float(sigma_max), None if alpha_max is None else float(alpha_max)
 
     def _pml_material_variation_edges(self, fields, pml_data):
