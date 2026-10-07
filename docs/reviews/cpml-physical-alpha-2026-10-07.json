@@ -1,0 +1,776 @@
+{
+  "base_commit": "ab84951b0ed7c6dbf41b9c531e070606bedd1e35",
+  "hardware": "RTX 3090, JAX float32; Meep 1.34.0 CPU",
+  "results": {
+    "annulus-r160": {
+      "settings": {
+        "engine": "beamz",
+        "resolution": 160,
+        "courant": 0.5,
+        "pml": 0.4,
+        "padding": 0.0,
+        "angular_phase": 0.0,
+        "alpha_max": null,
+        "until": 75.0,
+        "backend": "jax",
+        "vertices": 1024,
+        "order": 6,
+        "inner_radius": 0.25,
+        "shift": 0.0,
+        "corrugation": 0.0,
+        "smoothing": "farjadpour_full",
+        "quality": "balanced"
+      },
+      "exact": {
+        "frequency": 1.6882335951884884,
+        "decay": -0.011793616085455521,
+        "quality_factor": 71.57404408265006,
+        "azimuthal_order": 6
+      },
+      "diagnostics": {
+        "dt_um_over_c": 0.003125,
+        "grid_shape": [
+          384,
+          384,
+          1
+        ],
+        "version": "0.5.3",
+        "resolved_parameters": [
+          {
+            "edges": [
+              "left",
+              "right",
+              "top",
+              "bottom"
+            ],
+            "formulation": "cpml",
+            "thickness": 4e-07,
+            "sigma_max": 183360.7498092279,
+            "alpha_max": 663.604681998239,
+            "kappa_max": 2.0,
+            "m": 3,
+            "target_reflection": 1e-06
+          }
+        ]
+      },
+      "fits": [
+        {
+          "window": [
+            20,
+            60
+          ],
+          "frequency": 1.6873120549690082,
+          "decay_rate": 0.0734385618996011,
+          "quality_factor": 72.18070478355767,
+          "relative_residual": 2.266284282800006e-05
+        },
+        {
+          "window": [
+            30,
+            70
+          ],
+          "frequency": 1.687312055786616,
+          "decay_rate": 0.07343854874614451,
+          "quality_factor": 72.18071774669997,
+          "relative_residual": 4.670140437985103e-05
+        }
+      ]
+    },
+    "r80": {
+      "settings": {
+        "engine": "beamz",
+        "resolution": 80,
+        "courant": 0.5,
+        "pml": 0.4,
+        "padding": 0.0,
+        "angular_phase": 0.0,
+        "alpha_max": null,
+        "until": 75.0,
+        "backend": "jax",
+        "vertices": 1024,
+        "order": 6,
+        "inner_radius": 0.25,
+        "shift": 0.0,
+        "corrugation": 0.0,
+        "smoothing": "farjadpour_full",
+        "quality": "balanced"
+      },
+      "exact": {
+        "frequency": 1.6882335951884884,
+        "decay": -0.011793616085455521,
+        "quality_factor": 71.57404408265006,
+        "azimuthal_order": 6
+      },
+      "diagnostics": {
+        "dt_um_over_c": 0.00625,
+        "grid_shape": [
+          192,
+          192,
+          1
+        ],
+        "version": "0.5.3",
+        "resolved_parameters": [
+          {
+            "edges": [
+              "left",
+              "right",
+              "top",
+              "bottom"
+            ],
+            "formulation": "cpml",
+            "thickness": 4e-07,
+            "sigma_max": 183360.7498092279,
+            "alpha_max": 663.604681998239,
+            "kappa_max": 2.0,
+            "m": 3,
+            "target_reflection": 1e-06
+          }
+        ]
+      },
+      "fits": [
+        {
+          "window": [
+            20,
+            60
+          ],
+          "frequency": 1.6852952550817888,
+          "decay_rate": 0.07213027109291667,
+          "quality_factor": 73.40206978668371,
+          "relative_residual": 1.96778886843835e-05
+        },
+        {
+          "window": [
+            30,
+            70
+          ],
+          "frequency": 1.685295255381567,
+          "decay_rate": 0.07213027170321393,
+          "quality_factor": 73.40206917868238,
+          "relative_residual": 3.901323043425856e-05
+        }
+      ]
+    },
+    "r160-half-dt": {
+      "settings": {
+        "engine": "beamz",
+        "resolution": 160,
+        "courant": 0.25,
+        "pml": 0.4,
+        "padding": 0.0,
+        "angular_phase": 0.0,
+        "alpha_max": null,
+        "until": 75.0,
+        "backend": "jax",
+        "vertices": 1024,
+        "order": 6,
+        "inner_radius": 0.25,
+        "shift": 0.0,
+        "corrugation": 0.0,
+        "smoothing": "farjadpour_full",
+        "quality": "balanced"
+      },
+      "exact": {
+        "frequency": 1.6882335951884884,
+        "decay": -0.011793616085455521,
+        "quality_factor": 71.57404408265006,
+        "azimuthal_order": 6
+      },
+      "diagnostics": {
+        "dt_um_over_c": 0.0015625,
+        "grid_shape": [
+          384,
+          384,
+          1
+        ],
+        "version": "0.5.3",
+        "resolved_parameters": [
+          {
+            "edges": [
+              "left",
+              "right",
+              "top",
+              "bottom"
+            ],
+            "formulation": "cpml",
+            "thickness": 4e-07,
+            "sigma_max": 183360.7498092279,
+            "alpha_max": 663.604681998239,
+            "kappa_max": 2.0,
+            "m": 3,
+            "target_reflection": 1e-06
+          }
+        ]
+      },
+      "fits": [
+        {
+          "window": [
+            20,
+            60
+          ],
+          "frequency": 1.6872541900056823,
+          "decay_rate": 0.0734309846790602,
+          "quality_factor": 72.18567735714979,
+          "relative_residual": 2.9785694744986418e-05
+        },
+        {
+          "window": [
+            30,
+            70
+          ],
+          "frequency": 1.6872541913608001,
+          "decay_rate": 0.07343098516111599,
+          "quality_factor": 72.18567694124503,
+          "relative_residual": 6.11013851627844e-05
+        }
+      ]
+    },
+    "r160-zero": {
+      "settings": {
+        "engine": "beamz",
+        "resolution": 160,
+        "courant": 0.5,
+        "pml": 0.4,
+        "padding": 0.0,
+        "angular_phase": 0.0,
+        "alpha_max": 0.0,
+        "until": 75.0,
+        "backend": "jax",
+        "vertices": 1024,
+        "order": 6,
+        "inner_radius": 0.25,
+        "shift": 0.0,
+        "corrugation": 0.0,
+        "smoothing": "farjadpour_full",
+        "quality": "balanced"
+      },
+      "exact": {
+        "frequency": 1.6882335951884884,
+        "decay": -0.011793616085455521,
+        "quality_factor": 71.57404408265006,
+        "azimuthal_order": 6
+      },
+      "diagnostics": {
+        "dt_um_over_c": 0.003125,
+        "grid_shape": [
+          384,
+          384,
+          1
+        ],
+        "version": "0.5.3",
+        "resolved_parameters": [
+          {
+            "edges": [
+              "left",
+              "right",
+              "top",
+              "bottom"
+            ],
+            "formulation": "cpml",
+            "thickness": 4e-07,
+            "sigma_max": 183360.7498092279,
+            "alpha_max": 0.0,
+            "kappa_max": 2.0,
+            "m": 3,
+            "target_reflection": 1e-06
+          }
+        ]
+      },
+      "fits": [
+        {
+          "window": [
+            20,
+            60
+          ],
+          "frequency": 1.6873120561740447,
+          "decay_rate": 0.073438550595068,
+          "quality_factor": 72.1807159460179,
+          "relative_residual": 2.3407899318579636e-05
+        },
+        {
+          "window": [
+            30,
+            70
+          ],
+          "frequency": 1.6873120574453988,
+          "decay_rate": 0.0734385635423691,
+          "quality_factor": 72.18070327486338,
+          "relative_residual": 4.760170823651907e-05
+        }
+      ]
+    },
+    "r160-thick": {
+      "settings": {
+        "engine": "beamz",
+        "resolution": 160,
+        "courant": 0.5,
+        "pml": 0.6,
+        "padding": 0.2,
+        "angular_phase": 0.0,
+        "alpha_max": null,
+        "until": 75.0,
+        "backend": "jax",
+        "vertices": 1024,
+        "order": 6,
+        "inner_radius": 0.25,
+        "shift": 0.0,
+        "corrugation": 0.0,
+        "smoothing": "farjadpour_full",
+        "quality": "balanced"
+      },
+      "exact": {
+        "frequency": 1.6882335951884884,
+        "decay": -0.011793616085455521,
+        "quality_factor": 71.57404408265006,
+        "azimuthal_order": 6
+      },
+      "diagnostics": {
+        "dt_um_over_c": 0.003125,
+        "grid_shape": [
+          448,
+          448,
+          1
+        ],
+        "version": "0.5.3",
+        "resolved_parameters": [
+          {
+            "edges": [
+              "left",
+              "right",
+              "top",
+              "bottom"
+            ],
+            "formulation": "cpml",
+            "thickness": 6e-07,
+            "sigma_max": 122240.49987281859,
+            "alpha_max": 442.4031213321594,
+            "kappa_max": 2.0,
+            "m": 3,
+            "target_reflection": 1e-06
+          }
+        ]
+      },
+      "fits": [
+        {
+          "window": [
+            20,
+            60
+          ],
+          "frequency": 1.6873120667672858,
+          "decay_rate": 0.07343861517048571,
+          "quality_factor": 72.18065292984824,
+          "relative_residual": 2.299433930739898e-05
+        },
+        {
+          "window": [
+            30,
+            70
+          ],
+          "frequency": 1.6873120689657566,
+          "decay_rate": 0.07343861035053836,
+          "quality_factor": 72.18065776128014,
+          "relative_residual": 4.739328888318124e-05
+        }
+      ]
+    },
+    "r160-clearance": {
+      "settings": {
+        "engine": "beamz",
+        "resolution": 160,
+        "courant": 0.5,
+        "pml": 0.4,
+        "padding": 0.2,
+        "angular_phase": 0.0,
+        "alpha_max": null,
+        "until": 75.0,
+        "backend": "jax",
+        "vertices": 1024,
+        "order": 6,
+        "inner_radius": 0.25,
+        "shift": 0.0,
+        "corrugation": 0.0,
+        "smoothing": "farjadpour_full",
+        "quality": "balanced"
+      },
+      "exact": {
+        "frequency": 1.6882335951884884,
+        "decay": -0.011793616085455521,
+        "quality_factor": 71.57404408265006,
+        "azimuthal_order": 6
+      },
+      "diagnostics": {
+        "dt_um_over_c": 0.003125,
+        "grid_shape": [
+          448,
+          448,
+          1
+        ],
+        "version": "0.5.3",
+        "resolved_parameters": [
+          {
+            "edges": [
+              "left",
+              "right",
+              "top",
+              "bottom"
+            ],
+            "formulation": "cpml",
+            "thickness": 4e-07,
+            "sigma_max": 183360.7498092279,
+            "alpha_max": 663.604681998239,
+            "kappa_max": 2.0,
+            "m": 3,
+            "target_reflection": 1e-06
+          }
+        ]
+      },
+      "fits": [
+        {
+          "window": [
+            20,
+            60
+          ],
+          "frequency": 1.687312066050128,
+          "decay_rate": 0.07343866891754362,
+          "quality_factor": 72.180600072807,
+          "relative_residual": 2.356409028772906e-05
+        },
+        {
+          "window": [
+            30,
+            70
+          ],
+          "frequency": 1.6873120672398947,
+          "decay_rate": 0.07343867225283757,
+          "quality_factor": 72.18059684554608,
+          "relative_residual": 4.8427674416151244e-05
+        }
+      ]
+    },
+    "r320-cos": {
+      "settings": {
+        "engine": "beamz",
+        "resolution": 320,
+        "courant": 0.5,
+        "pml": 0.4,
+        "padding": 0.0,
+        "angular_phase": 0.0,
+        "alpha_max": null,
+        "until": 75.0,
+        "backend": "jax",
+        "vertices": 1024,
+        "order": 6,
+        "inner_radius": 0.25,
+        "shift": 0.0,
+        "corrugation": 0.0,
+        "smoothing": "farjadpour_full",
+        "quality": "balanced"
+      },
+      "exact": {
+        "frequency": 1.6882335951884884,
+        "decay": -0.011793616085455521,
+        "quality_factor": 71.57404408265006,
+        "azimuthal_order": 6
+      },
+      "diagnostics": {
+        "dt_um_over_c": 0.0015625,
+        "grid_shape": [
+          768,
+          768,
+          1
+        ],
+        "version": "0.5.3",
+        "resolved_parameters": [
+          {
+            "edges": [
+              "left",
+              "right",
+              "top",
+              "bottom"
+            ],
+            "formulation": "cpml",
+            "thickness": 4e-07,
+            "sigma_max": 183360.7498092279,
+            "alpha_max": 663.604681998239,
+            "kappa_max": 2.0,
+            "m": 3,
+            "target_reflection": 1e-06
+          }
+        ]
+      },
+      "fits": [
+        {
+          "window": [
+            20,
+            60
+          ],
+          "frequency": 1.687889556464043,
+          "decay_rate": 0.0738582008859269,
+          "quality_factor": 71.79516109319083,
+          "relative_residual": 2.9736218105609244e-05
+        },
+        {
+          "window": [
+            30,
+            70
+          ],
+          "frequency": 1.6878895586928757,
+          "decay_rate": 0.07385820150278373,
+          "quality_factor": 71.79516058836874,
+          "relative_residual": 6.057482595873988e-05
+        }
+      ]
+    },
+    "r320-sin": {
+      "settings": {
+        "engine": "beamz",
+        "resolution": 320,
+        "courant": 0.5,
+        "pml": 0.4,
+        "padding": 0.0,
+        "angular_phase": 1.5707963267948966,
+        "alpha_max": null,
+        "until": 75.0,
+        "backend": "jax",
+        "vertices": 1024,
+        "order": 6,
+        "inner_radius": 0.25,
+        "shift": 0.0,
+        "corrugation": 0.0,
+        "smoothing": "farjadpour_full",
+        "quality": "balanced"
+      },
+      "exact": {
+        "frequency": 1.6882335951884884,
+        "decay": -0.011793616085455521,
+        "quality_factor": 71.57404408265006,
+        "azimuthal_order": 6
+      },
+      "diagnostics": {
+        "dt_um_over_c": 0.0015625,
+        "grid_shape": [
+          768,
+          768,
+          1
+        ],
+        "version": "0.5.3",
+        "resolved_parameters": [
+          {
+            "edges": [
+              "left",
+              "right",
+              "top",
+              "bottom"
+            ],
+            "formulation": "cpml",
+            "thickness": 4e-07,
+            "sigma_max": 183360.7498092279,
+            "alpha_max": 663.604681998239,
+            "kappa_max": 2.0,
+            "m": 3,
+            "target_reflection": 1e-06
+          }
+        ]
+      },
+      "fits": [
+        {
+          "window": [
+            20,
+            60
+          ],
+          "frequency": 1.6879048596204225,
+          "decay_rate": 0.07387686220055202,
+          "quality_factor": 71.77767637920074,
+          "relative_residual": 1.093312118665186e-05
+        },
+        {
+          "window": [
+            30,
+            70
+          ],
+          "frequency": 1.6879048593454868,
+          "decay_rate": 0.07387686150328895,
+          "quality_factor": 71.77767704495976,
+          "relative_residual": 2.192837976734397e-05
+        }
+      ]
+    },
+    "r320-sin-legacy": {
+      "settings": {
+        "engine": "beamz",
+        "resolution": 320,
+        "courant": 0.5,
+        "pml": 0.4,
+        "padding": 0.0,
+        "angular_phase": 1.5707963267948966,
+        "alpha_max": 339765.5971831,
+        "until": 75.0,
+        "backend": "jax",
+        "vertices": 1024,
+        "order": 6,
+        "inner_radius": 0.25,
+        "shift": 0.0,
+        "corrugation": 0.0,
+        "smoothing": "farjadpour_full",
+        "quality": "balanced"
+      },
+      "exact": {
+        "frequency": 1.6882335951884884,
+        "decay": -0.011793616085455521,
+        "quality_factor": 71.57404408265006,
+        "azimuthal_order": 6
+      },
+      "diagnostics": {
+        "dt_um_over_c": 0.0015625,
+        "grid_shape": [
+          768,
+          768,
+          1
+        ],
+        "version": "0.5.3",
+        "resolved_parameters": [
+          {
+            "edges": [
+              "left",
+              "right",
+              "top",
+              "bottom"
+            ],
+            "formulation": "cpml",
+            "thickness": 4e-07,
+            "sigma_max": 183360.7498092279,
+            "alpha_max": 339765.5971831,
+            "kappa_max": 2.0,
+            "m": 3,
+            "target_reflection": 1e-06
+          }
+        ]
+      },
+      "fits": [
+        {
+          "window": [
+            20,
+            60
+          ],
+          "frequency": 1.6880054636581214,
+          "decay_rate": 0.073156464643804,
+          "quality_factor": 72.4888168074826,
+          "relative_residual": 1.083246735954821e-05
+        },
+        {
+          "window": [
+            30,
+            70
+          ],
+          "frequency": 1.6880054625127587,
+          "decay_rate": 0.07315646871859892,
+          "quality_factor": 72.48881272068988,
+          "relative_residual": 2.1687562827629016e-05
+        }
+      ]
+    },
+    "meep-r160": {
+      "settings": {
+        "engine": "meep",
+        "resolution": 160,
+        "courant": 0.5,
+        "pml": 0.4,
+        "padding": 0.0,
+        "angular_phase": 0.0,
+        "alpha_max": null,
+        "until": 75.0,
+        "backend": "jax",
+        "vertices": 1024,
+        "order": 6,
+        "inner_radius": 0.25,
+        "shift": 0.0,
+        "corrugation": 0.0,
+        "smoothing": "farjadpour_full",
+        "quality": "balanced"
+      },
+      "exact": {
+        "frequency": 1.6882335951884884,
+        "decay": -0.011793616085455521,
+        "quality_factor": 71.57404408265006,
+        "azimuthal_order": 6
+      },
+      "diagnostics": {
+        "version": "1.34.0",
+        "dt_um_over_c": 0.003125
+      },
+      "fits": [
+        {
+          "window": [
+            20,
+            60
+          ],
+          "frequency": 1.6873073541148158,
+          "decay_rate": 0.0734387521751338,
+          "quality_factor": 72.18031667250995,
+          "relative_residual": 2.8873387752253494e-07
+        },
+        {
+          "window": [
+            30,
+            70
+          ],
+          "frequency": 1.6873073552014142,
+          "decay_rate": 0.07343874858000524,
+          "quality_factor": 72.18032025251604,
+          "relative_residual": 1.8372945919122996e-07
+        }
+      ]
+    },
+    "meep-r320-sin": {
+      "settings": {
+        "engine": "meep",
+        "resolution": 320,
+        "courant": 0.5,
+        "pml": 0.4,
+        "padding": 0.0,
+        "angular_phase": 1.5707963267948966,
+        "alpha_max": null,
+        "until": 75.0,
+        "backend": "jax",
+        "vertices": 1024,
+        "order": 6,
+        "inner_radius": 0.25,
+        "shift": 0.0,
+        "corrugation": 0.0,
+        "smoothing": "farjadpour_full",
+        "quality": "balanced"
+      },
+      "exact": {
+        "frequency": 1.6882335951884884,
+        "decay": -0.011793616085455521,
+        "quality_factor": 71.57404408265006,
+        "azimuthal_order": 6
+      },
+      "diagnostics": {
+        "version": "1.34.0",
+        "dt_um_over_c": 0.0015625
+      },
+      "fits": [
+        {
+          "window": [
+            20,
+            60
+          ],
+          "frequency": 1.6878996364091792,
+          "decay_rate": 0.07387681216370738,
+          "quality_factor": 71.77750287856836,
+          "relative_residual": 1.3010803396475018e-07
+        },
+        {
+          "window": [
+            30,
+            70
+          ],
+          "frequency": 1.6878996359689065,
+          "decay_rate": 0.07387681334769573,
+          "quality_factor": 71.77750170950218,
+          "relative_residual": 2.2395874209717415e-07
+        }
+      ]
+    }
+  }
+}

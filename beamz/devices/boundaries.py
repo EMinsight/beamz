@@ -115,7 +115,11 @@ class PML:
     kappa_max : float, default=2.0
         Maximum CPML coordinate-stretching factor.
     alpha_max : float, optional
-        Maximum CPML complex-frequency-shift coefficient.
+        Maximum CPML complex-frequency-shift coefficient in S/m (the same
+        conductivity-like units as ``sigma_max``). When omitted, uses
+        ``0.1 * EPS_0 * LIGHT_SPEED / thickness`` in both 2D and 3D. Its decay
+        rate ``alpha_max / EPS_0`` is independent of the numerical timestep.
+        Set to zero for the classical, unshifted PML limit.
     target_reflection : float, default=1e-6
         Reflection target used to derive automatic conductivity.
 
@@ -127,10 +131,13 @@ class PML:
     -----
     Geometry should normally be kept clear of the absorber or extruded through it
     along the boundary normal to avoid material discontinuities inside the layer.
+    For mesh convergence, specify a fixed physical ``thickness``: the default
+    12-cell layer shrinks as the mesh is refined. For thickness studies that
+    hold alpha fixed, supply ``alpha_max`` explicitly. Resolved parameters are
+    available in ``simulation.pml_data["resolved_parameters"]``.
     """
 
-    _DEFAULT_CPML_ALPHA_NORMALIZED: ClassVar[float] = 0.1
-    _DEFAULT_3D_CPML_ALPHA_NORMALIZED: ClassVar[float] = 0.05
+    _DEFAULT_CPML_ALPHA_TRANSIT: ClassVar[float] = 0.1
     DEFAULT_CELLS: ClassVar[int] = 12
 
     edges: BoundaryEdges = "all"
@@ -219,8 +226,6 @@ class Absorber:
     # never used by the sponge branch.
     kappa_max: ClassVar[float] = 1.0
     alpha_max: ClassVar[None] = None
-    _DEFAULT_CPML_ALPHA_NORMALIZED: ClassVar[float] = 0.0
-    _DEFAULT_3D_CPML_ALPHA_NORMALIZED: ClassVar[float] = 0.0
 
     edges: BoundaryEdges = "all"
     thickness: float = 1 * µm

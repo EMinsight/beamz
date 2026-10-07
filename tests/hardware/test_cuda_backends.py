@@ -657,6 +657,34 @@ def test_streamed_cuda_matches_jax_complete_state(cpml):
     _assert_state_close(reference, actual)
 
 
+@pytest.mark.parametrize("timestep_scale", [1.0, 0.5])
+def test_split_cpml_physical_default_matches_cuda_trace_and_spectrum(timestep_scale):
+    simulation, state = _simulation_and_seed(cpml=True)
+    simulation = simulation.updated_copy(
+        time=np.asarray(simulation.time) * timestep_scale,
+        boundaries=[
+            bz.PML(edges=edges, thickness=240e-9, formulation="cpml")
+            for edges in (("left", "right"), ("top", "bottom"), ("front", "back"))
+        ],
+    )
+    reference, actual = _copy_state(state), _copy_state(state)
+    for _ in range(4):
+        reference = simulation.advance(
+            state=reference, num_steps=8, backend="jax", progress=False
+        ).state
+        actual = simulation.advance(
+            state=actual, num_steps=8, backend="cuda_streamed", progress=False
+        ).state
+        # Compare field samples, recurrence memories, and accumulated DFTs.
+        _assert_state_close(reference, actual)
+    diagnostics = simulation.pml_data["resolved_parameters"]
+    assert len(diagnostics) == 3
+    for parameters in diagnostics:
+        assert parameters["alpha_max"] == pytest.approx(
+            0.1 * bz.EPS_0 * bz.LIGHT_SPEED / 240e-9
+        )
+
+
 @pytest.mark.parametrize("material", ["binary", "smooth", "scalar", "lossy"])
 @pytest.mark.parametrize("fusion", ["0", "1"])
 def test_streamed_cuda_realistic_sources_and_cpml_match_jax(
