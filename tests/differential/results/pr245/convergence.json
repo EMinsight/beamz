@@ -2,7 +2,7 @@
   "wavelength_nm": 1550,
   "source_bandwidth_nm": 20,
   "power_unit": "percent of incident power",
-  "note": "Published samples include figure digitizations. Equal nominal PPW does not imply equal realized meshes. These sweeps do not establish complete mesh convergence.",
+  "note": "Retained RTX3090 fields reprojected without the extra modal normal-interpolation correction. Published samples include figure digitizations. Equal nominal PPW does not imply equal realized meshes. These sweeps do not establish complete mesh convergence.",
   "devices": {
     "mmi2x2": {
       "target_mode": "MMI cross TE0",
@@ -38,22 +38,22 @@
         {
           "run_id": "mmi-6",
           "ppw": 6,
-          "power": 37.42740518916944
+          "power": 37.445827348504075
         },
         {
           "run_id": "mmi-10",
           "ppw": 10,
-          "power": 45.97777901898707
+          "power": 45.98651281963782
         },
         {
           "run_id": "mmi-15-reused",
           "ppw": 15,
-          "power": 48.03235232283033
+          "power": 48.03766045775782
         },
         {
           "run_id": "mmi-20-headroom",
           "ppw": 20,
-          "power": 48.53429958429283
+          "power": 48.53491658361998
         }
       ]
     },
@@ -91,17 +91,17 @@
         {
           "run_id": "converter-6",
           "ppw": 6,
-          "power": 21.14712021964028
+          "power": 21.841635971954805
         },
         {
           "run_id": "converter-10",
           "ppw": 10,
-          "power": 28.96263088656023
+          "power": 28.97010328165821
         },
         {
           "run_id": "converter-15-final-headroom",
           "ppw": 15,
-          "power": 45.94159884053118
+          "power": 45.85897955117647
         }
       ]
     },
@@ -139,17 +139,17 @@
         {
           "run_id": "psr-6",
           "ppw": 6,
-          "power": 85.24464480875594
+          "power": 82.46909335957623
         },
         {
           "run_id": "psr-10",
           "ppw": 10,
-          "power": 89.19343903650339
+          "power": 88.13053128749338
         },
         {
           "run_id": "psr-15-headroom",
           "ppw": 15,
-          "power": 91.2068597115182
+          "power": 90.84588875244383
         }
       ]
     }

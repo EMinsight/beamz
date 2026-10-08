@@ -25,7 +25,7 @@ def main():
         "wavelength_nm": 1550,
         "source_bandwidth_nm": 20,
         "power_unit": "percent of incident power",
-        "note": "Published samples include figure digitizations. Equal nominal PPW does not imply equal realized meshes. These sweeps do not establish complete mesh convergence.",
+        "note": "Retained RTX3090 fields reprojected without the extra modal normal-interpolation correction. Published samples include figure digitizations. Equal nominal PPW does not imply equal realized meshes. These sweeps do not establish complete mesh convergence.",
         "devices": {},
     }
     fig, axes = plt.subplots(
@@ -78,7 +78,7 @@ def main():
             [row["power"] for row in measured],
             "o-",
             color="#236192",
-            label="BeamZ RTX3090",
+            label="BeamZ RTX3090 (reprojected)",
         )
         ax.set(
             title=title,
