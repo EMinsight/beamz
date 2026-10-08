@@ -120,41 +120,9 @@ Conversion comparisons record same-resolution agreement and only evaluate
 converged-reference agreement at eligible resolutions. A selected-output bound
 checks for normalization or passivity problems across the wavelength band.
 
-## Single-bus ring resonator
-
-The paper's sixth device is the supplementary repository's default
-`ring_single`. The case pins its GDS at the same source revision and runs the
-lowest published setting of 6 cells per wavelength over 1540--1560 nm with
-0.2 nm monitor sampling.
-
-```console
-uv run pytest tests/differential/test_ring_resonator.py \
-  --validation-report=validation-results-ring-6ppw.json
-```
-
-The benchmark uses the upstream ring script's default Lumerical silicon runtime
-of `30 * domain_x * 2 / c` (6.40 ps for this domain). The upstream Tidy3D helper
-uses half that duration. Section 3.6 and Figure 26 publish Lumerical and Tidy3D
-ring results at 6, 10, 15, 20, and 25 cells per wavelength. Following the
-paper's analysis script, the benchmark cubically interpolates the 0.2 nm
-samples to approximately 0.02 nm, measures the first complete resonance in
-wavelength order at half depth, and computes `Q = wavelength / FWHM`. At 6 PPW
-the paper reports a 0.84 nm Lumerical FWHM and Q of 1839.4; Tidy3D's FWHM lies
-in its reported 0.88--0.90 nm range and its series starts at Q 1756.5. The
-paper concludes that the ring requires 20 PPW for mesh convergence.
-
-The case records the complex TE0 through and reflection spectra, resonance
-wavelengths, median free spectral range, lowest-resonance FWHM and Q, runtime,
-grid size, and terminal field-decay ratio. The
-field-decay ratio must reach the repository's `1e-5` auto-shutoff threshold
-before any passivity or resonance metric can be accepted. The hardware test is
-a strict expected failure at the pinned runtime, so an unexpectedly converged
-run also requires review and removal of that marker before it can count as a
-passing validation.
-
 ## Investigation controls and interpretation (PR #245)
 
-The four new device builders accept `ExperimentOptions` for explicit duration,
+The three new device builders accept `ExperimentOptions` for explicit duration,
 monitor offset/aperture, absorber thickness, source-profile count, frequency
 sampling, and smoothing experiments. Defaults preserve the pinned setup;
 6/10/15/20/25 PPW are now supported for controlled refinement runs. Enabling a
@@ -173,8 +141,7 @@ Expected failures are restricted to the known output-power or field-decay
 assertion; unrelated exceptions are ordinary failures. Artifact files additionally
 retain complex incoming/outgoing modal amplitudes and all realized grid edges.
 
-The [RTX 3090 main-refresh report](results/pr245-main-refresh/README.md) records
-the merged-main reruns, finer-grid comparisons, capacity attempts, paired
-memory/runtime measurements, and validation evidence.
+The [RTX3090 comparison report](results/pr245/README.md) consolidates the latest
+MMI, converter, and PSR results, retained spectra, and reproduction commands.
 
 AI-assisted implementation and investigation: OpenAI Codex.

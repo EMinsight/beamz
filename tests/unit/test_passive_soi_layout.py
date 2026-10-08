@@ -28,7 +28,6 @@ def require_gdsfactory():
         "directional_coupler",
         "mode_converter",
         "polarization_splitter_rotator",
-        "ring_resonator",
     ],
 )
 @pytest.mark.parametrize("active", [False, True])

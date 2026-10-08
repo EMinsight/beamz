@@ -1,6 +1,6 @@
 """Run one auditable passive-SOI experiment per process.
 
-Example: python -m scripts.investigate_passive_soi ring_resonator --run-time-ps 12.8
+Example: python -m scripts.investigate_passive_soi mmi2x2 --ppw 15 --output validation-artifacts/mmi-15
 Raw artifacts are retained under validation-artifacts by default.
 """
 
@@ -41,23 +41,14 @@ from tests.differential.passive_soi.four_port import (
 from tests.differential.passive_soi.mode_conversion import (
     build_mode_conversion_simulation,
 )
-from tests.differential.passive_soi.ring_resonator import (
-    build_ring_resonator_simulation,
-    extract_ring_resonances,
-)
 from tests.differential.passive_soi.straight_control import (
     build_converter_grid_control,
-    build_ring_bus_control,
     build_straight_control,
 )
 
 
 def build_experiment(device, ppw, options):
-    if device == "ring_bus":
-        simulation, ports, outputs, frequencies = build_ring_bus_control(
-            resolution_ppw=ppw, options=options
-        )
-    elif device.startswith("converter_grid_"):
+    if device.startswith("converter_grid_"):
         simulation, ports, outputs, frequencies = build_converter_grid_control(
             device.removeprefix("converter_grid_"),
             resolution_ppw=ppw,
@@ -69,11 +60,6 @@ def build_experiment(device, ppw, options):
             resolution_ppw=ppw,
             options=options,
         )
-    elif device == "ring_resonator":
-        simulation, ports, frequencies = build_ring_resonator_simulation(
-            resolution_ppw=ppw, diagnostics=True, options=options
-        )
-        outputs = ("o1", "o2")
     elif device == "mmi2x2":
         simulation, ports, frequencies = build_four_port_simulation(
             load_passive_soi_case(device),
@@ -97,8 +83,6 @@ def main():
             "mmi2x2",
             "mode_converter",
             "polarization_splitter_rotator",
-            "ring_resonator",
-            "ring_bus",
             "straight_te0",
             "straight_wide_te0",
             "straight_te1",
@@ -229,25 +213,10 @@ def main():
         "termination": asdict(result.termination),
         "performance": asdict(result.performance),
     }
-    if args.device.startswith(("straight_", "converter_grid_", "ring_bus")):
+    if args.device.startswith(("straight_", "converter_grid_")):
         stack = np.stack(list(powers.values()))
         summary["max_transmission_error"] = float(np.max(np.abs(stack - 1)))
         summary["max_monitor_power_spread"] = float(np.max(np.ptp(stack, axis=0)))
-    elif args.device == "ring_resonator":
-        resonances, fsr, fwhm, q, extinction, normalized = extract_ring_resonances(
-            wavelengths, powers["o2"]
-        )
-        summary["ring"] = {
-            "resonances_um": resonances,
-            "fsr_nm": fsr,
-            "fwhm_nm": fwhm,
-            "q": q,
-            "extinction_db": extinction,
-            "field_decay_passed": result.termination.field_decay <= 1e-5,
-            "output_power_passed": float(np.max(sum(powers.values()))) <= 1.02,
-            "time_convergence_established": False,
-        }
-        summary["selected_output_max"] = float(np.max(sum(powers.values())))
     else:
         channel = "o3" if args.device == "mmi2x2" else "conversion"
         # Four-port protocol identifies the cross port explicitly.
