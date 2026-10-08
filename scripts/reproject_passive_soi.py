@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from beamz import Simulation
-from beamz.analysis import mode_projection, s_parameters
+from beamz.analysis import s_parameters
 from beamz.analysis.data import AnalysisData
 from beamz.design.discretization import build_material_grid
 from beamz.design.grid import RectilinearGrid
@@ -23,12 +23,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--verify-previous-unsampled-basis", action="store_true")
     args = parser.parse_args()
     if args.output.exists():
         parser.error("output already exists; preserve prior analysis")
     source = json.loads((args.input / "summary.json").read_text())
     raw_path = args.input / "monitor_data.npz"
+    raw_hash = hashlib.sha256(raw_path.read_bytes()).hexdigest()
+    if raw_hash != source["monitor_data_sha256"]:
+        raise ValueError("retained monitor data does not match its recorded hash")
     raw = np.load(raw_path)
     simulation, ports, outputs, frequencies = build_experiment(
         source["device"], source["ppw"], ExperimentOptions(**source["options"])
@@ -79,57 +81,60 @@ def main():
             monitor,
         )
 
-    def project():
-        return s_parameters(
-            inputs,
-            source_port="o1",
-            ports=ports,
-            output_ports=outputs,
-            frequencies=frequencies,
-            min_incident_db=-45,
-        )
-
-    baseline_error = None
-    if args.verify_previous_unsampled_basis:
-        original = mode_projection._normal_mode_sampling_factors_3d
-        try:
-            mode_projection._normal_mode_sampling_factors_3d = (
-                lambda sim, monitor, components, **kw: {c: 1.0 for c in components}
-            )
-            previous = project()
-        finally:
-            mode_projection._normal_mode_sampling_factors_3d = original
-        baseline_error = max(
-            float(np.max(np.abs(np.abs(v) ** 2 - source["powers"][key[0]])))
-            for key, v in previous.s_matrix.items()
-        )
-        if baseline_error > 1e-8:
-            raise ValueError(
-                f"reconstructed previous analysis differs by {baseline_error}; do not attribute this solely to sampling"
-            )
-    corrected = project()
-    powers = {key[0]: np.abs(v) ** 2 for key, v in corrected.s_matrix.items()}
+    scattering = s_parameters(
+        inputs,
+        source_port="o1",
+        ports=ports,
+        output_ports=outputs,
+        frequencies=frequencies,
+        min_incident_db=-45,
+    )
+    if not np.all(scattering.diagnostics["valid_mask"]):
+        raise ValueError("invalid incident signal in retained spectrum")
+    powers = {key[0]: np.abs(v) ** 2 for key, v in scattering.s_matrix.items()}
     arrays = {
-        f"S_{key[0]}_{key[1]}": np.asarray(v) for key, v in corrected.s_matrix.items()
+        f"S_{key[0]}_{key[1]}": np.asarray(v) for key, v in scattering.s_matrix.items()
     }
-    for name, wave in corrected.diagnostics["waves"].items():
+    for name, wave in scattering.diagnostics["waves"].items():
         for key in (
             "a_plus",
             "a_minus",
             "P_plus",
             "P_minus",
             "mode_neff",
-            "mode_wave_number",
             "projection_residual",
             "condition_number",
+            "projected_signed_power",
         ):
             arrays[f"diagnostic_{name}__{key}"] = np.asarray(wave[key])
-    arrays["incident_power"] = np.asarray(corrected.diagnostics["P_in"])
+    for name, flux in scattering.diagnostics["monitor_flux_checks"].items():
+        for key in (
+            "monitor_flux",
+            "P_modal_sum",
+            "P_modal_net",
+            "P_selected",
+            "P_rejected",
+            "P_selected_modal_net",
+        ):
+            arrays[f"flux_{name}__{key}"] = np.asarray(flux[key])
+    for name, key in (
+        ("valid_mask", "valid_mask"),
+        ("incident_power", "P_in"),
+        ("guided_output_power", "P_guided_out"),
+        ("power_sum", "power_sum"),
+        ("loss_estimate", "loss_est"),
+    ):
+        arrays[name] = np.asarray(scattering.diagnostics[key])
     arrays["frequencies_hz"] = np.asarray(frequencies)
+    for axis in "xyz":
+        arrays[f"grid_{axis}_boundaries_m"] = raw[f"grid_{axis}_boundaries_m"]
+    if not all(np.isfinite(value).all() for value in arrays.values()):
+        raise ValueError("nonfinite projection diagnostics")
     summary = {
         "field_run": str(args.input.resolve()),
-        "field_data_sha256": hashlib.sha256(raw_path.read_bytes()).hexdigest(),
+        "field_data_sha256": raw_hash,
         "field_simulation_commit": source["commit"],
+        "field_simulation_patch_sha256": source["working_tree_patch_sha256"],
         "analysis_commit": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], text=True
         ).strip(),
@@ -137,7 +142,6 @@ def main():
         "ppw": source["ppw"],
         "options": source["options"],
         "wavelengths_um": source["wavelengths_um"],
-        "previous_analysis_max_reconstruction_error": baseline_error,
         "previous_powers": source["powers"],
         "powers": {key: value.tolist() for key, value in powers.items()},
     }
