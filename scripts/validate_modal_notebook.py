@@ -1,7 +1,7 @@
-"""Execute the full modal tutorial and export unnormalized numerical results.
+"""Execute the full modal or cosine-crossing tutorial and export numerical results.
 
 Run once per checkout in a fresh process with that checkout on PYTHONPATH.
-The notebook cells are unchanged; a final cell exports arrays for comparison.
+Only backend selection is changed; a final cell exports arrays for comparison.
 """
 
 import argparse
@@ -22,6 +22,14 @@ def main():
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
+        "--backend", choices=("jax", "cuda_streamed"), default="cuda_streamed"
+    )
+    parser.add_argument(
+        "--notebook",
+        choices=("modal_sources_monitors", "cosine_waveguide_crossing"),
+        default="modal_sources_monitors",
+    )
+    parser.add_argument(
         "--expected-device", help="Require this substring in the JAX GPU name"
     )
     args = parser.parse_args()
@@ -34,10 +42,16 @@ def main():
         PYTHONPATH=str(root),
         MPLBACKEND="module://matplotlib_inline.backend_inline",
         XLA_PYTHON_CLIENT_PREALLOCATE="false",
-        BEAMZ_EXECUTION_BACKEND="cuda_streamed",
+        BEAMZ_EXECUTION_BACKEND=args.backend,
     )
-    path = root / "examples/notebooks/modal_sources_monitors.ipynb"
+    path = root / "examples/notebooks" / (args.notebook + ".ipynb")
     notebook = nbformat.read(path, as_version=4)
+    if args.notebook == "modal_sources_monitors":
+        for cell in notebook.cells:
+            if cell.cell_type == "code":
+                cell.source = cell.source.replace(
+                    ".run(progress=", f'.run(backend="{args.backend}", progress='
+                )
     notebook.cells.append(
         nbformat.v4.new_code_cell(
             """
@@ -78,7 +92,7 @@ for name, value in arrays.items():
     assert np.isfinite(value).all(), name
 np.savez_compressed(Path(OUTPUT) / "arrays.npz", **arrays)
 metadata = {
-    "backend": sim_single.compile().config.backend,
+    "backend": sim_single.compile(backend=BACKEND).config.backend,
     "grid_shape": list(sim0.grid.shape), "steps": sim0.num_steps,
     "nfreqs": nfreqs, "broadband_profiles": broadband_profile_count,
     "extension_version": extension.__version__,
@@ -87,14 +101,68 @@ metadata = {
     "devices": [device.device_kind for device in jax.devices()],
     "metric_kind": sim0.grid.metric_kind,
     "arrays": {name: list(value.shape) for name, value in arrays.items()},
+    "performance": {
+        label: None if data.performance is None else {
+            "runtime_s": data.performance.runtime_s, "gcups": data.performance.gcups,
+            "steps": data.performance.steps, "cells": data.performance.cells,
+        }
+        for label, data in (("single", sim_data_single), ("broadband", sim_data_bb), ("junction", sim_data_jct_bb))
+    },
 }
 (Path(OUTPUT) / "results.json").write_text(json.dumps(metadata, indent=2))
 print(metadata)
 """.replace("ROOT", repr(str(root)))
             .replace("OUTPUT", repr(str(output)))
             .replace("EXPECTED_DEVICE", repr(args.expected_device))
+            .replace("BACKEND", repr(args.backend))
         )
     )
+    if args.notebook == "cosine_waveguide_crossing":
+        notebook.cells.pop()  # Replace the modal-specific export cell.
+        for cell in notebook.cells:
+            if cell.cell_type == "code":
+                cell.source = cell.source.replace(
+                    'backend = "cuda_streamed"', f'backend = "{args.backend}"'
+                )
+        notebook.cells.append(
+            nbformat.v4.new_code_cell(
+                f"""
+import json, hashlib, jax
+import beamz._cuda as extension
+assert not test_mode
+assert Path(bz.__file__).resolve().parent.parent == Path({str(root)!r})
+assert any(device.platform == "gpu" for device in jax.devices())
+assert Path(extension.__file__).resolve().parent.parent == Path({str(root)!r})
+if {args.expected_device!r}:
+    assert {args.expected_device!r} in jax.devices()[0].device_kind
+raw = sim_data.renormalize(None)
+arrays = {{
+    "raw_flux_through": np.asarray(raw["flux_through"].flux),
+    "raw_flux_cross": np.asarray(raw["flux_cross"].flux),
+    "through": np.asarray(T_through), "cross": np.asarray(T_cross),
+    "neffs": np.asarray(modes.neffs), "freqs": np.asarray(freqs),
+    "launched_power": np.asarray(source_power),
+}}
+arrays.update({{"raw_field_" + k: np.asarray(v) for k,v in raw["field"].dft_fields.items()}})
+for name,value in arrays.items():
+    assert np.isfinite(value).all(), name
+np.savez_compressed(Path({str(output)!r}) / "arrays.npz", **arrays)
+metadata = {{
+    "backend": backend, "grid_shape": list(sim.grid.shape), "steps": sim.num_steps,
+    "nfreqs": len(freqs), "jax_version": jax.__version__,
+    "extension_version": extension.__version__,
+    "extension_sha256": hashlib.sha256(Path(extension.__file__).read_bytes()).hexdigest(),
+    "devices": [d.device_kind for d in jax.devices()],
+    "metric_kind": sim.grid.metric_kind,
+    "performance": None if sim_data.performance is None else {{
+        "runtime_s": sim_data.performance.runtime_s, "gcups": sim_data.performance.gcups,
+    }},
+}}
+(Path({str(output)!r}) / "results.json").write_text(json.dumps(metadata, indent=2))
+print(metadata)
+"""
+            )
+        )
     start = time.monotonic()
     client = NotebookClient(
         notebook,
@@ -108,7 +176,7 @@ print(metadata)
     try:
         client.execute()
     finally:
-        nbformat.write(notebook, output / "modal_sources_monitors.ipynb")
+        nbformat.write(notebook, output / (args.notebook + ".ipynb"))
         (output / "provenance.json").write_text(
             json.dumps(
                 {
