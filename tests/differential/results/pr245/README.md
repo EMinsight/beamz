@@ -36,6 +36,13 @@ These observations do not demonstrate complete paper reproduction or mesh
 convergence. BeamZ uses fixed material indices evaluated at 1550 nm, while the
 commercial references use fitted dispersive models.
 
+![MMI, mode converter, and polarization splitter-rotator mesh refinement](convergence.png)
+
+[convergence.json](convergence.json) contains every BeamZ and published sample
+plotted above. The figure includes the latest 20-PPW MMI and 15-PPW converter
+and PSR runs. Regenerate both files from the retained results and manifests with
+`python tests/differential/results/pr245/plot_convergence.py`.
+
 ## Evidence
 
 [results.json](results.json) retains the ten configurations, executing commits,
