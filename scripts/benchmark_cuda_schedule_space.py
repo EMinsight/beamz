@@ -133,6 +133,10 @@ def workloads():
         dict(base, name=name, shape=shape, pml=4 if name == "tiny" else 12)
         for name, shape in shapes.items()
     ]
+    cases.extend(
+        dict(base, name=f"large_{boundary}", shape=shapes["large"], boundary=boundary)
+        for boundary in ("pec", "right")
+    )
     for name, changes in {
         "pec": dict(boundary="pec"),
         "right": dict(boundary="right"),
@@ -243,6 +247,7 @@ def worker(case, candidates, output, samples, rounds):
                 }
                 if case["material"] == "dense_conductive" and any(
                     len(entry["coefficient_shapes"][f"h_source_{axis}"]) != 3
+                    or not all(entry["coefficient_shapes"][f"h_source_{axis}"])
                     for axis in "xyz"
                 ):
                     raise ValueError(

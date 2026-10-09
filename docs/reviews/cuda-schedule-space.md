@@ -36,7 +36,7 @@ finalist startup measurements use a fresh process for every configuration.
 Shape cases range from 32x48x64 to 256x512x512, including cubes, narrow domains,
 thin domains in each direction and odd extents. Workload variations cover all-face
 CPML, one-wall CPML with five PEC faces, all PEC, CPML thicknesses 4/12/20,
-binary/smooth/lossy/magnetic materials, mode and Gaussian sources, no monitors,
+binary/smooth/sparse-conductive/dense-conductive materials, mode and Gaussian sources, no monitors,
 ordinary DFT monitoring, dense DFT monitoring and BF16 CPML recurrence. Precision
 is fixed within each workload; BF16 results are not substituted for FP32 results.
 
@@ -63,6 +63,15 @@ This is a finite measured search on one RTX3090, not proof of an optimum on ever
 shape, source footprint or GPU. Shape, source coverage, monitored points, coefficient
 representation, boundary thickness, ownership and allocator headroom all matter.
 Unsupported mstep features retain the established streamed/JAX capability paths.
+
+The permeability-only pilot named `magnetic` did not exercise dense H coefficient
+banks: the present coefficient compiler uses magnetic conductivity and MU0 for
+that update. Its timings are excluded from the dense-coefficient conclusions and
+final recommendations. The replacement `dense_conductive` case uses a spatial
+conductivity gradient and checks that all H source coefficients are nonempty 3D
+banks before timing. The ordinary lossy case also covers dense H coefficients.
+Variable-permeability physics needs a separate review across the existing solvers;
+this performance work does not change that numerical behavior.
 
 ## Startup improvement
 
