@@ -1,5 +1,9 @@
 # Recovering the CUDA multistep advantage
 
+This report records an intermediate implementation. The
+[matched comparison](cuda-mstep-futhark-matched.md) contains the current kernel's
+three-way measurements across ten geometry/boundary cases.
+
 Futhark's temporal stepping advantage is real. The initial CUDA port's slower
 results identified a porting gap, rather than a limitation of the algorithm.
 The revised `cuda_mstep` retains the shared CUDA compiler, field-update

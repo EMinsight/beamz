@@ -71,6 +71,13 @@ recurrence, PEC masks, source injection and DFT accumulation reuse the establish
 CUDA operations and retain their phase and absolute timestep. Odd tails use the
 ordinary CUDA phase kernels. Returned state and continuation are unchanged.
 
+For packed E coefficients and scalar H coefficients, a compact kernel view
+hoists invariant metadata and carries linear field addresses along the column.
+A two-plane E input ring prefetches the next plane with CUDA pipeline copies
+while the current wave finishes H2/E2. This specialization uses 61,392 shared
+bytes per block and retains the same material and Yee update primitives.
+Other coefficient representations use the general column core.
+
 The initial scope is unsharded isotropic uniform float32 3D simulations with
 diagonal materials, packed slab sources and vector DFT monitors. Dense/lossy
 materials, asymmetric CPML and optional BF16 recurrence storage are supported.
@@ -97,10 +104,11 @@ unifying the public names; a cell-count threshold alone cannot express these
 costs. OpenCL remains a separate portability proposal until this scheduler and
 its parity contract are stable.
 
-The [RTX3090 follow-up](../docs/reviews/cuda-mstep-futhark-followup.md) records
-the recovery of Futhark's large-domain advantage through input-plane staging,
-720-thread mapping and scalar H specialization. It includes matched workloads,
-kernel profiles, correctness and sanitizer gates. The
+The [matched RTX3090 comparison](../docs/reviews/cuda-mstep-futhark-matched.md)
+records nine wins over Futhark's temporal schedule and one match within 0.3%,
+across ten geometry/boundary cases. It includes raw timings, implementation
+profiles, correctness and sanitizer gates. The
+[earlier follow-up](../docs/reviews/cuda-mstep-futhark-followup.md) and
 [initial port results](../docs/reviews/cuda-mstep-rtx3090-2026-10-09.md) preserve
 the slower initial implementation's measurements. Keep the scheduler explicit:
 domain geometry and boundary work affect its crossover, and automatic selection

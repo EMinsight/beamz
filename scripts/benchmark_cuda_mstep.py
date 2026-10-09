@@ -72,7 +72,9 @@ def main():
             )
         args.futhark_python = (
             args.futhark_python or args.futhark_reference_dir / ".venv/bin/python"
-        ).resolve()
+        ).absolute()
+        # Preserve the venv entry point: resolving its symlink would invoke the
+        # base interpreter without the reference environment's site packages.
         if not args.futhark_python.is_file():
             parser.error(f"reference Python not found: {args.futhark_python}")
     elif args.futhark_python:

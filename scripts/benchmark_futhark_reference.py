@@ -77,6 +77,7 @@ def main():
             "implementation": os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", ""),
         },
         "temporal_steps": 2,
+        "warmups": args.warmups,
         "shape": args.shape,
         "steps": args.steps,
         "boundary": args.boundary,
