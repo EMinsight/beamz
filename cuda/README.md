@@ -13,8 +13,8 @@ monitor schedules. JAX still owns tracing, buffers, and orchestration around tha
 small native interface, preserving BeamZ's public numerical semantics and JAX
 fallback without duplicating configuration-specific FFI targets.
 
-The native boundary has three typed FFI targets: a phase update, a sharded phase,
-and a complete multi-step program. The implementation is
+The native boundary has four typed FFI targets: a phase update, a sharded phase,
+a complete multi-step program, and the explicit column multistep schedule. The implementation is
 split by responsibility:
 
 - `ffi_handler.cc` decodes JAX buffers into a validated `BeamzProgramLaunch`;
@@ -56,7 +56,7 @@ simulations; only the explicitly selected CPML recurrence state may use BF16.
 `backend="cuda_mstep"` selects a second scheduler inside the same CUDA component
 (**0.22.0 / ABI 22**). It ports the whole-column temporal tiling in
 [PR #308](https://github.com/beamzorg/beamz/pull/308), credited to Pepijn de Vos.
-No Futhark compiler or separate numerical implementation is required.
+Both schedules share the CUDA compiler and numerical operations.
 
 ```python
 result = simulation.advance(num_steps=256, backend="cuda_mstep")
@@ -104,15 +104,13 @@ unifying the public names; a cell-count threshold alone cannot express these
 costs. OpenCL remains a separate portability proposal until this scheduler and
 its parity contract are stable.
 
-The [matched RTX3090 comparison](../docs/reviews/cuda-mstep-futhark-matched.md)
-records nine wins over Futhark's temporal schedule and one match within 0.3%,
-across ten geometry/boundary cases. It includes raw timings, implementation
-profiles, correctness and sanitizer gates. The
-[earlier follow-up](../docs/reviews/cuda-mstep-futhark-followup.md) and
-[initial port results](../docs/reviews/cuda-mstep-rtx3090-2026-10-09.md) preserve
-the slower initial implementation's measurements. Keep the scheduler explicit:
-domain geometry and boundary work affect its crossover, and automatic selection
-still needs a wider measured envelope.
+The [RTX3090 benchmark report](../docs/reviews/cuda-mstep-rtx3090.md)
+retains the algorithm ideas and historical Futhark baseline: nine wins and one
+match within 0.3% across ten geometry/boundary cases. It includes raw timings,
+selected core profiles, correctness and sanitizer gates. Keep the scheduler
+explicit: domain geometry and boundary work affect its crossover, and automatic
+selection still needs a wider measured envelope. The [code review](../docs/reviews/cuda-mstep-code-review.md)
+compares shared operations, workspace costs and the proposed unification.
 
 ## Experimental sharded streamed execution
 

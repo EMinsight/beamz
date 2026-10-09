@@ -303,3 +303,28 @@ def test_mstep_three_material_codebook_matches_cuda_and_jax():
     actual = _run(sim, state, "cuda_mstep", 3)
     _compare(_run(sim, state, "cuda", 3), actual)
     _compare(_run(sim, state, "jax", 3), actual, 3e-5)
+
+
+@pytest.mark.parametrize("steps", [2, 5, 17])
+def test_mstep_unequal_six_face_cpml_matches_cuda_and_jax(steps):
+    """Exercise dependency bounds with distinct nonzero low/high absorbers."""
+    sim = _simulation()
+    boundaries = [
+        bz.PML(edges=[face], thickness=thickness * 80e-9, formulation="cpml")
+        for face, thickness in zip(
+            ("left", "right", "top", "bottom", "front", "back"),
+            (2, 5, 3, 6, 4, 7),
+            strict=True,
+        )
+    ]
+    sim = bz.Simulation(
+        material_grid=sim._material_grid(progress=False),
+        sources=sim.sources,
+        monitors=sim.monitors,
+        boundaries=boundaries,
+        time=sim.time,
+    )
+    state = _seed(sim.compile(backend="jax", num_steps=steps))
+    actual = _run(sim, state, "cuda_mstep", steps)
+    _compare(_run(sim, state, "cuda", steps), actual)
+    _compare(_run(sim, state, "jax", steps), actual, 3e-5)

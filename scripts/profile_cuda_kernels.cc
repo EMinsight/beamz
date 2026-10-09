@@ -1,6 +1,6 @@
 // Optional CUPTI activity injection for scheduler comparisons; not a build
 // dependency. Built and exercised with the CUDA 13.3 SDK
-// (CUpti_ActivityKernel12). See docs/reviews/cuda-mstep-futhark-followup.md for
+// (CUpti_ActivityKernel12). See docs/reviews/cuda-mstep-rtx3090.md for
 // build/run instructions.
 #include <cupti.h>
 

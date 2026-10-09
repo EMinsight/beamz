@@ -1,4 +1,4 @@
-// Whole-column K=2 tiles, following PR #308's temporal.fut by Pepijn de Vos.
+// Whole-column K=2 tiles, following PR #308 by Pepijn de Vos.
 // Shared rings hold H1, E1 and H2; E0 is loaded once into a shared window.
 // Only eligible 8x16 quadrants publish H2/E2.
 // Boundary/source/monitor work uses the existing CUDA kernels through compact
@@ -162,7 +162,7 @@ __device__ __forceinline__ float &MstepPackedInput(float *shared, int c, int z,
                 y * kMstepWindowX + x];
 }
 
-// Lean version of the common Futhark core contract. Buffer metadata is lowered
+// Lean core for packed E and scalar H coefficients. Buffer metadata is lowered
 // once on the host; plane coordinates/clamping are invariant along the column.
 // The planner proves every dependency of an owned quadrant lies inside all six
 // fields. Clamping affects only discarded halo results of partially owned

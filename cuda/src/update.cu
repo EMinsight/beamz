@@ -1662,7 +1662,7 @@ cudaError_t LaunchMstepColumn(cudaStream_t stream, const BeamzLaunch &h,
                               const PairFieldOutputs &final,
                               const BeamzBuffer &masks,
                               const BeamzBuffer &bounds) {
-  // The input window and one thread per lane match the winning Futhark core.
+  // Map one thread to each lane in the shared input-plane window.
   if (auto error = cudaFuncSetAttribute(
           MstepColumnCore<Packed, ScalarH>,
           cudaFuncAttributeMaxDynamicSharedMemorySize, kMstepSharedBytes);

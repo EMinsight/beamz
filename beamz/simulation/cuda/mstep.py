@@ -1,4 +1,4 @@
-"""Whole-column two-step scheduling, derived from PR #308's temporal.fut.
+"""Whole-column two-step scheduling, derived from the tiling in PR #308.
 
 The numerical operations remain in the CUDA Yee primitives. This module only
 proves which cells can advance twice and which intermediate cells must exist.
