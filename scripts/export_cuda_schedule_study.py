@@ -28,6 +28,7 @@ FRESH = {
     "policy-anchors",
     "layout-anchors",
     "compact-layout-fresh",
+    "postlayout-fresh",
 }
 IDENTITY = (
     "device",
@@ -161,6 +162,7 @@ def write_tables(measured, output):
         "policy-anchors",
         "layout-anchors",
         "compact-layout-fresh",
+        "postlayout-fresh",
     }
     bycase = {}
     # The larger anchor sets replace one-round finalists for the same choice.
@@ -186,7 +188,13 @@ def write_tables(measured, output):
         cold = next((r for r in tied if r["configuration"] == "streamed"), fastest)
         best_stream = max((r["warm_gcups"] for r in streamed), default=0)
         best_mstep = (
-            f"{max(r['warm_gcups'] for r in mstep):.2f}" if mstep else "fallback"
+            f"{max(r['warm_gcups'] for r in mstep):.2f}"
+            if mstep
+            else (
+                "fallback"
+                if any(r["configuration"].startswith("mstep-") for r in values)
+                else "not tested"
+            )
         )
         lines.append(
             f"| {case} ({cold['shape']}) | {best_stream:.2f} | {best_mstep} | {cold['configuration']} | {cold['cold_after_shared_setup_s']:.3f} |"

@@ -207,8 +207,11 @@ def test_predictor_rejects_invalid_geometry(shape):
 
 
 @pytest.mark.parametrize("device_kind", ["NVIDIA GeForce RTX 3090", "RTX 3090 Ti"])
-def test_auto_uses_geometry_without_trials_telemetry_or_persistent_cache(
-    monkeypatch, tmp_path, device_kind
+@pytest.mark.parametrize(
+    "steps,runs,axes", [(1025, 1, (0, 1, 2)), (4096, 1, (1, 2, 0)), (64, 64, (1, 2, 0))]
+)
+def test_auto_uses_geometry_and_startup_without_trials_or_persistent_cache(
+    monkeypatch, tmp_path, device_kind, steps, runs, axes
 ):
     @dataclass
     class Program:
@@ -219,7 +222,8 @@ def test_auto_uses_geometry_without_trials_telemetry_or_persistent_cache(
         RunConfig(
             resolution=1,
             dt=1,
-            num_steps=1025,
+            num_steps=steps,
+            cuda_expected_runs=runs,
             plane_2d="xy",
             is_3d=True,
             cuda_flags=abi.CUDA_DEFAULT_FLAGS,
@@ -231,6 +235,7 @@ def test_auto_uses_geometry_without_trials_telemetry_or_persistent_cache(
         ),
     )
     monkeypatch.setattr(tuning, "_eligible", lambda _: True)
+    monkeypatch.setattr(tuning, "_measured_layout_workload", lambda *args: True)
     monkeypatch.setattr(
         tuning.jax, "devices", lambda: [SimpleNamespace(device_kind=device_kind)]
     )
@@ -242,15 +247,51 @@ def test_auto_uses_geometry_without_trials_telemetry_or_persistent_cache(
         monkeypatch.setattr(tuning, name, forbidden)
     selected = tuning.select_program(program, None, ("auto", str(tmp_path), ()))
     if device_kind.endswith("RTX 3090"):
-        assert selected.config.cuda_storage_axes == (1, 2, 0)
-        assert selected.config.num_steps == 1025
+        assert selected.config.cuda_storage_axes == axes
+        assert selected.config.num_steps == steps
         assert selected.boundary is program.boundary
         report = tuning.tuning_report(selected)
-        assert report["selection_method"] == "geometry"
+        assert report["selection_method"] == "geometry_and_startup"
         assert report["calibration_s"] == report["calibration_steps"] == 0
         assert not report["validated"]
         report["choice"]["axes"] = []
-        assert tuning.tuning_report(selected)["choice"]["axes"] == [1, 2, 0]
+        assert tuning.tuning_report(selected)["choice"]["axes"] == list(axes)
     else:
         assert selected is program
     assert list(tmp_path.iterdir()) == []
+
+
+def test_unmeasured_layout_cost_family_retains_canonical():
+    report = tuning.predict_layout_time_to_result((256, 1024, 64), 16384)
+    assert report["candidate_choice"]["axes"] == (2, 0, 1)
+    assert report["choice"]["axes"] == (0, 1, 2)
+    assert "no measured startup model" in report["reason"]
+
+
+@pytest.mark.parametrize(
+    "change", ["dense", "monitors", "sources", "capacity", "graph_cache"]
+)
+def test_layout_cost_scope_rejects_unmeasured_workloads(change):
+    from tests.unit.test_cuda_schedule import _program
+
+    program = _program()
+    program.sources = ()
+    shape = (512, 256, 64)
+    assert tuning._measured_layout_workload(program, shape)
+    if change == "dense":
+        program.coefficients.e_source_x = np.zeros((3, 3, 3), np.float32)
+    if change == "monitors":
+        program.monitors *= 2
+    if change == "sources":
+        program.sources = (SimpleNamespace(slab_sizes=(1, 128, 128)),)
+    if change == "capacity":
+        program.config.cuda_memory_policy = "capacity"
+    if change == "graph_cache":
+        program.config.cuda_graph_cache_capacity = 0
+    assert not tuning._measured_layout_workload(program, shape)
+
+
+@pytest.mark.parametrize("steps,runs", [(0, 1), (1, 0), (True, 1), (1, 1.5)])
+def test_layout_cost_requires_valid_work_horizon(steps, runs):
+    with pytest.raises(ValueError, match="positive integers"):
+        tuning.predict_layout_time_to_result((512, 256, 64), steps, runs)

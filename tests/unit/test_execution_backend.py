@@ -438,7 +438,7 @@ def test_cuda_storage_axes_refuse_unsupported_scan(monkeypatch):
     monkeypatch.setattr(backend_runtime, "resolve_backend", lambda backend: backend)
     monkeypatch.setenv("BEAMZ_CUDA_STORAGE_AXES", "120")
     program = _rectilinear_3d_simulation().compile(backend="cuda_streamed")
-    with pytest.raises(ValueError, match="uniform-grid CPML native graph"):
+    with pytest.raises(ValueError, match="uniform-grid native graph"):
         build_scan(program)
 
 

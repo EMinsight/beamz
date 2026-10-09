@@ -118,7 +118,11 @@ their known chunk reuse automatically. Selection considers additional preparatio
 cost, active column tiles, depth, core coverage, material and monitor
 workload, feature support and memory. The conservative model is limited to the
 recorded RTX3090 packed-E/scalar-H workloads, CPML12/all-PEC boundary families,
-16–67 million cells and invocations of at least 256 steps. Other GPU models and
+16–67 million cells, calls of at least 16 steps and known total work of at least
+256 steps. Predicted execution savings must repay preparation and first-execution
+overhead with a 25% margin. PEC and one-wall CPML use 8x16 / segment-32; ordinary
+CPML retains the original tile because its variants were close. Graph caching
+must be enabled. Other GPU models and
 workloads retain streamed execution; explicit mstep remains available. Decisions
 are frozen per executable and ownership policy, and reports return the choice,
 reason, geometry and workspace without executing calibration trials.
@@ -395,30 +399,39 @@ clang++ -std=c++17 \
 ### Automatic RTX3090 storage and shell selection
 
 With no manual `BEAMZ_CUDA_*` overrides, `Simulation.compile()` estimates storage
-for eligible RTX3090 programs from geometry. **The default performs no calibration
+for eligible RTX3090 programs from geometry and startup costs. **The default performs no calibration
 runs**, reads no tuning profiles and does not launch candidate executables.
 It counts thread slots in the existing 64x4 CPML queue for the three cyclic
 orders (`012`, `120`, `201`), including Yee staggering and partially filled
-tiles. It changes layout only for an estimated work reduction of at least 25%.
-This conservative margin describes geometric work, not predicted runtime gain.
+tiles. A work reduction of at least 25% generates a candidate. Selection also
+requires execution savings to repay additional preparation with a 25% margin.
+The startup model covers packed-E, lossless, CPML12 narrow-x shapes with
+z=512–1024, y=256 and x=63–65, small slab sources and at most two three-frequency
+DFT monitors. Short calls, unknown shapes and other workloads retain canonical
+storage. Known executable reuse contributes to the cost check.
 The shell tile remains 64x4, and padding stays off.
 
 The physical grid, CPML12, source/monitor sampling and FP32 precision remain
 unchanged. Existing automatic H/E fusion still applies within each layout;
 experimental CPML temporal blocking is not selected. The estimate repairs the
-recorded narrow-x cases while retaining canonical storage on the wide/irregular
-controls. It is not a guarantee of the global optimum or of beating another
-revision on every workload. See the [analysis and offline replay](../docs/reviews/cuda-layout-prediction-2026-09-18.md).
+recorded narrow-x cases once longer execution repays startup. It is not a
+guarantee of the global optimum on every workload. See the
+[schedule/startup study](../docs/reviews/cuda-schedule-space.md) for current results
+and the [earlier geometry study](../docs/reviews/cuda-layout-prediction-2026-09-18.md)
+for the work estimate.
 
 ```python
-program = sim.compile(num_steps=256, backend="cuda_streamed")
+program = sim.compile(num_steps=4096, backend="cuda_streamed")
 from beamz.simulation.cuda.tuning import tuning_report
 print(program.config.cuda_storage_axes)
-print(tuning_report(program))  # choice, geometric costs, reason, calibration_s=0
+print(tuning_report(program))  # choice, startup/savings, reason, calibration_s=0
 
 # Inspect a shape without compiling or accessing the GPU:
 from beamz.simulation.cuda.tuning import predict_layout
 print(predict_layout((1024, 256, 64))["choice"])  # 120 / 64x4
+from beamz.simulation.cuda.tuning import predict_layout_time_to_result
+print(predict_layout_time_to_result((1024, 256, 64), 256)["choice"])  # 012
+print(predict_layout_time_to_result((1024, 256, 64), 4096)["choice"])  # 120
 ```
 
 `BEAMZ_CUDA_AUTOTUNE=auto` is the predictive default; `off` disables selection.

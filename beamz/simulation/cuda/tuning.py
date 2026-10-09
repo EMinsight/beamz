@@ -1,6 +1,6 @@
 """Predictive layout selection for large, ordinary RTX3090 CPML programs.
 
-The default uses geometry alone, without executing a calibration workload.
+The default uses geometry and measured startup costs, without calibration.
 Explicit calibration considers existing storage orders and shell tiles on a
 private state; precision, physical shape and CPML stay unchanged in either mode.
 """
@@ -36,6 +36,13 @@ _REPORTS = OrderedDict()
 _TUNING_LOCK = threading.RLock()
 _GEOMETRY_MODEL = "cpml12-queue-v1"
 _MINIMUM_WORK_REDUCTION = 0.25
+# (physical cells, canonical GCUPS, rotated GCUPS, additional startup seconds).
+# Compact monitor-block ordering; two fresh rounds at 256 steps, checked at
+# 4096 steps. Source: docs/reviews/cuda-schedule-space.json, layout-anchors.
+_LAYOUT_COSTS = (
+    (8388608, 4.6148, 6.4642, 1.1508),
+    (16777216, 4.6714, 6.3869, 1.8844),
+)
 
 
 def tuning_policy_from_env():
@@ -165,6 +172,76 @@ def predict_layout(shape):
     )
 
 
+def predict_layout_time_to_result(shape, steps, expected_runs=1):
+    """Repay measured rotation startup; keep canonical outside this cost scope.
+
+    Geometry remains a candidate generator. The measured cost family is the
+    narrow-x, CPML12, packed-E case; runtime additionally checks the workload.
+    """
+    try:
+        work_steps, runs = operator.index(steps), operator.index(expected_runs)
+    except TypeError as exc:
+        raise ValueError("steps and expected_runs must be positive integers") from exc
+    if (
+        isinstance(steps, bool)
+        or isinstance(expected_runs, bool)
+        or min(work_steps, runs) < 1
+    ):
+        raise ValueError("steps and expected_runs must be positive integers")
+    report = predict_layout(shape)
+    candidate = report["choice"]
+    report = {
+        **report,
+        "candidate_choice": candidate,
+        "choice": dict(axes=(0, 1, 2), shell_tile="64x4"),
+    }
+    z, y, x = report["logical_shape"]
+    if candidate["axes"] == (0, 1, 2):
+        return report
+    if not (
+        candidate["axes"] == (1, 2, 0)
+        and 512 <= z <= 1024
+        and y == 256
+        and 63 <= x <= 65
+    ):
+        return {**report, "reason": "Rotated layout has no measured startup model"}
+    cells = z * y * x
+    small, large = _LAYOUT_COSTS
+    fraction = np.clip(np.log2(cells / small[0]), 0, 1)
+    canonical, rotated, extra = (
+        float(a + fraction * (b - a)) for a, b in zip(small[1:], large[1:], strict=True)
+    )
+    saved = cells * work_steps * runs * (1 / canonical - 1 / rotated) / 1e9
+    admitted = saved > 1.25 * extra
+    return {
+        **report,
+        "cost_model": "rtx3090-layout-startup-v1",
+        "choice": candidate if admitted else report["choice"],
+        "expected_runs": expected_runs,
+        "predicted_saved_execution_s": saved,
+        "extra_startup_s": extra,
+        "reason": "Predicted rotation savings repay startup"
+        if admitted
+        else "Predicted rotation savings do not repay startup",
+    }
+
+
+def _measured_layout_workload(program, shape):
+    from beamz.simulation.cuda.runtime import _packed_e_material
+
+    return (
+        program.config.cuda_memory_policy != "capacity"
+        and program.config.cuda_graph_cache_capacity > 0
+        and _packed_e_material(program.coefficients)
+        and len(program.monitors) <= 2
+        and all(m.freq_count <= 3 for m in program.monitors)
+        and sum(m.dft_point_count for m in program.monitors) <= 0.04 * np.prod(shape)
+        and len(program.sources) <= 8
+        and all(s.slab_sizes is not None for s in program.sources)
+        and sum(np.prod(s.slab_sizes) for s in program.sources) <= 4096
+    )
+
+
 def choose_winner(samples, *, minimum_gain=0.03):
     """Keep baseline unless a candidate wins both balanced timing halves."""
     baseline = samples["012/64x4"]
@@ -285,7 +362,7 @@ def _eligible(program):
         return False
     if cfg.cuda_flags != abi.CUDA_DEFAULT_FLAGS or cfg.cuda_storage_axes != (0, 1, 2):
         return False
-    if cfg.num_steps < 32:
+    if cfg.num_steps < 16 or cfg.num_steps * cfg.cuda_expected_runs < 32:
         return False
     shapes = program.boundary.logical_component_shapes
     shape = tuple(min(shapes[name][a] for name in ("Ex", "Ey", "Ez")) for a in range(3))
@@ -346,9 +423,18 @@ def select_program(program, signature, policy):
             shape = tuple(
                 min(shapes[name][a] for name in ("Ex", "Ey", "Ez")) for a in range(3)
             )
+            prediction = predict_layout_time_to_result(
+                shape, program.config.num_steps, program.config.cuda_expected_runs
+            )
+            if not _measured_layout_workload(program, shape):
+                prediction = {
+                    **prediction,
+                    "choice": dict(axes=(0, 1, 2), shell_tile="64x4"),
+                    "reason": "Workload has no measured layout startup model",
+                }
             report = dict(
-                predict_layout(shape),
-                selection_method="geometry",
+                prediction,
+                selection_method="geometry_and_startup",
                 calibration_s=0.0,
                 calibration_steps=0,
                 requested_steps=program.config.num_steps,

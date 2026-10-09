@@ -1106,7 +1106,8 @@ def compile_program(
         tuning_policy = tuning_policy_from_env()
         if (
             metric_kind == "isotropic_uniform"
-            and steps >= 32
+            and steps >= 16
+            and steps * expected_runs >= 32
             and np.prod(material_grid.shape) >= 8 * 1024 * 1024
         ):
             signature = replace(signature, cuda_tuning_policy=tuning_policy)
