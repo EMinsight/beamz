@@ -57,7 +57,7 @@ def test_auto_preserves_jax_for_unsupported_2d_simulations(monkeypatch):
     assert program.config.backend == "jax"
 
 
-@pytest.mark.parametrize("backend", ["cuda_streamed"])
+@pytest.mark.parametrize("backend", ["cuda_streamed", "cuda_mstep"])
 @pytest.mark.parametrize("polarization", ["tm", "te"])
 def test_explicit_cuda_rejects_2d_simulations(backend, polarization):
     simulation = bz.Simulation(
@@ -214,6 +214,37 @@ def test_cuda_defaults_to_validated_streamed_target_on_sm90(monkeypatch):
     assert backend_runtime.resolve_backend("auto") == "cuda_streamed"
 
 
+@pytest.mark.parametrize("present", [False, True])
+def test_mstep_is_explicit_and_requires_its_optional_target(monkeypatch, present):
+    from beamz.simulation._cuda_abi import CUDA_MSTEP_TARGET
+
+    extension = _extension(
+        "beamz_cuda_streamed", *((CUDA_MSTEP_TARGET,) if present else ())
+    )
+    monkeypatch.setattr(backend_runtime, "_gpu_devices", lambda: (_FakeDevice(),))
+    monkeypatch.setattr(backend_runtime, "_load_extension", lambda: extension)
+    monkeypatch.setattr(backend_runtime, "_REGISTERED_MODULE", None)
+    registered = []
+    monkeypatch.setattr(
+        backend_runtime.jax.ffi,
+        "register_ffi_target",
+        lambda name, capsule, **kwargs: registered.append(name),
+    )
+    assert backend_runtime.resolve_backend("auto") == "cuda_streamed"
+    assert (CUDA_MSTEP_TARGET in registered) == present
+    if present:
+        assert backend_runtime.resolve_backend("cuda_mstep") == "cuda_mstep"
+    else:
+        with pytest.raises(backend_runtime.CudaBackendUnavailable, match="cuda_mstep"):
+            backend_runtime.resolve_backend("cuda_mstep")
+
+
+def test_mstep_rejects_nonuniform_metrics(monkeypatch):
+    monkeypatch.setattr(backend_runtime, "resolve_backend", lambda backend: backend)
+    with pytest.raises(backend_runtime.CudaBackendUnavailable, match="uniform"):
+        _rectilinear_3d_simulation().compile(backend="cuda_mstep")
+
+
 @pytest.mark.parametrize(
     ("extension", "message"),
     [
@@ -272,6 +303,7 @@ def test_typed_ffi_registrations_use_cuda_api_v1(monkeypatch):
     [
         ("xla", "jax"),
         ("cuda-streamed", "cuda_streamed"),
+        ("cuda-mstep", "cuda_mstep"),
     ],
 )
 def test_backend_aliases(value, expected):
@@ -292,10 +324,15 @@ def test_backend_participates_in_compiled_program_identity():
     cuda_key = CompiledProgramKey.from_request(
         simulation.to_request(num_steps=2, backend="cuda_streamed")
     )
+    mstep_key = CompiledProgramKey.from_request(
+        simulation.to_request(num_steps=2, backend="cuda_mstep")
+    )
 
     assert jax_key != cuda_key
     assert jax_key.backend == "jax"
     assert cuda_key.backend == "cuda_streamed"
+    assert mstep_key.backend == "cuda_mstep"
+    assert mstep_key != cuda_key
 
 
 def test_cuda_policy_participates_in_compiled_program_identity():

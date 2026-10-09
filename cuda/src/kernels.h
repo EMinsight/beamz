@@ -5,6 +5,14 @@
 
 #include "launch.h"
 
+cudaError_t BeamzEnqueueMstepCore(cudaStream_t stream, const BeamzLaunch &h,
+                                  const BeamzLaunch &e,
+                                  const BeamzBuffer *final_fields,
+                                  const BeamzBuffer &masks,
+                                  const BeamzBuffer &bounds);
+cudaError_t BeamzEnqueueMstepEdge(cudaStream_t stream, const BeamzLaunch &phase,
+                                  const BeamzBuffer &cells, int ny, int nx);
+
 cudaError_t BeamzEnqueueTemporalCpml(cudaStream_t stream, const BeamzLaunch &h,
     const BeamzLaunch &e, const BeamzBuffer *final_fields,
     const BeamzSourceGroupLaunch *groups, int step, BeamzBuffer publication, int tile = 0);

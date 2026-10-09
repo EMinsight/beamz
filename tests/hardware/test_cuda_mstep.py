@@ -1,0 +1,198 @@
+"""Full-state gates for whole-column two-step CUDA execution."""
+
+from dataclasses import replace
+from types import SimpleNamespace
+
+import jax
+import numpy as np
+import pytest
+
+import beamz as bz
+from beamz.simulation import _cuda_abi as abi
+from beamz.simulation.backend import cuda_backend_status
+from beamz.simulation.cuda.mstep import build_mstep_plan
+from beamz.simulation.execute import build_scan, initial_program_state
+
+STATUS = cuda_backend_status()
+pytestmark = pytest.mark.skipif(
+    not STATUS.available or abi.CUDA_MSTEP_TARGET not in STATUS.targets,
+    reason=STATUS.reason or "cuda_mstep extension unavailable",
+)
+
+
+def _simulation(material="binary", boundary="all", shape=(37, 65, 97), steps=33):
+    from scripts.benchmark_cuda_realistic import build_simulation
+
+    sim = build_simulation(
+        SimpleNamespace(
+            shape=shape,
+            steps=max(2, steps),
+            pml=4,
+            monitors=2,
+            frequencies=3,
+            material=material,
+            source="gaussian",
+            monitor_type="field",
+        )
+    )
+    if boundary == "all":
+        return sim
+    boundaries = (
+        [bz.PEC(edges="all")]
+        if boundary == "pec"
+        else [
+            bz.PML(edges=["right"], thickness=4 * 80e-9, formulation="cpml"),
+            bz.PEC(edges=["left", "top", "bottom", "front", "back"]),
+        ]
+    )
+    return bz.Simulation(
+        material_grid=sim._material_grid(progress=False),
+        sources=sim.sources,
+        monitors=sim.monitors,
+        boundaries=boundaries,
+        time=sim.time,
+    )
+
+
+def _seed(program):
+    state = initial_program_state(program, t=0, current_step=0, monitor_steps=33)
+    rng = np.random.default_rng(308)
+
+    def noise(a):
+        return rng.normal(size=a.shape).astype(np.float32) * 1e-4
+
+    return state._replace(
+        **{
+            name: noise(getattr(state, name))
+            for name in ("ex", "ey", "ez", "hx", "hy", "hz")
+        },
+        cpml_psi_h_terms=tuple(noise(a) for a in state.cpml_psi_h_terms),
+        cpml_psi_e_terms=tuple(noise(a) for a in state.cpml_psi_e_terms),
+    )
+
+
+def _run(sim, state, backend, steps, *, source_timing=None):
+    program = sim.compile(backend=backend, num_steps=steps)
+    if source_timing is not None:
+        program = replace(
+            program,
+            sources=tuple(
+                replace(
+                    s,
+                    timing=source_timing,
+                    component="Hx" if source_timing == "h" else "Ex",
+                )
+                for s in program.sources
+            ),
+        )
+    copy = jax.tree_util.tree_map(lambda a: np.array(a, copy=True), state)
+    return jax.block_until_ready(build_scan(program)(copy, program.coefficients))
+
+
+def _compare(a, b, tolerance=1e-5):
+    assert jax.tree_util.tree_structure(a) == jax.tree_util.tree_structure(b)
+    for expected, actual in zip(
+        jax.tree_util.tree_leaves(a), jax.tree_util.tree_leaves(b), strict=True
+    ):
+        expected, actual = np.asarray(expected), np.asarray(actual)
+        if np.issubdtype(expected.dtype, np.inexact):
+            peak = np.max(np.abs(expected), initial=0)
+            assert (
+                np.max(np.abs(expected - actual), initial=0) <= tolerance * peak + 1e-30
+            )
+        else:
+            np.testing.assert_array_equal(actual, expected)
+
+
+@pytest.mark.parametrize("steps", [1, 2, 3, 4, 5, 17])
+@pytest.mark.parametrize(
+    "material,boundary", [("binary", "all"), ("smooth", "pec"), ("lossy", "right")]
+)
+def test_mstep_complete_state_matches_cuda_and_jax(steps, material, boundary):
+    sim = _simulation(material, boundary)
+    state = _seed(sim.compile(backend="jax", num_steps=steps))
+    actual = _run(sim, state, "cuda_mstep", steps)
+    _compare(_run(sim, state, "cuda", steps), actual)
+    _compare(_run(sim, state, "jax", steps), actual, 3e-5)
+
+
+@pytest.mark.parametrize("timing", ["pre_e", "h", "e"])
+def test_mstep_source_phases_and_continuation(timing):
+    sim = _simulation()
+    state = _seed(sim.compile(backend="jax", num_steps=7))
+    actual = _run(sim, state, "cuda_mstep", 7, source_timing=timing)
+    reference = _run(sim, state, "cuda", 7, source_timing=timing)
+    _compare(reference, actual)
+    # Public continuation also checks absolute source and DFT clocks.
+    whole = sim.advance(state=state, num_steps=7, backend="cuda_mstep").state
+    first = sim.advance(state=state, num_steps=3, backend="cuda_mstep").state
+    split = sim.advance(state=first, num_steps=4, backend="cuda_mstep").state
+    _compare(whole, split)
+
+
+def test_mstep_small_domain_and_bounded_long_run():
+    sim = _simulation(shape=(15, 17, 19), steps=259)
+    state = _seed(sim.compile(backend="jax", num_steps=259))
+    _compare(
+        sim.advance(state=state, num_steps=259, backend="cuda").state,
+        sim.advance(state=state, num_steps=259, backend="cuda_mstep").state,
+        3e-5,
+    )
+
+
+def test_mstep_reports_a_real_core_and_rejects_recorders():
+    sim = _simulation()
+    program = sim.compile(backend="cuda_mstep", num_steps=2)
+    from beamz.simulation.execute import compiled_source_batches
+
+    batches = compiled_source_batches(program.sources)
+    groups = tuple(
+        batches[(timing, c)][0]
+        for timing, components in (
+            ("pre_e", ("Ex", "Ey", "Ez")),
+            ("h", ("Hx", "Hy", "Hz")),
+            ("e", ("Ex", "Ey", "Ez")),
+        )
+        for c in components
+    )
+    shapes = tuple(
+        program.boundary.logical_component_shapes[c]
+        for c in ("Hx", "Hy", "Hz", "Ex", "Ey", "Ez")
+    )
+    assert build_mstep_plan(shapes, program.boundary.cpml, groups).core_cells > 0
+    recorder = bz.FieldRecorder(center=(1e-6, 1e-6, 1e-6), size=(0, 0, 0))
+    unsupported = bz.Simulation(
+        material_grid=sim._material_grid(progress=False),
+        monitors=[recorder],
+        boundaries=sim.boundaries,
+        time=sim.time,
+    )
+    from beamz.simulation.backend import CudaBackendUnavailable
+
+    with pytest.raises(CudaBackendUnavailable, match="recorders"):
+        unsupported.advance(num_steps=2, backend="cuda_mstep")
+
+
+def test_mstep_without_cpml_sources_or_monitors():
+    sim = _simulation()
+    bare = bz.Simulation(
+        material_grid=sim._material_grid(progress=False), time=sim.time
+    )
+    state = _seed(bare.compile(backend="jax", num_steps=5))
+    _compare(_run(bare, state, "cuda", 5), _run(bare, state, "cuda_mstep", 5))
+
+
+def test_mstep_bf16_recurrence_matches_cuda(monkeypatch):
+    monkeypatch.setenv("BEAMZ_CUDA_CPML_PSI_PRECISION", "bf16")
+    sim = _simulation()
+    program = sim.compile(backend="cuda_mstep", num_steps=5)
+    state = _seed(program)
+    state = state._replace(
+        cpml_psi_h_terms=tuple(
+            a.astype(jax.numpy.bfloat16) for a in state.cpml_psi_h_terms
+        ),
+        cpml_psi_e_terms=tuple(
+            a.astype(jax.numpy.bfloat16) for a in state.cpml_psi_e_terms
+        ),
+    )
+    _compare(_run(sim, state, "cuda", 5), _run(sim, state, "cuda_mstep", 5))

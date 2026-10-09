@@ -1,10 +1,11 @@
 {
-  "abi_version": 21,
-  "component_version": "0.21.0",
+  "abi_version": 22,
+  "component_version": "0.22.0",
   "targets": {
     "streamed": "beamz_cuda_streamed",
     "sharded": "beamz_cuda_sharded",
-    "program": "beamz_cuda_program"
+    "program": "beamz_cuda_program",
+    "mstep": "beamz_cuda_mstep"
   },
   "streamed_targets": [
     "streamed",
@@ -84,6 +85,7 @@
     "temporal_e_psi_workspace_offset": 30,
     "temporal_field_workspace_input": 74,
     "temporal_psi_workspace_input": 80,
-    "monitor_elapsed_steps_input": 15
+    "monitor_elapsed_steps_input": 15,
+    "mstep_plan_buffer_count": 5
   }
 }

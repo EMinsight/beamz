@@ -16,6 +16,7 @@ on:
       - "scripts/generate_cuda_abi.py"
       - "scripts/benchmark_h100.py"
       - "tests/hardware/test_cuda_backends.py"
+      - "tests/hardware/test_cuda_mstep.py"
       - "tests/performance/**"
   pull_request:
     paths:
@@ -31,6 +32,7 @@ on:
       - "scripts/generate_cuda_abi.py"
       - "scripts/benchmark_h100.py"
       - "tests/hardware/test_cuda_backends.py"
+      - "tests/hardware/test_cuda_mstep.py"
       - "tests/performance/**"
   workflow_dispatch:
 
@@ -118,7 +120,7 @@ jobs:
       - name: Run complete-state numerical parity
         run: >-
           uv run --no-sync --no-active --python 3.11 python -m pytest
-          tests/hardware/test_cuda_backends.py
+          tests/hardware/test_cuda_backends.py tests/hardware/test_cuda_mstep.py
           -v --tb=short --durations=20
       - name: Capture canonical H100 records
         run: |

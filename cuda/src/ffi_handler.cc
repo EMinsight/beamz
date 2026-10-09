@@ -854,6 +854,82 @@ ffi::Error StreamedProgramCpmlStepsHandler(
                    std::to_string(error));
 }
 
+// Same prepared materials, source groups and DFT ABI; only workspace differs.
+ffi::Error
+MstepHandler(void *stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
+             int32_t abi_version, int32_t cuda_flags, int32_t nsteps, float dt,
+             float resolution, int32_t boundary_code, int32_t metric_kind,
+             int32_t program_layout, int32_t cpml_enabled,
+             int32_t monitor_count, int32_t coincident_source_group_mask,
+             int32_t disjoint_source_group_mask, int32_t graph_cache_capacity,
+             int32_t schedule_flags, int32_t logical_z, int32_t logical_y,
+             int32_t logical_x, int32_t temporal_steps) {
+  if (abi_version != kAbiVersion || nsteps < 1 || metric_kind != 0 ||
+      (cpml_enabled != 0 && cpml_enabled != 1) || monitor_count < 0 ||
+      temporal_steps != 2 || program_layout != kProgramLayoutYeeInPlace ||
+      logical_z || logical_y || logical_x || graph_cache_capacity < 0 ||
+      graph_cache_capacity > 4096 || coincident_source_group_mask < 0 ||
+      coincident_source_group_mask >= (1 << kSourceGroupCount) ||
+      disjoint_source_group_mask < 0 ||
+      disjoint_source_group_mask >= (1 << kSourceGroupCount) ||
+      (coincident_source_group_mask & disjoint_source_group_mask) != 0)
+    return ffi::Error::InvalidArgument("invalid cuda_mstep attributes");
+  const size_t graph_count =
+      cpml_enabled ? kCpmlGraphInputCount : kYeeGraphInputCount;
+  const size_t state_count =
+      cpml_enabled ? kCpmlGraphOutputCount : kYeeGraphOutputCount;
+  const size_t source_offset = graph_count + 2 * kFieldCount;
+  const size_t monitor_offset =
+      source_offset + kSourceGroupCount * kSourceGroupBufferCount;
+  const size_t plan_offset = monitor_offset + kMonitorInputCount;
+  // Bounded stack storage; maximum is the CPML variant.
+  BeamzBuffer inputs[kCpmlGraphInputCount + 2 * kFieldCount +
+                     kSourceGroupCount * kSourceGroupBufferCount +
+                     kMonitorInputCount + kMstepPlanBufferCount]{};
+  BeamzBuffer outputs[kCpmlGraphOutputCount + 2 * kFieldCount + 6]{};
+  if (auto error =
+          DecodeArgs(args, inputs, plan_offset + kMstepPlanBufferCount);
+      error.failure())
+    return error;
+  if (auto error = DecodeRets(rets, outputs, state_count + 2 * kFieldCount + 6);
+      error.failure())
+    return error;
+  auto phases = InitializeGraphLaunches(abi_version, cuda_flags, dt, resolution,
+                                        boundary_code, metric_kind,
+                                        cpml_enabled, inputs, outputs);
+  BeamzSourceGroupLaunch groups[kSourceGroupCount]{};
+  InitializeSourceGroups(groups, inputs, source_offset,
+                         inputs[monitor_offset + kMonitorCurrentStepInput],
+                         coincident_source_group_mask,
+                         disjoint_source_group_mask);
+  const size_t dft_offset = state_count + 2 * kFieldCount;
+  auto monitors = InitializeDftGroups(
+      inputs, monitor_offset, outputs[dft_offset], outputs[dft_offset + 1],
+      outputs[dft_offset + 2], outputs[dft_offset + 3], outputs[dft_offset + 4],
+      outputs[dft_offset + 5], monitor_count);
+  BeamzMstepLaunch launch{};
+  launch.program = InPlaceProgram(phases, nsteps, groups, kSourceGroupCount,
+                                  monitor_count ? &monitors : nullptr,
+                                  graph_cache_capacity, schedule_flags);
+  for (int c = 0; c < kFieldCount; ++c) {
+    launch.final_fields[c] = outputs[state_count + c];
+    launch.scratch_fields[c] = outputs[state_count + kFieldCount + c];
+  }
+  launch.bounds = inputs[plan_offset];
+  launch.core_masks = inputs[plan_offset + 1];
+  launch.slots = inputs[plan_offset + 2];
+  launch.first_cells = inputs[plan_offset + 3];
+  launch.edge_cells = inputs[plan_offset + 4];
+#ifdef BEAMZ_CUDA_CPU_CONTRACT
+  return ffi::Error::Internal("cuda_mstep requires a GPU");
+#else
+  const int error = BeamzLaunchMstep(stream, launch);
+  return error == 0 ? ffi::Error::Success()
+                    : ffi::Error::Internal("BeamZ cuda_mstep launch failed: " +
+                                           std::to_string(error));
+#endif
+}
+
 ffi::Error ProgramHandler(
     void* stream, ffi::RemainingArgs args, ffi::RemainingRets rets,
     int32_t abi_version, int32_t cuda_flags, int32_t nsteps, float dt,
@@ -961,7 +1037,31 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_sharded, ShardedHandler,
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_program, ProgramHandler,
                               ffi::Ffi::Bind()
-                                  .Ctx<ffi::PlatformStream<void*>>()
+                                  .Ctx<ffi::PlatformStream<void *>>()
+                                  .RemainingArgs()
+                                  .RemainingRets()
+                                  .Attr<int32_t>("abi_version")
+                                  .Attr<int32_t>("cuda_flags")
+                                  .Attr<int32_t>("nsteps")
+                                  .Attr<float>("dt")
+                                  .Attr<float>("resolution")
+                                  .Attr<int32_t>("boundary_code")
+                                  .Attr<int32_t>("metric_kind")
+                                  .Attr<int32_t>("program_layout")
+                                  .Attr<int32_t>("cpml_enabled")
+                                  .Attr<int32_t>("monitor_count")
+                                  .Attr<int32_t>("coincident_source_group_mask")
+                                  .Attr<int32_t>("disjoint_source_group_mask")
+                                  .Attr<int32_t>("graph_cache_capacity")
+                                  .Attr<int32_t>("schedule_flags")
+                                  .Attr<int32_t>("logical_z")
+                                  .Attr<int32_t>("logical_y")
+                                  .Attr<int32_t>("logical_x")
+                                  .Attr<int32_t>("temporal_steps"));
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_mstep, MstepHandler,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<void *>>()
                                   .RemainingArgs()
                                   .RemainingRets()
                                   .Attr<int32_t>("abi_version")

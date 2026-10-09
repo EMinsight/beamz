@@ -542,7 +542,7 @@ def forward_step(
         local_single_owner=cfg.backend == "cuda_streamed",
     )
     kernel_owns_pec = (
-        cfg.backend == "cuda_streamed"
+        cfg.backend in {"cuda_streamed", "cuda_mstep"}
         and not cfg.sharding.enabled
         and not program.sources
     )
@@ -716,7 +716,7 @@ def build_scan(program, *, donate_state: bool = False):
     )
     packed_graph_monitors = None
     if (
-        cfg.backend == "cuda_streamed"
+        cfg.backend in {"cuda_streamed", "cuda_mstep"}
         and not cfg.sharding.enabled
         and graph_monitors_supported
         and not bool(jax.config.read("jax_enable_x64"))
@@ -725,11 +725,31 @@ def build_scan(program, *, donate_state: bool = False):
 
         packed_graph_monitors = pack_dft_monitors(program.monitors)
     cuda_multi_step = (
-        cfg.backend == "cuda_streamed"
+        cfg.backend in {"cuda_streamed", "cuda_mstep"}
         and not cfg.sharding.enabled
         and (not program.monitors or packed_graph_monitors is not None)
         and (not program.sources or source_groups_supported)
     )
+    mstep_plan = None
+    if cfg.backend == "cuda_mstep":
+        from beamz.simulation.backend import CudaBackendUnavailable
+        from beamz.simulation.cuda.mstep import build_mstep_plan
+
+        if not cuda_multi_step:
+            raise CudaBackendUnavailable(
+                "cuda_mstep supports batched slab sources and float32 vector DFT monitors; "
+                "recorders, flux/power monitors and other sources require cuda or jax"
+            )
+        shapes = tuple(
+            program.boundary.logical_component_shapes[c]
+            for c in ("Hx", "Hy", "Hz", "Ex", "Ey", "Ez")
+        )
+        mstep_plan = build_mstep_plan(
+            shapes,
+            boundary.cpml,
+            graph_source_groups,
+            packed_graph_monitors[0] if packed_graph_monitors is not None else None,
+        )
     native_graph_calls = None
     if cfg.cuda_storage_axes != (0, 1, 2) and not step_context.low_memory:
         if not (
@@ -811,6 +831,8 @@ def build_scan(program, *, donate_state: bool = False):
                     native_graph_calls
                 )
 
+            from beamz.simulation.cuda.mstep import run_mstep
+
             def advance_native_chunk(chunk_state, chunk_steps: int, elapsed_steps):
                 elapsed_steps = jnp.asarray(elapsed_steps, dtype=jnp.int32)
                 chunk_state = chunk_state._replace(
@@ -822,7 +844,19 @@ def build_scan(program, *, donate_state: bool = False):
                     current_step=state.current_step + elapsed_steps,
                 )
                 chunk_out = (
-                    run_steps(chunk_state, step_context, coeffs, chunk_steps)
+                    run_mstep(
+                        chunk_state,
+                        step_context,
+                        coeffs,
+                        graph_source_groups,
+                        packed_graph_monitors,
+                        mstep_plan,
+                        chunk_steps,
+                        observation_origin=observation_origin,
+                        observation_step_offset=observation_offset + elapsed_steps,
+                    )
+                    if mstep_plan is not None
+                    else run_steps(chunk_state, step_context, coeffs, chunk_steps)
                     if not program.sources and not program.monitors
                     else run_program_steps(
                         chunk_state,
@@ -1047,7 +1081,7 @@ def initial_program_state(
     cpml, layout = program.boundary.cpml, program.sharding.layout
     psi_dtype = None
     if (
-        program.config.backend == "cuda_streamed"
+        program.config.backend in {"cuda_streamed", "cuda_mstep"}
         and cpml.enabled
         and program.config.cuda_flags & CUDA_BF16_PSI
     ):

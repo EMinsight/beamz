@@ -680,7 +680,7 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
 
     empty3 = jnp.zeros((0, 0, 0), dtype=jnp.float32)
     if use_3d_material_coefficients:
-        if request.run.backend == "cuda_streamed":
+        if request.run.backend in {"cuda_streamed", "cuda_mstep"}:
             (
                 (h_decay_x, h_source_x),
                 (h_decay_y, h_source_y),
@@ -720,7 +720,7 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
         h_sigma_m_x = h_sigma_m_y = h_sigma_m_z = empty3
 
     if use_3d_material_coefficients:
-        if request.run.backend == "cuda_streamed":
+        if request.run.backend in {"cuda_streamed", "cuda_mstep"}:
             (
                 (e_decay_x, e_source_x),
                 (e_decay_y, e_source_y),
@@ -862,7 +862,7 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
     # original constitutive grids used by JAX. Do not transfer a second material
     # representation with every runtime invocation. The grid still owns setup
     # materials, and coupled CUDA updates retain their explicit inverse tensors.
-    if request.run.backend == "cuda_streamed":
+    if request.run.backend in {"cuda_streamed", "cuda_mstep"}:
         h_sigma_m_x = h_sigma_m_y = h_sigma_m_z = empty3
         e_conductivity_x = e_conductivity_y = e_conductivity_z = empty3
         e_permittivity_x = e_permittivity_y = e_permittivity_z = empty3
@@ -1015,7 +1015,17 @@ def compile_program(
         if requested_backend == "auto" and not cuda_problem_supported
         else resolve_backend(requested_backend)
     )
+    if resolved_backend == "cuda_mstep" and (
+        multi_device or metric_kind != "isotropic_uniform"
+    ):
+        raise CudaBackendUnavailable(
+            "cuda_mstep requires an unsharded isotropic uniform 3D grid"
+        )
     cuda_flags = cuda_flags_from_env() if resolved_backend != "jax" else 0
+    if resolved_backend == "cuda_mstep":
+        from ._cuda_abi import CUDA_BF16_PSI, CUDA_GRAPH_CACHE
+
+        cuda_flags &= CUDA_BF16_PSI | CUDA_GRAPH_CACHE
     cuda_storage_axes = (
         cuda_storage_axes_from_env() if resolved_backend != "jax" else (0, 1, 2)
     )

@@ -140,16 +140,27 @@ int RequiredMetricExtent(const BeamzLaunch &launch, int axis) {
   return extent;
 }
 
-bool IsCpmlProfile(const BeamzBuffer& value, int axis) {
-  if (!HasType(value, kBeamzF32) || !IsPositive3D(value)) return false;
+bool IsCpmlProfile(const BeamzBuffer &value, const BeamzBuffer &target,
+                   int axis) {
+  if (!HasType(value, kBeamzF32) || value.rank != 3 || value.dims[axis] < 0 ||
+      (value.dims[axis] > 0 && value.data == nullptr))
+    return false;
   for (int dimension = 0; dimension < 3; ++dimension) {
-    if (dimension != axis && value.dims[dimension] != 1) return false;
+    if (dimension != axis && value.dims[dimension] != 1 &&
+        !(value.dims[axis] == 0 &&
+          value.dims[dimension] == target.dims[dimension]))
+      return false;
   }
   return true;
 }
 
 bool IsCpmlPsi(const BeamzBuffer& value, const BeamzBuffer& target, int axis) {
-  if (!IsPositive3D(value) || value.dims[axis] > target.dims[axis]) return false;
+  // An inactive CPML axis has an empty packed slab.  It needs no allocation;
+  // CorrectCpml bypasses it before reading either the profile or psi buffer.
+  if (value.rank != 3 || value.dims[axis] < 0 ||
+      value.dims[axis] > target.dims[axis] ||
+      (value.dims[axis] > 0 && value.data == nullptr))
+    return false;
   for (int dimension = 0; dimension < 3; ++dimension) {
     if (dimension != axis && value.dims[dimension] != target.dims[dimension]) {
       return false;
@@ -229,9 +240,6 @@ cudaError_t ValidatePhase(const BeamzLaunch& launch) {
         metadata.data == nullptr) {
       return cudaErrorInvalidValue;
     }
-    for (int index = 13; index < 13 + 3 * launch.nterms; ++index) {
-      if (launch.inputs[index].data == nullptr) return cudaErrorInvalidValue;
-    }
     const int psi_input_base = 13 + 3 * launch.nterms;
     for (int term = 0; term < launch.nterms; ++term) {
       const BeamzBuffer& input = launch.inputs[psi_input_base + term];
@@ -247,7 +255,9 @@ cudaError_t ValidatePhase(const BeamzLaunch& launch) {
       }
       for (int coefficient = 0; coefficient < 3; ++coefficient) {
         const BeamzBuffer& profile = launch.inputs[13 + 3 * term + coefficient];
-        if (!IsCpmlProfile(profile, beamz::cuda::yee::CpmlAxis(term))) {
+        const int axis = beamz::cuda::yee::CpmlAxis(term);
+        if (!IsCpmlProfile(profile, target, axis) ||
+            profile.dims[axis] != input.dims[axis]) {
           return cudaErrorInvalidValue;
         }
       }
@@ -1063,8 +1073,12 @@ __global__ __launch_bounds__(Tile::X* Tile::Y, 6) void FusedCpmlCore(
   }
 }
 
+// These implementation fragments depend on the preceding stage definitions.
+// clang-format off
 #include "temporal_pair.cuh"
 #include "temporal_cpml.cuh"
+#include "mstep.cuh"
+// clang-format on
 
 template <int MetricKind, bool HasMetallicEdges, bool UniformCpml>
 void LaunchFusedUpdate(cudaStream_t stream, const BeamzLaunch& launch,
@@ -1639,4 +1653,55 @@ cudaError_t BeamzEnqueueSpatialCpml(cudaStream_t stream, const BeamzLaunch &h,
   if(h.inputs[31].element_type==kBeamzBF16)
     return LaunchTemporalCpmlMasks<false,true,2,1>(stream,h,e,final,groups,step,{});
   return LaunchTemporalCpmlMasks<false,false,2,1>(stream,h,e,final,groups,step,{});
+}
+
+cudaError_t BeamzEnqueueMstepCore(cudaStream_t stream, const BeamzLaunch &h,
+                                  const BeamzLaunch &e,
+                                  const BeamzBuffer *final_fields,
+                                  const BeamzBuffer &masks,
+                                  const BeamzBuffer &bounds) {
+  PairFieldOutputs final{};
+  for (int c = 0; c < 6; ++c)
+    final.fields[c] = final_fields[c];
+  const dim3 blocks(masks.dims[1], masks.dims[0]);
+  constexpr size_t bytes = 6 * (35 * 19 + 34 * 18 + 33 * 17) * sizeof(float);
+  const bool packed = e.inputs[9].element_type == kBeamzS32;
+  if (packed)
+    MstepColumnCore<true><<<blocks, 256, bytes, stream>>>(
+        MakeFusedYeePhase(h), MakeFusedYeePhase(e), final, masks, bounds);
+  else
+    MstepColumnCore<false><<<blocks, 256, bytes, stream>>>(
+        MakeFusedYeePhase(h), MakeFusedYeePhase(e), final, masks, bounds);
+  return cudaGetLastError();
+}
+
+cudaError_t BeamzEnqueueMstepEdge(cudaStream_t stream,
+                                  const BeamzLaunch &launch,
+                                  const BeamzBuffer &cells, int ny, int nx) {
+  if (!cells.dims[0])
+    return cudaSuccess;
+  const int blocks = (cells.dims[0] + 255) / 256;
+  if (launch.phase == 0) {
+    if (launch.nterms)
+      MstepEdgePhase<0, true, false>
+          <<<blocks, 256, 0, stream>>>(launch, cells, ny, nx);
+    else
+      MstepEdgePhase<0, false, false>
+          <<<blocks, 256, 0, stream>>>(launch, cells, ny, nx);
+  } else if (launch.inputs[9].element_type == kBeamzS32) {
+    if (launch.nterms)
+      MstepEdgePhase<1, true, true>
+          <<<blocks, 256, 0, stream>>>(launch, cells, ny, nx);
+    else
+      MstepEdgePhase<1, false, true>
+          <<<blocks, 256, 0, stream>>>(launch, cells, ny, nx);
+  } else {
+    if (launch.nterms)
+      MstepEdgePhase<1, true, false>
+          <<<blocks, 256, 0, stream>>>(launch, cells, ny, nx);
+    else
+      MstepEdgePhase<1, false, false>
+          <<<blocks, 256, 0, stream>>>(launch, cells, ny, nx);
+  }
+  return cudaGetLastError();
 }

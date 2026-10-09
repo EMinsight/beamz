@@ -1,9 +1,11 @@
 #include <cuda_runtime_api.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <utility>
 
 #include "abi_layout.h"
 #include "graph.h"
@@ -787,4 +789,170 @@ int BeamzLaunchProgram(void* raw_stream, const BeamzProgramLaunch& program) {
     return LaunchTemporalCpmlProgram(raw_stream, program);
   }
   return cudaErrorInvalidValue;
+}
+
+int BeamzLaunchMstep(void *raw_stream, const BeamzMstepLaunch &launch) {
+  const auto &program = launch.program;
+  if (auto error = ValidateProgram(program); error != cudaSuccess)
+    return error;
+  if (program.h_ab.metric_kind != 0 || program.field_bank_count != 1 ||
+      program.source_group_count != 9)
+    return cudaErrorInvalidValue;
+  int extent[3] = {};
+  for (int c = 0; c < 6; ++c) {
+    const auto &reference =
+        c < 3 ? program.h_ab.outputs[c] : program.e_ab.outputs[c - 3];
+    const auto &final = launch.final_fields[c];
+    const auto &scratch = launch.scratch_fields[c];
+    if (final.rank != 3 || final.element_type != kBeamzF32 || !final.data ||
+        scratch.rank != 1 || scratch.element_type != kBeamzF32 ||
+        !scratch.data || scratch.dims[0] < 128 || scratch.dims[0] % 128 ||
+        !FitsIntOffsets(final) || !FitsIntOffsets(scratch) ||
+        final.data == reference.data || scratch.data == reference.data ||
+        scratch.data == final.data)
+      return cudaErrorInvalidValue;
+    for (int a = 0; a < 3; ++a) {
+      if (final.dims[a] != reference.dims[a])
+        return cudaErrorInvalidValue;
+      extent[a] = std::max(extent[a], static_cast<int>(reference.dims[a]));
+    }
+    if (scratch.dims[0] != launch.scratch_fields[0].dims[0])
+      return cudaErrorInvalidValue;
+  }
+  const BeamzBuffer buffers[] = {launch.bounds, launch.core_masks, launch.slots,
+                                 launch.first_cells, launch.edge_cells};
+  for (const auto &b : buffers)
+    if (b.element_type != kBeamzS32 || !b.data || !FitsIntOffsets(b))
+      return cudaErrorInvalidValue;
+  const int qy = ((extent[1] + 15) / 16) * 2, qx = ((extent[2] + 31) / 32) * 2;
+  if (launch.bounds.rank != 1 || launch.bounds.dims[0] != 2 ||
+      launch.core_masks.rank != 2 || launch.core_masks.dims[0] != qy / 2 ||
+      launch.core_masks.dims[1] != qx / 2 || launch.slots.rank != 3 ||
+      launch.slots.dims[0] != extent[0] || launch.slots.dims[1] != qy ||
+      launch.slots.dims[2] != qx || launch.first_cells.rank != 1 ||
+      launch.edge_cells.rank != 1 ||
+      launch.first_cells.dims[0] >
+          static_cast<int64_t>(extent[0]) * extent[1] * extent[2] ||
+      launch.edge_cells.dims[0] > launch.first_cells.dims[0])
+    return cudaErrorInvalidValue;
+  BeamzBuffer original[6], scratch[6];
+  for (int c = 0; c < 6; ++c) {
+    original[c] = c < 3 ? program.h_ab.outputs[c] : program.e_ab.outputs[c - 3];
+    scratch[c] = original[c];
+    scratch[c].data = launch.scratch_fields[c].data;
+    scratch[c].compact_slots = static_cast<const int *>(launch.slots.data);
+    scratch[c].compact_ny = qy;
+    scratch[c].compact_nx = qx;
+  }
+  auto phases = [&](const BeamzBuffer *old, const BeamzBuffer *next) {
+    auto h = program.h_ab, e = program.e_ab;
+    for (int c = 0; c < 3; ++c) {
+      h.inputs[c] = old[c];
+      h.inputs[3 + c] = old[3 + c];
+      h.outputs[c] = next[c];
+      e.inputs[c] = old[3 + c];
+      e.inputs[3 + c] = next[c];
+      e.outputs[c] = next[3 + c];
+    }
+    return std::pair<BeamzLaunch, BeamzLaunch>(h, e);
+  };
+  auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
+  std::string key = BeamzGraphKey("mstep-column-k2", raw_stream, program);
+  auto append_buffer = [&](const BeamzBuffer &b) {
+    key.append(reinterpret_cast<const char *>(&b.data), sizeof(b.data));
+    key.append(reinterpret_cast<const char *>(&b.rank), sizeof(b.rank));
+    key.append(reinterpret_cast<const char *>(&b.element_type),
+               sizeof(b.element_type));
+    key.append(reinterpret_cast<const char *>(&b.row_stride),
+               sizeof(b.row_stride));
+    key.append(reinterpret_cast<const char *>(&b.plane_stride),
+               sizeof(b.plane_stride));
+    for (auto d : b.dims)
+      key.append(reinterpret_cast<const char *>(&d), sizeof(d));
+  };
+  for (const auto &b : buffers)
+    append_buffer(b);
+  for (int c = 0; c < 6; ++c) {
+    append_buffer(launch.final_fields[c]);
+    append_buffer(launch.scratch_fields[c]);
+  }
+  auto enqueue = [&]() {
+    const BeamzBuffer *current = original;
+    const BeamzBuffer *dest = launch.final_fields;
+    auto inject = [&](const auto &p, int timing, int step) {
+      return BeamzEnqueueSourcePhase(stream, p.first, p.second,
+                                     program.source_groups, 9, timing, step);
+    };
+    auto observe = [&](const BeamzBuffer *f, int step) {
+      if (!program.monitors)
+        return cudaSuccess;
+      auto p = phases(f, f);
+      return BeamzEnqueueDftGroups(stream, p.first, p.second, *program.monitors,
+                                   step);
+    };
+    for (int step = 0; step + 1 < program.nsteps; step += 2) {
+      auto base = phases(current, current);
+      if (auto err = inject(base, 0, step); err != cudaSuccess)
+        return err;
+      if (auto err =
+              BeamzEnqueueMstepCore(stream, base.first, base.second, dest,
+                                    launch.core_masks, launch.bounds);
+          err != cudaSuccess)
+        return err;
+      auto first = phases(current, scratch);
+      if (auto err = BeamzEnqueueMstepEdge(
+              stream, first.first, launch.first_cells, extent[1], extent[2]);
+          err != cudaSuccess)
+        return err;
+      if (auto err = inject(first, 1, step); err != cudaSuccess)
+        return err;
+      if (auto err = BeamzEnqueueMstepEdge(
+              stream, first.second, launch.first_cells, extent[1], extent[2]);
+          err != cudaSuccess)
+        return err;
+      if (auto err = inject(first, 2, step); err != cudaSuccess)
+        return err;
+      if (auto err = observe(scratch, step); err != cudaSuccess)
+        return err;
+      auto second = phases(scratch, dest);
+      if (auto err = inject(second, 0, step + 1); err != cudaSuccess)
+        return err;
+      if (auto err = BeamzEnqueueMstepEdge(
+              stream, second.first, launch.edge_cells, extent[1], extent[2]);
+          err != cudaSuccess)
+        return err;
+      if (auto err = inject(second, 1, step + 1); err != cudaSuccess)
+        return err;
+      if (auto err = BeamzEnqueueMstepEdge(
+              stream, second.second, launch.edge_cells, extent[1], extent[2]);
+          err != cudaSuccess)
+        return err;
+      if (auto err = inject(second, 2, step + 1); err != cudaSuccess)
+        return err;
+      if (auto err = observe(dest, step + 1); err != cudaSuccess)
+        return err;
+      current = dest;
+      dest = current == original ? launch.final_fields : original;
+    }
+    if (program.nsteps % 2) {
+      const int step = program.nsteps - 1;
+      auto tail = phases(current, current);
+      if (auto err = inject(tail, 0, step); err != cudaSuccess)
+        return err;
+      if (auto err = BeamzEnqueuePhase(stream, tail.first); err != cudaSuccess)
+        return err;
+      if (auto err = inject(tail, 1, step); err != cudaSuccess)
+        return err;
+      if (auto err = BeamzEnqueuePhase(stream, tail.second); err != cudaSuccess)
+        return err;
+      if (auto err = inject(tail, 2, step); err != cudaSuccess)
+        return err;
+      if (auto err = observe(current, step); err != cudaSuccess)
+        return err;
+    }
+    return cudaSuccess;
+  };
+  return BeamzLaunchGraph(stream, key,
+                          FlagEnabled(program.h_ab, kBeamzGraphCache),
+                          program.graph_cache_capacity, enqueue);
 }

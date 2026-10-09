@@ -18,6 +18,11 @@ struct BeamzBuffer {
   // descriptors always have explicit pitches, including contiguous arrays.
   int32_t row_stride = 0;
   int32_t plane_stride = 0;
+  // cuda_mstep intermediate fields share a quadrant slot map. All other
+  // buffers retain ordinary pitches. Logical shapes never change.
+  const int32_t *compact_slots = nullptr;
+  int32_t compact_ny = 0;
+  int32_t compact_nx = 0;
 };
 
 #ifdef __CUDACC__
@@ -26,12 +31,18 @@ struct BeamzBuffer {
 #define BEAMZ_HD inline
 #endif
 BEAMZ_HD int BeamzOffset3D(const BeamzBuffer& value, int z, int y, int x) {
+  if (value.compact_slots) {
+    const int q = (z * value.compact_ny + y / 8) * value.compact_nx + x / 16;
+    return value.compact_slots[q] * 128 + (y % 8) * 16 + x % 16;
+  }
   return z * value.plane_stride + y * value.row_stride + x;
 }
 BEAMZ_HD int BeamzPhysicalIndex(const BeamzBuffer& value, int logical) {
   const int nx = static_cast<int>(value.dims[2]);
   const int ny = static_cast<int>(value.dims[1]);
-  if (value.row_stride == nx && value.plane_stride == nx * ny) return logical;
+  if (!value.compact_slots && value.row_stride == nx &&
+      value.plane_stride == nx * ny)
+    return logical;
   const int zy = logical / nx;
   return BeamzOffset3D(value, zy / ny, zy % ny, logical % nx);
 }
@@ -127,5 +138,17 @@ struct BeamzProgramLaunch {
 int BeamzLaunchStreamed(void* stream, const BeamzLaunch& launch);
 int BeamzLaunchSharded(void* stream, const BeamzLaunch& launch);
 int BeamzLaunchProgram(void* stream, const BeamzProgramLaunch& program);
+
+struct BeamzMstepLaunch {
+  BeamzProgramLaunch program;
+  BeamzBuffer final_fields[6];
+  BeamzBuffer scratch_fields[6];
+  BeamzBuffer bounds;
+  BeamzBuffer core_masks;
+  BeamzBuffer slots;
+  BeamzBuffer first_cells;
+  BeamzBuffer edge_cells;
+};
+int BeamzLaunchMstep(void *stream, const BeamzMstepLaunch &launch);
 
 #endif  // BEAMZ_CUDA_LAUNCH_H_
