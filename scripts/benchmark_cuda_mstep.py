@@ -34,9 +34,26 @@ def main():
         "--material", choices=("binary", "smooth", "scalar", "lossy"), default="binary"
     )
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--memory-fraction",
+        type=float,
+        help="Set the same JAX allocator budget for all processes (e.g. 0.6 leaves room for Futhark's own arena)",
+    )
+    parser.add_argument(
+        "--futhark-reference-dir",
+        type=Path,
+        help="Include a compiled Futhark checkout using the same workload builder",
+    )
+    parser.add_argument(
+        "--futhark-python",
+        type=Path,
+        help="Reference Python; defaults to REFERENCE/.venv/bin/python",
+    )
     args = parser.parse_args()
     if args.rounds < 1:
         parser.error("rounds must be positive")
+    if args.memory_fraction is not None and not 0 < args.memory_fraction <= 1:
+        parser.error("memory-fraction must be in (0,1]")
     shapes = []
     for value in args.shapes:
         try:
@@ -47,15 +64,36 @@ def main():
             parser.error(f"shape {value!r} needs a nonempty CPML interior")
         shapes.append(shape)
     root = Path(__file__).resolve().parents[1]
+    if args.futhark_reference_dir:
+        args.futhark_reference_dir = args.futhark_reference_dir.resolve()
+        if args.source != "mode" or args.material != "binary":
+            parser.error(
+                "Futhark reference comparisons require binary material and mode source"
+            )
+        args.futhark_python = (
+            args.futhark_python or args.futhark_reference_dir / ".venv/bin/python"
+        ).resolve()
+        if not args.futhark_python.is_file():
+            parser.error(f"reference Python not found: {args.futhark_python}")
+    elif args.futhark_python:
+        parser.error("--futhark-python requires --futhark-reference-dir")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     # Compare the default established policy with the explicit new policy.
     # Avoid inheriting diagnostic scheduling overrides from the caller.
-    env = {k: v for k, v in os.environ.items() if not k.startswith("BEAMZ_CUDA_")}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(("BEAMZ_CUDA_", "BEAMZ_FUTHARK_"))
+    }
     env["PYTHONPATH"] = str(root)
     env["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+    if args.memory_fraction is not None:
+        env["XLA_PYTHON_CLIENT_MEM_FRACTION"] = str(args.memory_fraction)
     records = []
     for round_index in range(args.rounds):
         backends = ("cuda_streamed", "cuda_mstep")
+        if args.futhark_reference_dir:
+            backends += ("futhark",)
         if round_index % 2:
             backends = backends[::-1]
         for shape in shapes:
@@ -63,11 +101,19 @@ def main():
             for backend in backends:
                 output = args.output_dir / f"{label}-{backend}-{round_index}.json"
                 print(f"round {round_index + 1}: {label} {backend}", flush=True)
-                command = [
-                    sys.executable,
-                    str(root / "scripts/benchmark_cuda_realistic.py"),
-                    "--backend",
-                    backend,
+                command = (
+                    [
+                        str(args.futhark_python),
+                        str(root / "scripts/benchmark_futhark_reference.py"),
+                    ]
+                    if backend == "futhark"
+                    else [
+                        sys.executable,
+                        str(root / "scripts/benchmark_cuda_realistic.py"),
+                        "--backend",
+                        backend,
+                    ]
+                ) + [
                     "--shape",
                     *map(str, shape),
                     "--steps",
@@ -80,20 +126,33 @@ def main():
                     str(args.pml),
                     "--boundary",
                     args.boundary,
-                    "--source",
-                    args.source,
                     "--monitors",
                     str(args.monitors),
-                    "--material",
-                    args.material,
                     "--output",
                     str(output.resolve()),
                 ]
+                case_env = dict(env)
+                if backend == "futhark":
+                    case_env["PYTHONPATH"] = str(args.futhark_reference_dir)
+                else:
+                    command += ["--source", args.source, "--material", args.material]
                 with output.with_suffix(".log").open("w") as log:
                     subprocess.run(
-                        command, cwd=root, env=env, stdout=log, stderr=log, check=True
+                        command,
+                        cwd=root,
+                        env=case_env,
+                        stdout=log,
+                        stderr=log,
+                        check=True,
                     )
                 data = json.loads(output.read_text())
+                expected_root = (
+                    args.futhark_reference_dir if backend == "futhark" else root
+                )
+                if Path(data["source_root"]).resolve() != expected_root:
+                    raise RuntimeError(
+                        f"{backend} imported unexpected checkout {data['source_root']}"
+                    )
                 records.append(data)
                 print(f"  {data['median_gcups']:.3f} GCUPS", flush=True)
     (args.output_dir / "results.json").write_text(json.dumps(records, indent=2) + "\n")

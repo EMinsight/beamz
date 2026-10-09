@@ -154,6 +154,151 @@ __global__ __launch_bounds__(kMstepThreads) void MstepColumnCore(
   }
 }
 
+// Lean version of the common Futhark core contract. Buffer metadata is lowered
+// once on the host; plane coordinates/clamping are invariant along the column.
+// The planner proves every dependency of an owned quadrant lies inside all six
+// fields. Clamping affects only discarded halo results of partially owned
+// tiles.
+struct MstepCoreField {
+  float *data;
+  int row, plane;
+};
+struct MstepPackedCoreView {
+  MstepCoreField input[6], output[6];
+  const uint32_t *codes[3];
+  const float *tables[3], *h_decay[3], *h_source[3];
+  int table_sizes[3], min_y, min_x;
+  float inv;
+};
+struct MstepCoreLane {
+  int ix, iy, x, y;
+};
+template <int K>
+__device__ __forceinline__ MstepCoreLane MstepMakeLane(int ox, int oy, int ny,
+                                                       int nx) {
+  using Stage = PairStage<32, 16, K>;
+  int ix = threadIdx.x % Stage::sx, iy = threadIdx.x / Stage::sx;
+  return {ix, iy, min(max(ox - 2 + (K + 1) / 2 + ix, 0), nx - 1),
+          min(max(oy - 2 + (K + 1) / 2 + iy, 0), ny - 1)};
+}
+__device__ __forceinline__ int MstepCoreOffset(const MstepCoreField &f, int z,
+                                               int y, int x) {
+  return z * f.plane + y * f.row + x;
+}
+
+template <int K>
+__device__ __forceinline__ void
+MstepPackedStage(float *shared, const MstepPackedCoreView &v,
+                 const MstepHScalars &hc, const MstepCoreLane &lane, int z,
+                 bool owned) {
+  using Stage = PairStage<32, 16, K>;
+  constexpr int phase = K % 2, shift = phase == 1 ? 1 : 0;
+  constexpr int sign = phase == 0 ? 1 : -1;
+  if (threadIdx.x < Stage::sx * Stage::sy) {
+#pragma unroll
+    for (int c = 0; c < 3; ++c) {
+      auto other = [&](int component, int dz, int dy, int dx) {
+        if constexpr (K == 0) {
+          if (!dz)
+            return MstepInput(shared, component, lane.iy + dy, lane.ix + dx);
+          const auto &f = v.input[3 + component];
+          return f.data[MstepCoreOffset(f, z + dz, lane.y, lane.x)];
+        } else
+          return PairStage<32, 16, K - 1>::At(shared, component, z + dz,
+                                              lane.iy + shift + dy,
+                                              lane.ix + shift + dx);
+      };
+      auto difference = [&](int component, int axis) {
+        float a = other(component, 0, 0, 0);
+        float b = other(component, axis == 0 ? sign : 0, axis == 1 ? sign : 0,
+                        axis == 2 ? sign : 0);
+        return beamz::cuda::yee::ScaleYeeDifference(phase == 0 ? b - a : a - b,
+                                                    v.inv);
+      };
+      // c is unrolled; the same component/axis convention as all CUDA phases.
+      const auto a = beamz::cuda::yee::FirstCurlTerm(c);
+      const auto b = beamz::cuda::yee::SecondCurlTerm(c);
+      float curl = difference(a.source_component, a.derivative_axis) -
+                   difference(b.source_component, b.derivative_axis);
+      float old;
+      if constexpr (K == 0) {
+        const auto &f = v.input[c];
+        old = f.data[MstepCoreOffset(f, z, lane.y, lane.x)];
+      } else if constexpr (K == 1)
+        old = MstepInput(shared, c, lane.iy + 1, lane.ix + 1);
+      else
+        old = PairStage<32, 16, K - 2>::At(shared, c, z, lane.iy + 1,
+                                           lane.ix + 1);
+      float decay, source;
+      if constexpr (phase == 0) {
+        decay = hc.decay[c];
+        source = hc.source[c];
+      } else {
+        decay = 1.f;
+        const auto &f = v.input[3 + c];
+        int logical = MstepCoreOffset(f, z, lane.y, lane.x);
+        source = beamz::cuda::yee::PackedMaterialSource(
+            v.tables[c], v.table_sizes[c], v.codes[c], logical);
+      }
+      float next =
+          beamz::cuda::yee::AdvanceYeeField(phase, old, decay, source, curl);
+      if constexpr (K == 3) {
+        if (owned) {
+          const auto &e = v.output[3 + c];
+          const auto &h = v.output[c];
+          e.data[MstepCoreOffset(e, z, lane.y, lane.x)] = next;
+          h.data[MstepCoreOffset(h, z, lane.y, lane.x)] =
+              PairStage<32, 16, 2>::At(shared, c, z, lane.iy + 1, lane.ix + 1);
+        }
+      } else
+        Stage::At(shared, c, z, lane.iy, lane.ix) = next;
+    }
+  }
+  __syncthreads();
+}
+
+__global__ __launch_bounds__(kMstepThreads) void MstepPackedColumnCore(
+    const MstepPackedCoreView v, const int *masks, const int *bounds, int ntx) {
+  const int mask = masks[blockIdx.y * ntx + blockIdx.x];
+  if (!mask)
+    return;
+  const int zb = bounds[0], zt = bounds[1];
+  const int ox = blockIdx.x * 32, oy = blockIdx.y * 16;
+  const auto l0 = MstepMakeLane<0>(ox, oy, v.min_y, v.min_x);
+  const auto l1 = MstepMakeLane<1>(ox, oy, v.min_y, v.min_x);
+  const auto l2 = MstepMakeLane<2>(ox, oy, v.min_y, v.min_x);
+  const auto l3 = MstepMakeLane<3>(ox, oy, v.min_y, v.min_x);
+  const int quadrant = (l3.iy >= 8 ? 2 : 0) + (l3.ix >= 16 ? 1 : 0);
+  const bool owned = (mask & (1 << quadrant)) != 0;
+  const int wx = threadIdx.x % kMstepWindowX;
+  const int wy = threadIdx.x / kMstepWindowX;
+  const int gx = min(max(ox - 2 + wx, 0), v.min_x - 1);
+  const int gy = min(max(oy - 2 + wy, 0), v.min_y - 1);
+  MstepHScalars hc;
+#pragma unroll
+  for (int c = 0; c < 3; ++c) {
+    hc.decay[c] = *v.h_decay[c];
+    hc.source[c] = *v.h_source[c];
+  }
+  extern __shared__ float shared[];
+  for (int wave = 0; wave < zt - zb + 3; ++wave) {
+    int p = zb + wave - 2;
+#pragma unroll
+    for (int c = 0; c < 3; ++c) {
+      const auto &f = v.input[3 + c];
+      MstepInput(shared, c, wy, wx) = f.data[MstepCoreOffset(f, p, gy, gx)];
+    }
+    __syncthreads();
+    MstepPackedStage<0>(shared, v, hc, l0, p, owned);
+    if (wave >= 1)
+      MstepPackedStage<1>(shared, v, hc, l1, p, owned);
+    if (wave >= 2)
+      MstepPackedStage<2>(shared, v, hc, l2, p - 1, owned);
+    if (wave >= 3)
+      MstepPackedStage<3>(shared, v, hc, l3, p - 1, owned);
+  }
+}
+
 template <int Phase, bool Cpml, bool Packed, bool UniformCpml = false>
 __global__ void MstepEdgePhase(const __grid_constant__ BeamzLaunch launch,
                                const __grid_constant__ BeamzBuffer cells,

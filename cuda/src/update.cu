@@ -1686,8 +1686,34 @@ cudaError_t BeamzEnqueueMstepCore(cudaStream_t stream, const BeamzLaunch &h,
     scalar_h &= h.inputs[6 + c].rank == 0;
   }
   if (e.inputs[9].element_type == kBeamzS32) {
-    if (scalar_h)
-      return LaunchMstepColumn<true, true>(stream, h, e, final, masks, bounds);
+    if (scalar_h) {
+      MstepPackedCoreView v{};
+      v.min_y = v.min_x = std::numeric_limits<int>::max();
+      v.inv = h.inv_resolution;
+      for (int c = 0; c < 6; ++c) {
+        const auto &in = h.inputs[c];
+        const auto &out = final_fields[c];
+        v.input[c] = {static_cast<float *>(in.data), in.row_stride, in.plane_stride};
+        v.output[c] = {static_cast<float *>(out.data), out.row_stride, out.plane_stride};
+        v.min_y = std::min(v.min_y, static_cast<int>(in.dims[1]));
+        v.min_x = std::min(v.min_x, static_cast<int>(in.dims[2]));
+      }
+      for (int c = 0; c < 3; ++c) {
+        v.codes[c] = static_cast<const uint32_t *>(e.inputs[9 + c].data);
+        v.tables[c] = static_cast<const float *>(e.inputs[6 + c].data);
+        v.table_sizes[c] = static_cast<int>(e.inputs[6 + c].dims[0]);
+        v.h_decay[c] = static_cast<const float *>(h.inputs[6 + c].data);
+        v.h_source[c] = static_cast<const float *>(h.inputs[9 + c].data);
+      }
+      if (auto err = cudaFuncSetAttribute(MstepPackedColumnCore,
+                        cudaFuncAttributeMaxDynamicSharedMemorySize, kMstepSharedBytes);
+          err != cudaSuccess) return err;
+      const dim3 blocks(masks.dims[1], masks.dims[0]);
+      MstepPackedColumnCore<<<blocks, kMstepThreads, kMstepSharedBytes, stream>>>(
+          v, static_cast<const int *>(masks.data),
+          static_cast<const int *>(bounds.data), masks.dims[1]);
+      return cudaGetLastError();
+    }
     return LaunchMstepColumn<true, false>(stream, h, e, final, masks, bounds);
   }
   if (scalar_h)

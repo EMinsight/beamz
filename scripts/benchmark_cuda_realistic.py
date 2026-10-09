@@ -271,6 +271,11 @@ def main():
         "benchmark_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "warmups": args.warmups,
         "backend": args.backend,
+        "allocator": {
+            "preallocate": os.environ.get("XLA_PYTHON_CLIENT_PREALLOCATE", ""),
+            "memory_fraction": os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", ""),
+            "implementation": os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", ""),
+        },
         "cpml_core_fusion_env": os.environ.get("BEAMZ_CUDA_CPML_CORE_FUSION", "auto"),
         "field_padding_env": os.environ.get("BEAMZ_CUDA_FIELD_PADDING", "none"),
         "storage_axes": program.config.cuda_storage_axes,
