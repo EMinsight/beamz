@@ -108,7 +108,8 @@ def _compare(a, b, tolerance=1e-5):
 
 @pytest.mark.parametrize("steps", [1, 2, 3, 4, 5, 17])
 @pytest.mark.parametrize(
-    "material,boundary", [("binary", "all"), ("smooth", "pec"), ("lossy", "right")]
+    "material,boundary",
+    [("binary", "all"), ("binary", "right"), ("smooth", "pec"), ("lossy", "right")],
 )
 def test_mstep_complete_state_matches_cuda_and_jax(steps, material, boundary):
     sim = _simulation(material, boundary)
@@ -272,3 +273,33 @@ def test_mstep_short_column_sanitizer():
     actual = _run(sim, state, "cuda_mstep", 2)
     _compare(_run(sim, state, "cuda", 2), actual)
     _compare(_run(sim, state, "jax", 2), actual, 3e-5)
+
+
+def test_mstep_three_material_codebook_matches_cuda_and_jax():
+    """Exercise a packed codebook with more than the common two dielectrics."""
+    sim = _simulation(shape=(21, 41, 73))
+    grid = sim._material_grid(progress=False)
+    eps = np.asarray(grid.permittivity).copy()
+    eps[:, :10, :] = np.float32(2.0**2)
+    from beamz.design import MaterialGrid
+
+    sim = bz.Simulation(
+        material_grid=MaterialGrid(
+            permittivity=eps,
+            conductivity=np.float32(0),
+            permeability=np.float32(1),
+            resolution=grid.resolution,
+            shape=eps.shape,
+        ),
+        sources=sim.sources,
+        monitors=sim.monitors,
+        boundaries=sim.boundaries,
+        time=sim.time,
+    )
+    program = sim.compile(backend="cuda_mstep", num_steps=3)
+    assert program.coefficients.e_source_x.dtype == np.int32
+    assert program.coefficients.e_decay_x.shape[0] > 2
+    state = _seed(program)
+    actual = _run(sim, state, "cuda_mstep", 3)
+    _compare(_run(sim, state, "cuda", 3), actual)
+    _compare(_run(sim, state, "jax", 3), actual, 3e-5)

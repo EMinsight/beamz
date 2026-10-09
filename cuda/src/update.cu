@@ -1,6 +1,7 @@
 #include <cuda_runtime_api.h>
 
 #include <cuda_bf16.h>
+#include <cuda_pipeline.h>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -1706,10 +1707,10 @@ cudaError_t BeamzEnqueueMstepCore(cudaStream_t stream, const BeamzLaunch &h,
         v.h_source[c] = static_cast<const float *>(h.inputs[9 + c].data);
       }
       if (auto err = cudaFuncSetAttribute(MstepPackedColumnCore,
-                        cudaFuncAttributeMaxDynamicSharedMemorySize, kMstepSharedBytes);
+                        cudaFuncAttributeMaxDynamicSharedMemorySize, kMstepPackedSharedBytes);
           err != cudaSuccess) return err;
       const dim3 blocks(masks.dims[1], masks.dims[0]);
-      MstepPackedColumnCore<<<blocks, kMstepThreads, kMstepSharedBytes, stream>>>(
+      MstepPackedColumnCore<<<blocks, kMstepThreads, kMstepPackedSharedBytes, stream>>>(
           v, static_cast<const int *>(masks.data),
           static_cast<const int *>(bounds.data), masks.dims[1]);
       return cudaGetLastError();

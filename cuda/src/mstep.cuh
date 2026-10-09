@@ -154,6 +154,14 @@ __global__ __launch_bounds__(kMstepThreads) void MstepColumnCore(
   }
 }
 
+constexpr size_t kMstepPackedSharedBytes =
+    kMstepSharedBytes + 3 * kMstepThreads * sizeof(float);
+__device__ __forceinline__ float &MstepPackedInput(float *shared, int c, int z,
+                                                   int y, int x) {
+  return shared[kMstepInputOffset + ((z & 1) * 3 + c) * kMstepThreads +
+                y * kMstepWindowX + x];
+}
+
 // Lean version of the common Futhark core contract. Buffer metadata is lowered
 // once on the host; plane coordinates/clamping are invariant along the column.
 // The planner proves every dependency of an owned quadrant lies inside all six
@@ -190,7 +198,8 @@ template <int K>
 __device__ __forceinline__ void
 MstepPackedStage(float *shared, const MstepPackedCoreView &v,
                  const MstepHScalars &hc, const MstepCoreLane &lane, int z,
-                 bool owned) {
+                 bool owned, const int (&logical)[3],
+                 const int (&h_output)[3]) {
   using Stage = PairStage<32, 16, K>;
   constexpr int phase = K % 2, shift = phase == 1 ? 1 : 0;
   constexpr int sign = phase == 0 ? 1 : -1;
@@ -199,10 +208,8 @@ MstepPackedStage(float *shared, const MstepPackedCoreView &v,
     for (int c = 0; c < 3; ++c) {
       auto other = [&](int component, int dz, int dy, int dx) {
         if constexpr (K == 0) {
-          if (!dz)
-            return MstepInput(shared, component, lane.iy + dy, lane.ix + dx);
-          const auto &f = v.input[3 + component];
-          return f.data[MstepCoreOffset(f, z + dz, lane.y, lane.x)];
+          return MstepPackedInput(shared, component, z + dz, lane.iy + dy,
+                                  lane.ix + dx);
         } else
           return PairStage<32, 16, K - 1>::At(shared, component, z + dz,
                                               lane.iy + shift + dy,
@@ -223,9 +230,9 @@ MstepPackedStage(float *shared, const MstepPackedCoreView &v,
       float old;
       if constexpr (K == 0) {
         const auto &f = v.input[c];
-        old = f.data[MstepCoreOffset(f, z, lane.y, lane.x)];
+        old = f.data[logical[c]];
       } else if constexpr (K == 1)
-        old = MstepInput(shared, c, lane.iy + 1, lane.ix + 1);
+        old = MstepPackedInput(shared, c, z, lane.iy + 1, lane.ix + 1);
       else
         old = PairStage<32, 16, K - 2>::At(shared, c, z, lane.iy + 1,
                                            lane.ix + 1);
@@ -235,10 +242,8 @@ MstepPackedStage(float *shared, const MstepPackedCoreView &v,
         source = hc.source[c];
       } else {
         decay = 1.f;
-        const auto &f = v.input[3 + c];
-        int logical = MstepCoreOffset(f, z, lane.y, lane.x);
         source = beamz::cuda::yee::PackedMaterialSource(
-            v.tables[c], v.table_sizes[c], v.codes[c], logical);
+            v.tables[c], v.table_sizes[c], v.codes[c], logical[c]);
       }
       float next =
           beamz::cuda::yee::AdvanceYeeField(phase, old, decay, source, curl);
@@ -246,8 +251,8 @@ MstepPackedStage(float *shared, const MstepPackedCoreView &v,
         if (owned) {
           const auto &e = v.output[3 + c];
           const auto &h = v.output[c];
-          e.data[MstepCoreOffset(e, z, lane.y, lane.x)] = next;
-          h.data[MstepCoreOffset(h, z, lane.y, lane.x)] =
+          e.data[logical[c]] = next;
+          h.data[h_output[c]] =
               PairStage<32, 16, 2>::At(shared, c, z, lane.iy + 1, lane.ix + 1);
         }
       } else
@@ -257,7 +262,7 @@ MstepPackedStage(float *shared, const MstepPackedCoreView &v,
   __syncthreads();
 }
 
-__global__ __launch_bounds__(kMstepThreads) void MstepPackedColumnCore(
+__global__ __launch_bounds__(kMstepThreads, 1) void MstepPackedColumnCore(
     const MstepPackedCoreView v, const int *masks, const int *bounds, int ntx) {
   const int mask = masks[blockIdx.y * ntx + blockIdx.x];
   if (!mask)
@@ -275,27 +280,64 @@ __global__ __launch_bounds__(kMstepThreads) void MstepPackedColumnCore(
   const int gx = min(max(ox - 2 + wx, 0), v.min_x - 1);
   const int gy = min(max(oy - 2 + wy, 0), v.min_y - 1);
   MstepHScalars hc;
+  // Carry linear addresses along the column rather than recomputing the
+  // invariant y/x products in every stage of every wave. Full input/output
+  // banks have identical canonical component pitches.
+  int old_h[3], first_e[3], final_e[3], final_h[3], next_input[3];
 #pragma unroll
   for (int c = 0; c < 3; ++c) {
     hc.decay[c] = *v.h_decay[c];
     hc.source[c] = *v.h_source[c];
+    old_h[c] = MstepCoreOffset(v.input[c], zb - 2, l0.y, l0.x);
+    first_e[c] = MstepCoreOffset(v.input[3 + c], zb - 2, l1.y, l1.x);
+    final_e[c] = MstepCoreOffset(v.input[3 + c], zb - 3, l3.y, l3.x);
+    final_h[c] = MstepCoreOffset(v.output[c], zb - 3, l3.y, l3.x);
+    next_input[c] = MstepCoreOffset(v.input[3 + c], zb, gy, gx);
   }
   extern __shared__ float shared[];
-  for (int wave = 0; wave < zt - zb + 3; ++wave) {
-    int p = zb + wave - 2;
+  // Two E0 planes rotate through the input ring. Prefetch p+2 after E1's last
+  // use of p, while H2/E2 consume separate shared rings. The block waits before
+  // the next wave may read a neighbour's asynchronous copy.
 #pragma unroll
-    for (int c = 0; c < 3; ++c) {
-      const auto &f = v.input[3 + c];
-      MstepInput(shared, c, wy, wx) = f.data[MstepCoreOffset(f, p, gy, gx)];
-    }
-    __syncthreads();
-    MstepPackedStage<0>(shared, v, hc, l0, p, owned);
+  for (int c = 0; c < 3; ++c) {
+    const auto &f = v.input[3 + c];
+    MstepPackedInput(shared, c, zb - 2, wy, wx) =
+        f.data[MstepCoreOffset(f, zb - 2, gy, gx)];
+    MstepPackedInput(shared, c, zb - 1, wy, wx) =
+        f.data[MstepCoreOffset(f, zb - 1, gy, gx)];
+  }
+  __syncthreads();
+  const int waves = zt - zb + 3;
+  for (int wave = 0; wave < waves; ++wave) {
+    int p = zb + wave - 2;
+    MstepPackedStage<0>(shared, v, hc, l0, p, owned, old_h, final_h);
     if (wave >= 1)
-      MstepPackedStage<1>(shared, v, hc, l1, p, owned);
+      MstepPackedStage<1>(shared, v, hc, l1, p, owned, first_e, final_h);
+    if (wave + 1 < waves) {
+#pragma unroll
+      for (int c = 0; c < 3; ++c) {
+        const auto &f = v.input[3 + c];
+        __pipeline_memcpy_async(&MstepPackedInput(shared, c, p + 2, wy, wx),
+                                f.data + next_input[c], sizeof(float));
+      }
+      __pipeline_commit();
+    }
     if (wave >= 2)
-      MstepPackedStage<2>(shared, v, hc, l2, p - 1, owned);
+      MstepPackedStage<2>(shared, v, hc, l2, p - 1, owned, old_h, final_h);
     if (wave >= 3)
-      MstepPackedStage<3>(shared, v, hc, l3, p - 1, owned);
+      MstepPackedStage<3>(shared, v, hc, l3, p - 1, owned, final_e, final_h);
+    if (wave + 1 < waves) {
+      __pipeline_wait_prior(0);
+      __syncthreads();
+#pragma unroll
+      for (int c = 0; c < 3; ++c) {
+        old_h[c] += v.input[c].plane;
+        first_e[c] += v.input[3 + c].plane;
+        final_e[c] += v.input[3 + c].plane;
+        final_h[c] += v.output[c].plane;
+        next_input[c] += v.input[3 + c].plane;
+      }
+    }
   }
 }
 
