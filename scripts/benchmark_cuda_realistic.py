@@ -49,6 +49,10 @@ def build_simulation(args):
         sigma = np.where(eps > 3, np.float32(100), np.float32(0))
         # Loss starts downstream of the launch cross-section.
         sigma[:, :, : nx // 2] = 0
+    if args.material == "dense_conductive":
+        sigma = np.broadcast_to(
+            np.linspace(0, 100, nx, dtype=np.float32), eps.shape
+        ).copy()
     grid = MaterialGrid(
         permittivity=eps,
         conductivity=sigma,
@@ -151,7 +155,7 @@ def main():
     parser.add_argument("--frequencies", type=int, default=3)
     parser.add_argument(
         "--material",
-        choices=("binary", "smooth", "scalar", "lossy", "magnetic"),
+        choices=("binary", "smooth", "scalar", "lossy", "magnetic", "dense_conductive"),
         default="binary",
     )
     parser.add_argument("--source", choices=("mode", "gaussian"), default="mode")
@@ -180,7 +184,7 @@ def main():
         help="Advance the pulse before timing to measure developed fields",
     )
     args = parser.parse_args()
-    if args.material == "lossy" and args.source == "mode":
+    if args.material in {"lossy", "dense_conductive"} and args.source == "mode":
         parser.error(
             "ModeSource currently rejects conductive simulations; use --source gaussian for the loss test"
         )

@@ -144,6 +144,7 @@ def workloads():
         "no_monitors": dict(monitors=0),
         "dense_monitors": dict(monitors=3, frequencies=8),
         "magnetic": dict(material="magnetic"),
+        "dense_conductive": dict(material="dense_conductive", source="gaussian"),
         "bf16": dict(base_env={"BEAMZ_CUDA_CPML_PSI_PRECISION": "bf16"}),
     }.items():
         cases.append(dict(base, name=name, shape=shapes["medium"], **changes))
@@ -230,6 +231,23 @@ def worker(case, candidates, output, samples, rounds):
                 entry["decision"] = scan.cuda_schedule_decision
                 entry["cuda_flags"] = program.config.cuda_flags
                 entry["storage_axes"] = program.config.cuda_storage_axes
+                entry["coefficient_shapes"] = {
+                    f"{phase}_{kind}_{component}": list(
+                        getattr(
+                            program.coefficients, f"{phase}_{kind}_{component}"
+                        ).shape
+                    )
+                    for phase in "eh"
+                    for kind in ("decay", "source")
+                    for component in "xyz"
+                }
+                if case["material"] == "dense_conductive" and any(
+                    len(entry["coefficient_shapes"][f"h_source_{axis}"]) != 3
+                    for axis in "xyz"
+                ):
+                    raise ValueError(
+                        "Dense H benchmark did not produce dense coefficients"
+                    )
                 t = time.perf_counter()
                 lowered = scan.lower(state, program.coefficients)
                 entry["lower_s"] = time.perf_counter() - t

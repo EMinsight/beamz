@@ -90,9 +90,10 @@ indices, with a bounded host cache of at most two plans and 256 MiB.
 The initial scope is unsharded isotropic uniform float32 3D simulations with
 diagonal materials, packed slab sources and vector DFT monitors. Dense/lossy
 materials, asymmetric CPML and optional BF16 recurrence storage are supported.
-Recorder, flux/power, nonuniform-grid, tensor and storage-permutation requests
-raise a diagnostic. Existing scheduling environment overrides do not change
-`cuda_mstep`; graph caching and recurrence precision settings still apply.
+Recorder, flux/power, nonuniform-grid and tensor requests raise a diagnostic.
+Right-handed cyclic storage orders (012, 120 and 201) use the shared transform,
+including all-PEC programs. The column schedule retains two timesteps;
+its tile/segment overrides, graph caching and recurrence precision settings apply.
 Single-step and zero-core requests reuse the shared in-place program before
 allocating a pair workspace. Forced mstep checks its complete workspace against
 available allocator headroom and rejects incompatible capacity-only policy.
@@ -103,7 +104,7 @@ Use `schedule="auto"`, `"streamed"` or `"mstep"` with the unified backend:
 
 ```python
 program = simulation.compile(
-    num_steps=256, backend="cuda", schedule="auto", expected_runs=32
+    num_steps=1024, backend="cuda", schedule="auto"
 )
 print(program.cuda_schedule_report())
 result = simulation.advance(
@@ -112,8 +113,9 @@ result = simulation.advance(
 ```
 
 Automatic selection assumes one execution by default. `expected_runs` is a reuse
-hint, not an instruction to run multiple simulations. It accounts for additional
-compilation cost, active column tiles, depth, core coverage, material and monitor
+hint, not an instruction to run multiple simulations. Progress runs account for
+their known chunk reuse automatically. Selection considers additional preparation
+cost, active column tiles, depth, core coverage, material and monitor
 workload, feature support and memory. The conservative model is limited to the
 recorded RTX3090 packed-E/scalar-H workloads, CPML12/all-PEC boundary families,
 16–67 million cells and invocations of at least 256 steps. Other GPU models and
@@ -145,6 +147,9 @@ selection remains within that measured envelope. The [code review](../docs/revie
 compares shared operations and workspace costs; the
 [unification report](../docs/reviews/cuda-schedule-unification.md) records the
 implemented selector and the discarded direct-publication experiment.
+The [tile, layout and startup study](../docs/reviews/cuda-schedule-space.md)
+compares configuration choices using preparation plus execution time, and provides
+a benchmark/ranking tool for extending the measured workload and GPU envelope.
 
 ## Experimental sharded streamed execution
 
