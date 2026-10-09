@@ -20,7 +20,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _simulation(material="binary", boundary="all", shape=(37, 65, 97), steps=33):
+def _simulation(
+    material="binary", boundary="all", shape=(37, 65, 97), steps=33, source="gaussian"
+):
     from scripts.benchmark_cuda_realistic import build_simulation
 
     sim = build_simulation(
@@ -31,7 +33,7 @@ def _simulation(material="binary", boundary="all", shape=(37, 65, 97), steps=33)
             monitors=2,
             frequencies=3,
             material=material,
-            source="gaussian",
+            source=source,
             monitor_type="field",
         )
     )
@@ -196,3 +198,57 @@ def test_mstep_bf16_recurrence_matches_cuda(monkeypatch):
         ),
     )
     _compare(_run(sim, state, "cuda", 5), _run(sim, state, "cuda_mstep", 5))
+
+
+def test_mstep_mode_source_and_windowed_interval_dft():
+    sim = _simulation(source="mode")
+    state = _seed(sim.compile(backend="jax", num_steps=17))
+    results = []
+    for backend in ("cuda", "cuda_mstep", "jax"):
+        program = sim.compile(backend=backend, num_steps=17)
+        program = replace(
+            program,
+            monitors=tuple(
+                replace(
+                    m,
+                    dft_window_code=1,
+                    dft_normalization_code=1,
+                    dft_record_interval=3,
+                    dft_t_start=float(sim.time[2]),
+                    dft_t_end=float(sim.time[15]),
+                )
+                for m in program.monitors
+            ),
+        )
+        copied = jax.tree_util.tree_map(lambda a: np.array(a, copy=True), state)
+        results.append(
+            jax.block_until_ready(build_scan(program)(copied, program.coefficients))
+        )
+    _compare(results[0], results[1])
+    _compare(results[2], results[1], 3e-5)
+
+
+def test_mstep_state_donation_preserves_results():
+    sim = _simulation()
+    state = _seed(sim.compile(backend="jax", num_steps=5))
+    expected = sim.advance(state=state, num_steps=5, backend="cuda_mstep").state
+    copied = jax.tree_util.tree_map(lambda a: jax.numpy.array(a), state)
+    actual = sim.advance(
+        state=copied, num_steps=5, backend="cuda_mstep", donate_state=True
+    ).state
+    _compare(expected, actual)
+
+
+def test_mstep_dense_magnetic_coefficients():
+    sim = _simulation(material="lossy")
+    grid = sim._material_grid(progress=False)
+    permeability = np.broadcast_to(
+        np.linspace(1, 1.2, grid.shape[2], dtype=np.float32), grid.shape
+    )
+    sim = sim.updated_copy(material_grid=replace(grid, permeability=permeability))
+    program = sim.compile(backend="cuda_mstep", num_steps=5)
+    assert program.coefficients.h_source_x.ndim == 3
+    state = _seed(program)
+    actual = _run(sim, state, "cuda_mstep", 5)
+    _compare(_run(sim, state, "cuda", 5), actual)
+    _compare(_run(sim, state, "jax", 5), actual, 3e-5)

@@ -100,7 +100,7 @@ __global__ __launch_bounds__(256) void MstepColumnCore(
                         zb, wave, mask);
 }
 
-template <int Phase, bool Cpml, bool Packed>
+template <int Phase, bool Cpml, bool Packed, bool UniformCpml = false>
 __global__ void MstepEdgePhase(const __grid_constant__ BeamzLaunch launch,
                                const __grid_constant__ BeamzBuffer cells,
                                int ny, int nx) {
@@ -109,7 +109,10 @@ __global__ void MstepEdgePhase(const __grid_constant__ BeamzLaunch launch,
     return;
   const int row = static_cast<const int *>(cells.data)[i];
   const int z = row / (ny * nx), y = (row / nx) % ny, x = row % nx;
-  UpdateComponent<Phase, 0, Cpml, 0, true, false, -1, Packed>(launch, z, y, x);
-  UpdateComponent<Phase, 1, Cpml, 0, true, false, -1, Packed>(launch, z, y, x);
-  UpdateComponent<Phase, 2, Cpml, 0, true, false, -1, Packed>(launch, z, y, x);
+  UpdateComponent<Phase, 0, Cpml, 0, true, UniformCpml, -1, Packed>(launch, z,
+                                                                    y, x);
+  UpdateComponent<Phase, 1, Cpml, 0, true, UniformCpml, -1, Packed>(launch, z,
+                                                                    y, x);
+  UpdateComponent<Phase, 2, Cpml, 0, true, UniformCpml, -1, Packed>(launch, z,
+                                                                    y, x);
 }

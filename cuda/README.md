@@ -51,6 +51,52 @@ registers it lazily; `backend="cuda_streamed"` requests it explicitly. The first
 release supports float32 3D grids. `auto` retains JAX for multi-GPU and 2D
 simulations; only the explicitly selected CPML recurrence state may use BF16.
 
+## Explicit whole-column multistep execution
+
+`backend="cuda_mstep"` selects a second scheduler inside the same CUDA component
+(**0.22.0 / ABI 22**). It ports the whole-column temporal tiling in
+[PR #308](https://github.com/beamzorg/beamz/pull/308), credited to Pepijn de Vos.
+No Futhark compiler or separate numerical implementation is required.
+
+```python
+result = simulation.advance(num_steps=256, backend="cuda_mstep")
+```
+
+The core uses 16x32 tiles and three shared two-plane rings to finish two timesteps
+while traversing the full z column. Eligibility is determined per 8x16 quadrant,
+excluding CPML, PEC boundaries and a two-cell halo around source columns.
+First-step intermediates are allocated in compact quadrant slots for boundary
+dependencies and DFT samples. A full second field bank holds pair outputs. CPML
+recurrence, PEC masks, source injection and DFT accumulation reuse the established
+CUDA operations and retain their phase and absolute timestep. Odd tails use the
+ordinary CUDA phase kernels. Returned state and continuation are unchanged.
+
+The initial scope is unsharded isotropic uniform float32 3D simulations with
+diagonal materials, packed slab sources and vector DFT monitors. Dense/lossy
+materials, asymmetric CPML and optional BF16 recurrence storage are supported.
+Recorder, flux/power, nonuniform-grid, tensor and storage-permutation requests
+raise a diagnostic. Existing scheduling environment overrides do not change
+`cuda_mstep`; graph caching and recurrence precision settings still apply.
+Small domains can have an edge-only plan and remain valid, though compact-slot
+padding can cost more than a full intermediate field there.
+
+`auto` and `cuda` retain their existing policy. Run the two schedules explicitly
+before selecting one for a workload:
+
+```console
+python -m pytest tests/hardware/test_cuda_mstep.py
+python scripts/benchmark_cuda_mstep.py --output-dir .cache/cuda-mstep-results
+```
+
+Each benchmark case runs in a fresh process, with reversed backend order on the
+second round. Reports include warm samples, setup/compilation/first execution,
+executable/device memory and multistep core coverage. A future selector needs
+measurements across shape, CPML thickness, material layout, source coverage,
+monitor density, run length and GPU model. Keep an explicit override even after
+unifying the public names; a cell-count threshold alone cannot express these
+costs. OpenCL remains a separate portability proposal until this scheduler and
+its parity contract are stable.
+
 ## Experimental sharded streamed execution
 
 Explicit CUDA requests use the existing sharding API for 3D simulations, including
@@ -70,7 +116,7 @@ result = simulation.advance(
 This path has native C++ arithmetic and CPU FFI coverage, but has **not yet been
 validated on multiple CUDA GPUs**. `auto` continues selecting JAX for sharded
 requests. Rebuild the optional CUDA extension: this path requires component
-**0.21.0 / ABI 21**, including `beamz_cuda_sharded`. ABI 20 passes separate neighbor faces to sharded
+**0.22.0 / ABI 22**, including `beamz_cuda_sharded`. ABI 20 passes separate neighbor faces to sharded
 phases, avoiding full-field halo concatenations. ABI 21 adds an integer DFT
 chunk offset so every graph uses the same invocation time origin. Rebuild the native wheel when
 updating Python code across this ABI boundary.

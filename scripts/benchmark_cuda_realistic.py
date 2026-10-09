@@ -107,12 +107,22 @@ def build_simulation(args):
             )
             for i in range(args.monitors)
         ]
+    boundary = getattr(args, "boundary", "all")
+    if boundary == "all":
+        boundaries = [bz.PML(edges="all", thickness=args.pml * dx, formulation="cpml")]
+    elif boundary == "right":
+        boundaries = [
+            bz.PML(edges=["right"], thickness=args.pml * dx, formulation="cpml"),
+            bz.PEC(edges=["left", "top", "bottom", "front", "back"]),
+        ]
+    else:
+        boundaries = [bz.PEC(edges="all")]
     return bz.Simulation(
         material_grid=grid,
         size=tuple(size),
         sources=sources,
         monitors=monitors,
-        boundaries=[bz.PML(edges="all", thickness=args.pml * dx, formulation="cpml")],
+        boundaries=boundaries,
         time=times,
     )
 
@@ -120,10 +130,14 @@ def build_simulation(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--shape", nargs=3, type=int, default=(128, 256, 512))
+    parser.add_argument(
+        "--backend", choices=("cuda_streamed", "cuda_mstep"), default="cuda_streamed"
+    )
     parser.add_argument("--steps", type=int, default=256)
     parser.add_argument("--samples", type=int, default=11)
     parser.add_argument("--warmups", type=int, default=4)
     parser.add_argument("--pml", type=int, default=12)
+    parser.add_argument("--boundary", choices=("all", "right", "pec"), default="all")
     parser.add_argument("--monitors", type=int, default=2)
     parser.add_argument("--frequencies", type=int, default=3)
     parser.add_argument(
@@ -173,14 +187,28 @@ def main():
         )
     start = time.perf_counter()
     sim = build_simulation(args)
-    program = sim.compile(num_steps=args.steps, backend="cuda_streamed")
+    program = sim.compile(num_steps=args.steps, backend=args.backend)
     state = initial_program_state(
         program, t=0, current_step=0, monitor_steps=args.steps
     )
     jax.block_until_ready(state)
     setup_s = time.perf_counter() - start
     start = time.perf_counter()
-    scan = build_scan(program, donate_state=False)
+    from beamz.simulation.cuda import mstep
+
+    mstep_plans = []
+    choose_mstep_plan = mstep.build_mstep_plan
+
+    def record_mstep_plan(*positional, **keywords):
+        plan = choose_mstep_plan(*positional, **keywords)
+        mstep_plans.append(plan.summary())
+        return plan
+
+    mstep.build_mstep_plan = record_mstep_plan
+    try:
+        scan = build_scan(program, donate_state=False)
+    finally:
+        mstep.build_mstep_plan = choose_mstep_plan
     from beamz.simulation.cuda import runtime
 
     plans = []
@@ -201,10 +229,13 @@ def main():
     if args.presteps:
         start = time.perf_counter()
         state = sim.advance(
-            state=state, num_steps=args.presteps, backend="cuda_streamed"
+            state=state, num_steps=args.presteps, backend=args.backend
         ).state
         jax.block_until_ready(state)
         conditioning_s = time.perf_counter() - start
+    first_start = time.perf_counter()
+    jax.block_until_ready(executable(state, program.coefficients))
+    first_run_s = time.perf_counter() - first_start
     for _ in range(args.warmups):
         jax.block_until_ready(executable(state, program.coefficients))
     samples = []
@@ -216,15 +247,17 @@ def main():
     public_samples = []
     if args.public_samples:
         jax.block_until_ready(
-            sim.advance(num_steps=args.steps, backend="cuda_streamed").state
+            sim.advance(num_steps=args.steps, backend=args.backend).state
         )
         for _ in range(args.public_samples):
             start = time.perf_counter()
             jax.block_until_ready(
-                sim.advance(num_steps=args.steps, backend="cuda_streamed").state
+                sim.advance(num_steps=args.steps, backend=args.backend).state
             )
             public_samples.append(time.perf_counter() - start)
     import beamz._cuda as extension
+
+    memory = executable.memory_analysis()
 
     root = Path(bz.__file__).resolve().parents[1]
     sources = sorted([*root.glob("beamz/**/*.py"), *root.glob("cuda/src/*")])
@@ -237,6 +270,7 @@ def main():
         "source_sha256": source_hash.hexdigest(),
         "benchmark_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "warmups": args.warmups,
+        "backend": args.backend,
         "cpml_core_fusion_env": os.environ.get("BEAMZ_CUDA_CPML_CORE_FUSION", "auto"),
         "field_padding_env": os.environ.get("BEAMZ_CUDA_FIELD_PADDING", "none"),
         "storage_axes": program.config.cuda_storage_axes,
@@ -258,15 +292,29 @@ def main():
         "steps": args.steps,
         "material": args.material,
         "pml": args.pml,
+        "boundary": args.boundary,
         "monitors": args.monitors,
         "frequencies": args.frequencies,
         "in_place_experiment": args.in_place,
         "source_specs": len(program.sources),
         "setup_s": setup_s,
         "compile_s": compile_s,
+        "first_run_s": first_run_s,
+        "executable_memory": {
+            name: getattr(memory, name)
+            for name in (
+                "argument_size_in_bytes",
+                "output_size_in_bytes",
+                "alias_size_in_bytes",
+                "temp_size_in_bytes",
+                "generated_code_size_in_bytes",
+            )
+        },
+        "device_memory": jax.devices()[0].memory_stats(),
         "source": args.source,
         "monitor_type": args.monitor_type,
         "native_plans": plans,
+        "mstep_plans": mstep_plans,
         "presteps": args.presteps,
         "conditioning_s": conditioning_s,
         "public_samples_s": public_samples,

@@ -1681,7 +1681,19 @@ cudaError_t BeamzEnqueueMstepEdge(cudaStream_t stream,
   if (!cells.dims[0])
     return cudaSuccess;
   const int blocks = (cells.dims[0] + 255) / 256;
-  if (launch.phase == 0) {
+  if (launch.uniform_cpml_thickness > 0) {
+    // Reuse the existing symmetric-slab specialization instead of fetching
+    // per-term CPML metadata for every compact edge cell.
+    if (launch.phase == 0)
+      MstepEdgePhase<0, true, false, true>
+          <<<blocks, 256, 0, stream>>>(launch, cells, ny, nx);
+    else if (launch.inputs[9].element_type == kBeamzS32)
+      MstepEdgePhase<1, true, true, true>
+          <<<blocks, 256, 0, stream>>>(launch, cells, ny, nx);
+    else
+      MstepEdgePhase<1, true, false, true>
+          <<<blocks, 256, 0, stream>>>(launch, cells, ny, nx);
+  } else if (launch.phase == 0) {
     if (launch.nterms)
       MstepEdgePhase<0, true, false>
           <<<blocks, 256, 0, stream>>>(launch, cells, ny, nx);
