@@ -13,6 +13,76 @@ import jax.numpy as jnp
 import numpy as np
 
 
+def mstep_plan_inputs(program, groups, monitors):
+    """Rotate only dependency metadata; the executable shares the full transform."""
+    from types import SimpleNamespace
+
+    axes = program.config.cuda_storage_axes
+    names = ("Hx", "Hy", "Hz", "Ex", "Ey", "Ez")
+    shapes = tuple(program.boundary.logical_component_shapes[n] for n in names)
+    cpml = program.boundary.cpml
+    if axes == (0, 1, 2):
+        return shapes, cpml, groups, None if monitors is None else monitors[0]
+    components = tuple(2 - axes[2 - c] for c in range(3))
+    order = (*components, *(3 + c for c in components))
+    stored_shapes = tuple(tuple(shapes[c][a] for a in axes) for c in order)
+    terms = tuple(2 * c + k for c in components for k in range(2))
+
+    def rotate_terms(old):
+        if not old:
+            return ()
+        return tuple(
+            replace(
+                old[i],
+                component=old[i].component[0] + "xyz"[j // 2],
+                axis=axes.index(old[i].axis),
+                slab=old[i].slab._replace(
+                    axis=axes.index(old[i].axis),
+                    shape=tuple(old[i].slab.shape[a] for a in axes),
+                ),
+            )
+            for j, i in enumerate(terms)
+        )
+
+    cpml = replace(
+        cpml, h_terms=rotate_terms(cpml.h_terms), e_terms=rotate_terms(cpml.e_terms)
+    )
+    stored_groups = tuple(
+        None
+        if groups[3 * p + c] is None
+        else SimpleNamespace(
+            coeffs=SimpleNamespace(
+                shape=(
+                    groups[3 * p + c].coeffs.shape[0],
+                    *(groups[3 * p + c].coeffs.shape[1 + a] for a in axes),
+                )
+            ),
+            starts=np.asarray(groups[3 * p + c].starts)[:, axes],
+        )
+        for p in range(3)
+        for c in components
+    )
+    indices = None
+    if monitors is not None:
+        rows = []
+        original = np.asarray(monitors[0])
+        for old in order:
+            # Monitor component lanes use E,H order; native banks use H,E.
+            shape = shapes[(old + 3) % 6]
+            flat = original[:, old]
+            coord = (
+                flat // (shape[1] * shape[2]),
+                (flat // shape[2]) % shape[1],
+                flat % shape[2],
+            )
+            remapped = (coord[axes[0]] * shape[axes[1]] + coord[axes[1]]) * shape[
+                axes[2]
+            ] + coord[axes[2]]
+            rows.append(np.where((flat >= 0) & (flat < math.prod(shape)), remapped, -1))
+        indices = np.stack(rows, axis=1)
+    return stored_shapes, cpml, stored_groups, indices
+
+
 def wrap_program_call(original, axes):
     axes = tuple(axes)
     if axes not in ((0, 1, 2), (1, 2, 0), (2, 0, 1)):
@@ -58,11 +128,10 @@ def wrap_program_call(original, axes):
         if not (
             ctx.is_3d
             and ctx.config.metric_kind == "isotropic_uniform"
-            and ctx.boundary.cpml.enabled
             and coeffs.e_inverse_offdiagonal.size == 0
         ):
             raise ValueError(
-                "Cyclic CUDA storage requires uniform 3D CPML and diagonal materials"
+                "Cyclic CUDA storage requires uniform 3D and diagonal materials"
             )
         # Monitor arenas are ragged in point/frequency count. Preserve their
         # canonical offsets and spatial sample order; only component lanes move.
@@ -81,13 +150,19 @@ def wrap_program_call(original, axes):
         inverse_dft = np.argsort(dft_order)
         new_state = state._replace(
             **permute_fields(state, components, axes),
-            cpml_psi_h_terms=tuple(transpose(state.cpml_psi_h_terms[t]) for t in terms),
-            cpml_psi_e_terms=tuple(transpose(state.cpml_psi_e_terms[t]) for t in terms),
+            cpml_psi_h_terms=tuple(transpose(state.cpml_psi_h_terms[t]) for t in terms)
+            if state.cpml_psi_h_terms
+            else (),
+            cpml_psi_e_terms=tuple(transpose(state.cpml_psi_e_terms[t]) for t in terms)
+            if state.cpml_psi_e_terms
+            else (),
             dft_vec_re=state.dft_vec_re[dft_order],
             dft_vec_im=state.dft_vec_im[dft_order],
         )
 
         def boundary_terms(old_terms):
+            if not old_terms:
+                return ()
             result = []
             for new_index, old_index in enumerate(terms):
                 term = old_terms[old_index]
@@ -215,11 +290,15 @@ def wrap_program_call(original, axes):
             cpml_psi_h_terms=tuple(
                 jnp.transpose(result.cpml_psi_h_terms[t], inverse_axes)
                 for t in inverse_terms
-            ),
+            )
+            if result.cpml_psi_h_terms
+            else (),
             cpml_psi_e_terms=tuple(
                 jnp.transpose(result.cpml_psi_e_terms[t], inverse_axes)
                 for t in inverse_terms
-            ),
+            )
+            if result.cpml_psi_e_terms
+            else (),
             dft_vec_re=result.dft_vec_re[inverse_dft],
             dft_vec_im=result.dft_vec_im[inverse_dft],
         )

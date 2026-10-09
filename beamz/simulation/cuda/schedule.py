@@ -106,6 +106,8 @@ def automatic_candidate(program, geometry, *, device_kind):
     from beamz.simulation.cuda.runtime import _packed_e_material
 
     cfg = program.config
+    if cfg.cuda_storage_axes != (0, 1, 2):
+        return False, "rotated mstep has no measured selection model", {}
     if not device_kind.endswith("RTX 3090"):
         return False, "GPU has no measured mstep selection model", {}
     if cfg.num_steps < 256:
@@ -179,7 +181,6 @@ def choose_execution_schedule(
         and cfg.is_3d
         and not cfg.sharding.enabled
         and cfg.metric_kind == "isotropic_uniform"
-        and cfg.cuda_storage_axes == (0, 1, 2)
         and not program.coefficients.e_inverse_offdiagonal.size
     )
     if not supported:
@@ -214,11 +215,12 @@ def choose_execution_schedule(
         status = cuda_backend_status(register=False)
         if abi.CUDA_MSTEP_TARGET not in status.targets:
             return None, {**decision, "reason": "optional mstep target is unavailable"}
-    shapes = tuple(
-        program.boundary.logical_component_shapes[c]
-        for c in ("Hx", "Hy", "Hz", "Ex", "Ey", "Ez")
+    from beamz.simulation.cuda.storage import mstep_plan_inputs
+
+    shapes, cpml, planning_groups, monitor_indices = mstep_plan_inputs(
+        program, groups, packed_monitors
     )
-    geometry = build_mstep_geometry(shapes, program.boundary.cpml, groups)
+    geometry = build_mstep_geometry(shapes, cpml, planning_groups)
     decision = {**decision, **geometry.summary()}
     if not geometry.core_cells:
         return None, {**decision, "reason": "no eligible columns"}
@@ -232,9 +234,9 @@ def choose_execution_schedule(
             return None, {**decision, "reason": reason}
     plan = build_mstep_plan(
         shapes,
-        program.boundary.cpml,
-        groups,
-        packed_monitors[0] if packed_monitors is not None else None,
+        cpml,
+        planning_groups,
+        monitor_indices,
     )
     if requested == "mstep":
         required, available = check_mstep_workspace(

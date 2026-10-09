@@ -767,10 +767,9 @@ def build_scan(program, *, donate_state: bool = False):
             cuda_multi_step
             and cfg.is_3d
             and cfg.metric_kind == "isotropic_uniform"
-            and boundary.cpml.enabled
         ):
             raise ValueError(
-                "CUDA storage-axis permutations require a 3D uniform-grid CPML "
+                "CUDA storage-axis permutations require a 3D uniform-grid "
                 "native graph with supported slab sources and DFT monitors"
             )
         from beamz.simulation.cuda import (
@@ -835,6 +834,26 @@ def build_scan(program, *, donate_state: bool = False):
             from beamz.simulation.cuda.mstep import run_mstep
             from beamz.simulation.cuda.runtime import run_native_steps
 
+            def mstep_call(
+                chunk_state, ctx, coefficients, groups, monitors, steps, **clock
+            ):
+                return run_mstep(
+                    chunk_state,
+                    ctx,
+                    coefficients,
+                    groups,
+                    monitors,
+                    mstep_plan,
+                    steps,
+                    plan_buffers=mstep_buffers,
+                    **clock,
+                )
+
+            if mstep_plan is not None and cfg.cuda_storage_axes != (0, 1, 2):
+                from beamz.simulation.cuda.storage import wrap_program_call
+
+                mstep_call = wrap_program_call(mstep_call, cfg.cuda_storage_axes)
+
             def advance_native_chunk(chunk_state, chunk_steps: int, elapsed_steps):
                 elapsed_steps = jnp.asarray(elapsed_steps, dtype=jnp.int32)
                 chunk_state = chunk_state._replace(
@@ -846,17 +865,15 @@ def build_scan(program, *, donate_state: bool = False):
                     current_step=state.current_step + elapsed_steps,
                 )
                 chunk_out = (
-                    run_mstep(
+                    mstep_call(
                         chunk_state,
                         step_context,
                         coeffs,
                         graph_source_groups,
                         packed_graph_monitors,
-                        mstep_plan,
                         chunk_steps,
                         observation_origin=observation_origin,
                         observation_step_offset=observation_offset + elapsed_steps,
-                        plan_buffers=mstep_buffers,
                     )
                     if mstep_plan is not None
                     else run_native_steps(

@@ -124,8 +124,16 @@ class CompiledProgramKey:
 
 def _preparation_key(key: CompiledProgramKey):
     # Horizon and observation/source plans do not change constitutive arrays.
-    # Keep dt, materials, boundaries, layout, backend and numerical flags intact.
-    from .cuda.mstep_config import VARIANT_FLAGS
+    # CUDA schedules share constitutive arrays. Kernel/workspace choices must
+    # not create extra material banks when trying several launch configurations.
+    from ._cuda_abi import (
+        CUDA_BF16_PSI,
+        CUDA_FIELD_PAD32,
+        CUDA_FIELD_PAD64,
+        CUDA_FIELD_PAD_Y8,
+    )
+
+    cuda_backend = key.backend in {"cuda_streamed", "cuda_mstep"}
 
     return replace(
         key,
@@ -137,7 +145,15 @@ def _preparation_key(key: CompiledProgramKey):
         cuda_tuning_policy=(),
         cuda_schedule="streamed",
         cuda_expected_runs=1,
-        cuda_flags=key.cuda_flags & ~VARIANT_FLAGS,
+        backend="cuda_streamed" if cuda_backend else key.backend,
+        cuda_flags=key.cuda_flags
+        & (CUDA_BF16_PSI | CUDA_FIELD_PAD32 | CUDA_FIELD_PAD64 | CUDA_FIELD_PAD_Y8)
+        if cuda_backend
+        else key.cuda_flags,
+        cuda_memory_policy="auto",
+        cuda_graph_cache_capacity=0,
+        # Storage permutations are applied by the runtime to these canonical arrays.
+        cuda_storage_axes=(0, 1, 2) if cuda_backend else key.cuda_storage_axes,
     )
 
 
@@ -1051,8 +1067,11 @@ def compile_program(
     cuda_storage_axes = (
         cuda_storage_axes_from_env() if resolved_backend != "jax" else (0, 1, 2)
     )
-    if cuda_storage_axes != (0, 1, 2) and resolved_backend != "cuda_streamed":
-        raise ValueError("CUDA storage-axis permutations require cuda_streamed")
+    if cuda_storage_axes != (0, 1, 2) and resolved_backend not in {
+        "cuda_streamed",
+        "cuda_mstep",
+    }:
+        raise ValueError("CUDA storage-axis permutations require a CUDA schedule")
     cuda_graph_cache_capacity = (
         cuda_graph_cache_capacity_from_env() if resolved_backend != "jax" else 0
     )

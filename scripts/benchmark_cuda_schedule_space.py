@@ -78,6 +78,19 @@ def configurations():
         for tile in ("16x32", "8x32", "8x16", "16x16")
         for segment in ("whole", "32", "64", "128", "256")
     ]
+    candidates += [
+        {
+            "name": f"mstep-axes-{axes}-{tile}-{segment}",
+            "backend": "cuda_mstep",
+            "env": {
+                "BEAMZ_CUDA_STORAGE_AXES": axes,
+                "BEAMZ_CUDA_MSTEP_TILE": tile,
+                "BEAMZ_CUDA_MSTEP_SEGMENT": segment,
+            },
+        }
+        for axes in ("120", "201")
+        for tile, segment in (("16x32", "whole"), ("8x32", "64"), ("8x16", "32"))
+    ]
     return candidates
 
 
@@ -120,6 +133,8 @@ def workloads():
         "gaussian": dict(source="gaussian"),
         "no_monitors": dict(monitors=0),
         "dense_monitors": dict(monitors=3, frequencies=8),
+        "magnetic": dict(material="magnetic"),
+        "bf16": dict(base_env={"BEAMZ_CUDA_CPML_PSI_PRECISION": "bf16"}),
     }.items():
         cases.append(dict(base, name=name, shape=shapes["medium"], **changes))
     return cases
@@ -136,6 +151,7 @@ def worker(case, candidates, output, samples, rounds):
     from scripts.benchmark_cuda_realistic import build_simulation
 
     t = time.perf_counter()
+    os.environ.update(case.get("base_env", {}))
     sim = build_simulation(SimpleNamespace(**case))
     base_program = sim.compile(num_steps=case["steps"], backend="cuda_streamed")
     state = initial_program_state(
@@ -178,6 +194,7 @@ def worker(case, candidates, output, samples, rounds):
                 if key.startswith("BEAMZ_CUDA_"):
                     del os.environ[key]
             os.environ.update(choice["env"])
+            os.environ.update(case.get("base_env", {}))
             os.environ["BEAMZ_CUDA_AUTOTUNE"] = "off"
             last_plan = {}
             entry = {"configuration": choice, "round": round_index, "status": "ok"}
@@ -258,6 +275,11 @@ def main():
     parser.add_argument("--samples", type=int, default=3)
     parser.add_argument("--rounds", type=int, default=2)
     parser.add_argument("--worker", action="store_true")
+    parser.add_argument(
+        "--isolated",
+        action="store_true",
+        help="Measure every configuration/round in its own fresh process",
+    )
     parser.add_argument("--case-json")
     parser.add_argument("--config-json")
     args = parser.parse_args()
@@ -291,6 +313,62 @@ def main():
         XLA_PYTHON_CLIENT_MEM_FRACTION="0.6",
     )
     for case in cases:
+        if args.isolated:
+            aggregate = {
+                "case": case,
+                "records": [],
+                "method": "Every candidate and round runs in a fresh process; preparation and first execution are measured directly.",
+            }
+            for round_index in range(args.rounds):
+                for choice in choices if round_index % 2 == 0 else choices[::-1]:
+                    label = f"{case['name']}--{choice['name']}--{round_index}"
+                    item = dict(case, name=label)
+                    parts = args.output_dir / "isolated-parts"
+                    subprocess.run(
+                        [
+                            sys.executable,
+                            __file__,
+                            "--worker",
+                            "--case-json",
+                            json.dumps(item),
+                            "--config-json",
+                            json.dumps([choice]),
+                            "--output-dir",
+                            str(parts.resolve()),
+                            "--samples",
+                            str(args.samples),
+                            "--rounds",
+                            "1",
+                        ],
+                        env=env,
+                        check=True,
+                    )
+                    record = json.loads(
+                        (parts / f"{label}-{case['steps']}.json").read_text()
+                    )
+                    aggregate.update(
+                        {
+                            key: record[key]
+                            for key in (
+                                "device",
+                                "jax",
+                                "commit",
+                                "extension_sha256",
+                                "benchmark_sha256",
+                            )
+                        }
+                    )
+                    for entry in record["records"]:
+                        entry.update(
+                            round=round_index,
+                            fresh_process=True,
+                            shared_setup_s=record["shared_setup_s"],
+                        )
+                        aggregate["records"].append(entry)
+                    (
+                        args.output_dir / f"{case['name']}-{case['steps']}.json"
+                    ).write_text(json.dumps(aggregate, indent=2) + "\n")
+            continue
         subprocess.run(
             [
                 sys.executable,

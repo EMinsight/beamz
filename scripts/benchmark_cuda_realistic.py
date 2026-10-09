@@ -17,6 +17,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 import beamz as bz
@@ -51,7 +52,11 @@ def build_simulation(args):
     grid = MaterialGrid(
         permittivity=eps,
         conductivity=sigma,
-        permeability=np.float32(1),
+        permeability=(
+            np.broadcast_to(np.linspace(1, 1.2, nx, dtype=np.float32), eps.shape)
+            if args.material == "magnetic"
+            else np.float32(1)
+        ),
         resolution=dx,
         shape=eps.shape,
     )
@@ -145,7 +150,9 @@ def main():
     parser.add_argument("--monitors", type=int, default=2)
     parser.add_argument("--frequencies", type=int, default=3)
     parser.add_argument(
-        "--material", choices=("binary", "smooth", "scalar", "lossy"), default="binary"
+        "--material",
+        choices=("binary", "smooth", "scalar", "lossy", "magnetic"),
+        default="binary",
     )
     parser.add_argument("--source", choices=("mode", "gaussian"), default="mode")
     parser.add_argument("--monitor-type", choices=("field", "mode"), default="field")
@@ -161,6 +168,11 @@ def main():
         help="Experiment: use the existing single-bank CPML schedule",
     )
     parser.add_argument("--public-samples", type=int, default=0)
+    parser.add_argument(
+        "--donate",
+        action="store_true",
+        help="Use private copied state for each donated trial; copies are outside execution timing",
+    )
     parser.add_argument(
         "--presteps",
         type=int,
@@ -209,15 +221,25 @@ def main():
     choose_mstep_plan = mstep.build_mstep_plan
 
     def record_mstep_plan(*positional, **keywords):
+        plan_start = time.perf_counter()
         plan = choose_mstep_plan(*positional, **keywords)
-        mstep_plans.append(plan.summary())
+        from beamz.simulation.cuda.mstep_config import variant_summary
+
+        mstep_plans.append(
+            {
+                **plan.summary(),
+                **variant_summary(program.config.cuda_flags),
+                "build_s": time.perf_counter() - plan_start,
+            }
+        )
         return plan
 
     mstep.build_mstep_plan = record_mstep_plan
     try:
-        scan = build_scan(program, donate_state=False)
+        scan = build_scan(program, donate_state=args.donate)
     finally:
         mstep.build_mstep_plan = choose_mstep_plan
+    build_scan_s = time.perf_counter() - start
     from beamz.simulation.cuda import runtime
 
     plans = []
@@ -230,10 +252,25 @@ def main():
 
     runtime._native_schedule_plan = record_plan
     try:
-        executable = scan.lower(state, program.coefficients).compile()
+        lowering_start = time.perf_counter()
+        lowered = scan.lower(state, program.coefficients)
+        lower_s = time.perf_counter() - lowering_start
+        compilation_start = time.perf_counter()
+        executable = lowered.compile()
+        xla_compile_s = time.perf_counter() - compilation_start
     finally:
         runtime._native_schedule_plan = choose_plan
     compile_s = time.perf_counter() - start
+
+    def trial_state():
+        if not args.donate:
+            return state
+        copied = jax.tree.map(
+            lambda a: jnp.array(a, copy=True),
+            state,
+        )
+        return jax.block_until_ready(copied)
+
     conditioning_s = 0.0
     if args.presteps:
         start = time.perf_counter()
@@ -246,15 +283,17 @@ def main():
         ).state
         jax.block_until_ready(state)
         conditioning_s = time.perf_counter() - start
+    current = trial_state()
     first_start = time.perf_counter()
-    jax.block_until_ready(executable(state, program.coefficients))
+    jax.block_until_ready(executable(current, program.coefficients))
     first_run_s = time.perf_counter() - first_start
     for _ in range(args.warmups):
-        jax.block_until_ready(executable(state, program.coefficients))
+        jax.block_until_ready(executable(trial_state(), program.coefficients))
     samples = []
     for _ in range(args.samples):
+        current = trial_state()
         start = time.perf_counter()
-        result = executable(state, program.coefficients)
+        result = executable(current, program.coefficients)
         jax.block_until_ready(result)
         samples.append(time.perf_counter() - start)
     public_samples = []
@@ -330,6 +369,11 @@ def main():
         "source_specs": len(program.sources),
         "setup_s": setup_s,
         "compile_s": compile_s,
+        "build_scan_s": build_scan_s,
+        "lower_s": lower_s,
+        "xla_compile_s": xla_compile_s,
+        "donate_state": args.donate,
+        "cuda_flags": program.config.cuda_flags,
         "first_run_s": first_run_s,
         "executable_memory": {
             name: getattr(memory, name)

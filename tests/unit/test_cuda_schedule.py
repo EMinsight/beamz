@@ -178,6 +178,35 @@ def test_schedule_and_reuse_are_execution_cache_inputs():
     ]
     assert len(set(keys)) == 3
     assert len({_preparation_key(key) for key in keys}) == 1
+    cuda_keys = [
+        replace(
+            keys[0],
+            backend=backend,
+            cuda_flags=flags,
+            cuda_storage_axes=axes,
+            cuda_memory_policy=policy,
+        )
+        for backend, flags, axes, policy in (
+            ("cuda_streamed", abi.CUDA_GRAPH_CACHE, (0, 1, 2), "auto"),
+            (
+                "cuda_mstep",
+                abi.CUDA_GRAPH_CACHE | abi.CUDA_MSTEP_TILE8X32,
+                (0, 1, 2),
+                "speed",
+            ),
+            (
+                "cuda_streamed",
+                abi.CUDA_GRAPH_CACHE | abi.CUDA_TEMPORAL_PAIR,
+                (1, 2, 0),
+                "capacity",
+            ),
+        )
+    ]
+    assert len(set(cuda_keys)) == 3
+    assert len({_preparation_key(key) for key in cuda_keys}) == 1
+    assert _preparation_key(
+        replace(cuda_keys[0], cuda_flags=abi.CUDA_BF16_PSI)
+    ) != _preparation_key(cuda_keys[0])
 
 
 def test_auto_backend_cannot_silently_accept_mstep_on_2d():

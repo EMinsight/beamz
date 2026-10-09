@@ -134,6 +134,46 @@ def test_mstep_long_column_segments_and_tail(monkeypatch, tile, segment):
     _compare(reference, _run(sim, state, "cuda_mstep", 5))
 
 
+def test_cuda_launch_choices_share_material_buffers(monkeypatch):
+    sim = _simulation(steps=3)
+    base = sim.compile(backend="cuda_streamed", num_steps=3)
+    state = _seed(base)
+    reference = _run(sim, state, "cuda_streamed", 3)
+    for backend, env in (
+        (
+            "cuda_mstep",
+            {"BEAMZ_CUDA_MSTEP_TILE": "8x32", "BEAMZ_CUDA_MSTEP_SEGMENT": "32"},
+        ),
+        ("cuda_streamed", {"BEAMZ_CUDA_STORAGE_AXES": "120"}),
+        ("cuda_streamed", {"BEAMZ_CUDA_TEMPORAL_STEPS": "2"}),
+        ("cuda_streamed", {"BEAMZ_CUDA_MEMORY_POLICY": "capacity"}),
+    ):
+        with monkeypatch.context() as patch:
+            for key, value in env.items():
+                patch.setenv(key, value)
+            program = sim.compile(backend=backend, num_steps=3)
+            assert program.coefficients is base.coefficients
+            assert program.grid is base.grid
+            _compare(reference, _run(sim, state, backend, 3))
+
+
+@pytest.mark.parametrize("axes", ["120", "201"])
+@pytest.mark.parametrize("tile,segment", [("16x32", "whole"), ("8x32", "32")])
+@pytest.mark.parametrize(
+    "material,boundary", [("binary", "all"), ("smooth", "pec"), ("lossy", "right")]
+)
+def test_mstep_cyclic_storage_preserves_sources_and_monitors(
+    monkeypatch, axes, tile, segment, material, boundary
+):
+    sim = _simulation(material, boundary, shape=(103, 65, 97), steps=5)
+    state = _seed(sim.compile(backend="jax", num_steps=5))
+    reference = _run(sim, state, "cuda_streamed", 5)
+    monkeypatch.setenv("BEAMZ_CUDA_STORAGE_AXES", axes)
+    monkeypatch.setenv("BEAMZ_CUDA_MSTEP_TILE", tile)
+    monkeypatch.setenv("BEAMZ_CUDA_MSTEP_SEGMENT", segment)
+    _compare(reference, _run(sim, state, "cuda_mstep", 5))
+
+
 @pytest.mark.parametrize("steps", [1, 2, 3, 4, 5, 17])
 @pytest.mark.parametrize(
     "material,boundary",
