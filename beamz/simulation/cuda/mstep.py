@@ -189,7 +189,7 @@ def _build_mstep_plan(field_shapes, cpml, groups, monitor_indices=None):
     first_xy = np.logical_or.reduce(
         [padded[dy : dy + ny, dx : dx + nx] for dy in range(3) for dx in range(3)]
     )
-    watched = {}
+    requests = []
     if monitor_indices is not None:
         # DFT plans use E,H order; native field banks use H,E order.
         for c, dims in enumerate((*field_shapes[3:], *field_shapes[:3])):
@@ -198,9 +198,21 @@ def _build_mstep_plan(field_shapes, cpml, groups, monitor_indices=None):
             zz, rest = np.divmod(indices, dims[1] * dims[2])
             yy, xx = np.divmod(rest, dims[2])
             for dz, dy, dx in ((0, 0, 0), (-1, 0, 0), (0, -1, 0), (0, 0, -1)):
-                for z, y, x in zip(zz + dz, yy + dy, xx + dx, strict=True):
-                    if 0 <= z < nz and 0 <= y < ny and 0 <= x < nx:
-                        watched.setdefault(int(z), []).append(int(y * nx + x))
+                z, y, x = zz + dz, yy + dy, xx + dx
+                valid = (z >= 0) & (z < nz) & (y >= 0) & (y < ny) & (x >= 0) & (x < nx)
+                requests.append((z[valid] * ny + y[valid]) * nx + x[valid])
+    watched = {}
+    if requests:
+        # Collapse repeated frequencies, components and neighbours in bulk.
+        # Large monitor planes otherwise spend most preparation time inserting
+        # individual Python integers into per-plane lists.
+        rows = np.unique(np.concatenate(requests))
+        z, xy = np.divmod(rows, ny * nx)
+        planes, starts = np.unique(z, return_index=True)
+        for plane, start, end in zip(
+            planes, starts, (*starts[1:], rows.size), strict=True
+        ):
+            watched[int(plane)] = xy[start:end]
     slots = np.full((nz, nq_y, nq_x), -1, dtype=np.int32)
     first, edge = [], []
     all_xy = np.arange(ny * nx, dtype=np.int32)

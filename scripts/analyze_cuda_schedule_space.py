@@ -41,56 +41,130 @@ def summarize(report):
     return dict(case=report["case"], device=report["device"], configurations=rows)
 
 
-def recommend(summary, steps, *, cached=False):
+def rank(summary, steps, *, cached=False, expected_runs=1):
     """Estimate within tested configurations; preparation changes need validation."""
     values = []
     for row in summary["configurations"]:
-        score = steps * row["seconds_per_step"] + (
+        score = expected_runs * steps * row["seconds_per_step"] + (
             0 if cached else row["cold_preparation_s"] + row["first_execution_extra_s"]
         )
-        values.append((score, row["name"]))
-    return min(values) if values else (None, None)
+        values.append(
+            dict(
+                seconds=score,
+                configuration=row["configuration"],
+                fresh_process=row["fresh_process"],
+                measured_steps=summary["case"]["steps"],
+                extrapolated=steps != summary["case"]["steps"],
+            )
+        )
+    return sorted(values, key=lambda r: r["seconds"])
+
+
+def recommend(summary, steps, *, cached=False, expected_runs=1):
+    values = rank(summary, steps, cached=cached, expected_runs=expected_runs)
+    return (
+        (values[0]["seconds"], values[0]["configuration"]["name"])
+        if values
+        else (None, None)
+    )
+
+
+def load_reports(directories, *, fresh_only=False, cases=None):
+    """Merge complementary sweeps only when workload and implementation agree."""
+    merged = {}
+    for directory in directories:
+        for path in sorted(directory.glob("*.json")):
+            report = json.loads(path.read_text())
+            if not report.get("records") or (
+                cases and report["case"]["name"] not in cases
+            ):
+                continue
+            key = json.dumps(
+                [
+                    report["case"],
+                    report["device"],
+                    report.get("jax"),
+                    report.get("extension_sha256"),
+                    report.get("planner_sha256"),
+                ],
+                sort_keys=True,
+            )
+            records = [
+                r
+                for r in report["records"]
+                if not fresh_only or r.get("fresh_process", False)
+            ]
+            if not records:
+                continue
+            item = merged.setdefault(key, {**report, "records": [], "sources": []})
+            item["records"].extend(records)
+            item["sources"].append(str(path))
+    return list(merged.values())
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directories", nargs="+", type=Path)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--cases", nargs="+")
+    parser.add_argument("--fresh-only", action="store_true")
+    parser.add_argument("--steps", type=int, help="Rank for a requested horizon")
+    parser.add_argument("--expected-runs", type=int, default=1)
+    parser.add_argument("--cached", action="store_true")
     args = parser.parse_args()
+    if args.expected_runs < 1 or (args.steps is not None and args.steps < 1):
+        parser.error("steps and expected-runs must be positive")
     studies = []
-    for directory in args.directories:
-        for path in sorted(directory.glob("*.json")):
-            report = json.loads(path.read_text())
-            if not report.get("records"):
-                continue
-            item = summarize(report)
-            item["source"] = str(path)
-            item["predictions"] = [
-                dict(
-                    steps=n,
-                    cold=dict(
-                        zip(
-                            ("seconds", "configuration"),
-                            recommend(item, n),
-                            strict=True,
-                        )
-                    ),
-                    cached=dict(
-                        zip(
-                            ("seconds", "configuration"),
-                            recommend(item, n, cached=True),
-                            strict=True,
-                        )
-                    ),
-                )
-                for n in (16, 64, 256, 1024, 4096, 16384)
+    for report in load_reports(
+        args.directories, fresh_only=args.fresh_only, cases=args.cases
+    ):
+        item = summarize(report)
+        item["sources"] = report["sources"]
+        item["extension_sha256"] = report.get("extension_sha256")
+        item["planner_sha256"] = report.get("planner_sha256")
+        item["jax"] = report.get("jax")
+        item["predictions"] = [
+            dict(
+                steps=n,
+                cold=dict(
+                    zip(
+                        ("seconds", "configuration"),
+                        recommend(item, n),
+                        strict=True,
+                    )
+                ),
+                cached=dict(
+                    zip(
+                        ("seconds", "configuration"),
+                        recommend(item, n, cached=True),
+                        strict=True,
+                    )
+                ),
+            )
+            for n in (16, 64, 256, 1024, 4096, 16384)
+        ]
+        item["requested_ranking"] = rank(
+            item,
+            args.steps or item["case"]["steps"],
+            cached=args.cached,
+            expected_runs=args.expected_runs,
+        )
+        if item["requested_ranking"]:
+            best = item["requested_ranking"][0]["seconds"]
+            item["within_three_percent"] = [
+                r["configuration"]["name"]
+                for r in item["requested_ranking"]
+                if r["seconds"] <= best * 1.03
             ]
-            studies.append(item)
+        studies.append(item)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(
             dict(
-                method="Predictions extrapolate measured per-step execution and startup costs; verify finalists in fresh processes at actual horizons. Shared sweeps are screening data, not unbiased cold-start measurements.",
+                method="T = preparation + first-execution overhead + expected_runs * steps * execution_per_step. Cached mode excludes preparation and capture. Common material/state setup and Python import are excluded from ranking. Match the complete workload and hardware; extrapolations require fresh-process validation at the actual horizon. Shared sweeps are screening data, not unbiased cold-start measurements. Differences below 3% should be treated as ties, not proven wins.",
+                requested_steps=args.steps,
+                expected_runs=args.expected_runs,
+                cached=args.cached,
                 studies=studies,
             ),
             indent=2,

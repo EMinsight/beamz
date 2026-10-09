@@ -64,6 +64,30 @@ def test_monitors_preserve_intermediate_core_samples():
     assert plan.core_cells == base.core_cells
 
 
+def test_monitor_planes_deduplicate_components_and_ignore_invalid_indices():
+    base, shapes = _plan((31, 41, 57))
+    rng = np.random.default_rng(42)
+    indices = np.empty((2, 6, 3, 40), np.int32)
+    for component, dims in enumerate((*shapes[3:], *shapes[:3])):
+        values = rng.integers(-20, np.prod(dims) + 20, (2, 1, 40))
+        values[:, :, :2] = [-1, np.prod(dims)]
+        indices[:, component] = values  # Repeated frequencies request the same cells.
+    plan, _ = _plan((31, 41, 57), indices=indices)
+    expected = set(base.first_cells.tolist())
+    nz, ny, nx = plan.shape
+    for component, dims in enumerate((*shapes[3:], *shapes[:3])):
+        for index in indices[:, component].reshape(-1):
+            if not 0 <= index < np.prod(dims):
+                continue
+            z, rest = divmod(int(index), dims[1] * dims[2])
+            y, x = divmod(rest, dims[2])
+            for dz, dy, dx in ((0, 0, 0), (-1, 0, 0), (0, -1, 0), (0, 0, -1)):
+                zz, yy, xx = z + dz, y + dy, x + dx
+                if 0 <= zz < nz and 0 <= yy < ny and 0 <= xx < nx:
+                    expected.add((zz * ny + yy) * nx + xx)
+    assert set(plan.first_cells.tolist()) == expected
+
+
 def test_small_case_has_an_explicit_edge_only_plan():
     plan, _ = _plan((3, 4, 5))
     assert plan.core_cells == 0

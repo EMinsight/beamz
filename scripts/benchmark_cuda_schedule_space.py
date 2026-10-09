@@ -147,6 +147,7 @@ def worker(case, candidates, output, samples, rounds):
     import jax
 
     from beamz.simulation.cuda import mstep
+    from beamz.simulation.cuda.tuning import _gpu_status
     from beamz.simulation.execute import build_scan, initial_program_state
     from scripts.benchmark_cuda_realistic import build_simulation
 
@@ -163,6 +164,7 @@ def worker(case, candidates, output, samples, rounds):
         "case": case,
         "device": str(jax.devices()[0].device_kind),
         "jax": jax.__version__,
+        "hardware": _gpu_status(),
         "commit": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], text=True
         ).strip(),
@@ -170,6 +172,7 @@ def worker(case, candidates, output, samples, rounds):
             Path(cuda.__file__).read_bytes()
         ).hexdigest(),
         "benchmark_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "planner_sha256": hashlib.sha256(Path(mstep.__file__).read_bytes()).hexdigest(),
         "shared_setup_s": setup,
         "records": [],
         "method": "Shared material setup; measured plan construction, lowering, XLA compilation, first execution and warm samples. Reversed order in alternating rounds.",
@@ -250,6 +253,7 @@ def worker(case, candidates, output, samples, rounds):
                 entry["cold_time_to_result_s"] = (
                     entry["cold_preparation_s"] + entry["first_run_s"]
                 )
+                entry["total_time_to_result_s"] = setup + entry["cold_time_to_result_s"]
                 del executable, lowered, scan, result, program
             except Exception as exc:
                 entry.update(status="unavailable", error=f"{type(exc).__name__}: {exc}")
@@ -304,6 +308,13 @@ def main():
     choices = [
         c for c in configurations() if args.configs is None or c["name"] in args.configs
     ]
+    for selected, available, label in (
+        (args.cases, {c["name"] for c in workloads()}, "cases"),
+        (args.configs, {c["name"] for c in configurations()}, "configurations"),
+    ):
+        unknown = set(selected or ()) - available
+        if unknown:
+            parser.error(f"unknown {label}: {', '.join(sorted(unknown))}")
     if not cases or not choices:
         parser.error("no matching cases/configurations")
     env = {k: v for k, v in os.environ.items() if not k.startswith("BEAMZ_CUDA_")}
@@ -352,9 +363,11 @@ def main():
                             for key in (
                                 "device",
                                 "jax",
+                                "hardware",
                                 "commit",
                                 "extension_sha256",
                                 "benchmark_sha256",
+                                "planner_sha256",
                             )
                         }
                     )
