@@ -162,13 +162,14 @@ def worker(case, candidates, output, samples, rounds):
     import jax
 
     from beamz.simulation.cuda import mstep
-    from beamz.simulation.cuda.tuning import _gpu_status
+    from beamz.simulation.cuda.tuning import _gpu_status, _implementation_identity
     from beamz.simulation.execute import build_scan, initial_program_state
     from scripts.benchmark_cuda_realistic import build_simulation
 
     imports_s = time.perf_counter() - _PROCESS_START
     t = time.perf_counter()
     os.environ.update(case.get("base_env", {}))
+    os.environ["BEAMZ_CUDA_AUTOTUNE"] = "off"
     sim = build_simulation(SimpleNamespace(**case))
     base_program = sim.compile(num_steps=case["steps"], backend="cuda_streamed")
     state = initial_program_state(
@@ -189,6 +190,8 @@ def worker(case, candidates, output, samples, rounds):
         ).hexdigest(),
         "benchmark_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "planner_sha256": hashlib.sha256(Path(mstep.__file__).read_bytes()).hexdigest(),
+        "implementation_sha256": _implementation_identity(),
+        "monitor_layout": "component_blocks",
         "shared_setup_s": setup,
         "imports_s": imports_s,
         "workload_sha256": hashlib.sha256(
@@ -290,6 +293,12 @@ def worker(case, candidates, output, samples, rounds):
                 )
                 entry["cold_time_to_result_s"] = (
                     entry["cold_preparation_s"] + entry["first_run_s"]
+                )
+                entry["schedule_preparation_s"] = (
+                    entry["cold_preparation_s"] - entry["program_setup_s"]
+                )
+                entry["schedule_time_to_result_s"] = (
+                    entry["schedule_preparation_s"] + entry["first_run_s"]
                 )
                 entry["total_time_to_result_s"] = setup + entry["cold_time_to_result_s"]
                 entry["process_time_to_result_s"] = (
@@ -422,6 +431,8 @@ def main():
                                 "extension_sha256",
                                 "benchmark_sha256",
                                 "planner_sha256",
+                                "implementation_sha256",
+                                "monitor_layout",
                                 "workload_sha256",
                             )
                         }

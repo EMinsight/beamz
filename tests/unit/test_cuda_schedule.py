@@ -57,6 +57,7 @@ def _program(shape=(256, 512, 512), steps=256, runs=1):
         cuda_storage_axes=(0, 1, 2),
         metric_kind="isotropic_uniform",
         cuda_memory_policy="auto",
+        cuda_graph_cache_capacity=8,
     )
     coeffs = SimpleNamespace(e_inverse_offdiagonal=np.empty(0))
     for axis in "xyz":
@@ -99,21 +100,32 @@ def _geometry(shape=(257, 513, 513), active=480, depth=229):
     )
 
 
-def test_selector_requires_compilation_to_be_amortized():
+def test_selector_requires_startup_to_be_amortized():
     program = _program()
     candidate, reason, details = schedule.automatic_candidate(
         program, _geometry(), device_kind="NVIDIA GeForce RTX 3090"
     )
     assert not candidate
-    assert "compilation" in reason
-    assert details["predicted_saved_execution_s"] < details["extra_compile_s"]
+    assert "startup" in reason
+    assert details["predicted_saved_execution_s"] <= 1.25 * details["extra_startup_s"]
     program.config.cuda_expected_runs = 16
     assert schedule.automatic_candidate(
         program, _geometry(), device_kind="NVIDIA GeForce RTX 3090"
     )[0]
 
 
-@pytest.mark.parametrize("change", ["gpu", "columns", "dense", "monitors", "precision"])
+@pytest.mark.parametrize(
+    "change",
+    [
+        "gpu",
+        "columns",
+        "dense",
+        "monitors",
+        "precision",
+        "graph_cache",
+        "graph_capacity",
+    ],
+)
 def test_selector_stays_streamed_outside_measured_envelope(change):
     program = _program(runs=32)
     geometry = _geometry()
@@ -128,7 +140,67 @@ def test_selector_stays_streamed_outside_measured_envelope(change):
         program.monitors *= 2
     if change == "precision":
         program.config.cuda_flags |= abi.CUDA_BF16_PSI
+    if change == "graph_cache":
+        program.config.cuda_flags &= ~abi.CUDA_GRAPH_CACHE
+    if change == "graph_capacity":
+        program.config.cuda_graph_cache_capacity = 0
     assert not schedule.automatic_candidate(program, geometry, device_kind=gpu)[0]
+
+
+def test_known_short_chunk_reuse_can_repay_startup():
+    program = _program(steps=16, runs=256)
+    candidate, _, details = schedule.automatic_candidate(
+        program, _geometry(), device_kind="NVIDIA GeForce RTX 3090"
+    )
+    assert candidate
+    assert details["expected_runs"] == 256
+    program.config.cuda_expected_runs = 1
+    assert not schedule.automatic_candidate(
+        program, _geometry(), device_kind="NVIDIA GeForce RTX 3090"
+    )[0]
+
+
+@pytest.mark.parametrize("family", ["all", "pec", "right"])
+def test_measured_boundary_families_select_their_validated_variant(family):
+    program = _program(steps=1024, runs=32)
+    cpml = program.boundary.cpml
+    if family == "pec":
+        cpml.enabled = False
+        cpml.metallic_edges = frozenset(
+            {"front", "back", "bottom", "top", "left", "right"}
+        )
+    if family == "right":
+        terms = tuple(
+            SimpleNamespace(
+                axis=a, slab=SimpleNamespace(low=0, high=12 if a == 2 else 0)
+            )
+            for a in (0, 1, 2, 0, 1, 2)
+        )
+        cpml.h_terms = cpml.e_terms = terms
+        cpml.metallic_edges = frozenset({"front", "back", "bottom", "top", "left"})
+    candidate, _, details = schedule.automatic_candidate(
+        program, _geometry(), device_kind="NVIDIA GeForce RTX 3090"
+    )
+    assert candidate
+    assert details["boundary_family"] == family
+    expected = abi.CUDA_GRAPH_CACHE
+    if family != "all":
+        expected |= abi.CUDA_MSTEP_TILE8X16 | abi.CUDA_MSTEP_SEGMENT32
+    assert details["mstep_cuda_flags"] == expected
+
+
+def test_short_single_call_does_not_query_gpu_or_build_dependency_plan(monkeypatch):
+    from beamz.simulation.cuda import mstep
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Short single call queried hardware or built a plan")
+
+    monkeypatch.setattr(schedule, "cuda_device_kind", forbidden)
+    monkeypatch.setattr(mstep, "build_mstep_geometry", forbidden)
+    _, decision = schedule.choose_execution_schedule(
+        _program(steps=16), (None,) * 9, None, native_supported=True, donate_state=False
+    )
+    assert decision["selected"] == "streamed"
 
 
 @pytest.mark.parametrize(

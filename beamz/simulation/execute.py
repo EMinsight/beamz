@@ -746,7 +746,8 @@ def build_scan(program, *, donate_state: bool = False):
             step_context,
             config=replace(
                 cfg,
-                cuda_flags=cfg.cuda_flags & ALLOWED_FLAGS,
+                cuda_flags=schedule_decision.get("mstep_cuda_flags", cfg.cuda_flags)
+                & ALLOWED_FLAGS,
             ),
         )
         schedule_decision.update(variant_summary(step_context.config.cuda_flags))

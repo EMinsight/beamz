@@ -12,13 +12,23 @@ from pathlib import Path
 def summarize(report):
     groups = {}
     for record in report["records"]:
-        if record["status"] == "ok":
+        if record["status"] == "ok" and not record.get(
+            "exclude_from_current_recommendations"
+        ):
             groups.setdefault(record["configuration"]["name"], []).append(record)
     rows = []
     for name, records in groups.items():
         samples = [s for r in records for s in r["samples_s"]]
         elapsed = statistics.median(samples)
-        preparation = statistics.median(r["cold_preparation_s"] for r in records)
+        # A prepared baseline can hit the program cache while alternatives
+        # repeat identical source/monitor setup. Exclude that common work.
+        preparation = statistics.median(
+            r.get(
+                "schedule_preparation_s",
+                r["cold_preparation_s"] - r.get("program_setup_s", 0),
+            )
+            for r in records
+        )
         first_extra = statistics.median(
             max(0, r["first_run_s"] - r["median_run_s"]) for r in records
         )
@@ -71,45 +81,56 @@ def recommend(summary, steps, *, cached=False, expected_runs=1):
     )
 
 
+def input_reports(inputs):
+    """Read raw directories/files or the portable exported evidence packet."""
+    for source in inputs:
+        paths = [source] if source.is_file() else sorted(source.glob("*.json"))
+        for path in paths:
+            data = json.loads(path.read_text())
+            if "evidence" in data:
+                for item in data["evidence"]:
+                    if not item["exclusion"]:
+                        yield f"{path}:{item['source']}", item["report"]
+            else:
+                yield str(path), data
+
+
 def load_reports(directories, *, fresh_only=False, cases=None):
     """Merge complementary sweeps only when workload and implementation agree."""
     merged = {}
-    for directory in directories:
-        for path in sorted(directory.glob("*.json")):
-            report = json.loads(path.read_text())
-            if not report.get("records") or (
-                cases and report["case"]["name"] not in cases
+    for path, report in input_reports(directories):
+        if not report.get("records") or (cases and report["case"]["name"] not in cases):
+            continue
+        for record in report["records"]:
+            if record.get("exclude_from_current_recommendations") or (
+                fresh_only and not record.get("fresh_process", False)
             ):
                 continue
-            for record in report["records"]:
-                if fresh_only and not record.get("fresh_process", False):
-                    continue
-                # An interrupted/resumed sweep can span revisions. Do not assign
-                # the last worker's fingerprint to earlier measurements.
-                identity = {**report, **record.get("provenance", {})}
-                key = json.dumps(
-                    [
-                        report["case"],
-                        identity["device"],
-                        identity.get("jax"),
-                        identity.get("extension_sha256"),
-                        identity.get("planner_sha256"),
-                        identity.get("workload_sha256"),
-                        {
-                            k: identity.get("hardware", {}).get(k)
-                            for k in ("uuid", "driver", "power_limit")
-                        }
-                        if identity.get("hardware")
-                        else None,
-                    ],
-                    sort_keys=True,
-                )
-                item = merged.setdefault(
-                    key, {**identity, "records": [], "sources": []}
-                )
-                item["records"].append(record)
-                if str(path) not in item["sources"]:
-                    item["sources"].append(str(path))
+            # An interrupted/resumed sweep can span revisions. Do not assign
+            # the last worker's fingerprint to earlier measurements.
+            identity = {**report, **record.get("provenance", {})}
+            key = json.dumps(
+                [
+                    report["case"],
+                    identity["device"],
+                    identity.get("jax"),
+                    identity.get("extension_sha256"),
+                    identity.get("planner_sha256"),
+                    identity.get("implementation_sha256"),
+                    identity.get("workload_sha256"),
+                    {
+                        k: identity.get("hardware", {}).get(k)
+                        for k in ("uuid", "driver", "power_limit")
+                    }
+                    if identity.get("hardware")
+                    else None,
+                ],
+                sort_keys=True,
+            )
+            item = merged.setdefault(key, {**identity, "records": [], "sources": []})
+            item["records"].append(record)
+            if str(path) not in item["sources"]:
+                item["sources"].append(str(path))
     return list(merged.values())
 
 
@@ -133,6 +154,7 @@ def main():
         item["sources"] = report["sources"]
         item["extension_sha256"] = report.get("extension_sha256")
         item["planner_sha256"] = report.get("planner_sha256")
+        item["implementation_sha256"] = report.get("implementation_sha256")
         item["workload_sha256"] = report.get("workload_sha256")
         item["jax"] = report.get("jax")
         item["predictions"] = [
@@ -173,7 +195,7 @@ def main():
     args.output.write_text(
         json.dumps(
             dict(
-                method="T = preparation + first-execution overhead + expected_runs * steps * execution_per_step. Cached mode excludes preparation and capture. Common material/state setup and Python import are excluded from ranking. Match the complete workload and hardware; extrapolations require fresh-process validation at the actual horizon. Shared sweeps are screening data, not unbiased cold-start measurements. Differences below 3% should be treated as ties, not proven wins.",
+                method="T = schedule preparation + first-execution overhead + expected_runs * steps * execution_per_step. Cached mode excludes preparation and capture. Common material/source/monitor/state setup and Python import are excluded from ranking. Repeated program setup after the prepared baseline is also excluded to avoid cache bias. Match the complete workload and hardware; extrapolations require fresh-process validation at the actual horizon. Shared sweeps are screening data, not unbiased cold-start measurements. Differences below 3% should be treated as ties, not proven wins.",
                 requested_steps=args.steps,
                 expected_runs=args.expected_runs,
                 cached=args.cached,

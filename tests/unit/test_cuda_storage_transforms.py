@@ -7,7 +7,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from beamz.simulation.cuda.storage import wrap_native_calls, wrap_program_call
+from beamz.simulation.cuda.storage import (
+    _permute_monitor_arena,
+    wrap_native_calls,
+    wrap_program_call,
+)
 from tests.unit.test_cuda_runtime_contract import _program_and_state
 
 
@@ -17,6 +21,49 @@ class SourceGroup:
     starts: object
     starts_tuple: tuple
     max_sizes: tuple
+
+
+@pytest.mark.parametrize("order", [(2, 0, 1, 5, 3, 4), (1, 2, 0, 4, 5, 3)])
+def test_monitor_block_permutation_matches_index_reference_with_ragged_gaps(order):
+    values = jnp.arange(81, dtype=jnp.float32)
+    counts = np.array([[1, 5, 0, 43, 0], [2, 3, 0, 2, 0]], dtype=np.int32)
+    indices = np.arange(values.size)
+    for frequencies, points, _, offset, _ in counts:
+        end = offset + 6 * frequencies * points
+        indices[offset:end] = indices[offset:end].reshape(6, -1)[list(order)].ravel()
+    transformed = jax.jit(lambda v: _permute_monitor_arena(v, counts, order))(values)
+    np.testing.assert_array_equal(transformed, np.asarray(values)[indices])
+    inverse = tuple(order.index(i) for i in range(6))
+    np.testing.assert_array_equal(
+        _permute_monitor_arena(transformed, counts, inverse), values
+    )
+
+
+def test_empty_monitor_metadata_preserves_arena():
+    values = jnp.arange(7, dtype=jnp.float32)
+    assert (
+        _permute_monitor_arena(values, np.empty((0, 5)), (2, 0, 1, 5, 3, 4)) is values
+    )
+
+
+def test_canonical_wrapper_preserves_clock_arguments():
+    def native(state, ctx, coeffs, groups, monitors, nsteps, **clock):
+        assert nsteps == 7
+        assert clock == {"observation_origin": 0.5, "observation_step_offset": 19}
+        return state
+
+    state = object()
+    result = wrap_program_call(native, (0, 1, 2))(
+        state,
+        None,
+        None,
+        None,
+        None,
+        7,
+        observation_origin=0.5,
+        observation_step_offset=19,
+    )
+    assert result is state
 
 
 @pytest.mark.parametrize(
@@ -215,7 +262,7 @@ def test_storage_rejects_reflections_and_unsupported_geometry():
     call = wrap_program_call(
         lambda *args: pytest.fail("Native call reached"), (1, 2, 0)
     )
-    with pytest.raises(ValueError, match="uniform 3D CPML"):
+    with pytest.raises(ValueError, match="uniform 3D and diagonal"):
         call(
             state,
             replace(context, is_3d=False),

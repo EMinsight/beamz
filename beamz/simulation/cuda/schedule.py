@@ -10,23 +10,30 @@ import operator
 
 import numpy as np
 
-# (physical cells, streamed GCUPS, mstep GCUPS, extra compilation seconds).
-# Source: docs/reviews/cuda-mstep-rtx3090.json, measurement commit 11ae1809.
+# (physical cells, streamed GCUPS, mstep GCUPS, extra startup seconds).
+# Startup includes planning, lowering, XLA compilation and first-execution
+# overhead after shared material setup. Source: cuda-schedule-space.json.
 _COSTS = {
     "all": (
-        (16777216, 7.6066895237, 9.0671678337, 1.5378499049),
-        (67108864, 7.8998332186, 10.6188495464, 4.1703418751),
+        (16777216, 7.6048, 9.0340, 0.1265),
+        (67108864, 7.8590, 10.5972, 0.4765),
     ),
     "right": (
-        (16777216, 7.2631444384, 11.2717240255, 0.7930151416),
-        (67108864, 6.8113729002, 11.8751329705, 2.6239928711),
+        (16777216, 7.2903, 12.4521, 0.1329),
+        (67108864, 6.8163, 12.9725, 0.4750),
     ),
     "pec": (
-        (16777216, 8.2575839801, 12.1205601422, 0.7899707921),
-        (67108864, 8.1166088954, 12.6082370885, 2.6400067966),
+        (16777216, 8.2797, 13.5465, 0.1225),
+        (67108864, 8.1136, 13.8650, 0.4781),
     ),
 }
-_MODEL = "rtx3090-column-v1"
+_MODEL = "rtx3090-column-v2"
+
+
+def _enough_work(cfg):
+    # Measured 16-step calls can repay preparation when the same executable is
+    # known to be reused. Do not query a GPU or plan columns for a short one-off.
+    return cfg.num_steps >= 16 and cfg.num_steps * cfg.cuda_expected_runs >= 256
 
 
 def normalize_schedule_request(backend, schedule, expected_runs):
@@ -82,17 +89,17 @@ def measured_boundary_family(cpml):
 
 
 def predict_cost(cells, family, steps, expected_runs):
-    """Interpolate the two measured sizes; include compilation amortization."""
+    """Interpolate measured sizes; amortize preparation and initial capture."""
     small, large = _COSTS[family]
     fraction = np.clip((np.log2(cells) - np.log2(small[0])) / 2, 0, 1)
-    streamed, mstep, extra_compile = (
+    streamed, mstep, extra_startup = (
         float(a + fraction * (b - a)) for a, b in zip(small[1:], large[1:], strict=True)
     )
     saved = cells * steps * expected_runs * (1 / streamed - 1 / mstep) / 1e9
     return {
         "model": _MODEL,
         "predicted_saved_execution_s": saved,
-        "extra_compile_s": extra_compile,
+        "extra_startup_s": extra_startup,
         "expected_runs": expected_runs,
         "streamed_gcups": streamed,
         "mstep_gcups": mstep,
@@ -110,12 +117,12 @@ def automatic_candidate(program, geometry, *, device_kind):
         return False, "rotated mstep has no measured selection model", {}
     if not device_kind.endswith("RTX 3090"):
         return False, "GPU has no measured mstep selection model", {}
-    if cfg.num_steps < 256:
+    if not _enough_work(cfg):
         return False, "short invocation outside the measured selection envelope", {}
-    if (cfg.cuda_flags & ~abi.CUDA_GRAPH_CACHE) != (
-        CUDA_DEFAULT_FLAGS & ~abi.CUDA_GRAPH_CACHE
-    ):
+    if cfg.cuda_flags != CUDA_DEFAULT_FLAGS:
         return False, "explicit precision or kernel settings", {}
+    if cfg.cuda_graph_cache_capacity < 1:
+        return False, "graph caching has no measured selection model", {}
     if not _packed_e_material(program.coefficients) or any(
         getattr(program.coefficients, f"h_{kind}_{axis}").ndim != 0
         for kind in ("decay", "source")
@@ -145,9 +152,15 @@ def automatic_candidate(program, geometry, *, device_kind):
             details,
         )
     costs = predict_cost(cells, family, cfg.num_steps, cfg.cuda_expected_runs)
+    variant = (
+        abi.CUDA_MSTEP_TILE8X16 | abi.CUDA_MSTEP_SEGMENT32
+        if family in {"pec", "right"}
+        else 0
+    )
+    costs["mstep_cuda_flags"] = abi.CUDA_GRAPH_CACHE | variant
     details = {**details, "boundary_family": family, **costs}
-    if costs["predicted_saved_execution_s"] <= 1.25 * costs["extra_compile_s"]:
-        return False, "predicted execution savings do not repay compilation", details
+    if costs["predicted_saved_execution_s"] <= 1.25 * costs["extra_startup_s"]:
+        return False, "predicted execution savings do not repay startup", details
     return True, "measured column geometry and amortized execution cost", details
 
 
@@ -186,7 +199,7 @@ def choose_execution_schedule(
     if not supported:
         if requested == "mstep":
             raise CudaBackendUnavailable(
-                "cuda_mstep requires canonical unsharded isotropic float32 3D fields, "
+                "cuda_mstep requires unsharded isotropic float32 3D fields, "
                 "batched slab sources and vector DFT monitors; recorders, flux/power "
                 "monitors and other configurations require schedule='streamed' or jax"
             )
@@ -200,7 +213,7 @@ def choose_execution_schedule(
                 **decision,
                 "reason": "capacity policy requires in-place execution",
             }
-        if cfg.num_steps < 256:
+        if not _enough_work(cfg):
             return None, {
                 **decision,
                 "reason": "short invocation outside the measured selection envelope",

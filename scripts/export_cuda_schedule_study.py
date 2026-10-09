@@ -27,6 +27,7 @@ FRESH = {
     "dense-fresh",
     "policy-anchors",
     "layout-anchors",
+    "compact-layout-fresh",
 }
 IDENTITY = (
     "device",
@@ -36,13 +37,15 @@ IDENTITY = (
     "extension_sha256",
     "benchmark_sha256",
     "planner_sha256",
+    "implementation_sha256",
+    "monitor_layout",
     "workload_sha256",
 )
 
 
 def collect(root):
     evidence = []
-    for folder in sorted(SCREEN | FRESH | {"early-fresh"}):
+    for folder in sorted(SCREEN | FRESH | {"early-fresh", "layout-history"}):
         for path in sorted((root / folder).glob("*.json")):
             report = json.loads(path.read_text())
             exclusion = None
@@ -54,6 +57,8 @@ def collect(root):
                 exclusion = "Incomplete shared pilot before material-sharing fix; memory failures."
             if folder == "early-fresh":
                 exclusion = "Historical startup before vectorized planning; retained for comparison."
+            if folder == "layout-history":
+                exclusion = "Historical layout startup before compact monitor-block permutations."
             for record in report["records"]:
                 # Recover exact worker identity from independently saved parts,
                 # including sweeps made before aggregate provenance was added.
@@ -69,6 +74,15 @@ def collect(root):
                     record["provenance"] = {
                         key: worker[key] for key in IDENTITY if key in worker
                     }
+                identity = {**report, **record.get("provenance", {})}
+                if (
+                    folder in FRESH
+                    and tuple(record.get("storage_axes", (0, 1, 2))) != (0, 1, 2)
+                    and identity.get("monitor_layout") != "component_blocks"
+                ):
+                    record["exclude_from_current_recommendations"] = (
+                        "Historical rotated startup before compact monitor-block permutations."
+                    )
             evidence.append(
                 dict(
                     source=str(path.relative_to(root)),
@@ -101,7 +115,9 @@ def rows(packet):
             records = [
                 r
                 for r in report["records"]
-                if r["status"] == "ok" and r["configuration"]["name"] == row["name"]
+                if r["status"] == "ok"
+                and r["configuration"]["name"] == row["name"]
+                and not r.get("exclude_from_current_recommendations")
             ]
             cells = math.prod(report["case"]["shape"])
             result.append(
@@ -124,9 +140,13 @@ def rows(packet):
                     / row["execution_s"]
                     / 1e9,
                     cold_after_shared_setup_s=statistics.median(
-                        r["cold_time_to_result_s"] for r in records
+                        r.get(
+                            "schedule_time_to_result_s",
+                            r["cold_time_to_result_s"] - r.get("program_setup_s", 0),
+                        )
+                        for r in records
                     ),
-                    total_first_result_s=statistics.median(
+                    raw_pipeline_first_result_s=statistics.median(
                         r["total_time_to_result_s"] for r in records
                     ),
                 )
@@ -135,7 +155,13 @@ def rows(packet):
 
 
 def write_tables(measured, output):
-    preferred = {"finalists256", "dense-fresh", "policy-anchors", "layout-anchors"}
+    preferred = {
+        "finalists256",
+        "dense-fresh",
+        "policy-anchors",
+        "layout-anchors",
+        "compact-layout-fresh",
+    }
     bycase = {}
     # The larger anchor sets replace one-round finalists for the same choice.
     for row in sorted(measured, key=lambda r: (r["rounds"], r["source"])):

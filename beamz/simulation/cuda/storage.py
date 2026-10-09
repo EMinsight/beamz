@@ -83,6 +83,28 @@ def mstep_plan_inputs(program, groups, monitors):
     return stored_shapes, cpml, stored_groups, indices
 
 
+def _permute_monitor_arena(values, counts, components):
+    """Move six component blocks without materializing a per-value index table."""
+    if not counts.size:
+        return values
+    pieces = []
+    cursor = 0
+    order = np.asarray(components, dtype=np.int32)
+    for frequencies, points, _, offset, _ in sorted(
+        counts, key=lambda row: int(row[3])
+    ):
+        offset = int(offset)
+        end = offset + 6 * int(frequencies) * int(points)
+        if cursor < offset:
+            pieces.append(values[cursor:offset])
+        block = values[offset:end].reshape(6, -1)
+        pieces.append(block[order].reshape(-1))
+        cursor = end
+    if cursor < values.size:
+        pieces.append(values[cursor:])
+    return jnp.concatenate(pieces)
+
+
 def wrap_program_call(original, axes):
     axes = tuple(axes)
     if axes not in ((0, 1, 2), (1, 2, 0), (2, 0, 1)):
@@ -124,7 +146,7 @@ def wrap_program_call(original, axes):
 
     def call(state, ctx, coeffs, groups, monitors, nsteps, **clock):
         if axes == (0, 1, 2):
-            return original(state, ctx, coeffs, groups, monitors, nsteps)
+            return original(state, ctx, coeffs, groups, monitors, nsteps, **clock)
         if not (
             ctx.is_3d
             and ctx.config.metric_kind == "isotropic_uniform"
@@ -140,14 +162,7 @@ def wrap_program_call(original, axes):
             if monitors is not None
             else np.empty((0, 5), dtype=np.int32)
         )
-        dft_order = np.arange(state.dft_vec_re.size)
-        for frequencies, points, _, offset, _ in counts:
-            count = 6 * int(frequencies) * int(points)
-            old = np.arange(int(offset), int(offset) + count).reshape(6, -1)
-            dft_order[int(offset) : int(offset) + count] = old[
-                np.asarray(six_components)
-            ].reshape(-1)
-        inverse_dft = np.argsort(dft_order)
+        inverse_six = (*inverse_components, *(3 + c for c in inverse_components))
         new_state = state._replace(
             **permute_fields(state, components, axes),
             cpml_psi_h_terms=tuple(transpose(state.cpml_psi_h_terms[t]) for t in terms)
@@ -156,8 +171,8 @@ def wrap_program_call(original, axes):
             cpml_psi_e_terms=tuple(transpose(state.cpml_psi_e_terms[t]) for t in terms)
             if state.cpml_psi_e_terms
             else (),
-            dft_vec_re=state.dft_vec_re[dft_order],
-            dft_vec_im=state.dft_vec_im[dft_order],
+            dft_vec_re=_permute_monitor_arena(state.dft_vec_re, counts, six_components),
+            dft_vec_im=_permute_monitor_arena(state.dft_vec_im, counts, six_components),
         )
 
         def boundary_terms(old_terms):
@@ -299,8 +314,8 @@ def wrap_program_call(original, axes):
             )
             if result.cpml_psi_e_terms
             else (),
-            dft_vec_re=result.dft_vec_re[inverse_dft],
-            dft_vec_im=result.dft_vec_im[inverse_dft],
+            dft_vec_re=_permute_monitor_arena(result.dft_vec_re, counts, inverse_six),
+            dft_vec_im=_permute_monitor_arena(result.dft_vec_im, counts, inverse_six),
         )
 
     return call

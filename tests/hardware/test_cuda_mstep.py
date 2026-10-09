@@ -297,9 +297,17 @@ def test_mstep_mode_source_and_windowed_interval_dft():
     _compare(results[2], results[1], 3e-5)
 
 
-def test_mstep_state_donation_preserves_results():
+@pytest.mark.parametrize("axes", ["012", "120", "201"])
+def test_mstep_state_donation_preserves_results(monkeypatch, axes):
     sim = _simulation()
     state = _seed(sim.compile(backend="jax", num_steps=5))
+    state = state._replace(
+        dft_vec_re=jax.numpy.arange(state.dft_vec_re.size, dtype=jax.numpy.float32)
+        * 1e-5,
+        dft_vec_im=-jax.numpy.arange(state.dft_vec_im.size, dtype=jax.numpy.float32)
+        * 1e-5,
+    )
+    monkeypatch.setenv("BEAMZ_CUDA_STORAGE_AXES", axes)
     expected = sim.advance(state=state, num_steps=5, backend="cuda_mstep").state
     copied = jax.tree_util.tree_map(lambda a: jax.numpy.array(a), state)
     actual = sim.advance(
@@ -308,7 +316,8 @@ def test_mstep_state_donation_preserves_results():
     _compare(expected, actual)
 
 
-def test_mstep_dense_magnetic_coefficients():
+def test_mstep_dense_h_coefficients_with_variable_permeability():
+    # Conductivity produces the dense H banks in the current coefficient compiler.
     sim = _simulation(material="lossy")
     grid = sim._material_grid(progress=False)
     permeability = np.broadcast_to(
@@ -320,6 +329,27 @@ def test_mstep_dense_magnetic_coefficients():
     state = _seed(program)
     actual = _run(sim, state, "cuda_mstep", 5)
     _compare(_run(sim, state, "cuda", 5), actual)
+    _compare(_run(sim, state, "jax", 5), actual, 3e-5)
+
+
+@pytest.mark.parametrize(
+    "axes,tile,segment",
+    [("012", "16x32", "whole"), ("012", "8x16", "32"), ("201", "8x16", "32")],
+)
+def test_mstep_verified_dense_conductive_coefficients(monkeypatch, axes, tile, segment):
+    sim = _simulation(material="dense_conductive", shape=(103, 65, 97), steps=5)
+    # JAX computes these banks during stepping; verify the native representation.
+    program = sim.compile(backend="cuda_streamed", num_steps=5)
+    for axis in "xyz":
+        coefficient = getattr(program.coefficients, f"h_source_{axis}")
+        assert coefficient.ndim == 3 and all(coefficient.shape)
+    state = _seed(program)
+    reference = _run(sim, state, "cuda_streamed", 5)
+    monkeypatch.setenv("BEAMZ_CUDA_STORAGE_AXES", axes)
+    monkeypatch.setenv("BEAMZ_CUDA_MSTEP_TILE", tile)
+    monkeypatch.setenv("BEAMZ_CUDA_MSTEP_SEGMENT", segment)
+    actual = _run(sim, state, "cuda_mstep", 5)
+    _compare(reference, actual)
     _compare(_run(sim, state, "jax", 5), actual, 3e-5)
 
 
@@ -430,20 +460,39 @@ def test_unified_cuda_schedule_matches_compatibility_alias():
     _compare(_run(sim, state, "cuda_mstep", 5), actual)
 
 
-def test_automatic_schedule_dispatch_preserves_chunk_clocks(monkeypatch):
+@pytest.mark.parametrize(
+    "variant_flags", [0, abi.CUDA_MSTEP_TILE8X16 | abi.CUDA_MSTEP_SEGMENT32]
+)
+def test_automatic_schedule_dispatch_preserves_chunk_clocks(monkeypatch, variant_flags):
     """Exercise automatic dispatch on a small core; model admission is tested on host."""
+    from beamz.simulation.compile import clear_program_cache
     from beamz.simulation.cuda import schedule
+    from beamz.simulation.execute import clear_execution_cache
+
+    # Each mocked policy is a different frozen decision for an equivalent case.
+    clear_program_cache()
+    clear_execution_cache()
 
     monkeypatch.setattr(schedule, "cuda_device_kind", lambda: "NVIDIA GeForce RTX 3090")
     monkeypatch.setattr(
         schedule,
         "automatic_candidate",
-        lambda program, geometry, **kw: (True, "parity probe", geometry.summary()),
+        lambda program, geometry, **kw: (
+            True,
+            "parity probe",
+            {
+                **geometry.summary(),
+                "mstep_cuda_flags": abi.CUDA_GRAPH_CACHE | variant_flags,
+            },
+        ),
     )
     sim = _simulation(steps=257)
     state = _seed(sim.compile(backend="jax", num_steps=257))
     program = sim.compile(backend="cuda", schedule="auto", num_steps=257)
-    assert program.cuda_schedule_report()["selected"] == "mstep"
+    report = program.cuda_schedule_report()
+    assert report["selected"] == "mstep"
+    assert report["tile"] == ((8, 16) if variant_flags else (16, 32))
+    assert report["column_segment"] == (32 if variant_flags else 0)
     actual = sim.advance(
         state=state, num_steps=257, backend="cuda", schedule="auto", performance=False
     ).state
