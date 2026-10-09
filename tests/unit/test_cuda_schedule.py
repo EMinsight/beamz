@@ -191,3 +191,25 @@ def test_auto_backend_cannot_silently_accept_mstep_on_2d():
     )
     with pytest.raises(CudaBackendUnavailable, match="3D"):
         sim.compile(backend="auto", schedule="mstep")
+
+
+@pytest.mark.parametrize(
+    "tile,segment",
+    [("8x32", "32"), ("8x16", "128"), ("16x16", "256"), ("16x32", "whole")],
+)
+def test_mstep_variant_flags_are_validated_and_cacheable(monkeypatch, tile, segment):
+    from beamz.simulation.cuda.mstep_config import (
+        variant_flags_from_env,
+        variant_summary,
+    )
+
+    monkeypatch.setenv("BEAMZ_CUDA_MSTEP_TILE", tile)
+    monkeypatch.setenv("BEAMZ_CUDA_MSTEP_SEGMENT", segment)
+    flags = variant_flags_from_env()
+    assert variant_summary(flags) == {
+        "tile": tuple(map(int, tile.split("x"))),
+        "column_segment": 0 if segment == "whole" else int(segment),
+    }
+    monkeypatch.setenv("BEAMZ_CUDA_MSTEP_TILE", "bad")
+    with pytest.raises(ValueError, match="TILE"):
+        variant_flags_from_env()

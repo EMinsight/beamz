@@ -68,3 +68,17 @@ def test_small_case_has_an_explicit_edge_only_plan():
     plan, _ = _plan((3, 4, 5))
     assert plan.core_cells == 0
     assert plan.edge_cells.size == np.prod(plan.shape)
+
+
+def test_plan_cache_reuses_values_but_invalidates_geometry():
+    base, _ = _plan()
+    assert _plan()[0] is base
+    source = SimpleNamespace(
+        coeffs=np.ones((1, 1, 1, 1)), starts=np.array([[15, 24, 48]])
+    )
+    sourced, _ = _plan(groups=(source,) + (None,) * 8)
+    source.starts[0, 2] += 16
+    moved, _ = _plan(groups=(source,) + (None,) * 8)
+    assert sourced is not moved
+    assert not np.array_equal(sourced.core_masks, moved.core_masks)
+    assert not base.slots.flags.writeable

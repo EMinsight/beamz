@@ -54,7 +54,7 @@ simulations; only the explicitly selected CPML recurrence state may use BF16.
 ## Explicit whole-column multistep execution
 
 `backend="cuda_mstep"` selects a second scheduler inside the same CUDA component
-(**0.22.0 / ABI 22**). It ports the whole-column temporal tiling in
+(**0.23.0 / ABI 23**). It ports the whole-column temporal tiling in
 [PR #308](https://github.com/beamzorg/beamz/pull/308), credited to Pepijn de Vos.
 Both schedules share the CUDA compiler and numerical operations.
 
@@ -78,17 +78,50 @@ while the current wave finishes H2/E2. This specialization uses 61,392 shared
 bytes per block and retains the same material and Yee update primitives.
 Other coefficient representations use the general column core.
 
+Experimental launch choices retain the same 8x16 ownership and compact plan:
+`BEAMZ_CUDA_MSTEP_TILE=16x32|8x32|8x16|16x16` and
+`BEAMZ_CUDA_MSTEP_SEGMENT=whole|32|64|128|256`. Segment lengths count z planes;
+each segment uses overlapping frozen inputs and publishes only its owned
+outputs. Defaults remain 16x32/whole until the broad timing survey is assessed.
+Plan arrays are explicit executable input buffers, not embedded constants.
+Dependency plans are cached by grid, boundaries, source footprint and monitor
+indices, with a bounded host cache of at most two plans and 256 MiB.
+
 The initial scope is unsharded isotropic uniform float32 3D simulations with
 diagonal materials, packed slab sources and vector DFT monitors. Dense/lossy
 materials, asymmetric CPML and optional BF16 recurrence storage are supported.
 Recorder, flux/power, nonuniform-grid, tensor and storage-permutation requests
 raise a diagnostic. Existing scheduling environment overrides do not change
 `cuda_mstep`; graph caching and recurrence precision settings still apply.
-Small domains can have an edge-only plan and remain valid, though compact-slot
-padding can cost more than a full intermediate field there.
+Single-step and zero-core requests reuse the shared in-place program before
+allocating a pair workspace. Forced mstep checks its complete workspace against
+available allocator headroom and rejects incompatible capacity-only policy.
 
-`auto` and `cuda` retain their existing policy. Run the two schedules explicitly
-before selecting one for a workload:
+`backend="cuda"` exposes both schedules through one engine. The existing
+`cuda_streamed` and `cuda_mstep` names remain explicit compatibility overrides.
+Use `schedule="auto"`, `"streamed"` or `"mstep"` with the unified backend:
+
+```python
+program = simulation.compile(
+    num_steps=256, backend="cuda", schedule="auto", expected_runs=32
+)
+print(program.cuda_schedule_report())
+result = simulation.advance(
+    num_steps=256, backend="cuda", schedule="mstep"
+)
+```
+
+Automatic selection assumes one execution by default. `expected_runs` is a reuse
+hint, not an instruction to run multiple simulations. It accounts for additional
+compilation cost, active column tiles, depth, core coverage, material and monitor
+workload, feature support and memory. The conservative model is limited to the
+recorded RTX3090 packed-E/scalar-H workloads, CPML12/all-PEC boundary families,
+16–67 million cells and invocations of at least 256 steps. Other GPU models and
+workloads retain streamed execution; explicit mstep remains available. Decisions
+are frozen per executable and ownership policy, and reports return the choice,
+reason, geometry and workspace without executing calibration trials.
+
+Run the two schedules explicitly when extending that envelope:
 
 ```console
 python -m pytest tests/hardware/test_cuda_mstep.py
@@ -97,20 +130,21 @@ python scripts/benchmark_cuda_mstep.py --output-dir .cache/cuda-mstep-results
 
 Each benchmark case runs in a fresh process, with reversed backend order on the
 second round. Reports include warm samples, setup/compilation/first execution,
-executable/device memory and multistep core coverage. A future selector needs
+executable/device memory and multistep core coverage. Extending the selector needs
 measurements across shape, CPML thickness, material layout, source coverage,
-monitor density, run length and GPU model. Keep an explicit override even after
-unifying the public names; a cell-count threshold alone cannot express these
-costs. OpenCL remains a separate portability proposal until this scheduler and
+monitor density, run length and GPU model. Keep an explicit override; a cell-count
+threshold alone cannot express these costs. OpenCL remains a separate portability proposal until this scheduler and
 its parity contract are stable.
 
 The [RTX3090 benchmark report](../docs/reviews/cuda-mstep-rtx3090.md)
 retains the algorithm ideas and historical Futhark baseline: nine wins and one
 match within 0.3% across ten geometry/boundary cases. It includes raw timings,
-selected core profiles, correctness and sanitizer gates. Keep the scheduler
-explicit: domain geometry and boundary work affect its crossover, and automatic
-selection still needs a wider measured envelope. The [code review](../docs/reviews/cuda-mstep-code-review.md)
-compares shared operations, workspace costs and the proposed unification.
+selected core profiles, correctness and sanitizer gates. Keep explicit schedule
+overrides: domain geometry and boundary work affect its crossover, and automatic
+selection remains within that measured envelope. The [code review](../docs/reviews/cuda-mstep-code-review.md)
+compares shared operations and workspace costs; the
+[unification report](../docs/reviews/cuda-schedule-unification.md) records the
+implemented selector and the discarded direct-publication experiment.
 
 ## Experimental sharded streamed execution
 

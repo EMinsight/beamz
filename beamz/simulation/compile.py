@@ -125,6 +125,8 @@ class CompiledProgramKey:
 def _preparation_key(key: CompiledProgramKey):
     # Horizon and observation/source plans do not change constitutive arrays.
     # Keep dt, materials, boundaries, layout, backend and numerical flags intact.
+    from .cuda.mstep_config import VARIANT_FLAGS
+
     return replace(
         key,
         num_steps=0,
@@ -135,6 +137,7 @@ def _preparation_key(key: CompiledProgramKey):
         cuda_tuning_policy=(),
         cuda_schedule="streamed",
         cuda_expected_runs=1,
+        cuda_flags=key.cuda_flags & ~VARIANT_FLAGS,
     )
 
 
@@ -1042,9 +1045,9 @@ def compile_program(
         )
     cuda_flags = cuda_flags_from_env() if resolved_backend != "jax" else 0
     if requested_schedule == "mstep":
-        from ._cuda_abi import CUDA_BF16_PSI, CUDA_GRAPH_CACHE
+        from .cuda.mstep_config import ALLOWED_FLAGS
 
-        cuda_flags &= CUDA_BF16_PSI | CUDA_GRAPH_CACHE
+        cuda_flags &= ALLOWED_FLAGS
     cuda_storage_axes = (
         cuda_storage_axes_from_env() if resolved_backend != "jax" else (0, 1, 2)
     )

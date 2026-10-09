@@ -1,6 +1,6 @@
 {
-  "abi_version": 22,
-  "component_version": "0.22.0",
+  "abi_version": 23,
+  "component_version": "0.23.0",
   "targets": {
     "streamed": "beamz_cuda_streamed",
     "sharded": "beamz_cuda_sharded",
@@ -21,7 +21,14 @@
     "temporal_pair": 16,
     "shell32x8": 17,
     "shell32x4": 18,
-    "cpml_pair": 19
+    "cpml_pair": 19,
+    "mstep_tile8x32": 20,
+    "mstep_tile8x16": 21,
+    "mstep_tile16x16": 22,
+    "mstep_segment32": 23,
+    "mstep_segment64": 24,
+    "mstep_segment128": 25,
+    "mstep_segment256": 26
   },
   "default_flags": [
     "graph_cache"

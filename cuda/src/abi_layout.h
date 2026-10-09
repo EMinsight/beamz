@@ -7,8 +7,8 @@
 
 namespace beamz::cuda::abi {
 
-inline constexpr int32_t kAbiVersion = 22;
-inline constexpr char kComponentVersion[] = "0.22.0";
+inline constexpr int32_t kAbiVersion = 23;
+inline constexpr char kComponentVersion[] = "0.23.0";
 inline constexpr char kStreamedTarget[] = "beamz_cuda_streamed";
 inline constexpr char kShardedTarget[] = "beamz_cuda_sharded";
 inline constexpr char kProgramTarget[] = "beamz_cuda_program";
@@ -23,6 +23,13 @@ inline constexpr int32_t kBeamzTemporalPair = 1 << 16;
 inline constexpr int32_t kBeamzShell32x8 = 1 << 17;
 inline constexpr int32_t kBeamzShell32x4 = 1 << 18;
 inline constexpr int32_t kBeamzCpmlPair = 1 << 19;
+inline constexpr int32_t kBeamzMstepTile8x32 = 1 << 20;
+inline constexpr int32_t kBeamzMstepTile8x16 = 1 << 21;
+inline constexpr int32_t kBeamzMstepTile16x16 = 1 << 22;
+inline constexpr int32_t kBeamzMstepSegment32 = 1 << 23;
+inline constexpr int32_t kBeamzMstepSegment64 = 1 << 24;
+inline constexpr int32_t kBeamzMstepSegment128 = 1 << 25;
+inline constexpr int32_t kBeamzMstepSegment256 = 1 << 26;
 inline constexpr int32_t kBeamzDefaultFlags = kBeamzGraphCache;
 
 inline constexpr int32_t kNativeScheduleCpml = 1 << 0;

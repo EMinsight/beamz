@@ -806,6 +806,15 @@ int BeamzLaunchProgram(void* raw_stream, const BeamzProgramLaunch& program) {
 
 int BeamzLaunchMstep(void *raw_stream, const BeamzMstepLaunch &launch) {
   const auto &program = launch.program;
+  using namespace beamz::cuda::abi;
+  const int tiles = program.h_ab.cuda_flags &
+      (kBeamzMstepTile8x32 | kBeamzMstepTile8x16 | kBeamzMstepTile16x16);
+  const int segments = program.h_ab.cuda_flags &
+      (kBeamzMstepSegment32 | kBeamzMstepSegment64 |
+       kBeamzMstepSegment128 | kBeamzMstepSegment256);
+  if ((tiles && (tiles & (tiles - 1))) ||
+      (segments && (segments & (segments - 1))))
+    return cudaErrorInvalidValue;
   if (auto error = ValidateProgram(program); error != cudaSuccess)
     return error;
   if (program.h_ab.metric_kind != 0 || program.field_bank_count != 1 ||

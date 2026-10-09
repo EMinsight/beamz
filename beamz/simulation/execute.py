@@ -642,13 +642,13 @@ class _BoundedCompileScan:
         self.body = body
         self.compiled = compiled
 
-    def __call__(self, state, coefficients):
+    def __call__(self, state, coefficients, *extra):
         if any(
             isinstance(value, Tracer)
-            for value in jax.tree.leaves((state, coefficients))
+            for value in jax.tree.leaves((state, coefficients, extra))
         ):
-            return self.body(state, coefficients)
-        return self.compiled(state, coefficients)
+            return self.body(state, coefficients, *extra)
+        return self.compiled(state, coefficients, *extra)
 
     def __getattr__(self, name):
         return getattr(self.compiled, name)
@@ -740,15 +740,16 @@ def build_scan(program, *, donate_state: bool = False):
         donate_state=donate_state,
     )
     if mstep_plan is not None:
-        from beamz.simulation._cuda_abi import CUDA_BF16_PSI, CUDA_GRAPH_CACHE
+        from beamz.simulation.cuda.mstep_config import ALLOWED_FLAGS, variant_summary
 
         step_context = replace(
             step_context,
             config=replace(
                 cfg,
-                cuda_flags=cfg.cuda_flags & (CUDA_BF16_PSI | CUDA_GRAPH_CACHE),
+                cuda_flags=cfg.cuda_flags & ALLOWED_FLAGS,
             ),
         )
+        schedule_decision.update(variant_summary(step_context.config.cuda_flags))
     elif cfg.backend == "cuda_mstep" or cfg.cuda_schedule == "mstep":
         step_context = replace(step_context, low_memory=True)
     if cfg.backend in {"cuda_streamed", "cuda_mstep"} and mstep_plan is None:
@@ -786,6 +787,7 @@ def build_scan(program, *, donate_state: bool = False):
     def run_scan(
         state: SimulationState,
         coeffs: UpdateCoefficients,
+        mstep_buffers=None,
     ):
         # Normal continuations keep one absolute integer clock. Explicit states
         # may intentionally supply a different time origin; preserve that API
@@ -854,6 +856,7 @@ def build_scan(program, *, donate_state: bool = False):
                         chunk_steps,
                         observation_origin=observation_origin,
                         observation_step_offset=observation_offset + elapsed_steps,
+                        plan_buffers=mstep_buffers,
                     )
                     if mstep_plan is not None
                     else run_native_steps(
@@ -969,6 +972,10 @@ def build_scan(program, *, donate_state: bool = False):
     # existing behavior without changing process-wide XLA_FLAGS after startup.
     else:
         scan = jax.jit(run_scan, donate_argnums=donate_argnums)
+    if mstep_plan is not None:
+        from beamz.simulation.cuda.mstep import bind_plan_buffers
+
+        scan = bind_plan_buffers(scan, mstep_plan)
     scan.cuda_schedule_decision = schedule_decision
     return scan
 

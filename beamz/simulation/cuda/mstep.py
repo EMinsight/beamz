@@ -7,6 +7,9 @@ Tiles are 16x32; eligibility and scratch allocation use 8x16 quadrants.
 
 from __future__ import annotations
 
+import hashlib
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 
 import numpy as np
@@ -15,6 +18,9 @@ from beamz.simulation.backend import CudaBackendUnavailable
 
 TILE_Y, TILE_X = 16, 32
 QUAD_Y, QUAD_X = TILE_Y // 2, TILE_X // 2
+_PLAN_CACHE = OrderedDict()
+_PLAN_LOCK = threading.RLock()
+_PLAN_CACHE_BYTES = 256 << 20
 
 
 @dataclass(frozen=True)
@@ -117,6 +123,48 @@ def build_mstep_geometry(field_shapes, cpml, groups):
 
 
 def build_mstep_plan(field_shapes, cpml, groups, monitor_indices=None):
+    """Reuse dependency plans when only execution settings or values change."""
+    digest = hashlib.sha256()
+    structure = (
+        tuple(field_shapes),
+        tuple(
+            (t.axis, t.component, t.slab.low, t.slab.high)
+            for t in (*cpml.h_terms, *cpml.e_terms)
+        ),
+        tuple(
+            None if g is None else (g.coeffs.shape, np.asarray(g.starts).shape)
+            for g in groups
+        ),
+    )
+    digest.update(repr(structure).encode())
+    for group in groups:
+        if group is not None:
+            digest.update(np.ascontiguousarray(group.starts, dtype=np.int64).tobytes())
+    if monitor_indices is not None:
+        indices = np.ascontiguousarray(monitor_indices)
+        digest.update(repr((indices.shape, indices.dtype.str)).encode())
+        digest.update(indices.tobytes())
+    key = digest.digest()
+    with _PLAN_LOCK:
+        if key in _PLAN_CACHE:
+            _PLAN_CACHE.move_to_end(key)
+            return _PLAN_CACHE[key]
+    plan = _build_mstep_plan(field_shapes, cpml, groups, monitor_indices)
+    for array in _plan_arrays(plan):
+        array.setflags(write=False)
+    with _PLAN_LOCK:
+        if plan.summary()["plan_bytes"] <= _PLAN_CACHE_BYTES:
+            _PLAN_CACHE[key] = plan
+            while (
+                len(_PLAN_CACHE) > 2
+                or sum(p.summary()["plan_bytes"] for p in _PLAN_CACHE.values())
+                > _PLAN_CACHE_BYTES
+            ):
+                _PLAN_CACHE.popitem(last=False)
+    return plan
+
+
+def _build_mstep_plan(field_shapes, cpml, groups, monitor_indices=None):
     """Build static dependency queues without allocating a volume-sized mask.
 
     Every second-step edge cell needs first-step E at its positive neighbours;
@@ -200,6 +248,7 @@ def run_mstep(
     *,
     observation_origin,
     observation_step_offset,
+    plan_buffers=None,
 ):
     """Lower the shared CUDA program with compact intermediate field storage."""
     import jax.numpy as jnp
@@ -243,19 +292,9 @@ def run_mstep(
         observation_origin=observation_origin,
         observation_step_offset=observation_step_offset,
     )
-    arguments = (
-        *arguments,
-        *(
-            jnp.asarray(a)
-            for a in (
-                plan.bounds,
-                plan.core_masks,
-                plan.slots,
-                plan.first_cells,
-                plan.edge_cells,
-            )
-        ),
-    )
+    if plan_buffers is None:
+        plan_buffers = tuple(jnp.asarray(a) for a in _plan_arrays(plan))
+    arguments = (*arguments, *plan_buffers)
     flags = rt._native_schedule_flags(ctx, coeffs, sources=True, monitors=count)
     schedule = rt.NativeSchedulePlan(
         layout=abi.PROGRAM_LAYOUT_YEE_IN_PLACE,
@@ -277,3 +316,45 @@ def run_mstep(
     if count:
         result = rt._replace_dft(result, outputs, monitor_start)
     return result
+
+
+def _plan_arrays(plan):
+    return (plan.bounds, plan.core_masks, plan.slots, plan.first_cells, plan.edge_cells)
+
+
+class _BoundPlan:
+    """Keep plan values out of compiled code while preserving the two-input API."""
+
+    def __init__(self, executable, buffers):
+        self.executable, self.buffers = executable, buffers
+
+    def __call__(self, state, coefficients):
+        return self.executable(state, coefficients, self.buffers)
+
+    def lower(self, state, coefficients):
+        return _BoundPlanLowered(
+            self.executable.lower(state, coefficients, self.buffers), self.buffers
+        )
+
+    def __getattr__(self, name):
+        return getattr(self.executable, name)
+
+
+class _BoundPlanLowered:
+    def __init__(self, lowered, buffers):
+        self.lowered, self.buffers = lowered, buffers
+
+    def compile(self, *args, **kwargs):
+        return _BoundPlan(self.lowered.compile(*args, **kwargs), self.buffers)
+
+    def __getattr__(self, name):
+        return getattr(self.lowered, name)
+
+
+def bind_plan_buffers(scan, plan):
+    import jax
+
+    buffers = jax.device_put(_plan_arrays(plan))
+    # Include the one-time upload in preparation, not the first execution.
+    jax.block_until_ready(buffers)
+    return _BoundPlan(scan, buffers)

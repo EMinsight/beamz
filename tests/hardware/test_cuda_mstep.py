@@ -106,6 +106,34 @@ def _compare(a, b, tolerance=1e-5):
             np.testing.assert_array_equal(actual, expected)
 
 
+@pytest.mark.parametrize("tile", ["16x32", "8x32", "8x16", "16x16"])
+@pytest.mark.parametrize("segment", ["whole", "32", "64", "128", "256"])
+@pytest.mark.parametrize(
+    "material,boundary", [("binary", "all"), ("smooth", "pec"), ("lossy", "right")]
+)
+def test_mstep_launch_variants_preserve_complete_state(
+    monkeypatch, tile, segment, material, boundary
+):
+    sim = _simulation(material, boundary, shape=(103, 65, 97), steps=5)
+    state = _seed(sim.compile(backend="jax", num_steps=5))
+    reference = _run(sim, state, "cuda_streamed", 5)
+    monkeypatch.setenv("BEAMZ_CUDA_MSTEP_TILE", tile)
+    monkeypatch.setenv("BEAMZ_CUDA_MSTEP_SEGMENT", segment)
+    actual = _run(sim, state, "cuda_mstep", 5)
+    _compare(reference, actual)
+
+
+@pytest.mark.parametrize("tile", ["16x32", "8x32", "8x16", "16x16"])
+@pytest.mark.parametrize("segment", ["128", "256"])
+def test_mstep_long_column_segments_and_tail(monkeypatch, tile, segment):
+    sim = _simulation(shape=(301, 49, 81), steps=5)
+    state = _seed(sim.compile(backend="jax", num_steps=5))
+    reference = _run(sim, state, "cuda_streamed", 5)
+    monkeypatch.setenv("BEAMZ_CUDA_MSTEP_TILE", tile)
+    monkeypatch.setenv("BEAMZ_CUDA_MSTEP_SEGMENT", segment)
+    _compare(reference, _run(sim, state, "cuda_mstep", 5))
+
+
 @pytest.mark.parametrize("steps", [1, 2, 3, 4, 5, 17])
 @pytest.mark.parametrize(
     "material,boundary",

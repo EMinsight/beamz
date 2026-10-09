@@ -1,5 +1,9 @@
 # Review: CUDA whole-column multistep versus streamed execution
 
+This is the review before unification. The [follow-up](cuda-schedule-unification.md)
+records the shared workspace/IO changes and conservative selector implemented
+in response. The recommendations below describe the earlier snapshot.
+
 Reviewed locally on 2026-10-09, after cleanup commit `1e3ebe79`. The selected
 kernel implementation is `b1560508`; cleanup changed comments, benchmark tooling
 and evidence organization. The [benchmark report](cuda-mstep-rtx3090.md) retains

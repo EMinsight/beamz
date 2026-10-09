@@ -84,6 +84,9 @@ def cuda_flags_from_env() -> int:
     if shell_tile not in shell_tiles:
         raise ValueError("BEAMZ_CUDA_CPML_SHELL_TILE must be 64x4, 32x8, or 32x4")
     flags |= shell_tiles[shell_tile]
+    from .cuda.mstep_config import variant_flags_from_env
+
+    flags |= variant_flags_from_env()
     return flags
 
 
