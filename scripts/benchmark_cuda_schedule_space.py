@@ -23,7 +23,7 @@ from pathlib import Path
 _PROCESS_START = time.perf_counter()
 
 
-def configurations():
+def configurations(*, exhaustive_layouts=False):
     candidates = [{"name": "streamed", "backend": "cuda_streamed", "env": {}}]
     candidates += [
         {
@@ -91,7 +91,15 @@ def configurations():
             },
         }
         for axes in ("120", "201")
-        for tile, segment in (("16x32", "whole"), ("8x32", "64"), ("8x16", "32"))
+        for tile, segment in (
+            [
+                (tile, segment)
+                for tile in ("16x32", "8x32", "8x16", "16x16")
+                for segment in ("whole", "32", "64", "128", "256")
+            ]
+            if exhaustive_layouts
+            else (("16x32", "whole"), ("8x32", "64"), ("8x16", "32"))
+        )
     ]
     return candidates
 
@@ -285,6 +293,11 @@ def main():
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--cases", nargs="+")
     parser.add_argument("--configs", nargs="+")
+    parser.add_argument(
+        "--exhaustive-layouts",
+        action="store_true",
+        help="Include every tile/segment in all three storage orders (72 candidates)",
+    )
     parser.add_argument("--steps", type=int, default=256)
     parser.add_argument("--samples", type=int, default=3)
     parser.add_argument("--rounds", type=int, default=2)
@@ -316,11 +329,19 @@ def main():
         if args.cases is None or c["name"] in args.cases
     ]
     choices = [
-        c for c in configurations() if args.configs is None or c["name"] in args.configs
+        c
+        for c in configurations(
+            exhaustive_layouts=args.exhaustive_layouts or bool(args.configs)
+        )
+        if args.configs is None or c["name"] in args.configs
     ]
     for selected, available, label in (
         (args.cases, {c["name"] for c in workloads()}, "cases"),
-        (args.configs, {c["name"] for c in configurations()}, "configurations"),
+        (
+            args.configs,
+            {c["name"] for c in configurations(exhaustive_layouts=True)},
+            "configurations",
+        ),
     ):
         unknown = set(selected or ()) - available
         if unknown:

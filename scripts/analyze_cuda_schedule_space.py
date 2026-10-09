@@ -26,6 +26,8 @@ def summarize(report):
             dict(
                 name=name,
                 configuration=records[0]["configuration"],
+                actual_schedule=records[0].get("decision", {}).get("selected"),
+                decision=records[0].get("decision", {}),
                 rounds=len(records),
                 execution_s=elapsed,
                 seconds_per_step=elapsed / report["case"]["steps"],
@@ -87,6 +89,12 @@ def load_reports(directories, *, fresh_only=False, cases=None):
                     report.get("extension_sha256"),
                     report.get("planner_sha256"),
                     report.get("workload_sha256"),
+                    {
+                        k: report.get("hardware", {}).get(k)
+                        for k in ("uuid", "driver", "power_limit")
+                    }
+                    if report.get("hardware")
+                    else None,
                 ],
                 sort_keys=True,
             )

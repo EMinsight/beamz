@@ -58,3 +58,13 @@ def test_shared_sweep_cannot_supply_verified_cold_start(tmp_path):
         json.dumps(_report([_record("mstep", 0.01, 0.3, fresh=False)]))
     )
     assert load_reports([tmp_path], fresh_only=True) == []
+
+
+def test_exhaustive_layout_space_is_complete_and_names_are_unique():
+    from scripts.benchmark_cuda_schedule_space import configurations
+
+    candidates = configurations(exhaustive_layouts=True)
+    assert len(candidates) == len({c["name"] for c in candidates}) == 72
+    mstep = [c for c in candidates if c["backend"] == "cuda_mstep"]
+    assert len(mstep) == 4 * 5 * 3
+    assert {c["name"] for c in configurations()} <= {c["name"] for c in candidates}
