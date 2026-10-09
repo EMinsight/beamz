@@ -351,6 +351,25 @@ cudaError_t ValidateProgram(const BeamzProgramLaunch& program) {
   return ValidateSchedulePlan(program);
 }
 
+cudaError_t EnqueueProgramSources(cudaStream_t stream,
+                                  const BeamzProgramLaunch& program,
+                                  const BeamzLaunch& h, const BeamzLaunch& e,
+                                  int timing, int step, bool shell_only = false,
+                                  int inner_margin = -1) {
+  return BeamzEnqueueSourcePhase(stream, h, e, program.source_groups,
+                                 program.source_group_count, timing, step,
+                                 shell_only, inner_margin);
+}
+
+cudaError_t ObserveProgramStep(cudaStream_t stream,
+                               const BeamzProgramLaunch& program,
+                               const BeamzLaunch& h, const BeamzLaunch& e,
+                               int step) {
+  return program.monitors
+             ? BeamzEnqueueDftGroups(stream, h, e, *program.monitors, step)
+             : cudaSuccess;
+}
+
 int LaunchInPlaceProgram(void* raw_stream, const BeamzProgramLaunch& program) {
   const BeamzLaunch& h_launch = program.h_ab;
   const BeamzLaunch& e_launch = program.e_ab;
@@ -365,8 +384,7 @@ int LaunchInPlaceProgram(void* raw_stream, const BeamzProgramLaunch& program) {
     const bool split_cpml =
         ScheduleFlagEnabled(program, kNativeScheduleCombinedCpmlCore);
     auto enqueue_sources = [&](int timing, int32_t step) {
-      error = BeamzEnqueueSourcePhase(stream, h_launch, e_launch, source_groups,
-                                      source_group_count, timing, step);
+      error = EnqueueProgramSources(stream, program, h_launch, e_launch, timing, step);
     };
     for (int32_t step = 0; step < program.nsteps; ++step) {
       if (source_groups != nullptr) {
@@ -398,8 +416,7 @@ int LaunchInPlaceProgram(void* raw_stream, const BeamzProgramLaunch& program) {
         if (error != cudaSuccess) break;
       }
       if (monitors != nullptr) {
-        error = BeamzEnqueueDftGroups(stream, h_launch, e_launch, *monitors,
-                                      step);
+        error = ObserveProgramStep(stream, program, h_launch, e_launch, step);
         if (error != cudaSuccess) break;
       }
     }
@@ -515,7 +532,7 @@ cudaError_t EnqueueTemporalPairProgram(cudaStream_t stream,
       auto error=BeamzEnqueueSpatialCpml(stream,h,e,program.source_groups,step);
       if(error!=cudaSuccess)return error;
       return observe && program.monitors
-          ? BeamzEnqueueDftGroups(stream,h,e,*program.monitors,step) : cudaSuccess;
+          ? ObserveProgramStep(stream, program, h, e, step) : cudaSuccess;
     }
     if (pair_tile >= 3 && !fused_core) {
       auto sources = [&](int timing) -> cudaError_t {
@@ -544,14 +561,13 @@ cudaError_t EnqueueTemporalPairProgram(cudaStream_t stream,
       if (error != cudaSuccess)
         return error;
       return observe && program.monitors
-                 ? BeamzEnqueueDftGroups(stream, h, e, *program.monitors, step)
+                 ? ObserveProgramStep(stream, program, h, e, step)
                  : cudaSuccess;
     }
     auto error = BeamzEnqueueCpmlShell(stream, h);
     if (error != cudaSuccess)
       return error;
-    error = BeamzEnqueueSourcePhase(stream, h, e, program.source_groups,
-                                    program.source_group_count, 1, step, true);
+    error = EnqueueProgramSources(stream, program, h, e, 1, step, true);
     if (error != cudaSuccess)
       return error;
     error = band ? BeamzEnqueueCpmlPairBand(stream, h, e, program.source_groups,
@@ -563,13 +579,12 @@ cudaError_t EnqueueTemporalPairProgram(cudaStream_t stream,
     error = BeamzEnqueueCpmlShell(stream, e);
     if (error != cudaSuccess)
       return error;
-    error = BeamzEnqueueSourcePhase(stream, h, e, program.source_groups,
-                                    program.source_group_count, 2, step, false,
+    error = EnqueueProgramSources(stream, program, h, e, 2, step, false,
                                     band ? 2 : -1);
     if (error != cudaSuccess)
       return error;
     return program.monitors && observe
-               ? BeamzEnqueueDftGroups(stream, h, e, *program.monitors, step)
+               ? ObserveProgramStep(stream, program, h, e, step)
                : cudaSuccess;
   };
   const bool cpml_pair = FlagEnabled(program.h_ab, kBeamzCpmlPair);
@@ -696,8 +711,7 @@ int LaunchTemporalCpmlProgram(void *raw_stream,
                                const BeamzLaunch &e_launch, int timing,
                                int32_t step) {
       if (batch_sources) {
-        error = BeamzEnqueueSourcePhase(
-            stream, h_launch, e_launch, source_groups, source_group_count,
+        error = EnqueueProgramSources(stream, program, h_launch, e_launch,
             timing, step, timing == 1 && fused_core);
       } else {
         for (int index = 0; index < source_group_count; ++index) {
@@ -760,8 +774,7 @@ int LaunchTemporalCpmlProgram(void *raw_stream,
       if (error != cudaSuccess)
         return error;
       if (monitors != nullptr) {
-        error = BeamzEnqueueDftGroups(stream, h_launch, e_launch, *monitors,
-                                      step);
+        error = ObserveProgramStep(stream, program, h_launch, e_launch, step);
         if (error != cudaSuccess)
           return error;
       }
@@ -863,37 +876,23 @@ int BeamzLaunchMstep(void *raw_stream, const BeamzMstepLaunch &launch) {
   };
   auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
   std::string key = BeamzGraphKey("mstep-column-k2", raw_stream, program);
-  auto append_buffer = [&](const BeamzBuffer &b) {
-    key.append(reinterpret_cast<const char *>(&b.data), sizeof(b.data));
-    key.append(reinterpret_cast<const char *>(&b.rank), sizeof(b.rank));
-    key.append(reinterpret_cast<const char *>(&b.element_type),
-               sizeof(b.element_type));
-    key.append(reinterpret_cast<const char *>(&b.row_stride),
-               sizeof(b.row_stride));
-    key.append(reinterpret_cast<const char *>(&b.plane_stride),
-               sizeof(b.plane_stride));
-    for (auto d : b.dims)
-      key.append(reinterpret_cast<const char *>(&d), sizeof(d));
-  };
   for (const auto &b : buffers)
-    append_buffer(b);
+    BeamzAppendBufferKey(&key, b);
   for (int c = 0; c < 6; ++c) {
-    append_buffer(launch.final_fields[c]);
-    append_buffer(launch.scratch_fields[c]);
+    BeamzAppendBufferKey(&key, launch.final_fields[c]);
+    BeamzAppendBufferKey(&key, launch.scratch_fields[c]);
   }
   auto enqueue = [&]() {
     const BeamzBuffer *current = original;
     const BeamzBuffer *dest = launch.final_fields;
     auto inject = [&](const auto &p, int timing, int step) {
-      return BeamzEnqueueSourcePhase(stream, p.first, p.second,
-                                     program.source_groups, 9, timing, step);
+      return EnqueueProgramSources(stream, program, p.first, p.second, timing, step);
     };
     auto observe = [&](const BeamzBuffer *f, int step) {
       if (!program.monitors)
         return cudaSuccess;
       auto p = phases(f, f);
-      return BeamzEnqueueDftGroups(stream, p.first, p.second, *program.monitors,
-                                   step);
+      return ObserveProgramStep(stream, program, p.first, p.second, step);
     };
     for (int step = 0; step + 1 < program.nsteps; step += 2) {
       auto base = phases(current, current);

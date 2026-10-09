@@ -18,22 +18,36 @@ QUAD_Y, QUAD_X = TILE_Y // 2, TILE_X // 2
 
 
 @dataclass(frozen=True)
-class MstepPlan:
+class MstepGeometry:
     shape: tuple[int, int, int]
     bounds: np.ndarray
     core_masks: np.ndarray
-    slots: np.ndarray
-    first_cells: np.ndarray
-    edge_cells: np.ndarray
-    scratch_cells: int
     core_cells: int
 
     def summary(self):
         return {
+            "core_fraction": self.core_cells / int(np.prod(self.shape)),
+            "active_tiles": int(np.count_nonzero(self.core_masks)),
+            "column_depth": max(0, int(self.bounds[1] - self.bounds[0])),
+            "owned_quadrants": sum(
+                int(np.count_nonzero(self.core_masks & (1 << bit))) for bit in range(4)
+            ),
+        }
+
+
+@dataclass(frozen=True)
+class MstepPlan(MstepGeometry):
+    slots: np.ndarray
+    first_cells: np.ndarray
+    edge_cells: np.ndarray
+    scratch_cells: int
+
+    def summary(self):
+        return {
+            **super().summary(),
             "schedule": "cuda_mstep",
             "tile": (TILE_Y, TILE_X),
             "temporal_steps": 2,
-            "core_fraction": self.core_cells / int(np.prod(self.shape)),
             "first_step_cells": self.first_cells.size,
             "edge_cells": self.edge_cells.size,
             "scratch_bytes": 6 * self.scratch_cells * 4,
@@ -50,16 +64,8 @@ class MstepPlan:
         }
 
 
-def build_mstep_plan(field_shapes, cpml, groups, monitor_indices=None):
-    """Build static dependency queues without allocating a volume-sized mask.
-
-    Every second-step edge cell needs first-step E at its positive neighbours;
-    those E values need first-step H at their negative neighbours. A one-cell
-    Chebyshev margin covers both, including curl cross-axis dependencies.
-    Monitors additionally request their sample cells and negative neighbours.
-    Source intersections exclude an entire column quadrant and its two-cell
-    halo, so the tiled kernel never needs to inject a source.
-    """
+def build_mstep_geometry(field_shapes, cpml, groups):
+    """Prove column eligibility before allocating any intermediate queues."""
     shape = tuple(max(s[a] for s in field_shapes) for a in range(3))
     nz, ny, nx = shape
     if int(np.prod(shape)) >= np.iinfo(np.int32).max:
@@ -102,6 +108,34 @@ def build_mstep_plan(field_shapes, cpml, groups, monitor_indices=None):
         for dy in range(2)
         for dx in range(2)
     )
+    return MstepGeometry(
+        shape,
+        np.asarray((zb, zt), np.int32),
+        masks,
+        int(core.sum()) * QUAD_Y * QUAD_X * max(0, zt - zb),
+    )
+
+
+def build_mstep_plan(field_shapes, cpml, groups, monitor_indices=None):
+    """Build static dependency queues without allocating a volume-sized mask.
+
+    Every second-step edge cell needs first-step E at its positive neighbours;
+    those E values need first-step H at their negative neighbours. A one-cell
+    Chebyshev margin covers both, including curl cross-axis dependencies.
+    Monitors additionally request their sample cells and negative neighbours.
+    Source intersections exclude an entire column quadrant and its two-cell
+    halo, so the tiled kernel never needs to inject a source.
+    """
+    geometry = build_mstep_geometry(field_shapes, cpml, groups)
+    shape = geometry.shape
+    nz, ny, nx = shape
+    zb, zt = map(int, geometry.bounds)
+    masks = geometry.core_masks
+    nq_y, nq_x = masks.shape[0] * 2, masks.shape[1] * 2
+    core = np.zeros((nq_y, nq_x), bool)
+    for dy in range(2):
+        for dx in range(2):
+            core[dy::2, dx::2] = (masks & (1 << (2 * dy + dx))) != 0
     edge_xy = ~np.repeat(np.repeat(core, QUAD_Y, axis=0), QUAD_X, axis=1)[:ny, :nx]
     padded = np.pad(edge_xy, 1, constant_values=True)
     first_xy = np.logical_or.reduce(
@@ -145,13 +179,13 @@ def build_mstep_plan(field_shapes, cpml, groups, monitor_indices=None):
         raise CudaBackendUnavailable("cuda_mstep scratch offsets exceed int32")
     return MstepPlan(
         shape,
-        np.asarray((zb, zt), np.int32),
+        geometry.bounds,
         masks,
+        geometry.core_cells,
         slots,
         np.concatenate(first),
         np.concatenate(edge),
         (slot_count + 1) * QUAD_Y * QUAD_X,
-        int(core.sum()) * QUAD_Y * QUAD_X * max(0, zt - zb),
     )
 
 
@@ -173,6 +207,21 @@ def run_mstep(
     from beamz.simulation import _cuda_abi as abi
     from beamz.simulation.cuda import runtime as rt
 
+    if nsteps < 2 or not plan.core_cells:
+        # Ordinary execution has no pair workspace, including a one-step tail
+        # after native chunks. Force the shared in-place program here.
+        from dataclasses import replace
+
+        return rt.run_native_steps(
+            state,
+            replace(ctx, low_memory=True),
+            coeffs,
+            groups,
+            packed_monitors,
+            nsteps,
+            observation_origin=observation_origin,
+            observation_step_offset=observation_step_offset,
+        )
     fields = rt._fields(state)
     if any(f.dtype != jnp.float32 for f in fields):
         raise CudaBackendUnavailable("cuda_mstep requires float32 fields")
@@ -185,34 +234,17 @@ def run_mstep(
         arguments = (*arguments, value)
         values = (*values, value)
     arguments = (*arguments, *rt._source_group_arguments(groups))
-    if packed_monitors is None:
-        packed_monitors = (
-            jnp.zeros((0, 6, 1, 1), jnp.int32),
-            jnp.zeros((0, 6, 1, 1), jnp.float32),
-            jnp.zeros((0, 1), jnp.float32),
-            jnp.zeros((0, 6), jnp.float32),
-            jnp.zeros((0, 5), jnp.int32),
-            jnp.zeros((0, 2), jnp.int32),
-            jnp.zeros((0, 3), jnp.float32),
-        )
-        dft = (jnp.zeros((0,), jnp.float32),) * 3
-    else:
-        dft = (state.dft_vec_re, state.dft_vec_im, state.dft_weight_sum)
-    arguments = (*arguments, *packed_monitors)
-    monitor_start = len(values)
-    count, frequencies = packed_monitors[2].shape
-    phase = tuple(
-        jnp.empty((max(1, count), frequencies), jnp.float32) for _ in range(3)
+    arguments, values, aliases, monitor_start, count = rt._monitor_io(
+        state,
+        packed_monitors,
+        arguments,
+        values,
+        aliases,
+        observation_origin=observation_origin,
+        observation_step_offset=observation_step_offset,
     )
-    for value in (*dft, *phase):
-        aliases[len(arguments)] = len(values)
-        arguments = (*arguments, value)
-        values = (*values, value)
     arguments = (
         *arguments,
-        observation_origin,
-        state.current_step,
-        jnp.asarray(observation_step_offset, jnp.int32),
         *(
             jnp.asarray(a)
             for a in (
@@ -224,17 +256,7 @@ def run_mstep(
             )
         ),
     )
-    flags = abi.NATIVE_SCHEDULE_SOURCES
-    if ctx.boundary.cpml.enabled:
-        flags |= abi.NATIVE_SCHEDULE_CPML
-    if rt._uniform_cpml_thickness(ctx) > 0:
-        flags |= abi.NATIVE_SCHEDULE_UNIFORM_CPML
-    if rt._packed_e_material(coeffs):
-        flags |= abi.NATIVE_SCHEDULE_PACKED_MATERIAL
-    if count:
-        flags |= abi.NATIVE_SCHEDULE_MONITORS
-    if ctx.config.cuda_flags & abi.CUDA_GRAPH_CACHE:
-        flags |= abi.NATIVE_SCHEDULE_GRAPH_CACHE
+    flags = rt._native_schedule_flags(ctx, coeffs, sources=True, monitors=count)
     schedule = rt.NativeSchedulePlan(
         layout=abi.PROGRAM_LAYOUT_YEE_IN_PLACE,
         flags=flags,
@@ -253,9 +275,5 @@ def run_mstep(
             cpml_psi_h_terms=outputs[6:12], cpml_psi_e_terms=outputs[12:18]
         )
     if count:
-        result = result._replace(
-            dft_vec_re=outputs[monitor_start],
-            dft_vec_im=outputs[monitor_start + 1],
-            dft_weight_sum=outputs[monitor_start + 2],
-        )
+        result = rt._replace_dft(result, outputs, monitor_start)
     return result

@@ -328,3 +328,37 @@ def test_mstep_unequal_six_face_cpml_matches_cuda_and_jax(steps):
     actual = _run(sim, state, "cuda_mstep", steps)
     _compare(_run(sim, state, "cuda", steps), actual)
     _compare(_run(sim, state, "jax", steps), actual, 3e-5)
+
+
+def test_unified_cuda_schedule_matches_compatibility_alias():
+    sim = _simulation()
+    state = _seed(sim.compile(backend="jax", num_steps=5))
+    program = sim.compile(backend="cuda", schedule="mstep", num_steps=5)
+    report = program.cuda_schedule_report()
+    assert report["selected"] == "mstep"
+    report["selected"] = "changed"
+    assert program.cuda_schedule_report()["selected"] == "mstep"
+    actual = sim.advance(
+        state=state, num_steps=5, backend="cuda", schedule="mstep", performance=False
+    ).state
+    _compare(_run(sim, state, "cuda_mstep", 5), actual)
+
+
+def test_automatic_schedule_dispatch_preserves_chunk_clocks(monkeypatch):
+    """Exercise automatic dispatch on a small core; model admission is tested on host."""
+    from beamz.simulation.cuda import schedule
+
+    monkeypatch.setattr(schedule, "cuda_device_kind", lambda: "NVIDIA GeForce RTX 3090")
+    monkeypatch.setattr(
+        schedule,
+        "automatic_candidate",
+        lambda program, geometry, **kw: (True, "parity probe", geometry.summary()),
+    )
+    sim = _simulation(steps=257)
+    state = _seed(sim.compile(backend="jax", num_steps=257))
+    program = sim.compile(backend="cuda", schedule="auto", num_steps=257)
+    assert program.cuda_schedule_report()["selected"] == "mstep"
+    actual = sim.advance(
+        state=state, num_steps=257, backend="cuda", schedule="auto", performance=False
+    ).state
+    _compare(_run(sim, state, "cuda_streamed", 257), actual, 3e-5)

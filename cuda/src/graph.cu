@@ -194,6 +194,10 @@ void AppendMonitors(std::string* key, const BeamzDftGroupLaunch& value) {
 
 }  // namespace
 
+void BeamzAppendBufferKey(std::string* key, const BeamzBuffer& buffer) {
+  AppendBuffer(key, buffer);
+}
+
 std::string BeamzGraphKey(const char* schedule, void* stream,
                           const BeamzProgramLaunch& program) {
   std::string key(schedule);

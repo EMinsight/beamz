@@ -924,3 +924,31 @@ def test_scan_compiler_policy_preserves_older_jax(monkeypatch):
     monkeypatch.setattr("jax.jit", jit)
     build_scan(program, donate_state=True)
     assert calls == [(0,)]
+
+
+@pytest.mark.parametrize("steps", [1, 3])
+def test_mstep_degenerate_runs_never_allocate_pair_workspace(monkeypatch, steps):
+    from beamz.simulation.cuda import mstep
+
+    program, state, context = _program_and_state(cpml=True)
+    program = replace(
+        program, config=replace(context.config, backend="cuda_mstep", num_steps=steps)
+    )
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("degenerate runs must not build pair queues")
+
+    monkeypatch.setattr(mstep, "build_mstep_plan", unexpected)
+    if steps == 1:
+        monkeypatch.setattr(mstep, "build_mstep_geometry", unexpected)
+    calls = []
+
+    def ordinary(state, ctx, coeffs, nsteps):
+        calls.append((ctx.low_memory, nsteps))
+        return state
+
+    monkeypatch.setattr("beamz.simulation.cuda.run_steps", ordinary)
+    scan = build_scan(program)
+    scan(state, program.coefficients)
+    assert calls == [(True, steps)]
+    assert scan.cuda_schedule_decision["selected"] == "streamed"

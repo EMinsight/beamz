@@ -40,6 +40,8 @@ class RunSpec:
     cuda_graph_cache_capacity: int = 32
     cuda_storage_axes: tuple[int, int, int] = (0, 1, 2)
     cuda_memory_policy: str = "auto"
+    cuda_schedule: str = "streamed"
+    cuda_expected_runs: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -481,6 +483,8 @@ class RunConfig:
     cuda_graph_cache_capacity: int = 32
     cuda_storage_axes: tuple[int, int, int] = (0, 1, 2)
     cuda_memory_policy: str = "auto"
+    cuda_schedule: str = "streamed"
+    cuda_expected_runs: int = 1
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -534,3 +538,9 @@ class CompiledProgram:
     sources: tuple[CompiledSourceSpec, ...]
     monitors: tuple[CompiledMonitorSpec, ...]
     sharding: ShardingPlan
+
+    def cuda_schedule_report(self, *, donate_state: bool = False) -> dict:
+        """Explain the selected schedule and workspace without running simulation."""
+        from beamz.simulation.execute import cuda_schedule_report
+
+        return cuda_schedule_report(self, donate_state=donate_state)

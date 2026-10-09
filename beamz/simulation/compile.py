@@ -91,6 +91,8 @@ class CompiledProgramKey:
     boundaries: tuple[HashToken, ...]
     cuda_tuning_policy: tuple = ()
     cuda_memory_policy: str = "auto"
+    cuda_schedule: str = "streamed"
+    cuda_expected_runs: int = 1
 
     @classmethod
     def from_request(cls, request: SimulationRequest) -> CompiledProgramKey:
@@ -115,6 +117,8 @@ class CompiledProgramKey:
             tuple(cache_token(monitor) for monitor in request.monitors),
             tuple(cache_token(boundary) for boundary in request.boundaries),
             cuda_memory_policy=request.run.cuda_memory_policy,
+            cuda_schedule=request.run.cuda_schedule,
+            cuda_expected_runs=request.run.cuda_expected_runs,
         )
 
 
@@ -129,6 +133,8 @@ def _preparation_key(key: CompiledProgramKey):
         sources=(),
         monitors=(),
         cuda_tuning_policy=(),
+        cuda_schedule="streamed",
+        cuda_expected_runs=1,
     )
 
 
@@ -459,6 +465,8 @@ def _prepare_compilation(
         cuda_graph_cache_capacity=int(request.run.cuda_graph_cache_capacity),
         cuda_storage_axes=request.run.cuda_storage_axes,
         cuda_memory_policy=request.run.cuda_memory_policy,
+        cuda_schedule=request.run.cuda_schedule,
+        cuda_expected_runs=request.run.cuda_expected_runs,
     )
     return _CompileSetup(
         dt,
@@ -943,6 +951,8 @@ def compile_program(
     sharding=None,
     backend: str | None = "auto",
     progress: bool = False,
+    schedule: str | None = None,
+    expected_runs: int = 1,
     setup_context_factory=None,
     compile_factory=None,
 ) -> CompiledProgram:
@@ -976,6 +986,13 @@ def compile_program(
     )
 
     requested_backend = normalize_backend(backend)
+    from .cuda.schedule import normalize_schedule_request
+
+    requested_schedule, expected_runs = normalize_schedule_request(
+        requested_backend,
+        schedule,
+        expected_runs,
+    )
     sharding_token = sharding_cache_token(sharding)
     metric_kind = simulation.grid.metric_kind_for(
         ("x", "y", "z") if simulation.is_3d else ("x", "y")
@@ -1013,16 +1030,18 @@ def compile_program(
     resolved_backend = (
         "jax"
         if requested_backend == "auto" and not cuda_problem_supported
-        else resolve_backend(requested_backend)
+        else resolve_backend(
+            "cuda_mstep" if requested_schedule == "mstep" else requested_backend
+        )
     )
-    if resolved_backend == "cuda_mstep" and (
-        multi_device or metric_kind != "isotropic_uniform"
+    if requested_schedule == "mstep" and (
+        not cuda_problem_supported or multi_device or metric_kind != "isotropic_uniform"
     ):
         raise CudaBackendUnavailable(
             "cuda_mstep requires an unsharded isotropic uniform 3D grid"
         )
     cuda_flags = cuda_flags_from_env() if resolved_backend != "jax" else 0
-    if resolved_backend == "cuda_mstep":
+    if requested_schedule == "mstep":
         from ._cuda_abi import CUDA_BF16_PSI, CUDA_GRAPH_CACHE
 
         cuda_flags &= CUDA_BF16_PSI | CUDA_GRAPH_CACHE
@@ -1047,19 +1066,19 @@ def compile_program(
         request,
         run=replace(
             request.run,
+            cuda_schedule=requested_schedule,
+            cuda_expected_runs=expected_runs,
             cuda_flags=cuda_flags,
             cuda_graph_cache_capacity=cuda_graph_cache_capacity,
             cuda_storage_axes=cuda_storage_axes,
             cuda_memory_policy=(
-                cuda_memory_policy_from_env()
-                if resolved_backend == "cuda_streamed"
-                else "auto"
+                cuda_memory_policy_from_env() if resolved_backend != "jax" else "auto"
             ),
         ),
     )
     signature = CompiledProgramKey.from_request(request)
     tuning_policy = None
-    if resolved_backend == "cuda_streamed":
+    if resolved_backend == "cuda_streamed" and requested_schedule != "mstep":
         from .cuda.tuning import tuning_policy_from_env
 
         tuning_policy = tuning_policy_from_env()

@@ -13,6 +13,8 @@
 std::string BeamzGraphKey(const char* schedule, void* stream,
                           const BeamzProgramLaunch& program);
 
+void BeamzAppendBufferKey(std::string* key, const BeamzBuffer& buffer);
+
 // Replay a cached executable or capture, instantiate, cache, and launch the
 // supplied enqueue sequence. ``cache_capacity`` is a per-program target: an
 // entry may temporarily remain above it while its completion event is pending,

@@ -131,8 +131,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--shape", nargs=3, type=int, default=(128, 256, 512))
     parser.add_argument(
-        "--backend", choices=("cuda_streamed", "cuda_mstep"), default="cuda_streamed"
+        "--backend",
+        choices=("cuda", "cuda_streamed", "cuda_mstep"),
+        default="cuda_streamed",
     )
+    parser.add_argument("--schedule", choices=("auto", "streamed", "mstep"))
+    parser.add_argument("--expected-runs", type=int, default=1)
     parser.add_argument("--steps", type=int, default=256)
     parser.add_argument("--samples", type=int, default=11)
     parser.add_argument("--warmups", type=int, default=4)
@@ -187,7 +191,12 @@ def main():
         )
     start = time.perf_counter()
     sim = build_simulation(args)
-    program = sim.compile(num_steps=args.steps, backend=args.backend)
+    program = sim.compile(
+        num_steps=args.steps,
+        backend=args.backend,
+        schedule=args.schedule,
+        expected_runs=args.expected_runs,
+    )
     state = initial_program_state(
         program, t=0, current_step=0, monitor_steps=args.steps
     )
@@ -229,7 +238,11 @@ def main():
     if args.presteps:
         start = time.perf_counter()
         state = sim.advance(
-            state=state, num_steps=args.presteps, backend=args.backend
+            state=state,
+            num_steps=args.presteps,
+            backend=args.backend,
+            schedule=args.schedule,
+            expected_runs=args.expected_runs,
         ).state
         jax.block_until_ready(state)
         conditioning_s = time.perf_counter() - start
@@ -247,12 +260,22 @@ def main():
     public_samples = []
     if args.public_samples:
         jax.block_until_ready(
-            sim.advance(num_steps=args.steps, backend=args.backend).state
+            sim.advance(
+                num_steps=args.steps,
+                backend=args.backend,
+                schedule=args.schedule,
+                expected_runs=args.expected_runs,
+            ).state
         )
         for _ in range(args.public_samples):
             start = time.perf_counter()
             jax.block_until_ready(
-                sim.advance(num_steps=args.steps, backend=args.backend).state
+                sim.advance(
+                    num_steps=args.steps,
+                    backend=args.backend,
+                    schedule=args.schedule,
+                    expected_runs=args.expected_runs,
+                ).state
             )
             public_samples.append(time.perf_counter() - start)
     import beamz._cuda as extension
@@ -271,6 +294,9 @@ def main():
         "benchmark_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "warmups": args.warmups,
         "backend": args.backend,
+        "schedule": args.schedule,
+        "expected_runs": args.expected_runs,
+        "schedule_decision": scan.cuda_schedule_decision,
         "allocator": {
             "preallocate": os.environ.get("XLA_PYTHON_CLIENT_PREALLOCATE", ""),
             "memory_fraction": os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", ""),

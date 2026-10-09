@@ -400,7 +400,10 @@ def _select_program(program, signature, policy):
     # the real source/monitor plans, then retain the original execution horizon.
     calibration_steps = min(program.config.num_steps, CUDA_GRAPH_MAX_STEPS)
     probe = replace(
-        program, config=replace(program.config, num_steps=calibration_steps)
+        program,
+        config=replace(
+            program.config, num_steps=calibration_steps, cuda_schedule="streamed"
+        ),
     )
     state = initial_program_state(
         program, t=signature.t0, current_step=0, monitor_steps=program.config.num_steps
