@@ -252,3 +252,23 @@ def test_mstep_dense_magnetic_coefficients():
     actual = _run(sim, state, "cuda_mstep", 5)
     _compare(_run(sim, state, "cuda", 5), actual)
     _compare(_run(sim, state, "jax", 5), actual, 3e-5)
+
+
+def test_mstep_short_column_sanitizer():
+    """Keep a real K=2 core and ring wraparound cheap to instrument."""
+    sim = _simulation(shape=(12, 25, 55))
+    sim = bz.Simulation(
+        material_grid=sim._material_grid(progress=False),
+        boundaries=[bz.PEC(edges="all")],
+        time=sim.time,
+    )
+    program = sim.compile(backend="cuda_mstep", num_steps=2)
+    shapes = tuple(
+        program.boundary.logical_component_shapes[c]
+        for c in ("Hx", "Hy", "Hz", "Ex", "Ey", "Ez")
+    )
+    assert build_mstep_plan(shapes, program.boundary.cpml, (None,) * 9).core_cells > 0
+    state = _seed(program)
+    actual = _run(sim, state, "cuda_mstep", 2)
+    _compare(_run(sim, state, "cuda", 2), actual)
+    _compare(_run(sim, state, "jax", 2), actual, 3e-5)

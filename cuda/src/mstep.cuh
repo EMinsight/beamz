@@ -1,7 +1,18 @@
 // Whole-column K=2 tiles, following PR #308's temporal.fut by Pepijn de Vos.
-// Shared rings hold H1, E1 and H2. Only eligible 8x16 quadrants publish H2/E2.
+// Shared rings hold H1, E1 and H2; E0 is loaded once into a shared window.
+// Only eligible 8x16 quadrants publish H2/E2.
 // Boundary/source/monitor work uses the existing CUDA kernels through compact
 // BeamzBuffer addressing; this file defines no new numerical conventions.
+constexpr int kMstepWindowX = 36, kMstepWindowY = 20;
+constexpr int kMstepThreads = kMstepWindowX * kMstepWindowY;
+constexpr int kMstepInputOffset = PairStage<32, 16, 3>::offset;
+constexpr size_t kMstepSharedBytes =
+    (kMstepInputOffset + 3 * kMstepThreads) * sizeof(float);
+
+__device__ __forceinline__ float &MstepInput(float *shared, int c, int y,
+                                             int x) {
+  return shared[kMstepInputOffset + c * kMstepThreads + y * kMstepWindowX + x];
+}
 template <bool Packed, int K = 0>
 __device__ __forceinline__ void
 MstepStages(float *shared, const FusedYeePhase &h, const FusedYeePhase &e,
@@ -24,6 +35,8 @@ MstepStages(float *shared, const FusedYeePhase &h, const FusedYeePhase &e,
         if (BufferContains(out, z, y, x)) {
           auto other = [&](int component, int dz, int dy, int dx) {
             if constexpr (K == 0) {
+              if (!dz)
+                return MstepInput(shared, component, iy + dy, ix + dx);
               const auto &f = h.inputs[3 + component];
               return BufferContains(f, z + dz, y + dy, x + dx)
                          ? Read3D(f, z + dz, y + dy, x + dx)
@@ -45,7 +58,9 @@ MstepStages(float *shared, const FusedYeePhase &h, const FusedYeePhase &e,
           const float curl = difference(a.source_component, a.derivative_axis) -
                              difference(b.source_component, b.derivative_axis);
           float old;
-          if constexpr (K < 2)
+          if constexpr (K == 1)
+            old = MstepInput(shared, c, iy + 1, ix + 1);
+          else if constexpr (K == 0)
             old = Read3D(launch.inputs[c], z, y, x);
           else
             old = PairStage<32, 16, K - 2>::At(shared, c, z, iy + 1, ix + 1);
@@ -82,7 +97,7 @@ MstepStages(float *shared, const FusedYeePhase &h, const FusedYeePhase &e,
 }
 
 template <bool Packed>
-__global__ __launch_bounds__(256) void MstepColumnCore(
+__global__ __launch_bounds__(kMstepThreads) void MstepColumnCore(
     const __grid_constant__ FusedYeePhase h,
     const __grid_constant__ FusedYeePhase e,
     const __grid_constant__ PairFieldOutputs final,
@@ -95,9 +110,22 @@ __global__ __launch_bounds__(256) void MstepColumnCore(
   const int zb = static_cast<const int *>(bounds.data)[0];
   const int zt = static_cast<const int *>(bounds.data)[1];
   extern __shared__ float shared[];
-  for (int wave = 0; wave < zt - zb + 3; ++wave)
+  for (int wave = 0; wave < zt - zb + 3; ++wave) {
+    const int y = threadIdx.x / kMstepWindowX;
+    const int x = threadIdx.x % kMstepWindowX;
+    const int z = zb + wave - 2;
+    const int gy = blockIdx.y * 16 - 2 + y;
+    const int gx = blockIdx.x * 32 - 2 + x;
+#pragma unroll
+    for (int c = 0; c < 3; ++c) {
+      const auto &f = h.inputs[3 + c];
+      MstepInput(shared, c, y, x) =
+          BufferContains(f, z, gy, gx) ? Read3D(f, z, gy, gx) : 0.f;
+    }
+    __syncthreads();
     MstepStages<Packed>(shared, h, e, final, blockIdx.x * 32, blockIdx.y * 16,
                         zb, wave, mask);
+  }
 }
 
 template <int Phase, bool Cpml, bool Packed, bool UniformCpml = false>

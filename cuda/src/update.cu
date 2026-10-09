@@ -1664,13 +1664,20 @@ cudaError_t BeamzEnqueueMstepCore(cudaStream_t stream, const BeamzLaunch &h,
   for (int c = 0; c < 6; ++c)
     final.fields[c] = final_fields[c];
   const dim3 blocks(masks.dims[1], masks.dims[0]);
-  constexpr size_t bytes = 6 * (35 * 19 + 34 * 18 + 33 * 17) * sizeof(float);
+  // The input window and one thread per lane match the winning Futhark core.
+  auto kernel = e.inputs[9].element_type == kBeamzS32
+                    ? MstepColumnCore<true>
+                    : MstepColumnCore<false>;
+  if (auto error = cudaFuncSetAttribute(
+          kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, kMstepSharedBytes);
+      error != cudaSuccess)
+    return error;
   const bool packed = e.inputs[9].element_type == kBeamzS32;
   if (packed)
-    MstepColumnCore<true><<<blocks, 256, bytes, stream>>>(
+    MstepColumnCore<true><<<blocks, kMstepThreads, kMstepSharedBytes, stream>>>(
         MakeFusedYeePhase(h), MakeFusedYeePhase(e), final, masks, bounds);
   else
-    MstepColumnCore<false><<<blocks, 256, bytes, stream>>>(
+    MstepColumnCore<false><<<blocks, kMstepThreads, kMstepSharedBytes, stream>>>(
         MakeFusedYeePhase(h), MakeFusedYeePhase(e), final, masks, bounds);
   return cudaGetLastError();
 }

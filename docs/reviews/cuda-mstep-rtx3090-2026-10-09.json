@@ -1,0 +1,4736 @@
+{
+  "records": [
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_streamed",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        32,
+        64,
+        96
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "all",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 4.763494564918801,
+      "compile_s": 0.34543287102133036,
+      "first_run_s": 0.0460354289971292,
+      "executable_memory": {
+        "argument_size_in_bytes": 9958552,
+        "output_size_in_bytes": 9346184,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 9256704,
+        "generated_code_size_in_bytes": 212780
+      },
+      "device_memory": {
+        "num_allocs": 2895,
+        "bytes_in_use": 31977984,
+        "peak_bytes_in_use": 50840576,
+        "largest_alloc_size": 9256704,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 65011712,
+        "peak_pool_bytes": 65011712
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [
+        {
+          "layout": 6,
+          "flags": 255,
+          "monitor_count": 2,
+          "coincident_source_group_mask": 4,
+          "disjoint_source_group_mask": 0,
+          "logical_shape": [
+            0,
+            0,
+            0
+          ],
+          "temporal_steps": 1
+        }
+      ],
+      "mstep_plans": [],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        0.007310032844543457,
+        0.00920564285479486,
+        0.008987064007669687,
+        0.008948320988565683,
+        0.008939484832808375
+      ],
+      "median_gcups": 2.8123515050652874,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          33,
+          65,
+          96
+        ],
+        "ey": [
+          33,
+          64,
+          97
+        ],
+        "ez": [
+          32,
+          65,
+          97
+        ],
+        "hx": [
+          32,
+          64,
+          97
+        ],
+        "hy": [
+          32,
+          65,
+          96
+        ],
+        "hz": [
+          33,
+          64,
+          96
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            4.992000000000001e-06,
+            2.56e-06,
+            1.28e-06
+          ],
+          "size": [
+            0.0,
+            3.2e-06,
+            6.399999999999998e-07
+          ]
+        },
+        {
+          "center": [
+            5.760000000000001e-06,
+            2.56e-06,
+            1.28e-06
+          ],
+          "size": [
+            0.0,
+            3.2e-06,
+            6.399999999999998e-07
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          51480
+        ],
+        [
+          51216
+        ],
+        [
+          50440
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 0 %, 1755 MHz, 9501 MHz, 126.49 W, 370.00 W, 55, 905 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_mstep",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        32,
+        64,
+        96
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "all",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 4.672716080909595,
+      "compile_s": 0.4539555059745908,
+      "first_run_s": 0.05455011804588139,
+      "executable_memory": {
+        "argument_size_in_bytes": 9958552,
+        "output_size_in_bytes": 9346184,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 11246080,
+        "generated_code_size_in_bytes": 1851060
+      },
+      "device_memory": {
+        "num_allocs": 2895,
+        "bytes_in_use": 31973376,
+        "peak_bytes_in_use": 52859392,
+        "largest_alloc_size": 11246080,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 65011712,
+        "peak_pool_bytes": 65011712
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [],
+      "mstep_plans": [
+        {
+          "schedule": "cuda_mstep",
+          "tile": [
+            16,
+            32
+          ],
+          "temporal_steps": 2,
+          "core_fraction": 0.024607694710787494,
+          "first_step_cells": 205995,
+          "edge_cells": 202945,
+          "scratch_bytes": 6389760,
+          "plan_bytes": 1646408
+        }
+      ],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        0.015702462987974286,
+        0.017697359900921583,
+        0.017638128018006682,
+        0.017490071011707187,
+        0.017622077837586403
+      ],
+      "median_gcups": 1.4280849416249555,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          33,
+          65,
+          96
+        ],
+        "ey": [
+          33,
+          64,
+          97
+        ],
+        "ez": [
+          32,
+          65,
+          97
+        ],
+        "hx": [
+          32,
+          64,
+          97
+        ],
+        "hy": [
+          32,
+          65,
+          96
+        ],
+        "hz": [
+          33,
+          64,
+          96
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            4.992000000000001e-06,
+            2.56e-06,
+            1.28e-06
+          ],
+          "size": [
+            0.0,
+            3.2e-06,
+            6.399999999999998e-07
+          ]
+        },
+        {
+          "center": [
+            5.760000000000001e-06,
+            2.56e-06,
+            1.28e-06
+          ],
+          "size": [
+            0.0,
+            3.2e-06,
+            6.399999999999998e-07
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          51480
+        ],
+        [
+          51216
+        ],
+        [
+          50440
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 0 %, 1755 MHz, 9501 MHz, 134.35 W, 370.00 W, 55, 905 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_streamed",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        128,
+        256,
+        512
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "all",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 5.248870220966637,
+      "compile_s": 0.41715063783340156,
+      "first_run_s": 0.3063285469543189,
+      "executable_memory": {
+        "argument_size_in_bytes": 551574104,
+        "output_size_in_bytes": 500782984,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 493836544,
+        "generated_code_size_in_bytes": 9355052
+      },
+      "device_memory": {
+        "num_allocs": 2910,
+        "bytes_in_use": 2088379136,
+        "peak_bytes_in_use": 3138620672,
+        "largest_alloc_size": 493836544,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 4297064448,
+        "peak_pool_bytes": 4297064448
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [
+        {
+          "layout": 6,
+          "flags": 255,
+          "monitor_count": 2,
+          "coincident_source_group_mask": 4,
+          "disjoint_source_group_mask": 0,
+          "logical_shape": [
+            0,
+            0,
+            0
+          ],
+          "temporal_steps": 1
+        }
+      ],
+      "mstep_plans": [],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        0.26591152092441916,
+        0.2648808998055756,
+        0.2657559188082814,
+        0.2658570189960301,
+        0.26654341514222324
+      ],
+      "median_gcups": 8.07758868323152,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          129,
+          257,
+          512
+        ],
+        "ey": [
+          129,
+          256,
+          513
+        ],
+        "ez": [
+          128,
+          257,
+          513
+        ],
+        "hx": [
+          128,
+          256,
+          513
+        ],
+        "hy": [
+          128,
+          257,
+          512
+        ],
+        "hz": [
+          129,
+          256,
+          512
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            2.6624e-05,
+            1.024e-05,
+            5.12e-06
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            8.32e-06
+          ]
+        },
+        {
+          "center": [
+            3.0720000000000004e-05,
+            1.024e-05,
+            5.12e-06
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            8.32e-06
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          4243584
+        ],
+        [
+          4235328
+        ],
+        [
+          4218912
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 100 %, 1815 MHz, 9501 MHz, 368.59 W, 370.00 W, 62, 4953 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_mstep",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        128,
+        256,
+        512
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "all",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 5.203162385849282,
+      "compile_s": 1.9375714978668839,
+      "first_run_s": 0.4472684741485864,
+      "executable_memory": {
+        "argument_size_in_bytes": 551574104,
+        "output_size_in_bytes": 500782984,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 648412160,
+        "generated_code_size_in_bytes": 62365696
+      },
+      "device_memory": {
+        "num_allocs": 2910,
+        "bytes_in_use": 2019163136,
+        "peak_bytes_in_use": 3228782336,
+        "largest_alloc_size": 648412160,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 4294967296,
+        "peak_pool_bytes": 4294967296
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [],
+      "mstep_plans": [
+        {
+          "schedule": "cuda_mstep",
+          "tile": [
+            16,
+            32
+          ],
+          "temporal_steps": 2,
+          "core_fraction": 0.6293923812033628,
+          "first_step_cells": 6802173,
+          "edge_cells": 6303105,
+          "scratch_bytes": 243001344,
+          "plan_bytes": 53018772
+        }
+      ],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        0.3891469759400934,
+        0.38970237597823143,
+        0.3890888369642198,
+        0.38983316090889275,
+        0.3894857708364725
+      ],
+      "median_gcups": 5.513638260488935,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          129,
+          257,
+          512
+        ],
+        "ey": [
+          129,
+          256,
+          513
+        ],
+        "ez": [
+          128,
+          257,
+          513
+        ],
+        "hx": [
+          128,
+          256,
+          513
+        ],
+        "hy": [
+          128,
+          257,
+          512
+        ],
+        "hz": [
+          129,
+          256,
+          512
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            2.6624e-05,
+            1.024e-05,
+            5.12e-06
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            8.32e-06
+          ]
+        },
+        {
+          "center": [
+            3.0720000000000004e-05,
+            1.024e-05,
+            5.12e-06
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            8.32e-06
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          4243584
+        ],
+        [
+          4235328
+        ],
+        [
+          4218912
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 100 %, 1935 MHz, 9501 MHz, 361.55 W, 370.00 W, 66, 4991 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_streamed",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        256,
+        512,
+        512
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "all",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 5.777368698036298,
+      "compile_s": 0.6678300239145756,
+      "first_run_s": 1.0764653759542853,
+      "executable_memory": {
+        "argument_size_in_bytes": 2053710296,
+        "output_size_in_bytes": 1851334024,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 1818730240,
+        "generated_code_size_in_bytes": 43560236
+      },
+      "device_memory": {
+        "num_allocs": 2910,
+        "bytes_in_use": 7273646592,
+        "peak_bytes_in_use": 10951477248,
+        "largest_alloc_size": 1818730240,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 17181966336,
+        "peak_pool_bytes": 17181966336
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [
+        {
+          "layout": 6,
+          "flags": 255,
+          "monitor_count": 2,
+          "coincident_source_group_mask": 4,
+          "disjoint_source_group_mask": 0,
+          "logical_shape": [
+            0,
+            0,
+            0
+          ],
+          "temporal_steps": 1
+        }
+      ],
+      "mstep_plans": [],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        1.0279954369179904,
+        1.0265700889285654,
+        1.0275031470227987,
+        1.0284361748490483,
+        1.0313754898961633
+      ],
+      "median_gcups": 8.356004592543023,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          257,
+          513,
+          512
+        ],
+        "ey": [
+          257,
+          512,
+          513
+        ],
+        "ez": [
+          256,
+          513,
+          513
+        ],
+        "hx": [
+          256,
+          512,
+          513
+        ],
+        "hy": [
+          256,
+          513,
+          512
+        ],
+        "hz": [
+          257,
+          512,
+          512
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            2.6624e-05,
+            2.048e-05,
+            1.024e-05
+          ],
+          "size": [
+            0.0,
+            3.904e-05,
+            1.856e-05
+          ]
+        },
+        {
+          "center": [
+            3.0720000000000004e-05,
+            2.048e-05,
+            1.024e-05
+          ],
+          "size": [
+            0.0,
+            3.904e-05,
+            1.856e-05
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          16875648
+        ],
+        [
+          16875648
+        ],
+        [
+          16842816
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 100 %, 1800 MHz, 9501 MHz, 367.11 W, 370.00 W, 66, 17275 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_mstep",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        256,
+        512,
+        512
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "all",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 5.781809056177735,
+      "compile_s": 4.940401928965002,
+      "first_run_s": 1.3517545762006193,
+      "executable_memory": {
+        "argument_size_in_bytes": 2053710296,
+        "output_size_in_bytes": 1851334024,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 2320171520,
+        "generated_code_size_in_bytes": 173981504
+      },
+      "device_memory": {
+        "num_allocs": 2910,
+        "bytes_in_use": 7272592384,
+        "peak_bytes_in_use": 11450813696,
+        "largest_alloc_size": 2320171520,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 17179869184,
+        "peak_pool_bytes": 17179869184
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [],
+      "mstep_plans": [
+        {
+          "schedule": "cuda_mstep",
+          "tile": [
+            16,
+            32
+          ],
+          "temporal_steps": 2,
+          "core_fraction": 0.7748990222184609,
+          "first_step_cells": 16805501,
+          "edge_cells": 15224577,
+          "scratch_bytes": 703260672,
+          "plan_bytes": 130429396
+        }
+      ],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        1.2940103970468044,
+        1.2930966871790588,
+        1.2967666909098625,
+        1.293585292994976,
+        1.2962560961022973
+      ],
+      "median_gcups": 6.638226873295595,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          257,
+          513,
+          512
+        ],
+        "ey": [
+          257,
+          512,
+          513
+        ],
+        "ez": [
+          256,
+          513,
+          513
+        ],
+        "hx": [
+          256,
+          512,
+          513
+        ],
+        "hy": [
+          256,
+          513,
+          512
+        ],
+        "hz": [
+          257,
+          512,
+          512
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            2.6624e-05,
+            2.048e-05,
+            1.024e-05
+          ],
+          "size": [
+            0.0,
+            3.904e-05,
+            1.856e-05
+          ]
+        },
+        {
+          "center": [
+            3.0720000000000004e-05,
+            2.048e-05,
+            1.024e-05
+          ],
+          "size": [
+            0.0,
+            3.904e-05,
+            1.856e-05
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          16875648
+        ],
+        [
+          16875648
+        ],
+        [
+          16842816
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 100 %, 1935 MHz, 9501 MHz, 363.64 W, 370.00 W, 70, 17403 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_streamed",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        1,
+        2,
+        0
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        512,
+        256,
+        64
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "all",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 5.306733721867204,
+      "compile_s": 2.2018805760890245,
+      "first_run_s": 0.2070350639987737,
+      "executable_memory": {
+        "argument_size_in_bytes": 331151640,
+        "output_size_in_bytes": 305624712,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 302219072,
+        "generated_code_size_in_bytes": 76274092
+      },
+      "device_memory": {
+        "num_allocs": 2910,
+        "bytes_in_use": 1205095680,
+        "peak_bytes_in_use": 1819430656,
+        "largest_alloc_size": 302219264,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 2149580800,
+        "peak_pool_bytes": 2149580800
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [
+        {
+          "layout": 6,
+          "flags": 255,
+          "monitor_count": 2,
+          "coincident_source_group_mask": 1,
+          "disjoint_source_group_mask": 0,
+          "logical_shape": [
+            0,
+            0,
+            0
+          ],
+          "temporal_steps": 1
+        }
+      ],
+      "mstep_plans": [],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        0.16483097081072628,
+        0.165449399035424,
+        0.166551292873919,
+        0.16707988386042416,
+        0.16533975303173065
+      ],
+      "median_gcups": 6.489850251859202,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          513,
+          257,
+          64
+        ],
+        "ey": [
+          513,
+          256,
+          65
+        ],
+        "ez": [
+          512,
+          257,
+          65
+        ],
+        "hx": [
+          512,
+          256,
+          65
+        ],
+        "hy": [
+          512,
+          257,
+          64
+        ],
+        "hz": [
+          513,
+          256,
+          64
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            3.328e-06,
+            1.024e-05,
+            2.048e-05
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            3.904e-05
+          ]
+        },
+        {
+          "center": [
+            3.8400000000000005e-06,
+            1.024e-05,
+            2.048e-05
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            3.904e-05
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          2109456
+        ],
+        [
+          2134080
+        ],
+        [
+          2138240
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 100 %, 1785 MHz, 9501 MHz, 362.31 W, 370.00 W, 67, 2971 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_mstep",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        512,
+        256,
+        64
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "all",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 5.282883057137951,
+      "compile_s": 2.8288685400038958,
+      "first_run_s": 0.733901628991589,
+      "executable_memory": {
+        "argument_size_in_bytes": 331151640,
+        "output_size_in_bytes": 305624712,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 463526656,
+        "generated_code_size_in_bytes": 91169112
+      },
+      "device_memory": {
+        "num_allocs": 2910,
+        "bytes_in_use": 1203067136,
+        "peak_bytes_in_use": 1978642176,
+        "largest_alloc_size": 463526656,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 2147483648,
+        "peak_pool_bytes": 2147483648
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [],
+      "mstep_plans": [
+        {
+          "schedule": "cuda_mstep",
+          "tile": [
+            16,
+            32
+          ],
+          "temporal_steps": 2,
+          "core_fraction": 0.34771954329603316,
+          "first_step_cells": 6208761,
+          "edge_cells": 5589825,
+          "scratch_bytes": 260032512,
+          "plan_bytes": 47613164
+        }
+      ],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        0.6825605409685522,
+        0.684425454121083,
+        0.6842024761717767,
+        0.68375777406618,
+        0.6839735580142587
+      ],
+      "median_gcups": 1.569858675702805,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          513,
+          257,
+          64
+        ],
+        "ey": [
+          513,
+          256,
+          65
+        ],
+        "ez": [
+          512,
+          257,
+          65
+        ],
+        "hx": [
+          512,
+          256,
+          65
+        ],
+        "hy": [
+          512,
+          257,
+          64
+        ],
+        "hz": [
+          513,
+          256,
+          64
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            3.328e-06,
+            1.024e-05,
+            2.048e-05
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            3.904e-05
+          ]
+        },
+        {
+          "center": [
+            3.8400000000000005e-06,
+            1.024e-05,
+            2.048e-05
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            3.904e-05
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          2109456
+        ],
+        [
+          2134080
+        ],
+        [
+          2138240
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 100 %, 1935 MHz, 9501 MHz, 269.08 W, 370.00 W, 64, 2983 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_mstep",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        32,
+        64,
+        96
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "all",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 4.696950763929635,
+      "compile_s": 0.4586430140770972,
+      "first_run_s": 0.054339495953172445,
+      "executable_memory": {
+        "argument_size_in_bytes": 9958552,
+        "output_size_in_bytes": 9346184,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 11246080,
+        "generated_code_size_in_bytes": 1851060
+      },
+      "device_memory": {
+        "num_allocs": 2895,
+        "bytes_in_use": 31973376,
+        "peak_bytes_in_use": 52859392,
+        "largest_alloc_size": 11246080,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 65011712,
+        "peak_pool_bytes": 65011712
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [],
+      "mstep_plans": [
+        {
+          "schedule": "cuda_mstep",
+          "tile": [
+            16,
+            32
+          ],
+          "temporal_steps": 2,
+          "core_fraction": 0.024607694710787494,
+          "first_step_cells": 205995,
+          "edge_cells": 202945,
+          "scratch_bytes": 6389760,
+          "plan_bytes": 1646408
+        }
+      ],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        0.0157570349983871,
+        0.017648798879235983,
+        0.01749006099998951,
+        0.017499859910458326,
+        0.017079501878470182
+      ],
+      "median_gcups": 1.438864278404466,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          33,
+          65,
+          96
+        ],
+        "ey": [
+          33,
+          64,
+          97
+        ],
+        "ez": [
+          32,
+          65,
+          97
+        ],
+        "hx": [
+          32,
+          64,
+          97
+        ],
+        "hy": [
+          32,
+          65,
+          96
+        ],
+        "hz": [
+          33,
+          64,
+          96
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            4.992000000000001e-06,
+            2.56e-06,
+            1.28e-06
+          ],
+          "size": [
+            0.0,
+            3.2e-06,
+            6.399999999999998e-07
+          ]
+        },
+        {
+          "center": [
+            5.760000000000001e-06,
+            2.56e-06,
+            1.28e-06
+          ],
+          "size": [
+            0.0,
+            3.2e-06,
+            6.399999999999998e-07
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          51480
+        ],
+        [
+          51216
+        ],
+        [
+          50440
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 37 %, 1935 MHz, 9501 MHz, 136.40 W, 370.00 W, 59, 907 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_streamed",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        32,
+        64,
+        96
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "all",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 4.757076548179612,
+      "compile_s": 0.34676893916912377,
+      "first_run_s": 0.04613272310234606,
+      "executable_memory": {
+        "argument_size_in_bytes": 9958552,
+        "output_size_in_bytes": 9346184,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 9256704,
+        "generated_code_size_in_bytes": 212780
+      },
+      "device_memory": {
+        "num_allocs": 2895,
+        "bytes_in_use": 31973376,
+        "peak_bytes_in_use": 50870016,
+        "largest_alloc_size": 9256704,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 65011712,
+        "peak_pool_bytes": 65011712
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [
+        {
+          "layout": 6,
+          "flags": 255,
+          "monitor_count": 2,
+          "coincident_source_group_mask": 4,
+          "disjoint_source_group_mask": 0,
+          "logical_shape": [
+            0,
+            0,
+            0
+          ],
+          "temporal_steps": 1
+        }
+      ],
+      "mstep_plans": [],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        0.00730178807862103,
+        0.00922476896084845,
+        0.008984980871900916,
+        0.008923836052417755,
+        0.008926341077312827
+      ],
+      "median_gcups": 2.8192765414220404,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          33,
+          65,
+          96
+        ],
+        "ey": [
+          33,
+          64,
+          97
+        ],
+        "ez": [
+          32,
+          65,
+          97
+        ],
+        "hx": [
+          32,
+          64,
+          97
+        ],
+        "hy": [
+          32,
+          65,
+          96
+        ],
+        "hz": [
+          33,
+          64,
+          96
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            4.992000000000001e-06,
+            2.56e-06,
+            1.28e-06
+          ],
+          "size": [
+            0.0,
+            3.2e-06,
+            6.399999999999998e-07
+          ]
+        },
+        {
+          "center": [
+            5.760000000000001e-06,
+            2.56e-06,
+            1.28e-06
+          ],
+          "size": [
+            0.0,
+            3.2e-06,
+            6.399999999999998e-07
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          51480
+        ],
+        [
+          51216
+        ],
+        [
+          50440
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 0 %, 1755 MHz, 9501 MHz, 129.40 W, 370.00 W, 58, 907 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_mstep",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        128,
+        256,
+        512
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "all",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 5.363843100843951,
+      "compile_s": 1.9500893549993634,
+      "first_run_s": 0.440496384864673,
+      "executable_memory": {
+        "argument_size_in_bytes": 551574104,
+        "output_size_in_bytes": 500782984,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 648412160,
+        "generated_code_size_in_bytes": 62365696
+      },
+      "device_memory": {
+        "num_allocs": 2910,
+        "bytes_in_use": 2019164416,
+        "peak_bytes_in_use": 3228783616,
+        "largest_alloc_size": 648412160,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 4294967296,
+        "peak_pool_bytes": 4294967296
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [],
+      "mstep_plans": [
+        {
+          "schedule": "cuda_mstep",
+          "tile": [
+            16,
+            32
+          ],
+          "temporal_steps": 2,
+          "core_fraction": 0.6293923812033628,
+          "first_step_cells": 6802173,
+          "edge_cells": 6303105,
+          "scratch_bytes": 243001344,
+          "plan_bytes": 53018772
+        }
+      ],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        0.3905464119743556,
+        0.39107309794053435,
+        0.3909577219747007,
+        0.3910534209571779,
+        0.3904074609745294
+      ],
+      "median_gcups": 5.49287947851038,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          129,
+          257,
+          512
+        ],
+        "ey": [
+          129,
+          256,
+          513
+        ],
+        "ez": [
+          128,
+          257,
+          513
+        ],
+        "hx": [
+          128,
+          256,
+          513
+        ],
+        "hy": [
+          128,
+          257,
+          512
+        ],
+        "hz": [
+          129,
+          256,
+          512
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            2.6624e-05,
+            1.024e-05,
+            5.12e-06
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            8.32e-06
+          ]
+        },
+        {
+          "center": [
+            3.0720000000000004e-05,
+            1.024e-05,
+            5.12e-06
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            8.32e-06
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          4243584
+        ],
+        [
+          4235328
+        ],
+        [
+          4218912
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 100 %, 1935 MHz, 9501 MHz, 364.17 W, 370.00 W, 66, 4931 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_streamed",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        128,
+        256,
+        512
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "all",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 5.266022260999307,
+      "compile_s": 0.4203086020424962,
+      "first_run_s": 0.30763462698087096,
+      "executable_memory": {
+        "argument_size_in_bytes": 551574104,
+        "output_size_in_bytes": 500782984,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 493836544,
+        "generated_code_size_in_bytes": 9355052
+      },
+      "device_memory": {
+        "num_allocs": 2910,
+        "bytes_in_use": 2088382720,
+        "peak_bytes_in_use": 3138622464,
+        "largest_alloc_size": 493836544,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 4297064448,
+        "peak_pool_bytes": 4297064448
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [
+        {
+          "layout": 6,
+          "flags": 255,
+          "monitor_count": 2,
+          "coincident_source_group_mask": 4,
+          "disjoint_source_group_mask": 0,
+          "logical_shape": [
+            0,
+            0,
+            0
+          ],
+          "temporal_steps": 1
+        }
+      ],
+      "mstep_plans": [],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        0.266133459052071,
+        0.2655302381608635,
+        0.2651661070995033,
+        0.2670797109603882,
+        0.2677655150182545
+      ],
+      "median_gcups": 8.069198272359392,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          129,
+          257,
+          512
+        ],
+        "ey": [
+          129,
+          256,
+          513
+        ],
+        "ez": [
+          128,
+          257,
+          513
+        ],
+        "hx": [
+          128,
+          256,
+          513
+        ],
+        "hy": [
+          128,
+          257,
+          512
+        ],
+        "hz": [
+          129,
+          256,
+          512
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            2.6624e-05,
+            1.024e-05,
+            5.12e-06
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            8.32e-06
+          ]
+        },
+        {
+          "center": [
+            3.0720000000000004e-05,
+            1.024e-05,
+            5.12e-06
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            8.32e-06
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          4243584
+        ],
+        [
+          4235328
+        ],
+        [
+          4218912
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 100 %, 1860 MHz, 9501 MHz, 368.10 W, 370.00 W, 65, 4893 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_mstep",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        256,
+        512,
+        512
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "all",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 5.8156660969834775,
+      "compile_s": 4.903095941990614,
+      "first_run_s": 1.362267621094361,
+      "executable_memory": {
+        "argument_size_in_bytes": 2053710296,
+        "output_size_in_bytes": 1851334024,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 2320171520,
+        "generated_code_size_in_bytes": 173981504
+      },
+      "device_memory": {
+        "num_allocs": 2910,
+        "bytes_in_use": 7272600064,
+        "peak_bytes_in_use": 11450821376,
+        "largest_alloc_size": 2320171520,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 17179869184,
+        "peak_pool_bytes": 17179869184
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [],
+      "mstep_plans": [
+        {
+          "schedule": "cuda_mstep",
+          "tile": [
+            16,
+            32
+          ],
+          "temporal_steps": 2,
+          "core_fraction": 0.7748990222184609,
+          "first_step_cells": 16805501,
+          "edge_cells": 15224577,
+          "scratch_bytes": 703260672,
+          "plan_bytes": 130429396
+        }
+      ],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        1.294198488816619,
+        1.2954439718741924,
+        1.29739233199507,
+        1.296076819067821,
+        1.2978651588782668
+      ],
+      "median_gcups": 6.627643103884961,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          257,
+          513,
+          512
+        ],
+        "ey": [
+          257,
+          512,
+          513
+        ],
+        "ez": [
+          256,
+          513,
+          513
+        ],
+        "hx": [
+          256,
+          512,
+          513
+        ],
+        "hy": [
+          256,
+          513,
+          512
+        ],
+        "hz": [
+          257,
+          512,
+          512
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            2.6624e-05,
+            2.048e-05,
+            1.024e-05
+          ],
+          "size": [
+            0.0,
+            3.904e-05,
+            1.856e-05
+          ]
+        },
+        {
+          "center": [
+            3.0720000000000004e-05,
+            2.048e-05,
+            1.024e-05
+          ],
+          "size": [
+            0.0,
+            3.904e-05,
+            1.856e-05
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          16875648
+        ],
+        [
+          16875648
+        ],
+        [
+          16842816
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 100 %, 1920 MHz, 9501 MHz, 362.09 W, 370.00 W, 69, 17345 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_streamed",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        256,
+        512,
+        512
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "all",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 5.849334379890934,
+      "compile_s": 0.6694553990382701,
+      "first_run_s": 1.0795926239807159,
+      "executable_memory": {
+        "argument_size_in_bytes": 2053710296,
+        "output_size_in_bytes": 1851334024,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 1818730240,
+        "generated_code_size_in_bytes": 43560236
+      },
+      "device_memory": {
+        "num_allocs": 2910,
+        "bytes_in_use": 7273640960,
+        "peak_bytes_in_use": 10951471616,
+        "largest_alloc_size": 1818730240,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 17181966336,
+        "peak_pool_bytes": 17181966336
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [
+        {
+          "layout": 6,
+          "flags": 255,
+          "monitor_count": 2,
+          "coincident_source_group_mask": 4,
+          "disjoint_source_group_mask": 0,
+          "logical_shape": [
+            0,
+            0,
+            0
+          ],
+          "temporal_steps": 1
+        }
+      ],
+      "mstep_plans": [],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        1.028889450011775,
+        1.0283426460810006,
+        1.0337170029524714,
+        1.0253997440449893,
+        1.0281157509889454
+      ],
+      "median_gcups": 8.353183274792814,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          257,
+          513,
+          512
+        ],
+        "ey": [
+          257,
+          512,
+          513
+        ],
+        "ez": [
+          256,
+          513,
+          513
+        ],
+        "hx": [
+          256,
+          512,
+          513
+        ],
+        "hy": [
+          256,
+          513,
+          512
+        ],
+        "hz": [
+          257,
+          512,
+          512
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            2.6624e-05,
+            2.048e-05,
+            1.024e-05
+          ],
+          "size": [
+            0.0,
+            3.904e-05,
+            1.856e-05
+          ]
+        },
+        {
+          "center": [
+            3.0720000000000004e-05,
+            2.048e-05,
+            1.024e-05
+          ],
+          "size": [
+            0.0,
+            3.904e-05,
+            1.856e-05
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          16875648
+        ],
+        [
+          16875648
+        ],
+        [
+          16842816
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 100 %, 1800 MHz, 9501 MHz, 368.12 W, 370.00 W, 68, 17217 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_mstep",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        512,
+        256,
+        64
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "all",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 5.297528918134049,
+      "compile_s": 2.7747120840940624,
+      "first_run_s": 0.7400381970219314,
+      "executable_memory": {
+        "argument_size_in_bytes": 331151640,
+        "output_size_in_bytes": 305624712,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 463526656,
+        "generated_code_size_in_bytes": 91169112
+      },
+      "device_memory": {
+        "num_allocs": 2910,
+        "bytes_in_use": 1203067136,
+        "peak_bytes_in_use": 1978642176,
+        "largest_alloc_size": 463526656,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 2147483648,
+        "peak_pool_bytes": 2147483648
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [],
+      "mstep_plans": [
+        {
+          "schedule": "cuda_mstep",
+          "tile": [
+            16,
+            32
+          ],
+          "temporal_steps": 2,
+          "core_fraction": 0.34771954329603316,
+          "first_step_cells": 6208761,
+          "edge_cells": 5589825,
+          "scratch_bytes": 260032512,
+          "plan_bytes": 47613164
+        }
+      ],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        0.6956233009696007,
+        0.6856538371648639,
+        0.6842325548641384,
+        0.6845211850013584,
+        0.6839636899530888
+      ],
+      "median_gcups": 1.5686027657389,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          513,
+          257,
+          64
+        ],
+        "ey": [
+          513,
+          256,
+          65
+        ],
+        "ez": [
+          512,
+          257,
+          65
+        ],
+        "hx": [
+          512,
+          256,
+          65
+        ],
+        "hy": [
+          512,
+          257,
+          64
+        ],
+        "hz": [
+          513,
+          256,
+          64
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            3.328e-06,
+            1.024e-05,
+            2.048e-05
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            3.904e-05
+          ]
+        },
+        {
+          "center": [
+            3.8400000000000005e-06,
+            1.024e-05,
+            2.048e-05
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            3.904e-05
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          2109456
+        ],
+        [
+          2134080
+        ],
+        [
+          2138240
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 100 %, 1935 MHz, 9501 MHz, 268.39 W, 370.00 W, 64, 2545 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_streamed",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        1,
+        2,
+        0
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        512,
+        256,
+        64
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "all",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 5.370766310952604,
+      "compile_s": 2.0426213841419667,
+      "first_run_s": 0.2067732010036707,
+      "executable_memory": {
+        "argument_size_in_bytes": 331151640,
+        "output_size_in_bytes": 305624712,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 302219072,
+        "generated_code_size_in_bytes": 76274092
+      },
+      "device_memory": {
+        "num_allocs": 2910,
+        "bytes_in_use": 1205096960,
+        "peak_bytes_in_use": 1819431936,
+        "largest_alloc_size": 302219264,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 2149580800,
+        "peak_pool_bytes": 2149580800
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [
+        {
+          "layout": 6,
+          "flags": 255,
+          "monitor_count": 2,
+          "coincident_source_group_mask": 1,
+          "disjoint_source_group_mask": 0,
+          "logical_shape": [
+            0,
+            0,
+            0
+          ],
+          "temporal_steps": 1
+        }
+      ],
+      "mstep_plans": [],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        0.16430719615891576,
+        0.16552415606565773,
+        0.16711789113469422,
+        0.16575426515191793,
+        0.16549648297950625
+      ],
+      "median_gcups": 6.486919187638592,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          513,
+          257,
+          64
+        ],
+        "ey": [
+          513,
+          256,
+          65
+        ],
+        "ez": [
+          512,
+          257,
+          65
+        ],
+        "hx": [
+          512,
+          256,
+          65
+        ],
+        "hy": [
+          512,
+          257,
+          64
+        ],
+        "hz": [
+          513,
+          256,
+          64
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            3.328e-06,
+            1.024e-05,
+            2.048e-05
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            3.904e-05
+          ]
+        },
+        {
+          "center": [
+            3.8400000000000005e-06,
+            1.024e-05,
+            2.048e-05
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            3.904e-05
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          2109456
+        ],
+        [
+          2134080
+        ],
+        [
+          2138240
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 99 %, 1875 MHz, 9501 MHz, 369.64 W, 370.00 W, 67, 2531 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_streamed",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        32,
+        64,
+        96
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "right",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 3.5666946680285037,
+      "compile_s": 0.30637979111634195,
+      "first_run_s": 0.044172564055770636,
+      "executable_memory": {
+        "argument_size_in_bytes": 5961880,
+        "output_size_in_bytes": 5349512,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 1008,
+        "generated_code_size_in_bytes": 191116
+      },
+      "device_memory": {
+        "num_allocs": 1617,
+        "bytes_in_use": 24215040,
+        "peak_bytes_in_use": 29815040,
+        "largest_alloc_size": 1630720,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 31457280,
+        "peak_pool_bytes": 31457280
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [
+        {
+          "layout": 5,
+          "flags": 233,
+          "monitor_count": 2,
+          "coincident_source_group_mask": 4,
+          "disjoint_source_group_mask": 0,
+          "logical_shape": [
+            0,
+            0,
+            0
+          ],
+          "temporal_steps": 1
+        }
+      ],
+      "mstep_plans": [],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        0.00573671399615705,
+        0.007595617091283202,
+        0.007544500986114144,
+        0.007363090990111232,
+        0.007417282089591026
+      ],
+      "median_gcups": 3.3928632747184073,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          33,
+          65,
+          96
+        ],
+        "ey": [
+          33,
+          64,
+          97
+        ],
+        "ez": [
+          32,
+          65,
+          97
+        ],
+        "hx": [
+          32,
+          64,
+          97
+        ],
+        "hy": [
+          32,
+          65,
+          96
+        ],
+        "hz": [
+          33,
+          64,
+          96
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            4.992000000000001e-06,
+            2.56e-06,
+            1.28e-06
+          ],
+          "size": [
+            0.0,
+            3.2e-06,
+            6.399999999999998e-07
+          ]
+        },
+        {
+          "center": [
+            5.760000000000001e-06,
+            2.56e-06,
+            1.28e-06
+          ],
+          "size": [
+            0.0,
+            3.2e-06,
+            6.399999999999998e-07
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          51480
+        ],
+        [
+          51216
+        ],
+        [
+          50440
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 0 %, 1755 MHz, 9501 MHz, 133.41 W, 370.00 W, 60, 841 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_mstep",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        32,
+        64,
+        96
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "right",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 3.5299235079437494,
+      "compile_s": 0.4157255438622087,
+      "first_run_s": 0.07595265796408057,
+      "executable_memory": {
+        "argument_size_in_bytes": 5961880,
+        "output_size_in_bytes": 5349512,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 11246080,
+        "generated_code_size_in_bytes": 1492356
+      },
+      "device_memory": {
+        "num_allocs": 1617,
+        "bytes_in_use": 24215040,
+        "peak_bytes_in_use": 41060096,
+        "largest_alloc_size": 11246080,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 65011712,
+        "peak_pool_bytes": 65011712
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [],
+      "mstep_plans": [
+        {
+          "schedule": "cuda_mstep",
+          "tile": [
+            16,
+            32
+          ],
+          "temporal_steps": 2,
+          "core_fraction": 0.26576310287650495,
+          "first_step_cells": 166791,
+          "edge_cells": 152769,
+          "scratch_bytes": 6389760,
+          "plan_bytes": 1288888
+        }
+      ],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        0.034351770067587495,
+        0.03627857891842723,
+        0.03616321296431124,
+        0.036069808062165976,
+        0.03605578211136162
+      ],
+      "median_gcups": 0.6976977519987614,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          33,
+          65,
+          96
+        ],
+        "ey": [
+          33,
+          64,
+          97
+        ],
+        "ez": [
+          32,
+          65,
+          97
+        ],
+        "hx": [
+          32,
+          64,
+          97
+        ],
+        "hy": [
+          32,
+          65,
+          96
+        ],
+        "hz": [
+          33,
+          64,
+          96
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            4.992000000000001e-06,
+            2.56e-06,
+            1.28e-06
+          ],
+          "size": [
+            0.0,
+            3.2e-06,
+            6.399999999999998e-07
+          ]
+        },
+        {
+          "center": [
+            5.760000000000001e-06,
+            2.56e-06,
+            1.28e-06
+          ],
+          "size": [
+            0.0,
+            3.2e-06,
+            6.399999999999998e-07
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          51480
+        ],
+        [
+          51216
+        ],
+        [
+          50440
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 43 %, 1935 MHz, 9501 MHz, 145.08 W, 370.00 W, 61, 873 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_streamed",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        128,
+        256,
+        512
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "right",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 4.074241447029635,
+      "compile_s": 0.3769834020640701,
+      "first_run_s": 0.33048081398010254,
+      "executable_memory": {
+        "argument_size_in_bytes": 469477976,
+        "output_size_in_bytes": 418686856,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 1008,
+        "generated_code_size_in_bytes": 9333388
+      },
+      "device_memory": {
+        "num_allocs": 1632,
+        "bytes_in_use": 1993541376,
+        "peak_bytes_in_use": 2539101696,
+        "largest_alloc_size": 135266304,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 4297064448,
+        "peak_pool_bytes": 4297064448
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [
+        {
+          "layout": 5,
+          "flags": 233,
+          "monitor_count": 2,
+          "coincident_source_group_mask": 4,
+          "disjoint_source_group_mask": 0,
+          "logical_shape": [
+            0,
+            0,
+            0
+          ],
+          "temporal_steps": 1
+        }
+      ],
+      "mstep_plans": [],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        0.2922989910002798,
+        0.29517172113992274,
+        0.2935109508689493,
+        0.29319782508537173,
+        0.29321098886430264
+      ],
+      "median_gcups": 7.324021709820196,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          129,
+          257,
+          512
+        ],
+        "ey": [
+          129,
+          256,
+          513
+        ],
+        "ez": [
+          128,
+          257,
+          513
+        ],
+        "hx": [
+          128,
+          256,
+          513
+        ],
+        "hy": [
+          128,
+          257,
+          512
+        ],
+        "hz": [
+          129,
+          256,
+          512
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            2.6624e-05,
+            1.024e-05,
+            5.12e-06
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            8.32e-06
+          ]
+        },
+        {
+          "center": [
+            3.0720000000000004e-05,
+            1.024e-05,
+            5.12e-06
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            8.32e-06
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          4243584
+        ],
+        [
+          4235328
+        ],
+        [
+          4218912
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 99 %, 1845 MHz, 9501 MHz, 369.03 W, 370.00 W, 67, 4921 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_mstep",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        128,
+        256,
+        512
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "right",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 4.044919508974999,
+      "compile_s": 1.1758702790830284,
+      "first_run_s": 0.4095153568778187,
+      "executable_memory": {
+        "argument_size_in_bytes": 469477976,
+        "output_size_in_bytes": 418686856,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 584053760,
+        "generated_code_size_in_bytes": 36434192
+      },
+      "device_memory": {
+        "num_allocs": 1632,
+        "bytes_in_use": 1924204288,
+        "peak_bytes_in_use": 3053686784,
+        "largest_alloc_size": 584053760,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 4294967296,
+        "peak_pool_bytes": 4294967296
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [],
+      "mstep_plans": [
+        {
+          "schedule": "cuda_mstep",
+          "tile": [
+            16,
+            32
+          ],
+          "temporal_steps": 2,
+          "core_fraction": 0.8220303420452014,
+          "first_step_cells": 3595881,
+          "edge_cells": 3026817,
+          "scratch_bytes": 178642944,
+          "plan_bytes": 27088452
+        }
+      ],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        0.35423421603627503,
+        0.3543275808915496,
+        0.3542864441405982,
+        0.3545456388965249,
+        0.35463796206749976
+      ],
+      "median_gcups": 6.060729572890033,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          129,
+          257,
+          512
+        ],
+        "ey": [
+          129,
+          256,
+          513
+        ],
+        "ez": [
+          128,
+          257,
+          513
+        ],
+        "hx": [
+          128,
+          256,
+          513
+        ],
+        "hy": [
+          128,
+          257,
+          512
+        ],
+        "hz": [
+          129,
+          256,
+          512
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            2.6624e-05,
+            1.024e-05,
+            5.12e-06
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            8.32e-06
+          ]
+        },
+        {
+          "center": [
+            3.0720000000000004e-05,
+            1.024e-05,
+            5.12e-06
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            8.32e-06
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          4243584
+        ],
+        [
+          4235328
+        ],
+        [
+          4218912
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 100 %, 1935 MHz, 9501 MHz, 344.76 W, 370.00 W, 68, 4945 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_streamed",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        256,
+        512,
+        512
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "right",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 5.076171331107616,
+      "compile_s": 0.6267376048490405,
+      "first_run_s": 1.2986258268356323,
+      "executable_memory": {
+        "argument_size_in_bytes": 1877131736,
+        "output_size_in_bytes": 1674755464,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 1008,
+        "generated_code_size_in_bytes": 43538572
+      },
+      "device_memory": {
+        "num_allocs": 1632,
+        "bytes_in_use": 6899499008,
+        "peak_bytes_in_use": 8585135104,
+        "largest_alloc_size": 335020032,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 17181966336,
+        "peak_pool_bytes": 17181966336
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [
+        {
+          "layout": 5,
+          "flags": 233,
+          "monitor_count": 2,
+          "coincident_source_group_mask": 4,
+          "disjoint_source_group_mask": 0,
+          "logical_shape": [
+            0,
+            0,
+            0
+          ],
+          "temporal_steps": 1
+        }
+      ],
+      "mstep_plans": [],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        1.2603860888630152,
+        1.2757634411100298,
+        1.2599628882016987,
+        1.2633261389564723,
+        1.261582022998482
+      ],
+      "median_gcups": 6.808859380846088,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          257,
+          513,
+          512
+        ],
+        "ey": [
+          257,
+          512,
+          513
+        ],
+        "ez": [
+          256,
+          513,
+          513
+        ],
+        "hx": [
+          256,
+          512,
+          513
+        ],
+        "hy": [
+          256,
+          513,
+          512
+        ],
+        "hz": [
+          257,
+          512,
+          512
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            2.6624e-05,
+            2.048e-05,
+            1.024e-05
+          ],
+          "size": [
+            0.0,
+            3.904e-05,
+            1.856e-05
+          ]
+        },
+        {
+          "center": [
+            3.0720000000000004e-05,
+            2.048e-05,
+            1.024e-05
+          ],
+          "size": [
+            0.0,
+            3.904e-05,
+            1.856e-05
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          16875648
+        ],
+        [
+          16875648
+        ],
+        [
+          16842816
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 100 %, 1785 MHz, 9501 MHz, 368.33 W, 370.00 W, 70, 17243 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_mstep",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        256,
+        512,
+        512
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "right",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 5.095854507992044,
+      "compile_s": 3.3043877549935132,
+      "first_run_s": 1.4590274980291724,
+      "executable_memory": {
+        "argument_size_in_bytes": 1877131736,
+        "output_size_in_bytes": 1674755464,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 2177661440,
+        "generated_code_size_in_bytes": 118697040
+      },
+      "device_memory": {
+        "num_allocs": 1632,
+        "bytes_in_use": 6898976768,
+        "peak_bytes_in_use": 10761223680,
+        "largest_alloc_size": 2177661440,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 17179869184,
+        "peak_pool_bytes": 17179869184
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [],
+      "mstep_plans": [
+        {
+          "schedule": "cuda_mstep",
+          "tile": [
+            16,
+            32
+          ],
+          "temporal_steps": 2,
+          "core_fraction": 0.8778449284848739,
+          "first_step_cells": 9947369,
+          "edge_cells": 8261889,
+          "scratch_bytes": 560750592,
+          "plan_bytes": 75146116
+        }
+      ],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        1.39974351413548,
+        1.4004266939591616,
+        1.3998169940896332,
+        1.3986094531137496,
+        1.4004569749813527
+      ],
+      "median_gcups": 6.13646971587628,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          257,
+          513,
+          512
+        ],
+        "ey": [
+          257,
+          512,
+          513
+        ],
+        "ez": [
+          256,
+          513,
+          513
+        ],
+        "hx": [
+          256,
+          512,
+          513
+        ],
+        "hy": [
+          256,
+          513,
+          512
+        ],
+        "hz": [
+          257,
+          512,
+          512
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            2.6624e-05,
+            2.048e-05,
+            1.024e-05
+          ],
+          "size": [
+            0.0,
+            3.904e-05,
+            1.856e-05
+          ]
+        },
+        {
+          "center": [
+            3.0720000000000004e-05,
+            2.048e-05,
+            1.024e-05
+          ],
+          "size": [
+            0.0,
+            3.904e-05,
+            1.856e-05
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          16875648
+        ],
+        [
+          16875648
+        ],
+        [
+          16842816
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 100 %, 1935 MHz, 9501 MHz, 340.32 W, 370.00 W, 70, 17315 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_mstep",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        32,
+        64,
+        96
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "right",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 3.5315398399252445,
+      "compile_s": 0.422209104988724,
+      "first_run_s": 0.0758720999583602,
+      "executable_memory": {
+        "argument_size_in_bytes": 5961880,
+        "output_size_in_bytes": 5349512,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 11246080,
+        "generated_code_size_in_bytes": 1492356
+      },
+      "device_memory": {
+        "num_allocs": 1617,
+        "bytes_in_use": 24275200,
+        "peak_bytes_in_use": 41035776,
+        "largest_alloc_size": 11246080,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 65011712,
+        "peak_pool_bytes": 65011712
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [],
+      "mstep_plans": [
+        {
+          "schedule": "cuda_mstep",
+          "tile": [
+            16,
+            32
+          ],
+          "temporal_steps": 2,
+          "core_fraction": 0.26576310287650495,
+          "first_step_cells": 166791,
+          "edge_cells": 152769,
+          "scratch_bytes": 6389760,
+          "plan_bytes": 1288888
+        }
+      ],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        0.03710229299031198,
+        0.03823790093883872,
+        0.03597370907664299,
+        0.03598072309978306,
+        0.036138117080554366
+      ],
+      "median_gcups": 0.6963789492381033,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          33,
+          65,
+          96
+        ],
+        "ey": [
+          33,
+          64,
+          97
+        ],
+        "ez": [
+          32,
+          65,
+          97
+        ],
+        "hx": [
+          32,
+          64,
+          97
+        ],
+        "hy": [
+          32,
+          65,
+          96
+        ],
+        "hz": [
+          33,
+          64,
+          96
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            4.992000000000001e-06,
+            2.56e-06,
+            1.28e-06
+          ],
+          "size": [
+            0.0,
+            3.2e-06,
+            6.399999999999998e-07
+          ]
+        },
+        {
+          "center": [
+            5.760000000000001e-06,
+            2.56e-06,
+            1.28e-06
+          ],
+          "size": [
+            0.0,
+            3.2e-06,
+            6.399999999999998e-07
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          51480
+        ],
+        [
+          51216
+        ],
+        [
+          50440
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 98 %, 1950 MHz, 9501 MHz, 141.99 W, 370.00 W, 62, 873 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_streamed",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        32,
+        64,
+        96
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "right",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 3.6200643100310117,
+      "compile_s": 0.3034055149182677,
+      "first_run_s": 0.04384392104111612,
+      "executable_memory": {
+        "argument_size_in_bytes": 5961880,
+        "output_size_in_bytes": 5349512,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 1008,
+        "generated_code_size_in_bytes": 191116
+      },
+      "device_memory": {
+        "num_allocs": 1617,
+        "bytes_in_use": 24215040,
+        "peak_bytes_in_use": 29815040,
+        "largest_alloc_size": 1630720,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 31457280,
+        "peak_pool_bytes": 31457280
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [
+        {
+          "layout": 5,
+          "flags": 233,
+          "monitor_count": 2,
+          "coincident_source_group_mask": 4,
+          "disjoint_source_group_mask": 0,
+          "logical_shape": [
+            0,
+            0,
+            0
+          ],
+          "temporal_steps": 1
+        }
+      ],
+      "mstep_plans": [],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        0.005744970170781016,
+        0.007703989977017045,
+        0.007499977946281433,
+        0.0074365290347486734,
+        0.007419497007504106
+      ],
+      "median_gcups": 3.3840819934148905,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          33,
+          65,
+          96
+        ],
+        "ey": [
+          33,
+          64,
+          97
+        ],
+        "ez": [
+          32,
+          65,
+          97
+        ],
+        "hx": [
+          32,
+          64,
+          97
+        ],
+        "hy": [
+          32,
+          65,
+          96
+        ],
+        "hz": [
+          33,
+          64,
+          96
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            4.992000000000001e-06,
+            2.56e-06,
+            1.28e-06
+          ],
+          "size": [
+            0.0,
+            3.2e-06,
+            6.399999999999998e-07
+          ]
+        },
+        {
+          "center": [
+            5.760000000000001e-06,
+            2.56e-06,
+            1.28e-06
+          ],
+          "size": [
+            0.0,
+            3.2e-06,
+            6.399999999999998e-07
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          51480
+        ],
+        [
+          51216
+        ],
+        [
+          50440
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 0 %, 1755 MHz, 9501 MHz, 130.90 W, 370.00 W, 60, 841 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_mstep",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        128,
+        256,
+        512
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "right",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 4.02264392003417,
+      "compile_s": 1.1782655790448189,
+      "first_run_s": 0.4100489120464772,
+      "executable_memory": {
+        "argument_size_in_bytes": 469477976,
+        "output_size_in_bytes": 418686856,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 584053760,
+        "generated_code_size_in_bytes": 36434192
+      },
+      "device_memory": {
+        "num_allocs": 1632,
+        "bytes_in_use": 1924204288,
+        "peak_bytes_in_use": 3053686784,
+        "largest_alloc_size": 584053760,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 4294967296,
+        "peak_pool_bytes": 4294967296
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [],
+      "mstep_plans": [
+        {
+          "schedule": "cuda_mstep",
+          "tile": [
+            16,
+            32
+          ],
+          "temporal_steps": 2,
+          "core_fraction": 0.8220303420452014,
+          "first_step_cells": 3595881,
+          "edge_cells": 3026817,
+          "scratch_bytes": 178642944,
+          "plan_bytes": 27088452
+        }
+      ],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        0.3547225031070411,
+        0.353994068922475,
+        0.35535212396644056,
+        0.35377206513658166,
+        0.3548478891607374
+      ],
+      "median_gcups": 6.053981997730703,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          129,
+          257,
+          512
+        ],
+        "ey": [
+          129,
+          256,
+          513
+        ],
+        "ez": [
+          128,
+          257,
+          513
+        ],
+        "hx": [
+          128,
+          256,
+          513
+        ],
+        "hy": [
+          128,
+          257,
+          512
+        ],
+        "hz": [
+          129,
+          256,
+          512
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            2.6624e-05,
+            1.024e-05,
+            5.12e-06
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            8.32e-06
+          ]
+        },
+        {
+          "center": [
+            3.0720000000000004e-05,
+            1.024e-05,
+            5.12e-06
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            8.32e-06
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          4243584
+        ],
+        [
+          4235328
+        ],
+        [
+          4218912
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 100 %, 1935 MHz, 9501 MHz, 347.63 W, 370.00 W, 68, 4945 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_streamed",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        128,
+        256,
+        512
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "right",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 4.05883489898406,
+      "compile_s": 0.38387058093212545,
+      "first_run_s": 0.329739861888811,
+      "executable_memory": {
+        "argument_size_in_bytes": 469477976,
+        "output_size_in_bytes": 418686856,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 1008,
+        "generated_code_size_in_bytes": 9333388
+      },
+      "device_memory": {
+        "num_allocs": 1632,
+        "bytes_in_use": 1993541376,
+        "peak_bytes_in_use": 2539101696,
+        "largest_alloc_size": 135266304,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 4297064448,
+        "peak_pool_bytes": 4297064448
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [
+        {
+          "layout": 5,
+          "flags": 233,
+          "monitor_count": 2,
+          "coincident_source_group_mask": 4,
+          "disjoint_source_group_mask": 0,
+          "logical_shape": [
+            0,
+            0,
+            0
+          ],
+          "temporal_steps": 1
+        }
+      ],
+      "mstep_plans": [],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        0.2923722919076681,
+        0.2947931259404868,
+        0.2934642580803484,
+        0.29401384689845145,
+        0.2934613621328026
+      ],
+      "median_gcups": 7.317700840461582,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          129,
+          257,
+          512
+        ],
+        "ey": [
+          129,
+          256,
+          513
+        ],
+        "ez": [
+          128,
+          257,
+          513
+        ],
+        "hx": [
+          128,
+          256,
+          513
+        ],
+        "hy": [
+          128,
+          257,
+          512
+        ],
+        "hz": [
+          129,
+          256,
+          512
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            2.6624e-05,
+            1.024e-05,
+            5.12e-06
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            8.32e-06
+          ]
+        },
+        {
+          "center": [
+            3.0720000000000004e-05,
+            1.024e-05,
+            5.12e-06
+          ],
+          "size": [
+            0.0,
+            1.856e-05,
+            8.32e-06
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          4243584
+        ],
+        [
+          4235328
+        ],
+        [
+          4218912
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 99 %, 1800 MHz, 9501 MHz, 368.62 W, 370.00 W, 68, 4921 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_mstep",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        256,
+        512,
+        512
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "right",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 5.138331071007997,
+      "compile_s": 3.321461904095486,
+      "first_run_s": 1.4576216479763389,
+      "executable_memory": {
+        "argument_size_in_bytes": 1877131736,
+        "output_size_in_bytes": 1674755464,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 2177661440,
+        "generated_code_size_in_bytes": 118697040
+      },
+      "device_memory": {
+        "num_allocs": 1632,
+        "bytes_in_use": 6898976768,
+        "peak_bytes_in_use": 10761223680,
+        "largest_alloc_size": 2177661440,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 17179869184,
+        "peak_pool_bytes": 17179869184
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [],
+      "mstep_plans": [
+        {
+          "schedule": "cuda_mstep",
+          "tile": [
+            16,
+            32
+          ],
+          "temporal_steps": 2,
+          "core_fraction": 0.8778449284848739,
+          "first_step_cells": 9947369,
+          "edge_cells": 8261889,
+          "scratch_bytes": 560750592,
+          "plan_bytes": 75146116
+        }
+      ],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        1.4001115951687098,
+        1.3991608349606395,
+        1.400803972966969,
+        1.399722760077566,
+        1.3999844519421458
+      ],
+      "median_gcups": 6.135735707695543,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          257,
+          513,
+          512
+        ],
+        "ey": [
+          257,
+          512,
+          513
+        ],
+        "ez": [
+          256,
+          513,
+          513
+        ],
+        "hx": [
+          256,
+          512,
+          513
+        ],
+        "hy": [
+          256,
+          513,
+          512
+        ],
+        "hz": [
+          257,
+          512,
+          512
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            2.6624e-05,
+            2.048e-05,
+            1.024e-05
+          ],
+          "size": [
+            0.0,
+            3.904e-05,
+            1.856e-05
+          ]
+        },
+        {
+          "center": [
+            3.0720000000000004e-05,
+            2.048e-05,
+            1.024e-05
+          ],
+          "size": [
+            0.0,
+            3.904e-05,
+            1.856e-05
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          16875648
+        ],
+        [
+          16875648
+        ],
+        [
+          16842816
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 100 %, 1935 MHz, 9501 MHz, 341.49 W, 370.00 W, 69, 17315 MiB"
+    },
+    {
+      "source_sha256": "7ec200f4614805cf39dad7c85e4da7aa4ae2f3d9aef033a1a661dcaeafe8569b",
+      "benchmark_sha256": "84408fca4f684afb198ca418e1987f283a19c0d0535a1134ed7c4eec4d1919d6",
+      "warmups": 3,
+      "backend": "cuda_streamed",
+      "cpml_core_fusion_env": "auto",
+      "field_padding_env": "none",
+      "storage_axes": [
+        0,
+        1,
+        2
+      ],
+      "cpml_tile_env": "auto",
+      "cpml_pair_tile_env": "16x8x16",
+      "cpml_temporal_env": "0",
+      "cpml_shell_tile_env": "64x4",
+      "temporal_steps_env": "1",
+      "source_root": "/home/quentinwach/beamz/beamz-cuda-mstep",
+      "commit": "24cd6b6fdd4caefc80e5909f08b705266b9c9b01",
+      "extension_sha256": "52aae61deb3a8ea065425469237bdc5c0b852ccc7bfe4f3b36d4d3302a7e5690",
+      "device": "cuda:0",
+      "jax": "0.9.0",
+      "shape": [
+        256,
+        512,
+        512
+      ],
+      "steps": 128,
+      "material": "binary",
+      "pml": 12,
+      "boundary": "right",
+      "monitors": 2,
+      "frequencies": 3,
+      "in_place_experiment": false,
+      "source_specs": 1,
+      "setup_s": 5.131525940028951,
+      "compile_s": 0.6306321539450437,
+      "first_run_s": 1.2991503910161555,
+      "executable_memory": {
+        "argument_size_in_bytes": 1877131736,
+        "output_size_in_bytes": 1674755464,
+        "alias_size_in_bytes": 0,
+        "temp_size_in_bytes": 1008,
+        "generated_code_size_in_bytes": 43538572
+      },
+      "device_memory": {
+        "num_allocs": 1632,
+        "bytes_in_use": 6899499008,
+        "peak_bytes_in_use": 8585135104,
+        "largest_alloc_size": 335020032,
+        "bytes_limit": 18945048576,
+        "bytes_reserved": 0,
+        "peak_bytes_reserved": 0,
+        "largest_free_block_bytes": 0,
+        "pool_bytes": 17181966336,
+        "peak_pool_bytes": 17181966336
+      },
+      "source": "gaussian",
+      "monitor_type": "field",
+      "native_plans": [
+        {
+          "layout": 5,
+          "flags": 233,
+          "monitor_count": 2,
+          "coincident_source_group_mask": 4,
+          "disjoint_source_group_mask": 0,
+          "logical_shape": [
+            0,
+            0,
+            0
+          ],
+          "temporal_steps": 1
+        }
+      ],
+      "mstep_plans": [],
+      "presteps": 0,
+      "conditioning_s": 0.0,
+      "public_samples_s": [],
+      "samples_s": [
+        1.2611619101371616,
+        1.2760119151789695,
+        1.2601743720006198,
+        1.2638073179405183,
+        1.262064513983205
+      ],
+      "median_gcups": 6.806256333829786,
+      "field_dtype": "float32",
+      "field_shapes": {
+        "ex": [
+          257,
+          513,
+          512
+        ],
+        "ey": [
+          257,
+          512,
+          513
+        ],
+        "ez": [
+          256,
+          513,
+          513
+        ],
+        "hx": [
+          256,
+          512,
+          513
+        ],
+        "hy": [
+          256,
+          513,
+          512
+        ],
+        "hz": [
+          257,
+          512,
+          512
+        ]
+      },
+      "monitor_regions": [
+        {
+          "center": [
+            2.6624e-05,
+            2.048e-05,
+            1.024e-05
+          ],
+          "size": [
+            0.0,
+            3.904e-05,
+            1.856e-05
+          ]
+        },
+        {
+          "center": [
+            3.0720000000000004e-05,
+            2.048e-05,
+            1.024e-05
+          ],
+          "size": [
+            0.0,
+            3.904e-05,
+            1.856e-05
+          ]
+        }
+      ],
+      "cpml_dtypes": [
+        "float32"
+      ],
+      "h_coefficient_shapes": {
+        "h_decay_x": [],
+        "h_decay_y": [],
+        "h_decay_z": [],
+        "h_source_x": [],
+        "h_source_y": [],
+        "h_source_z": []
+      },
+      "e_coefficient_shapes": [
+        [
+          16875648
+        ],
+        [
+          16875648
+        ],
+        [
+          16842816
+        ]
+      ],
+      "gpu": "name, utilization.gpu [%], clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], temperature.gpu, memory.used [MiB]\nNVIDIA GeForce RTX 3090, 100 %, 1785 MHz, 9501 MHz, 368.11 W, 370.00 W, 70, 17243 MiB"
+    }
+  ]
+}
