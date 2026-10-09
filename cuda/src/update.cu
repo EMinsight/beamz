@@ -1655,31 +1655,44 @@ cudaError_t BeamzEnqueueSpatialCpml(cudaStream_t stream, const BeamzLaunch &h,
   return LaunchTemporalCpmlMasks<false,false,2,1>(stream,h,e,final,groups,step,{});
 }
 
+template <bool Packed, bool ScalarH>
+cudaError_t LaunchMstepColumn(cudaStream_t stream, const BeamzLaunch &h,
+                              const BeamzLaunch &e,
+                              const PairFieldOutputs &final,
+                              const BeamzBuffer &masks,
+                              const BeamzBuffer &bounds) {
+  // The input window and one thread per lane match the winning Futhark core.
+  if (auto error = cudaFuncSetAttribute(
+          MstepColumnCore<Packed, ScalarH>,
+          cudaFuncAttributeMaxDynamicSharedMemorySize, kMstepSharedBytes);
+      error != cudaSuccess)
+    return error;
+  const dim3 blocks(masks.dims[1], masks.dims[0]);
+  MstepColumnCore<Packed, ScalarH>
+      <<<blocks, kMstepThreads, kMstepSharedBytes, stream>>>(
+          MakeFusedYeePhase(h), MakeFusedYeePhase(e), final, masks, bounds);
+  return cudaGetLastError();
+}
+
 cudaError_t BeamzEnqueueMstepCore(cudaStream_t stream, const BeamzLaunch &h,
                                   const BeamzLaunch &e,
                                   const BeamzBuffer *final_fields,
                                   const BeamzBuffer &masks,
                                   const BeamzBuffer &bounds) {
   PairFieldOutputs final{};
-  for (int c = 0; c < 6; ++c)
+  bool scalar_h = true;
+  for (int c = 0; c < 6; ++c) {
     final.fields[c] = final_fields[c];
-  const dim3 blocks(masks.dims[1], masks.dims[0]);
-  // The input window and one thread per lane match the winning Futhark core.
-  auto kernel = e.inputs[9].element_type == kBeamzS32
-                    ? MstepColumnCore<true>
-                    : MstepColumnCore<false>;
-  if (auto error = cudaFuncSetAttribute(
-          kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, kMstepSharedBytes);
-      error != cudaSuccess)
-    return error;
-  const bool packed = e.inputs[9].element_type == kBeamzS32;
-  if (packed)
-    MstepColumnCore<true><<<blocks, kMstepThreads, kMstepSharedBytes, stream>>>(
-        MakeFusedYeePhase(h), MakeFusedYeePhase(e), final, masks, bounds);
-  else
-    MstepColumnCore<false><<<blocks, kMstepThreads, kMstepSharedBytes, stream>>>(
-        MakeFusedYeePhase(h), MakeFusedYeePhase(e), final, masks, bounds);
-  return cudaGetLastError();
+    scalar_h &= h.inputs[6 + c].rank == 0;
+  }
+  if (e.inputs[9].element_type == kBeamzS32) {
+    if (scalar_h)
+      return LaunchMstepColumn<true, true>(stream, h, e, final, masks, bounds);
+    return LaunchMstepColumn<true, false>(stream, h, e, final, masks, bounds);
+  }
+  if (scalar_h)
+    return LaunchMstepColumn<false, true>(stream, h, e, final, masks, bounds);
+  return LaunchMstepColumn<false, false>(stream, h, e, final, masks, bounds);
 }
 
 cudaError_t BeamzEnqueueMstepEdge(cudaStream_t stream,

@@ -97,11 +97,14 @@ unifying the public names; a cell-count threshold alone cannot express these
 costs. OpenCL remains a separate portability proposal until this scheduler and
 its parity contract are stable.
 
-The [initial RTX3090 port results](../docs/reviews/cuda-mstep-rtx3090-2026-10-09.md)
-include correctness and sanitizer gates, raw timings and memory measurements.
-Established CUDA wins all measured cases, including the largest 67-million-cell
-domain. This supports keeping the new scheduler explicit while profiling it;
-the current measurements do not justify an automatic switching threshold.
+The [RTX3090 follow-up](../docs/reviews/cuda-mstep-futhark-followup.md) records
+the recovery of Futhark's large-domain advantage through input-plane staging,
+720-thread mapping and scalar H specialization. It includes matched workloads,
+kernel profiles, correctness and sanitizer gates. The
+[initial port results](../docs/reviews/cuda-mstep-rtx3090-2026-10-09.md) preserve
+the slower initial implementation's measurements. Keep the scheduler explicit:
+domain geometry and boundary work affect its crossover, and automatic selection
+still needs a wider measured envelope.
 
 ## Experimental sharded streamed execution
 

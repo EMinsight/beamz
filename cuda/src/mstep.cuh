@@ -13,11 +13,23 @@ __device__ __forceinline__ float &MstepInput(float *shared, int c, int y,
                                              int x) {
   return shared[kMstepInputOffset + c * kMstepThreads + y * kMstepWindowX + x];
 }
-template <bool Packed, int K = 0>
+// Full field banks are canonical; compact addressing belongs only to edges.
+__device__ __forceinline__ int MstepFieldOffset(const BeamzBuffer &f, int z,
+                                                int y, int x) {
+  return z * f.plane_stride + y * f.row_stride + x;
+}
+__device__ __forceinline__ float MstepFieldRead(const BeamzBuffer &f, int z,
+                                                int y, int x) {
+  return static_cast<const float *>(f.data)[MstepFieldOffset(f, z, y, x)];
+}
+struct MstepHScalars {
+  float decay[3], source[3];
+};
+template <bool Packed, bool ScalarH, int K = 0>
 __device__ __forceinline__ void
 MstepStages(float *shared, const FusedYeePhase &h, const FusedYeePhase &e,
-            const PairFieldOutputs &final, int ox, int oy, int oz, int wave,
-            int mask) {
+            const PairFieldOutputs &final, const MstepHScalars &hc, int ox,
+            int oy, int oz, int wave, int mask) {
   using Here = PairStage<32, 16, K>;
   constexpr int phase = K % 2, shift = phase == 1 ? 1 : 0;
   constexpr int sign = phase == 0 ? 1 : -1;
@@ -39,7 +51,7 @@ MstepStages(float *shared, const FusedYeePhase &h, const FusedYeePhase &e,
                 return MstepInput(shared, component, iy + dy, ix + dx);
               const auto &f = h.inputs[3 + component];
               return BufferContains(f, z + dz, y + dy, x + dx)
-                         ? Read3D(f, z + dz, y + dy, x + dx)
+                         ? MstepFieldRead(f, z + dz, y + dy, x + dx)
                          : 0.f;
             } else {
               return PairStage<32, 16, K - 1>::At(
@@ -61,19 +73,24 @@ MstepStages(float *shared, const FusedYeePhase &h, const FusedYeePhase &e,
           if constexpr (K == 1)
             old = MstepInput(shared, c, iy + 1, ix + 1);
           else if constexpr (K == 0)
-            old = Read3D(launch.inputs[c], z, y, x);
+            old = MstepFieldRead(launch.inputs[c], z, y, x);
           else
             old = PairStage<32, 16, K - 2>::At(shared, c, z, iy + 1, ix + 1);
           const int logical = (z * static_cast<int>(out.dims[1]) + y) *
                                   static_cast<int>(out.dims[2]) +
                               x;
-          const float decay =
-              phase == 1 && Packed ? 1.f : Read(launch.inputs[6 + c], z, y, x);
-          const float source =
-              phase == 1 && Packed
-                  ? beamz::cuda::yee::PackedMaterialSource(
-                        launch.inputs[6 + c], launch.inputs[9 + c], logical)
-                  : Read(launch.inputs[9 + c], z, y, x);
+          float decay, source;
+          if constexpr (phase == 0 && ScalarH) {
+            decay = hc.decay[c];
+            source = hc.source[c];
+          } else if constexpr (phase == 1 && Packed) {
+            decay = 1.f;
+            source = beamz::cuda::yee::PackedMaterialSource(
+                launch.inputs[6 + c], launch.inputs[9 + c], logical);
+          } else {
+            decay = Read(launch.inputs[6 + c], z, y, x);
+            source = Read(launch.inputs[9 + c], z, y, x);
+          }
           next = beamz::cuda::yee::AdvanceYeeField(phase, old, decay, source,
                                                    curl);
         }
@@ -82,8 +99,8 @@ MstepStages(float *shared, const FusedYeePhase &h, const FusedYeePhase &e,
           if (mask & (1 << quadrant)) {
             const auto &ef = final.fields[3 + c];
             const auto &hf = final.fields[c];
-            static_cast<float *>(ef.data)[BeamzOffset3D(ef, z, y, x)] = next;
-            static_cast<float *>(hf.data)[BeamzOffset3D(hf, z, y, x)] =
+            static_cast<float *>(ef.data)[MstepFieldOffset(ef, z, y, x)] = next;
+            static_cast<float *>(hf.data)[MstepFieldOffset(hf, z, y, x)] =
                 PairStage<32, 16, 2>::At(shared, c, z, iy + 1, ix + 1);
           }
         } else
@@ -93,10 +110,11 @@ MstepStages(float *shared, const FusedYeePhase &h, const FusedYeePhase &e,
   }
   __syncthreads();
   if constexpr (K < 3)
-    MstepStages<Packed, K + 1>(shared, h, e, final, ox, oy, oz, wave, mask);
+    MstepStages<Packed, ScalarH, K + 1>(shared, h, e, final, hc, ox, oy, oz,
+                                        wave, mask);
 }
 
-template <bool Packed>
+template <bool Packed, bool ScalarH>
 __global__ __launch_bounds__(kMstepThreads) void MstepColumnCore(
     const __grid_constant__ FusedYeePhase h,
     const __grid_constant__ FusedYeePhase e,
@@ -109,6 +127,14 @@ __global__ __launch_bounds__(kMstepThreads) void MstepColumnCore(
     return;
   const int zb = static_cast<const int *>(bounds.data)[0];
   const int zt = static_cast<const int *>(bounds.data)[1];
+  MstepHScalars hc{};
+  if constexpr (ScalarH) {
+#pragma unroll
+    for (int c = 0; c < 3; ++c) {
+      hc.decay[c] = static_cast<const float *>(h.inputs[6 + c].data)[0];
+      hc.source[c] = static_cast<const float *>(h.inputs[9 + c].data)[0];
+    }
+  }
   extern __shared__ float shared[];
   for (int wave = 0; wave < zt - zb + 3; ++wave) {
     const int y = threadIdx.x / kMstepWindowX;
@@ -120,11 +146,11 @@ __global__ __launch_bounds__(kMstepThreads) void MstepColumnCore(
     for (int c = 0; c < 3; ++c) {
       const auto &f = h.inputs[3 + c];
       MstepInput(shared, c, y, x) =
-          BufferContains(f, z, gy, gx) ? Read3D(f, z, gy, gx) : 0.f;
+          BufferContains(f, z, gy, gx) ? MstepFieldRead(f, z, gy, gx) : 0.f;
     }
     __syncthreads();
-    MstepStages<Packed>(shared, h, e, final, blockIdx.x * 32, blockIdx.y * 16,
-                        zb, wave, mask);
+    MstepStages<Packed, ScalarH>(shared, h, e, final, hc, blockIdx.x * 32,
+                                 blockIdx.y * 16, zb, wave, mask);
   }
 }
 

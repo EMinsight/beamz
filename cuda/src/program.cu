@@ -811,6 +811,11 @@ int BeamzLaunchMstep(void *raw_stream, const BeamzMstepLaunch &launch) {
         final.data == reference.data || scratch.data == reference.data ||
         scratch.data == final.data)
       return cudaErrorInvalidValue;
+    // The core bypasses compact/padded addressing for full field banks.
+    for (const auto &field : {reference, final})
+      if (field.compact_slots || field.row_stride != field.dims[2] ||
+          field.plane_stride != field.dims[1] * field.dims[2])
+        return cudaErrorInvalidValue;
     for (int a = 0; a < 3; ++a) {
       if (final.dims[a] != reference.dims[a])
         return cudaErrorInvalidValue;
