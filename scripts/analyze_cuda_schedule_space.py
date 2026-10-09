@@ -81,33 +81,35 @@ def load_reports(directories, *, fresh_only=False, cases=None):
                 cases and report["case"]["name"] not in cases
             ):
                 continue
-            key = json.dumps(
-                [
-                    report["case"],
-                    report["device"],
-                    report.get("jax"),
-                    report.get("extension_sha256"),
-                    report.get("planner_sha256"),
-                    report.get("workload_sha256"),
-                    {
-                        k: report.get("hardware", {}).get(k)
-                        for k in ("uuid", "driver", "power_limit")
-                    }
-                    if report.get("hardware")
-                    else None,
-                ],
-                sort_keys=True,
-            )
-            records = [
-                r
-                for r in report["records"]
-                if not fresh_only or r.get("fresh_process", False)
-            ]
-            if not records:
-                continue
-            item = merged.setdefault(key, {**report, "records": [], "sources": []})
-            item["records"].extend(records)
-            item["sources"].append(str(path))
+            for record in report["records"]:
+                if fresh_only and not record.get("fresh_process", False):
+                    continue
+                # An interrupted/resumed sweep can span revisions. Do not assign
+                # the last worker's fingerprint to earlier measurements.
+                identity = {**report, **record.get("provenance", {})}
+                key = json.dumps(
+                    [
+                        report["case"],
+                        identity["device"],
+                        identity.get("jax"),
+                        identity.get("extension_sha256"),
+                        identity.get("planner_sha256"),
+                        identity.get("workload_sha256"),
+                        {
+                            k: identity.get("hardware", {}).get(k)
+                            for k in ("uuid", "driver", "power_limit")
+                        }
+                        if identity.get("hardware")
+                        else None,
+                    ],
+                    sort_keys=True,
+                )
+                item = merged.setdefault(
+                    key, {**identity, "records": [], "sources": []}
+                )
+                item["records"].append(record)
+                if str(path) not in item["sources"]:
+                    item["sources"].append(str(path))
     return list(merged.values())
 
 

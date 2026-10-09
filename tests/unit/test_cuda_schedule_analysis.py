@@ -60,6 +60,20 @@ def test_shared_sweep_cannot_supply_verified_cold_start(tmp_path):
     assert load_reports([tmp_path], fresh_only=True) == []
 
 
+def test_resumed_sweep_keeps_each_workers_implementation_identity(tmp_path):
+    first = _record("streamed", 0.4, 0.5)
+    second = _record("mstep", 0.9, 0.3)
+    first["provenance"] = {"extension_sha256": "earlier-binary"}
+    report = _report([first, second])
+    (tmp_path / "resumed.json").write_text(json.dumps(report))
+    reports = load_reports([tmp_path], fresh_only=True)
+    assert {r["extension_sha256"] for r in reports} == {
+        "earlier-binary",
+        "binary-one",
+    }
+    assert all(len(r["records"]) == 1 for r in reports)
+
+
 def test_exhaustive_layout_space_is_complete_and_names_are_unique():
     from scripts.benchmark_cuda_schedule_space import configurations
 
@@ -68,3 +82,37 @@ def test_exhaustive_layout_space_is_complete_and_names_are_unique():
     mstep = [c for c in candidates if c["backend"] == "cuda_mstep"]
     assert len(mstep) == 4 * 5 * 3
     assert {c["name"] for c in configurations()} <= {c["name"] for c in candidates}
+
+
+def test_evidence_export_excludes_pilots_and_reports_streamed_fallback(tmp_path):
+    from scripts.export_cuda_schedule_study import rows, write_tables
+
+    record = _record("mstep-request", 0.4, 0.5)
+    record.update(
+        decision={"selected": "streamed"},
+        cold_time_to_result_s=1.0,
+        total_time_to_result_s=4.0,
+    )
+    report = _report([record])
+    packet = {
+        "evidence": [
+            dict(
+                source="finalists256/medium.json",
+                phase="fresh",
+                exclusion=None,
+                report=report,
+            ),
+            dict(
+                source="magnetic.json",
+                phase="fresh",
+                exclusion="Not dense H",
+                report=report,
+            ),
+        ]
+    }
+    measured = rows(packet)
+    assert len(measured) == 1
+    assert measured[0]["actual_schedule"] == "streamed"
+    assert measured[0]["total_first_result_s"] == 4.0
+    write_tables(measured, tmp_path)
+    assert "fallback" in (tmp_path / "cuda-schedule-tables.md").read_text()
