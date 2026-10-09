@@ -20,6 +20,8 @@ import sys
 import time
 from pathlib import Path
 
+_PROCESS_START = time.perf_counter()
+
 
 def configurations():
     candidates = [{"name": "streamed", "backend": "cuda_streamed", "env": {}}]
@@ -151,6 +153,7 @@ def worker(case, candidates, output, samples, rounds):
     from beamz.simulation.execute import build_scan, initial_program_state
     from scripts.benchmark_cuda_realistic import build_simulation
 
+    imports_s = time.perf_counter() - _PROCESS_START
     t = time.perf_counter()
     os.environ.update(case.get("base_env", {}))
     sim = build_simulation(SimpleNamespace(**case))
@@ -174,6 +177,10 @@ def worker(case, candidates, output, samples, rounds):
         "benchmark_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "planner_sha256": hashlib.sha256(Path(mstep.__file__).read_bytes()).hexdigest(),
         "shared_setup_s": setup,
+        "imports_s": imports_s,
+        "workload_sha256": hashlib.sha256(
+            Path(build_simulation.__code__.co_filename).read_bytes()
+        ).hexdigest(),
         "records": [],
         "method": "Shared material setup; measured plan construction, lowering, XLA compilation, first execution and warm samples. Reversed order in alternating rounds.",
     }
@@ -254,6 +261,9 @@ def worker(case, candidates, output, samples, rounds):
                     entry["cold_preparation_s"] + entry["first_run_s"]
                 )
                 entry["total_time_to_result_s"] = setup + entry["cold_time_to_result_s"]
+                entry["process_time_to_result_s"] = (
+                    imports_s + entry["total_time_to_result_s"]
+                )
                 del executable, lowered, scan, result, program
             except Exception as exc:
                 entry.update(status="unavailable", error=f"{type(exc).__name__}: {exc}")
@@ -368,6 +378,7 @@ def main():
                                 "extension_sha256",
                                 "benchmark_sha256",
                                 "planner_sha256",
+                                "workload_sha256",
                             )
                         }
                     )
@@ -376,6 +387,7 @@ def main():
                             round=round_index,
                             fresh_process=True,
                             shared_setup_s=record["shared_setup_s"],
+                            imports_s=record["imports_s"],
                         )
                         aggregate["records"].append(entry)
                     (

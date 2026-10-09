@@ -86,6 +86,7 @@ def load_reports(directories, *, fresh_only=False, cases=None):
                     report.get("jax"),
                     report.get("extension_sha256"),
                     report.get("planner_sha256"),
+                    report.get("workload_sha256"),
                 ],
                 sort_keys=True,
             )
@@ -122,6 +123,7 @@ def main():
         item["sources"] = report["sources"]
         item["extension_sha256"] = report.get("extension_sha256")
         item["planner_sha256"] = report.get("planner_sha256")
+        item["workload_sha256"] = report.get("workload_sha256")
         item["jax"] = report.get("jax")
         item["predictions"] = [
             dict(

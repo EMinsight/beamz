@@ -242,3 +242,42 @@ def test_mstep_variant_flags_are_validated_and_cacheable(monkeypatch, tile, segm
     monkeypatch.setenv("BEAMZ_CUDA_MSTEP_TILE", "bad")
     with pytest.raises(ValueError, match="TILE"):
         variant_flags_from_env()
+
+
+def test_progress_uses_known_chunk_reuse_and_preserves_state(monkeypatch):
+    import jax
+
+    import beamz as bz
+    from beamz.simulation.execute import initial_program_state
+
+    sim = bz.Simulation(
+        domain=(0.4 * bz.um, 0.3 * bz.um),
+        resolution=0.1 * bz.um,
+        time=np.arange(44) * 1e-17,
+    )
+    program = sim.compile(num_steps=43, backend="jax")
+    state = initial_program_state(program, t=0, current_step=0, monitor_steps=43)
+    rng = np.random.default_rng(73)
+    state = state._replace(
+        **{
+            name: rng.normal(size=getattr(state, name).shape).astype(np.float32) * 1e-3
+            for name in ("ex", "ey", "ez", "hx", "hy", "hz")
+        }
+    )
+    expected = sim.advance(state=state, num_steps=43, backend="jax", progress=False)
+    calls = []
+    compile_program = type(sim).compile
+
+    def record(self, **kwargs):
+        calls.append((kwargs["num_steps"], kwargs["expected_runs"]))
+        return compile_program(self, **kwargs)
+
+    monkeypatch.setattr(type(sim), "compile", record)
+    actual = sim.advance(
+        state=state, num_steps=43, backend="jax", progress=True, expected_runs=2
+    )
+    assert sorted(calls) == [(1, 2), (3, 28)]
+    for reference, result in zip(
+        jax.tree.leaves(expected.state), jax.tree.leaves(actual.state), strict=True
+    ):
+        np.testing.assert_allclose(result, reference, rtol=1e-5, atol=1e-8)

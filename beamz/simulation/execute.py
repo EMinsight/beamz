@@ -7,7 +7,7 @@ import os
 import pathlib
 import platform
 import sys
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from time import perf_counter
@@ -764,9 +764,7 @@ def build_scan(program, *, donate_state: bool = False):
     native_graph_calls = None
     if cfg.cuda_storage_axes != (0, 1, 2) and not step_context.low_memory:
         if not (
-            cuda_multi_step
-            and cfg.is_3d
-            and cfg.metric_kind == "isotropic_uniform"
+            cuda_multi_step and cfg.is_3d and cfg.metric_kind == "isotropic_uniform"
         ):
             raise ValueError(
                 "CUDA storage-axis permutations require a 3D uniform-grid "
@@ -1566,6 +1564,9 @@ def run_simulation_with_progress(
 ) -> SimulationRun:
     """Run a segment in compiled chunks and report actual completed timesteps."""
     chunk_lengths = _progress_chunk_lengths(num_steps)
+    # This API already knows how often each executable will run. Account for
+    # that work even when visible progress divides a long run into short calls.
+    chunk_reuse = Counter(chunk_lengths)
     _print_inline_status("Compiling simulation...")
     try:
         programs = {
@@ -1574,7 +1575,7 @@ def run_simulation_with_progress(
                 sharding=sharding,
                 backend=backend,
                 schedule=schedule,
-                expected_runs=expected_runs,
+                expected_runs=expected_runs * chunk_reuse[length],
                 progress=False,
             )
             for length in set(chunk_lengths)

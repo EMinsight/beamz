@@ -343,6 +343,24 @@ def test_mstep_short_column_sanitizer():
     _compare(_run(sim, state, "jax", 2), actual, 3e-5)
 
 
+def test_mstep_segmented_rotated_sanitizer(monkeypatch):
+    """Cross multiple column segments with cyclic storage and seeded fields."""
+    monkeypatch.setenv("BEAMZ_CUDA_MSTEP_TILE", "8x16")
+    monkeypatch.setenv("BEAMZ_CUDA_MSTEP_SEGMENT", "32")
+    monkeypatch.setenv("BEAMZ_CUDA_STORAGE_AXES", "120")
+    sim = _simulation(shape=(73, 49, 65))
+    sim = bz.Simulation(
+        material_grid=sim._material_grid(progress=False),
+        boundaries=[bz.PEC(edges="all")],
+        time=sim.time,
+    )
+    program = sim.compile(backend="cuda_mstep", num_steps=2)
+    state = _seed(program)
+    actual = _run(sim, state, "cuda_mstep", 2)
+    _compare(_run(sim, state, "cuda", 2), actual)
+    _compare(_run(sim, state, "jax", 2), actual, 3e-5)
+
+
 def test_mstep_three_material_codebook_matches_cuda_and_jax():
     """Exercise a packed codebook with more than the common two dielectrics."""
     sim = _simulation(shape=(21, 41, 73))
