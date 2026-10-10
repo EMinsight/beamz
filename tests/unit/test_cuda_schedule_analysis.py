@@ -1,5 +1,6 @@
 """Measured startup costs and reuse can reverse the preferred CUDA schedule."""
 
+import gzip
 import json
 from pathlib import Path
 
@@ -84,22 +85,22 @@ def test_resumed_sweep_keeps_each_workers_implementation_identity(tmp_path):
     assert all(len(r["records"]) == 1 for r in reports)
 
 
-def test_archive_is_replayable_and_excluded_pilots_cannot_affect_ranking(tmp_path):
+@pytest.mark.parametrize("compressed", [False, True])
+def test_archive_is_replayable_and_excluded_pilots_cannot_affect_ranking(
+    tmp_path, compressed
+):
     report = _report([_record("streamed", 0.4, 0.5)])
     pilot = _report([_record("mstep", 0.0, 0.001)])
-    path = tmp_path / "archive.json"
-    path.write_text(
-        json.dumps(
-            {
-                "evidence": [
-                    dict(source="fresh.json", exclusion=None, report=report),
-                    dict(
-                        source="pilot.json", exclusion="Invalid workload", report=pilot
-                    ),
-                ]
-            }
-        )
-    )
+    path = tmp_path / ("archive.json.gz" if compressed else "archive.json")
+    payload = json.dumps(
+        {
+            "evidence": [
+                dict(source="fresh.json", exclusion=None, report=report),
+                dict(source="pilot.json", exclusion="Invalid workload", report=pilot),
+            ]
+        }
+    ).encode()
+    path.write_bytes(gzip.compress(payload, mtime=0) if compressed else payload)
     reports = load_reports([path], fresh_only=True)
     assert len(reports) == 1
     assert rank(summarize(reports[0]), 256)[0]["configuration"]["name"] == "streamed"

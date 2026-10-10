@@ -1207,9 +1207,10 @@ class Simulation:
             compatible and otherwise retains the JAX implementation. ``cuda_mstep``
             explicitly selects the experimental two-step CUDA scheduler.
         schedule : {"auto", "streamed", "mstep"}, optional
-            CUDA execution schedule. ``cuda`` and ``auto`` select automatically;
-            the legacy CUDA backend names select their matching explicit schedule.
-            Unmeasured automatic cases retain streamed execution.
+            CUDA execution schedule. Omitting it preserves established streamed
+            selection. ``schedule="auto"`` opts into selection by time to result;
+            unmeasured cases retain streamed. CUDA backend names remain explicit
+            schedule overrides.
         expected_runs : int, default=1
             Expected executions reusing this program. Automatic CUDA selection
             uses this hint to amortize compilation; it does not execute extra runs.
@@ -1284,9 +1285,10 @@ class Simulation:
         progress : bool, default=False
             Display setup progress while rasterizing the material grid.
         schedule : {"auto", "streamed", "mstep"}, optional
-            CUDA execution schedule. ``cuda`` and ``auto`` select automatically;
-            the legacy CUDA backend names select their matching explicit schedule.
-            Unmeasured automatic cases retain streamed execution.
+            CUDA execution schedule. Omitting it preserves established streamed
+            selection. ``schedule="auto"`` opts into selection by time to result;
+            unmeasured cases retain streamed. CUDA backend names remain explicit
+            schedule overrides.
         expected_runs : int, default=1
             Expected executions reusing this program. Automatic CUDA selection
             uses this hint to amortize compilation; it does not execute extra runs.
@@ -1363,9 +1365,10 @@ class Simulation:
         progress : bool, default=False
             Display setup progress while rasterizing and lowering the simulation.
         schedule : {"auto", "streamed", "mstep"}, optional
-            CUDA execution schedule. ``cuda`` and ``auto`` select automatically;
-            the legacy CUDA backend names select their matching explicit schedule.
-            Unmeasured automatic cases retain streamed execution.
+            CUDA execution schedule. Omitting it preserves established streamed
+            selection. ``schedule="auto"`` opts into selection by time to result;
+            unmeasured cases retain streamed. CUDA backend names remain explicit
+            schedule overrides.
         expected_runs : int, default=1
             Expected executions reusing this program. Automatic CUDA selection
             uses this hint to amortize compilation; it does not execute extra runs.
@@ -1545,9 +1548,10 @@ class Simulation:
         performance : bool, default=True
             Print JIT- and setup-free runtime and GCUPS after this segment finishes.
         schedule : {"auto", "streamed", "mstep"}, optional
-            CUDA execution schedule. ``cuda`` and ``auto`` select automatically;
-            the legacy CUDA backend names select their matching explicit schedule.
-            Unmeasured automatic cases retain streamed execution.
+            CUDA execution schedule. Omitting it preserves established streamed
+            selection. ``schedule="auto"`` opts into selection by time to result;
+            unmeasured cases retain streamed. CUDA backend names remain explicit
+            schedule overrides.
         expected_runs : int, default=1
             Expected executions reusing this program. Automatic CUDA selection
             uses this hint to amortize compilation; it does not execute extra runs.
@@ -1672,9 +1676,10 @@ class Simulation:
             Print JIT- and setup-free runtime and GCUPS after completion. Set to
             ``False`` to suppress reporting and timing instrumentation.
         schedule : {"auto", "streamed", "mstep"}, optional
-            CUDA execution schedule. ``cuda`` and ``auto`` select automatically;
-            the legacy CUDA backend names select their matching explicit schedule.
-            Unmeasured automatic cases retain streamed execution.
+            CUDA execution schedule. Omitting it preserves established streamed
+            selection. ``schedule="auto"`` opts into selection by time to result;
+            unmeasured cases retain streamed. CUDA backend names remain explicit
+            schedule overrides.
         expected_runs : int, default=1
             Expected executions reusing this program. Automatic CUDA selection
             uses this hint to amortize compilation; it does not execute extra runs.

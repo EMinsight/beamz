@@ -22,6 +22,11 @@ def main():
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--shape", nargs=3, type=int, required=True)
     parser.add_argument("--steps", type=int, default=256)
+    parser.add_argument("--backend", default="cuda_streamed")
+    parser.add_argument("--schedule", choices=("auto", "streamed", "mstep"))
+    parser.add_argument("--boundary", choices=("all", "right", "pec"), default="all")
+    parser.add_argument("--warmups", type=int, default=4)
+    parser.add_argument("--samples", type=int, default=9)
     parser.add_argument("--material", choices=("binary", "smooth"), required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--reference", type=Path, required=True)
@@ -65,26 +70,29 @@ def main():
         material=args.material,
         source="mode",
         monitor_type="mode",
+        boundary=args.boundary,
     )
     start = time.perf_counter()
     sim = workload.build_simulation(settings)
-    program = sim.compile(num_steps=args.steps, backend="cuda_streamed")
+    options = {"schedule": args.schedule} if args.schedule is not None else {}
+    program = sim.compile(num_steps=args.steps, backend=args.backend, **options)
     state = initial_program_state(
         program, t=0, current_step=0, monitor_steps=args.steps
     )
     jax.block_until_ready(state)
     setup_s = time.perf_counter() - start
     start = time.perf_counter()
-    executable = (
-        build_scan(program, donate_state=False)
-        .lower(state, program.coefficients)
-        .compile()
-    )
+    scan = build_scan(program, donate_state=False)
+    decision = getattr(scan, "cuda_schedule_decision", None)
+    executable = scan.lower(state, program.coefficients).compile()
     compile_s = time.perf_counter() - start
-    for _ in range(4):
+    start = time.perf_counter()
+    jax.block_until_ready(executable(state, program.coefficients))
+    first_run_s = time.perf_counter() - start
+    for _ in range(max(0, args.warmups - 1)):
         jax.block_until_ready(executable(state, program.coefficients))
     samples = []
-    for _ in range(9):
+    for _ in range(args.samples):
         start = time.perf_counter()
         result = jax.block_until_ready(executable(state, program.coefficients))
         samples.append(time.perf_counter() - start)
@@ -166,7 +174,12 @@ def main():
         cuda_flags=program.config.cuda_flags,
         setup_s=setup_s,
         compile_s=compile_s,
-        warmups=4,
+        backend=args.backend,
+        schedule=args.schedule,
+        schedule_decision=decision,
+        first_run_s=first_run_s,
+        first_result_s=setup_s + compile_s + first_run_s,
+        warmups=args.warmups,
         samples_s=samples,
         median_gcups=int(np.prod(args.shape))
         * args.steps

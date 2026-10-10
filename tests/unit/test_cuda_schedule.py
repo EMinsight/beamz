@@ -16,8 +16,10 @@ from beamz.simulation.cuda import schedule
 @pytest.mark.parametrize(
     "backend,choice,expected",
     [
-        ("cuda", None, "auto"),
-        ("auto", None, "auto"),
+        ("cuda", None, "streamed"),
+        ("auto", None, "streamed"),
+        ("cuda", "auto", "auto"),
+        ("auto", "auto", "auto"),
         ("cuda_streamed", None, "streamed"),
         ("cuda_mstep", None, "mstep"),
         ("cuda", "mstep", "mstep"),

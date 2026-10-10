@@ -11,7 +11,7 @@ The saved study contains 2,198 recorded trials across 26 included workloads,
 - [Measured 256-step choices](cuda-schedule-tables.md).
 - [First-result plot](cuda-schedule-time-to-result.png).
 - [Fresh-process timing CSV](cuda-schedule-space.csv).
-- [Complete evidence, fingerprints and validation](cuda-schedule-space.json).
+- [Complete evidence, fingerprints and validation](cuda-schedule-space.json.gz).
 
 Recorded trials include explicitly excluded historical pilots and failed choices;
 they are preserved for auditing and are not treated as performance wins.
@@ -140,8 +140,8 @@ python scripts/analyze_cuda_schedule_space.py .cache/fresh --fresh-only --steps 
 The committed packet is replayable without a GPU:
 
 ```console
-python -m scripts.export_cuda_schedule_study --archive docs/reviews/cuda-schedule-space.json --output-dir .cache/replay
-python scripts/analyze_cuda_schedule_space.py docs/reviews/cuda-schedule-space.json --fresh-only --cases medium --steps 1024 --output .cache/ranking.json
+python -m scripts.export_cuda_schedule_study --archive docs/reviews/cuda-schedule-space.json.gz --compress-archive --output-dir .cache/replay
+python scripts/analyze_cuda_schedule_space.py docs/reviews/cuda-schedule-space.json.gz --fresh-only --cases medium --steps 1024 --output .cache/ranking.json
 ```
 
 Each ranked configuration includes its backend and environment settings. The
@@ -222,7 +222,7 @@ seconds at 512x256x64 and 1.88 seconds at 1024x256x64. It loses on first-result
 time at 256 steps and wins at 4096. The 1024-step checks also retain canonical
 streamed for the smaller narrow-x case.
 
-The default selector runs no candidate trials. It uses the two measured sizes
+The new selector, explicitly enabled with `schedule="auto"`, runs no candidate trials. Existing calls without that option retain main's streamed schedule and geometry-based layout selection. It uses the two measured sizes
 per boundary family, geometry/core coverage, coefficient representation, monitor
 load, GPU model, precision, graph caching and actual memory headroom. It admits
 mstep only when predicted savings exceed the extra startup by 25%. Calls shorter

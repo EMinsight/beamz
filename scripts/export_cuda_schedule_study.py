@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gzip
 import hashlib
 import json
 import math
@@ -18,6 +19,7 @@ from pathlib import Path
 from scripts.analyze_cuda_schedule_space import (
     measurement_identity,
     partition_report,
+    read_report,
     summarize,
 )
 
@@ -296,12 +298,9 @@ def main():
     source.add_argument("--archive", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--validation", type=Path)
+    parser.add_argument("--compress-archive", action="store_true")
     args = parser.parse_args()
-    packet = (
-        collect(args.input_root)
-        if args.input_root
-        else json.loads(args.archive.read_text())
-    )
+    packet = collect(args.input_root) if args.input_root else read_report(args.archive)
     if args.validation:
         packet["validation"] = json.loads(args.validation.read_text())
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -320,9 +319,12 @@ def main():
     )
     packet["fresh_summaries"] = measured
     packet["profiles"] = profiles(packet)
-    (args.output_dir / "cuda-schedule-space.json").write_text(
-        json.dumps(packet, indent=2) + "\n"
-    )
+    payload = (json.dumps(packet, indent=2) + "\n").encode()
+    name = "cuda-schedule-space.json"
+    if args.compress_archive:
+        name += ".gz"
+        payload = gzip.compress(payload, mtime=0)
+    (args.output_dir / name).write_bytes(payload)
     with (args.output_dir / "cuda-schedule-space.csv").open("w", newline="") as handle:
         writer = csv.DictWriter(
             handle, fieldnames=list(measured[0]) if measured else []

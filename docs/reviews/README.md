@@ -4,12 +4,10 @@ The [tile, layout and startup study](cuda-schedule-space.md) explores smaller
 tiles, column segments and storage rotations, and compares complete time to result.
 It distinguishes shared screening trials from independent startup measurements.
 
-The current explicit column schedule is documented in the
-[CUDA multistep benchmark report](cuda-mstep-rtx3090.md) and
-[comparison with streamed CUDA](cuda-mstep-code-review.md). The
-[schedule unification follow-up](cuda-schedule-unification.md) documents the
-shared execution API and its measured selection limits. The report retains
-the algorithm ideas and historical reference timings from PR #308.
+The [CUDA component README](../../cuda/README.md) documents the shared execution
+API and selection limits. The [historical multistep comparison](cuda-mstep-rtx3090.md)
+retains the algorithm ideas, credit and reference timings from PR #308.
+Raw evidence is compressed JSON; the analyzer/exporter reads it directly.
 
 Start with the [main-merge validation and notebook comparison](cuda-merge-validation-2026-09-24.md),
 the [original random-domain comparison](cuda-random-final-comparison-2026-09-18.md),

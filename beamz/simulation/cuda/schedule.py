@@ -12,7 +12,7 @@ import numpy as np
 
 # (physical cells, streamed GCUPS, mstep GCUPS, extra startup seconds).
 # Startup includes planning, lowering, XLA compilation and first-execution
-# overhead after shared material setup. Source: cuda-schedule-space.json.
+# overhead after shared material setup. Source: cuda-schedule-space.json.gz.
 _COSTS = {
     "all": (
         (16777216, 7.6048, 9.0340, 0.1260),
@@ -42,7 +42,9 @@ def normalize_schedule_request(backend, schedule, expected_runs):
         "cuda_mstep": "mstep",
         "cuda-mstep": "mstep",
     }
-    default = aliases.get(backend, "auto")
+    # Existing calls retain main's streamed policy. The new cost selector is an
+    # explicit schedule='auto' opt-in, separate from backend availability='auto'.
+    default = "auto" if backend == "jax" else aliases.get(backend, "streamed")
     requested = default if schedule is None else str(schedule).strip().lower()
     if requested not in {"auto", "streamed", "mstep"}:
         raise ValueError("schedule must be auto, streamed, or mstep")

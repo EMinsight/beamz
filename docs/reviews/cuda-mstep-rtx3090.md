@@ -29,7 +29,7 @@ settings were changed.
 The table divides physical cell count times timesteps by the median of ten
 execution times. GCUPS counts full cell timesteps. Per-round samples, GPU
 telemetry, source/library fingerprints, validation logs and selected core profiles
-are preserved in [the evidence JSON](cuda-mstep-rtx3090.json).
+are preserved in [the evidence JSON](cuda-mstep-rtx3090.json.gz).
 
 | Boundary | Shape | Established CUDA | CUDA multistep | Futhark temporal | Multistep / Futhark |
 |---|---|---:|---:|---:|---:|
@@ -111,8 +111,8 @@ statistics and Futhark's total GPU memory snapshots are recorded separately.
 The next unification should expose one CUDA backend with an explicit schedule
 override and a selector based on measured costs. These ten cases establish the
 performance result and useful crossover examples; they do not justify a
-universal cell-count threshold. The [OpenCL proposal](opencl-backend-proposal.md)
-remains a local issue draft.
+universal cell-count threshold. Future OpenCL work should share the schedule
+contract and correctness tests; it is outside this CUDA implementation.
 
 ## Validation and reproduction
 
@@ -139,40 +139,15 @@ The historical Futhark library was the compiled PR checkout `55287d41`. Its temp
 matches reviewed head `17ff1fa3` after normalizing the compiler annotation
 spelling. The source and library fingerprints remain in the evidence for provenance.
 This branch retains no Futhark runtime or reference benchmark driver; the
-commands below reproduce the two native schedules.
+current profiling uses the shared schedule-space runner:
 
 ```console
-python scripts/benchmark_cuda_mstep.py \
-  --shapes 64x96x128 96x160x256 128x256x512 256x512x512 512x256x64 \
-  --steps 256 --samples 5 --rounds 2 --source mode --boundary all \
-  --memory-fraction 0.6 \
-  --output-dir .cache/mstep-matched-all
-python scripts/benchmark_cuda_mstep.py \
-  --shapes 64x96x128 128x256x512 256x512x512 \
-  --steps 256 --samples 5 --rounds 2 --source mode --boundary right \
-  --memory-fraction 0.6 \
-  --output-dir .cache/mstep-matched-right
-python scripts/benchmark_cuda_mstep.py \
-  --shapes 128x256x512 256x512x512 \
-  --steps 256 --samples 5 --rounds 2 --source mode --boundary pec \
-  --memory-fraction 0.6 \
-  --output-dir .cache/mstep-matched-pec
+python scripts/benchmark_cuda_schedule_space.py --cases small crossover medium large narrow_x --configs streamed mstep-16x32-whole --steps 256 --samples 5 --rounds 2 --isolated --output-dir .cache/mstep-comparison
+python scripts/benchmark_cuda_schedule_space.py --cases right large_right pec large_pec --configs streamed mstep-16x32-whole --steps 256 --samples 5 --rounds 2 --isolated --output-dir .cache/mstep-boundaries
 ```
 
-All implementation and evidence changes are local to `feat/cuda-mstep`.
-Nothing was pushed, and no GitHub PR or issue was modified or published.
-
-For CUDA kernel attribution, build the optional CUPTI activity helper with the
-CUDA 13.3 SDK. This helper is independent of the component build; instrumented
-runs are excluded from the warm-throughput matrix.
-
-```console
-g++ -std=c++17 -shared -fPIC -O2 -I"$CUDA_HOME/include" \
-  scripts/profile_cuda_kernels.cc -L"$CUDA_HOME/lib64" \
-  -Wl,-rpath,"$CUDA_HOME/lib64" -lcupti -o /tmp/beamz-kernel-profile.so
-CUDA_INJECTION64_PATH=/tmp/beamz-kernel-profile.so \
-BEAMZ_KERNEL_PROFILE_OUT=/tmp/beamz-mstep-kernels.csv \
-  python scripts/benchmark_cuda_realistic.py --backend cuda_mstep \
-  --shape 256 512 512 --steps 256 --samples 3 --warmups 1 \
-  --source mode --boundary all --output /tmp/beamz-mstep-profile.json
-```
+These commands measure the current native schedules. The historical Futhark
+reference and its original method/fingerprints remain in the compressed evidence;
+its implementation and experiment-only profiler are not needed in the PR.
+The [current startup study](cuda-schedule-space.md) describes the later preparation
+improvements and the explicit automatic selector.

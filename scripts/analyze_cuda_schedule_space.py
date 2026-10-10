@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import statistics
 from pathlib import Path
@@ -81,12 +82,22 @@ def recommend(summary, steps, *, cached=False, expected_runs=1):
     )
 
 
+def read_report(path):
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "rt") as handle:
+        return json.load(handle)
+
+
 def input_reports(inputs):
     """Read raw directories/files or the portable exported evidence packet."""
     for source in inputs:
-        paths = [source] if source.is_file() else sorted(source.glob("*.json"))
+        paths = (
+            [source]
+            if source.is_file()
+            else sorted((*source.glob("*.json"), *source.glob("*.json.gz")))
+        )
         for path in paths:
-            data = json.loads(path.read_text())
+            data = read_report(path)
             if "evidence" in data:
                 for item in data["evidence"]:
                     if not item["exclusion"]:

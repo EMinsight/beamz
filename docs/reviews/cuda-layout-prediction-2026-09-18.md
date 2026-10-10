@@ -1,10 +1,5 @@
 # CUDA layout prediction without calibration — 2026-09-18
 
-The geometry estimate described here is retained as a candidate generator. Its
-runtime selection is now also gated by preparation cost, run length and known
-reuse. See the [current schedule/startup study](cuda-schedule-space.md). The
-results below describe the earlier geometry-only policy.
-
 Default automatic selection now uses a deterministic geometry estimate. No GPU
 performance benchmarks were run for this change: all performance conclusions
 below come from saved measurements. Explicit `BEAMZ_CUDA_AUTOTUNE=calibrate`

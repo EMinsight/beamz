@@ -38,7 +38,7 @@ _GEOMETRY_MODEL = "cpml12-queue-v1"
 _MINIMUM_WORK_REDUCTION = 0.25
 # (physical cells, canonical GCUPS, rotated GCUPS, additional startup seconds).
 # Compact monitor-block ordering; two fresh rounds at 256 steps, checked at
-# 4096 steps. Source: docs/reviews/cuda-schedule-space.json, layout-anchors.
+# 4096 steps. Source: docs/reviews/cuda-schedule-space.json.gz, layout-anchors.
 _LAYOUT_COSTS = (
     (8388608, 4.6148, 6.4642, 1.1508),
     (16777216, 4.6714, 6.3869, 1.8844),
@@ -362,7 +362,8 @@ def _eligible(program):
         return False
     if cfg.cuda_flags != abi.CUDA_DEFAULT_FLAGS or cfg.cuda_storage_axes != (0, 1, 2):
         return False
-    if cfg.num_steps < 16 or cfg.num_steps * cfg.cuda_expected_runs < 32:
+    minimum_steps = 16 if cfg.cuda_schedule == "auto" else 32
+    if cfg.num_steps < minimum_steps or cfg.num_steps * cfg.cuda_expected_runs < 32:
         return False
     shapes = program.boundary.logical_component_shapes
     shape = tuple(min(shapes[name][a] for name in ("Ex", "Ey", "Ez")) for a in range(3))
@@ -423,18 +424,23 @@ def select_program(program, signature, policy):
             shape = tuple(
                 min(shapes[name][a] for name in ("Ex", "Ey", "Ez")) for a in range(3)
             )
-            prediction = predict_layout_time_to_result(
-                shape, program.config.num_steps, program.config.cuda_expected_runs
-            )
-            if not _measured_layout_workload(program, shape):
-                prediction = {
-                    **prediction,
-                    "choice": dict(axes=(0, 1, 2), shell_tile="64x4"),
-                    "reason": "Workload has no measured layout startup model",
-                }
+            if program.config.cuda_schedule == "auto":
+                prediction = predict_layout_time_to_result(
+                    shape, program.config.num_steps, program.config.cuda_expected_runs
+                )
+                if not _measured_layout_workload(program, shape):
+                    prediction = {
+                        **prediction,
+                        "choice": dict(axes=(0, 1, 2), shell_tile="64x4"),
+                        "reason": "Workload has no measured layout startup model",
+                    }
+                method = "geometry_and_startup"
+            else:
+                prediction = predict_layout(shape)
+                method = "geometry"
             report = dict(
                 prediction,
-                selection_method="geometry_and_startup",
+                selection_method=method,
                 calibration_s=0.0,
                 calibration_steps=0,
                 requested_steps=program.config.num_steps,

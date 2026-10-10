@@ -208,10 +208,16 @@ def test_predictor_rejects_invalid_geometry(shape):
 
 @pytest.mark.parametrize("device_kind", ["NVIDIA GeForce RTX 3090", "RTX 3090 Ti"])
 @pytest.mark.parametrize(
-    "steps,runs,axes", [(1025, 1, (0, 1, 2)), (4096, 1, (1, 2, 0)), (64, 64, (1, 2, 0))]
+    "steps,runs,schedule,axes,method",
+    [
+        (1025, 1, "auto", (0, 1, 2), "geometry_and_startup"),
+        (4096, 1, "auto", (1, 2, 0), "geometry_and_startup"),
+        (64, 64, "auto", (1, 2, 0), "geometry_and_startup"),
+        (1025, 1, "streamed", (1, 2, 0), "geometry"),
+    ],
 )
 def test_auto_uses_geometry_and_startup_without_trials_or_persistent_cache(
-    monkeypatch, tmp_path, device_kind, steps, runs, axes
+    monkeypatch, tmp_path, device_kind, steps, runs, schedule, axes, method
 ):
     @dataclass
     class Program:
@@ -224,6 +230,7 @@ def test_auto_uses_geometry_and_startup_without_trials_or_persistent_cache(
             dt=1,
             num_steps=steps,
             cuda_expected_runs=runs,
+            cuda_schedule=schedule,
             plane_2d="xy",
             is_3d=True,
             cuda_flags=abi.CUDA_DEFAULT_FLAGS,
@@ -251,7 +258,7 @@ def test_auto_uses_geometry_and_startup_without_trials_or_persistent_cache(
         assert selected.config.num_steps == steps
         assert selected.boundary is program.boundary
         report = tuning.tuning_report(selected)
-        assert report["selection_method"] == "geometry_and_startup"
+        assert report["selection_method"] == method
         assert report["calibration_s"] == report["calibration_steps"] == 0
         assert not report["validated"]
         report["choice"]["axes"] = []

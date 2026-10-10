@@ -100,9 +100,11 @@ Single-step and zero-core requests reuse the shared in-place program before
 allocating a pair workspace. Forced mstep checks its complete workspace against
 available allocator headroom and rejects incompatible capacity-only policy.
 
-`backend="cuda"` exposes both schedules through one engine. The existing
+`backend="cuda"` exposes both schedules through one engine. Omitting `schedule`
+preserves main's streamed schedule and geometry-based layout policy. The existing
 `cuda_streamed` and `cuda_mstep` names remain explicit compatibility overrides.
-Use `schedule="auto"`, `"streamed"` or `"mstep"` with the unified backend:
+Explicit `schedule="auto"` enables the new time-to-result selector; `"streamed"`
+and `"mstep"` force a schedule:
 
 ```python
 program = simulation.compile(
@@ -137,7 +139,7 @@ Run the two schedules explicitly when extending that envelope:
 
 ```console
 python -m pytest tests/hardware/test_cuda_mstep.py
-python scripts/benchmark_cuda_mstep.py --output-dir .cache/cuda-mstep-results
+python scripts/benchmark_cuda_schedule_space.py --cases small medium large narrow_x --configs streamed mstep-16x32-whole --isolated --output-dir .cache/cuda-mstep-results
 ```
 
 Each benchmark case runs in a fresh process, with reversed backend order on the
@@ -153,10 +155,7 @@ retains the algorithm ideas and historical Futhark baseline: nine wins and one
 match within 0.3% across ten geometry/boundary cases. It includes raw timings,
 selected core profiles, correctness and sanitizer gates. Keep explicit schedule
 overrides: domain geometry and boundary work affect its crossover, and automatic
-selection remains within that measured envelope. The [code review](../docs/reviews/cuda-mstep-code-review.md)
-compares shared operations and workspace costs; the
-[unification report](../docs/reviews/cuda-schedule-unification.md) records the
-implemented selector and the discarded direct-publication experiment.
+selection remains within that measured envelope.
 The [tile, layout and startup study](../docs/reviews/cuda-schedule-space.md)
 compares configuration choices using preparation plus execution time, and provides
 a benchmark/ranking tool for extending the measured workload and GPU envelope.
@@ -416,6 +415,11 @@ z=512–1024, y=256 and x=63–65, small slab sources and at most two three-freq
 DFT monitors. Short calls, unknown shapes and other workloads retain canonical
 storage. Known executable reuse contributes to the cost check.
 The shell tile remains 64x4, and padding stays off.
+
+That startup gate applies only with explicit `schedule="auto"`. Calls that omit
+it preserve main's geometry predictor, including its broader shape envelope and
+32-step minimum. This preserves existing layout/performance behavior while
+allowing the new selector to optimize first-result time explicitly.
 
 The physical grid, CPML12, source/monitor sampling and FP32 precision remain
 unchanged. Existing automatic H/E fusion still applies within each layout;
