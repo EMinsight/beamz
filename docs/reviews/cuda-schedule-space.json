@@ -142053,7 +142053,34 @@
       "Ruff lint and format passed for changed CUDA Python modules and benchmark/export scripts.",
       "CUDA ABI generation check passed.",
       "git diff --check passed."
-    ]
+    ],
+    "review_fixes": {
+      "revision": "e4399e93 (runtime fixes: 1a3e7ce2; analysis/export fixes: e4399e93)",
+      "native_kernels_changed": false,
+      "scope": "Early memory rejection, consistent reuse-hint validation and comparison-profile separation. Historical native validation and timing records retain their original revision identities.",
+      "cpu_regression": {
+        "command": "JAX_PLATFORMS=cpu PYTHONPATH=. .venv/bin/python -m pytest -q tests/unit/test_cuda_schedule.py tests/unit/test_memory_policy.py tests/unit/test_execution_backend.py tests/unit/test_cuda_schedule_analysis.py tests/integration/test_compiled_engine.py tests/validation/invariants/test_automatic_termination.py",
+        "passed_cases": 149,
+        "result": "149 passed in 30.19s",
+        "coverage": "Early memory preflight without geometry construction; full-plan recheck with changed budget; public progress/ordinary invalid reuse hints; mixed-worker exporter/analyzer identities, tables and plot lines; execution cache, integration and automatic termination."
+      },
+      "gpu_regression": {
+        "command": "JAX_PLATFORMS=cuda PYTHONPATH=. .venv/bin/python -m pytest -q tests/hardware/test_cuda_mstep.py -k 'state_donation_preserves_results or unified_cuda_schedule_matches_compatibility_alias or automatic_schedule_dispatch_preserves_chunk_clocks'",
+        "passed_cases": 6,
+        "result": "6 passed, 123 deselected in 7.65s",
+        "coverage": "State donation under all three cyclic layouts, unified API alias parity, automatic original/segmented dispatch and complete state/chunk clocks."
+      },
+      "static_checks": [
+        "Ruff lint and format passed for all nine affected code/test files.",
+        "CUDA ABI generation check passed.",
+        "git diff --check passed."
+      ],
+      "notes": [
+        "The 15 analysis cases are included in the 149-case CPU run.",
+        "These regressions overlap earlier validation counts; they are not additional unique-case totals.",
+        "No performance timings were rerun or relabeled as the fix revision."
+      ]
+    }
   },
   "counts": {
     "records": 2198,
@@ -142064,6 +142091,7 @@
   "fresh_summaries": [
     {
       "source": "compact-layout-fresh/narrow_x-256.json",
+      "profile": "ebf3b4c2ce5fd1f3d36d04e1f0961ec7fa85440b87b6772df44ae70f14aa5f34",
       "case": "narrow_x",
       "shape": "512x256x64",
       "steps": 256,
@@ -142080,6 +142108,7 @@
     },
     {
       "source": "compact-layout-fresh/narrow_x-256.json",
+      "profile": "ebf3b4c2ce5fd1f3d36d04e1f0961ec7fa85440b87b6772df44ae70f14aa5f34",
       "case": "narrow_x",
       "shape": "512x256x64",
       "steps": 256,
@@ -142096,6 +142125,7 @@
     },
     {
       "source": "compact-layout-fresh/narrow_x-256.json",
+      "profile": "ebf3b4c2ce5fd1f3d36d04e1f0961ec7fa85440b87b6772df44ae70f14aa5f34",
       "case": "narrow_x",
       "shape": "512x256x64",
       "steps": 256,
@@ -142112,6 +142142,7 @@
     },
     {
       "source": "dense-fresh/dense_conductive-1024.json",
+      "profile": "3d152334e32b4dec3e9e8d3035949766c572c9f38ea4e4c9a64a3f4a16a9ac8e",
       "case": "dense_conductive",
       "shape": "128x256x512",
       "steps": 1024,
@@ -142128,6 +142159,7 @@
     },
     {
       "source": "dense-fresh/dense_conductive-1024.json",
+      "profile": "3d152334e32b4dec3e9e8d3035949766c572c9f38ea4e4c9a64a3f4a16a9ac8e",
       "case": "dense_conductive",
       "shape": "128x256x512",
       "steps": 1024,
@@ -142144,6 +142176,7 @@
     },
     {
       "source": "dense-fresh/dense_conductive-1024.json",
+      "profile": "3d152334e32b4dec3e9e8d3035949766c572c9f38ea4e4c9a64a3f4a16a9ac8e",
       "case": "dense_conductive",
       "shape": "128x256x512",
       "steps": 1024,
@@ -142160,6 +142193,7 @@
     },
     {
       "source": "dense-fresh/dense_conductive-16.json",
+      "profile": "3d152334e32b4dec3e9e8d3035949766c572c9f38ea4e4c9a64a3f4a16a9ac8e",
       "case": "dense_conductive",
       "shape": "128x256x512",
       "steps": 16,
@@ -142176,6 +142210,7 @@
     },
     {
       "source": "dense-fresh/dense_conductive-16.json",
+      "profile": "3d152334e32b4dec3e9e8d3035949766c572c9f38ea4e4c9a64a3f4a16a9ac8e",
       "case": "dense_conductive",
       "shape": "128x256x512",
       "steps": 16,
@@ -142192,6 +142227,7 @@
     },
     {
       "source": "dense-fresh/dense_conductive-16.json",
+      "profile": "3d152334e32b4dec3e9e8d3035949766c572c9f38ea4e4c9a64a3f4a16a9ac8e",
       "case": "dense_conductive",
       "shape": "128x256x512",
       "steps": 16,
@@ -142208,6 +142244,7 @@
     },
     {
       "source": "dense-fresh/dense_conductive-256.json",
+      "profile": "3d152334e32b4dec3e9e8d3035949766c572c9f38ea4e4c9a64a3f4a16a9ac8e",
       "case": "dense_conductive",
       "shape": "128x256x512",
       "steps": 256,
@@ -142224,6 +142261,7 @@
     },
     {
       "source": "dense-fresh/dense_conductive-256.json",
+      "profile": "3d152334e32b4dec3e9e8d3035949766c572c9f38ea4e4c9a64a3f4a16a9ac8e",
       "case": "dense_conductive",
       "shape": "128x256x512",
       "steps": 256,
@@ -142240,6 +142278,7 @@
     },
     {
       "source": "dense-fresh/dense_conductive-256.json",
+      "profile": "3d152334e32b4dec3e9e8d3035949766c572c9f38ea4e4c9a64a3f4a16a9ac8e",
       "case": "dense_conductive",
       "shape": "128x256x512",
       "steps": 256,
@@ -142256,6 +142295,7 @@
     },
     {
       "source": "finalists256/bf16-256.json",
+      "profile": "3bf5c39f92196bdd97c2a5a9d724ac4b1279bdcbd20643bed942f4e13c83ac36",
       "case": "bf16",
       "shape": "128x256x512",
       "steps": 256,
@@ -142272,6 +142312,7 @@
     },
     {
       "source": "finalists256/bf16-256.json",
+      "profile": "3bf5c39f92196bdd97c2a5a9d724ac4b1279bdcbd20643bed942f4e13c83ac36",
       "case": "bf16",
       "shape": "128x256x512",
       "steps": 256,
@@ -142288,6 +142329,7 @@
     },
     {
       "source": "finalists256/bf16-256.json",
+      "profile": "3bf5c39f92196bdd97c2a5a9d724ac4b1279bdcbd20643bed942f4e13c83ac36",
       "case": "bf16",
       "shape": "128x256x512",
       "steps": 256,
@@ -142304,6 +142346,7 @@
     },
     {
       "source": "finalists256/cpml20-256.json",
+      "profile": "2a35e144452a43ea6cbfddf5a9eacee2977bf1c61b2ac65c09f386cdb9491506",
       "case": "cpml20",
       "shape": "128x256x512",
       "steps": 256,
@@ -142320,6 +142363,7 @@
     },
     {
       "source": "finalists256/cpml20-256.json",
+      "profile": "2a35e144452a43ea6cbfddf5a9eacee2977bf1c61b2ac65c09f386cdb9491506",
       "case": "cpml20",
       "shape": "128x256x512",
       "steps": 256,
@@ -142336,6 +142380,7 @@
     },
     {
       "source": "finalists256/cpml20-256.json",
+      "profile": "2a35e144452a43ea6cbfddf5a9eacee2977bf1c61b2ac65c09f386cdb9491506",
       "case": "cpml20",
       "shape": "128x256x512",
       "steps": 256,
@@ -142352,6 +142397,7 @@
     },
     {
       "source": "finalists256/cpml4-256.json",
+      "profile": "3c3b052f8f07d1854136e5f39369bbfa0041b93a756d648617dd7d72197dc3a9",
       "case": "cpml4",
       "shape": "128x256x512",
       "steps": 256,
@@ -142368,6 +142414,7 @@
     },
     {
       "source": "finalists256/cpml4-256.json",
+      "profile": "3c3b052f8f07d1854136e5f39369bbfa0041b93a756d648617dd7d72197dc3a9",
       "case": "cpml4",
       "shape": "128x256x512",
       "steps": 256,
@@ -142384,6 +142431,7 @@
     },
     {
       "source": "finalists256/cpml4-256.json",
+      "profile": "3c3b052f8f07d1854136e5f39369bbfa0041b93a756d648617dd7d72197dc3a9",
       "case": "cpml4",
       "shape": "128x256x512",
       "steps": 256,
@@ -142400,6 +142448,7 @@
     },
     {
       "source": "finalists256/crossover-256.json",
+      "profile": "0e43257d59294952c918df5a5080d25d0b8afa835097c73da4837eb687ac37fd",
       "case": "crossover",
       "shape": "96x160x256",
       "steps": 256,
@@ -142416,6 +142465,7 @@
     },
     {
       "source": "finalists256/crossover-256.json",
+      "profile": "0e43257d59294952c918df5a5080d25d0b8afa835097c73da4837eb687ac37fd",
       "case": "crossover",
       "shape": "96x160x256",
       "steps": 256,
@@ -142432,6 +142482,7 @@
     },
     {
       "source": "finalists256/crossover-256.json",
+      "profile": "0e43257d59294952c918df5a5080d25d0b8afa835097c73da4837eb687ac37fd",
       "case": "crossover",
       "shape": "96x160x256",
       "steps": 256,
@@ -142448,6 +142499,7 @@
     },
     {
       "source": "finalists256/cube-256.json",
+      "profile": "babe9c72b409a767a6583fdb8108920d578e5f6d2ed76de30570ff10f931370f",
       "case": "cube",
       "shape": "128x128x128",
       "steps": 256,
@@ -142464,6 +142516,7 @@
     },
     {
       "source": "finalists256/cube-256.json",
+      "profile": "babe9c72b409a767a6583fdb8108920d578e5f6d2ed76de30570ff10f931370f",
       "case": "cube",
       "shape": "128x128x128",
       "steps": 256,
@@ -142480,6 +142533,7 @@
     },
     {
       "source": "finalists256/dense_monitors-256.json",
+      "profile": "e80fcef0c6c2625cea713cd3425665b0eb06f8f8c9a013afe7f778c2096b9c5e",
       "case": "dense_monitors",
       "shape": "128x256x512",
       "steps": 256,
@@ -142496,6 +142550,7 @@
     },
     {
       "source": "finalists256/dense_monitors-256.json",
+      "profile": "e80fcef0c6c2625cea713cd3425665b0eb06f8f8c9a013afe7f778c2096b9c5e",
       "case": "dense_monitors",
       "shape": "128x256x512",
       "steps": 256,
@@ -142512,6 +142567,7 @@
     },
     {
       "source": "finalists256/dense_monitors-256.json",
+      "profile": "e80fcef0c6c2625cea713cd3425665b0eb06f8f8c9a013afe7f778c2096b9c5e",
       "case": "dense_monitors",
       "shape": "128x256x512",
       "steps": 256,
@@ -142528,6 +142584,7 @@
     },
     {
       "source": "finalists256/gaussian-256.json",
+      "profile": "b348c3cb6bd52a8e7302a2aae0e202e677f1bb88ae9665dc790197af2155b044",
       "case": "gaussian",
       "shape": "128x256x512",
       "steps": 256,
@@ -142544,6 +142601,7 @@
     },
     {
       "source": "finalists256/gaussian-256.json",
+      "profile": "b348c3cb6bd52a8e7302a2aae0e202e677f1bb88ae9665dc790197af2155b044",
       "case": "gaussian",
       "shape": "128x256x512",
       "steps": 256,
@@ -142560,6 +142618,7 @@
     },
     {
       "source": "finalists256/gaussian-256.json",
+      "profile": "b348c3cb6bd52a8e7302a2aae0e202e677f1bb88ae9665dc790197af2155b044",
       "case": "gaussian",
       "shape": "128x256x512",
       "steps": 256,
@@ -142576,6 +142635,7 @@
     },
     {
       "source": "finalists256/gaussian-256.json",
+      "profile": "b348c3cb6bd52a8e7302a2aae0e202e677f1bb88ae9665dc790197af2155b044",
       "case": "gaussian",
       "shape": "128x256x512",
       "steps": 256,
@@ -142592,6 +142652,7 @@
     },
     {
       "source": "finalists256/large-256.json",
+      "profile": "f0a109de094bf800985fe6ac5303f376543604e901e55f51186ca51c1a3bd5ed",
       "case": "large",
       "shape": "256x512x512",
       "steps": 256,
@@ -142608,6 +142669,7 @@
     },
     {
       "source": "finalists256/large-256.json",
+      "profile": "f0a109de094bf800985fe6ac5303f376543604e901e55f51186ca51c1a3bd5ed",
       "case": "large",
       "shape": "256x512x512",
       "steps": 256,
@@ -142624,6 +142686,7 @@
     },
     {
       "source": "finalists256/large-256.json",
+      "profile": "f0a109de094bf800985fe6ac5303f376543604e901e55f51186ca51c1a3bd5ed",
       "case": "large",
       "shape": "256x512x512",
       "steps": 256,
@@ -142640,6 +142703,7 @@
     },
     {
       "source": "finalists256/large-256.json",
+      "profile": "f0a109de094bf800985fe6ac5303f376543604e901e55f51186ca51c1a3bd5ed",
       "case": "large",
       "shape": "256x512x512",
       "steps": 256,
@@ -142656,6 +142720,7 @@
     },
     {
       "source": "finalists256/lossy-256.json",
+      "profile": "aae1e5f1d7a7178712bebb9291ce4a76c60901a12410461363bd6b3dd2afd976",
       "case": "lossy",
       "shape": "128x256x512",
       "steps": 256,
@@ -142672,6 +142737,7 @@
     },
     {
       "source": "finalists256/lossy-256.json",
+      "profile": "aae1e5f1d7a7178712bebb9291ce4a76c60901a12410461363bd6b3dd2afd976",
       "case": "lossy",
       "shape": "128x256x512",
       "steps": 256,
@@ -142688,6 +142754,7 @@
     },
     {
       "source": "finalists256/lossy-256.json",
+      "profile": "aae1e5f1d7a7178712bebb9291ce4a76c60901a12410461363bd6b3dd2afd976",
       "case": "lossy",
       "shape": "128x256x512",
       "steps": 256,
@@ -142704,6 +142771,7 @@
     },
     {
       "source": "finalists256/medium-256.json",
+      "profile": "6756a94ab2cd96e3a9df479db17e6843ed006a0bcafa8ce88cc013164d541ab2",
       "case": "medium",
       "shape": "128x256x512",
       "steps": 256,
@@ -142720,6 +142788,7 @@
     },
     {
       "source": "finalists256/medium-256.json",
+      "profile": "6756a94ab2cd96e3a9df479db17e6843ed006a0bcafa8ce88cc013164d541ab2",
       "case": "medium",
       "shape": "128x256x512",
       "steps": 256,
@@ -142736,6 +142805,7 @@
     },
     {
       "source": "finalists256/medium-256.json",
+      "profile": "6756a94ab2cd96e3a9df479db17e6843ed006a0bcafa8ce88cc013164d541ab2",
       "case": "medium",
       "shape": "128x256x512",
       "steps": 256,
@@ -142752,6 +142822,7 @@
     },
     {
       "source": "finalists256/medium-256.json",
+      "profile": "6756a94ab2cd96e3a9df479db17e6843ed006a0bcafa8ce88cc013164d541ab2",
       "case": "medium",
       "shape": "128x256x512",
       "steps": 256,
@@ -142768,6 +142839,7 @@
     },
     {
       "source": "finalists256/narrow_x-256.json",
+      "profile": "274f52f1d1f0a469291785d5c52d3e93c07e1b8cb2cce67e57737e37e8dada0d",
       "case": "narrow_x",
       "shape": "512x256x64",
       "steps": 256,
@@ -142784,6 +142856,7 @@
     },
     {
       "source": "finalists256/narrow_x-256.json",
+      "profile": "274f52f1d1f0a469291785d5c52d3e93c07e1b8cb2cce67e57737e37e8dada0d",
       "case": "narrow_x",
       "shape": "512x256x64",
       "steps": 256,
@@ -142800,6 +142873,7 @@
     },
     {
       "source": "finalists256/narrow_z-256.json",
+      "profile": "65e7442d204d61529fa87e72889999678b3df02c04a573caa5f1333321bb4192",
       "case": "narrow_z",
       "shape": "64x512x256",
       "steps": 256,
@@ -142816,6 +142890,7 @@
     },
     {
       "source": "finalists256/narrow_z-256.json",
+      "profile": "65e7442d204d61529fa87e72889999678b3df02c04a573caa5f1333321bb4192",
       "case": "narrow_z",
       "shape": "64x512x256",
       "steps": 256,
@@ -142832,6 +142907,7 @@
     },
     {
       "source": "finalists256/no_monitors-256.json",
+      "profile": "e3550b8c08952f4e22e3b4148cad101b9863e5130ae13823523807bb9adca297",
       "case": "no_monitors",
       "shape": "128x256x512",
       "steps": 256,
@@ -142848,6 +142924,7 @@
     },
     {
       "source": "finalists256/no_monitors-256.json",
+      "profile": "e3550b8c08952f4e22e3b4148cad101b9863e5130ae13823523807bb9adca297",
       "case": "no_monitors",
       "shape": "128x256x512",
       "steps": 256,
@@ -142864,6 +142941,7 @@
     },
     {
       "source": "finalists256/no_monitors-256.json",
+      "profile": "e3550b8c08952f4e22e3b4148cad101b9863e5130ae13823523807bb9adca297",
       "case": "no_monitors",
       "shape": "128x256x512",
       "steps": 256,
@@ -142880,6 +142958,7 @@
     },
     {
       "source": "finalists256/no_monitors-256.json",
+      "profile": "e3550b8c08952f4e22e3b4148cad101b9863e5130ae13823523807bb9adca297",
       "case": "no_monitors",
       "shape": "128x256x512",
       "steps": 256,
@@ -142896,6 +142975,7 @@
     },
     {
       "source": "finalists256/odd-256.json",
+      "profile": "835e742224bfd5ca114310b55fee2425cbbde17163c651ffe1acf0bd80bb951d",
       "case": "odd",
       "shape": "127x193x257",
       "steps": 256,
@@ -142912,6 +142992,7 @@
     },
     {
       "source": "finalists256/odd-256.json",
+      "profile": "835e742224bfd5ca114310b55fee2425cbbde17163c651ffe1acf0bd80bb951d",
       "case": "odd",
       "shape": "127x193x257",
       "steps": 256,
@@ -142928,6 +143009,7 @@
     },
     {
       "source": "finalists256/odd-256.json",
+      "profile": "835e742224bfd5ca114310b55fee2425cbbde17163c651ffe1acf0bd80bb951d",
       "case": "odd",
       "shape": "127x193x257",
       "steps": 256,
@@ -142944,6 +143026,7 @@
     },
     {
       "source": "finalists256/pec-256.json",
+      "profile": "cdd6f94003a25312ab328a2543ace2cf3250343d7cda3e5e7c4f615040966f32",
       "case": "pec",
       "shape": "128x256x512",
       "steps": 256,
@@ -142960,6 +143043,7 @@
     },
     {
       "source": "finalists256/pec-256.json",
+      "profile": "cdd6f94003a25312ab328a2543ace2cf3250343d7cda3e5e7c4f615040966f32",
       "case": "pec",
       "shape": "128x256x512",
       "steps": 256,
@@ -142976,6 +143060,7 @@
     },
     {
       "source": "finalists256/pec-256.json",
+      "profile": "cdd6f94003a25312ab328a2543ace2cf3250343d7cda3e5e7c4f615040966f32",
       "case": "pec",
       "shape": "128x256x512",
       "steps": 256,
@@ -142992,6 +143077,7 @@
     },
     {
       "source": "finalists256/pec-256.json",
+      "profile": "cdd6f94003a25312ab328a2543ace2cf3250343d7cda3e5e7c4f615040966f32",
       "case": "pec",
       "shape": "128x256x512",
       "steps": 256,
@@ -143008,6 +143094,7 @@
     },
     {
       "source": "finalists256/right-256.json",
+      "profile": "c37fde4cbb409b939dac8593cbe664f8d6f30b060dec7fbf263fdce28fba6f1c",
       "case": "right",
       "shape": "128x256x512",
       "steps": 256,
@@ -143024,6 +143111,7 @@
     },
     {
       "source": "finalists256/right-256.json",
+      "profile": "c37fde4cbb409b939dac8593cbe664f8d6f30b060dec7fbf263fdce28fba6f1c",
       "case": "right",
       "shape": "128x256x512",
       "steps": 256,
@@ -143040,6 +143128,7 @@
     },
     {
       "source": "finalists256/right-256.json",
+      "profile": "c37fde4cbb409b939dac8593cbe664f8d6f30b060dec7fbf263fdce28fba6f1c",
       "case": "right",
       "shape": "128x256x512",
       "steps": 256,
@@ -143056,6 +143145,7 @@
     },
     {
       "source": "finalists256/right-256.json",
+      "profile": "c37fde4cbb409b939dac8593cbe664f8d6f30b060dec7fbf263fdce28fba6f1c",
       "case": "right",
       "shape": "128x256x512",
       "steps": 256,
@@ -143072,6 +143162,7 @@
     },
     {
       "source": "finalists256/small-256.json",
+      "profile": "f8fbedefcf49eb891cbf53ee07d35cf4551d31244e2465aac00a5654fb2ae8fb",
       "case": "small",
       "shape": "64x96x128",
       "steps": 256,
@@ -143088,6 +143179,7 @@
     },
     {
       "source": "finalists256/small-256.json",
+      "profile": "f8fbedefcf49eb891cbf53ee07d35cf4551d31244e2465aac00a5654fb2ae8fb",
       "case": "small",
       "shape": "64x96x128",
       "steps": 256,
@@ -143104,6 +143196,7 @@
     },
     {
       "source": "finalists256/small-256.json",
+      "profile": "f8fbedefcf49eb891cbf53ee07d35cf4551d31244e2465aac00a5654fb2ae8fb",
       "case": "small",
       "shape": "64x96x128",
       "steps": 256,
@@ -143120,6 +143213,7 @@
     },
     {
       "source": "finalists256/smooth-256.json",
+      "profile": "afb9413cde54366fa694242ab5adfa7f3a7e229884d7f1911651308836e0521a",
       "case": "smooth",
       "shape": "128x256x512",
       "steps": 256,
@@ -143136,6 +143230,7 @@
     },
     {
       "source": "finalists256/smooth-256.json",
+      "profile": "afb9413cde54366fa694242ab5adfa7f3a7e229884d7f1911651308836e0521a",
       "case": "smooth",
       "shape": "128x256x512",
       "steps": 256,
@@ -143152,6 +143247,7 @@
     },
     {
       "source": "finalists256/smooth-256.json",
+      "profile": "afb9413cde54366fa694242ab5adfa7f3a7e229884d7f1911651308836e0521a",
       "case": "smooth",
       "shape": "128x256x512",
       "steps": 256,
@@ -143168,6 +143264,7 @@
     },
     {
       "source": "finalists256/thin_x-256.json",
+      "profile": "c0961b0df3314cf89718e2f5d8b37940080fc9374727288f791456b8803b007b",
       "case": "thin_x",
       "shape": "256x512x48",
       "steps": 256,
@@ -143184,6 +143281,7 @@
     },
     {
       "source": "finalists256/thin_x-256.json",
+      "profile": "c0961b0df3314cf89718e2f5d8b37940080fc9374727288f791456b8803b007b",
       "case": "thin_x",
       "shape": "256x512x48",
       "steps": 256,
@@ -143200,6 +143298,7 @@
     },
     {
       "source": "finalists256/thin_y-256.json",
+      "profile": "63421e89588bd965e7a2d5bf2f2a00fcbe239bb3c6ca988f2ca5ebbf74c7a1fb",
       "case": "thin_y",
       "shape": "256x48x512",
       "steps": 256,
@@ -143216,6 +143315,7 @@
     },
     {
       "source": "finalists256/thin_y-256.json",
+      "profile": "63421e89588bd965e7a2d5bf2f2a00fcbe239bb3c6ca988f2ca5ebbf74c7a1fb",
       "case": "thin_y",
       "shape": "256x48x512",
       "steps": 256,
@@ -143232,6 +143332,7 @@
     },
     {
       "source": "finalists256/thin_z-256.json",
+      "profile": "f7df3b66eb0638c7e8e172f848d0e74b9cec24f7a51256e27c3d833f1ba59027",
       "case": "thin_z",
       "shape": "48x512x512",
       "steps": 256,
@@ -143248,6 +143349,7 @@
     },
     {
       "source": "finalists256/thin_z-256.json",
+      "profile": "f7df3b66eb0638c7e8e172f848d0e74b9cec24f7a51256e27c3d833f1ba59027",
       "case": "thin_z",
       "shape": "48x512x512",
       "steps": 256,
@@ -143264,6 +143366,7 @@
     },
     {
       "source": "finalists256/thin_z-256.json",
+      "profile": "f7df3b66eb0638c7e8e172f848d0e74b9cec24f7a51256e27c3d833f1ba59027",
       "case": "thin_z",
       "shape": "48x512x512",
       "steps": 256,
@@ -143280,6 +143383,7 @@
     },
     {
       "source": "finalists256/tiny-256.json",
+      "profile": "eaba0bddb4a4f5bcb7999828025dc8fd31c6b815796d16a81a6e15a8c5a74c9c",
       "case": "tiny",
       "shape": "32x48x64",
       "steps": 256,
@@ -143296,6 +143400,7 @@
     },
     {
       "source": "finalists256/tiny-256.json",
+      "profile": "eaba0bddb4a4f5bcb7999828025dc8fd31c6b815796d16a81a6e15a8c5a74c9c",
       "case": "tiny",
       "shape": "32x48x64",
       "steps": 256,
@@ -143312,6 +143417,7 @@
     },
     {
       "source": "horizon1024/crossover-1024.json",
+      "profile": "d544b701ab409552f50e7856de9b3f680056c7b179a74c65b1dec5944f0d5a4d",
       "case": "crossover",
       "shape": "96x160x256",
       "steps": 1024,
@@ -143328,6 +143434,7 @@
     },
     {
       "source": "horizon1024/crossover-1024.json",
+      "profile": "d544b701ab409552f50e7856de9b3f680056c7b179a74c65b1dec5944f0d5a4d",
       "case": "crossover",
       "shape": "96x160x256",
       "steps": 1024,
@@ -143344,6 +143451,24 @@
     },
     {
       "source": "horizon1024/large-1024.json",
+      "profile": "acccb2048976677e83518d3bb893e01b1c3333582377e1b72a82c6e4ef013327",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 1024,
+      "configuration": "streamed",
+      "actual_schedule": "streamed",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 0.8092592088505626,
+      "first_execution_s": 8.80123864300549,
+      "warm_s": 8.814043461112306,
+      "warm_gcups": 7.7965892770090575,
+      "cold_after_shared_setup_s": 9.610497851856053,
+      "raw_pipeline_first_result_s": 18.365979759022593
+    },
+    {
+      "source": "horizon1024/large-1024.json",
+      "profile": "aea27d8f620f30458e1c718856ec446b698bd6d8ee0792242050e0d1c73f5bd2",
       "case": "large",
       "shape": "256x512x512",
       "steps": 1024,
@@ -143360,6 +143485,7 @@
     },
     {
       "source": "horizon1024/large-1024.json",
+      "profile": "aea27d8f620f30458e1c718856ec446b698bd6d8ee0792242050e0d1c73f5bd2",
       "case": "large",
       "shape": "256x512x512",
       "steps": 1024,
@@ -143375,39 +143501,8 @@
       "raw_pipeline_first_result_s": 20.0312920298893
     },
     {
-      "source": "horizon1024/large-1024.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 1024,
-      "configuration": "streamed",
-      "actual_schedule": "streamed",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 0.8092592088505626,
-      "first_execution_s": 8.80123864300549,
-      "warm_s": 8.814043461112306,
-      "warm_gcups": 7.7965892770090575,
-      "cold_after_shared_setup_s": 9.610497851856053,
-      "raw_pipeline_first_result_s": 18.365979759022593
-    },
-    {
       "source": "horizon1024/medium-1024.json",
-      "case": "medium",
-      "shape": "128x256x512",
-      "steps": 1024,
-      "configuration": "mstep-8x16-32",
-      "actual_schedule": "mstep",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 0.6812956200446934,
-      "first_execution_s": 1.9329196389298886,
-      "warm_s": 1.894174573943019,
-      "warm_gcups": 9.069844680808608,
-      "cold_after_shared_setup_s": 2.614215258974582,
-      "raw_pipeline_first_result_s": 10.536949625937268
-    },
-    {
-      "source": "horizon1024/medium-1024.json",
+      "profile": "5b40ab40f7d3a0ec316bc68dbdb7b09eff6cb4d23b9472c56db5d75996214e75",
       "case": "medium",
       "shape": "128x256x512",
       "steps": 1024,
@@ -143424,6 +143519,7 @@
     },
     {
       "source": "horizon1024/medium-1024.json",
+      "profile": "5b40ab40f7d3a0ec316bc68dbdb7b09eff6cb4d23b9472c56db5d75996214e75",
       "case": "medium",
       "shape": "128x256x512",
       "steps": 1024,
@@ -143439,7 +143535,25 @@
       "raw_pipeline_first_result_s": 10.544363802066073
     },
     {
+      "source": "horizon1024/medium-1024.json",
+      "profile": "e846407e2a016041829a280679d68dfa5687cb43246dec0d27f3fdf90c3a409a",
+      "case": "medium",
+      "shape": "128x256x512",
+      "steps": 1024,
+      "configuration": "mstep-8x16-32",
+      "actual_schedule": "mstep",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 0.6812956200446934,
+      "first_execution_s": 1.9329196389298886,
+      "warm_s": 1.894174573943019,
+      "warm_gcups": 9.069844680808608,
+      "cold_after_shared_setup_s": 2.614215258974582,
+      "raw_pipeline_first_result_s": 10.536949625937268
+    },
+    {
       "source": "horizon1024/narrow_x-1024.json",
+      "profile": "0fc6b306c75b9b7e72f4c1d91ed6cd903faa17a05d3a5f01189490710c231024",
       "case": "narrow_x",
       "shape": "512x256x64",
       "steps": 1024,
@@ -143456,6 +143570,7 @@
     },
     {
       "source": "horizon1024/narrow_x-1024.json",
+      "profile": "0fc6b306c75b9b7e72f4c1d91ed6cd903faa17a05d3a5f01189490710c231024",
       "case": "narrow_x",
       "shape": "512x256x64",
       "steps": 1024,
@@ -143472,6 +143587,7 @@
     },
     {
       "source": "horizon1024/narrow_x-1024.json",
+      "profile": "0fc6b306c75b9b7e72f4c1d91ed6cd903faa17a05d3a5f01189490710c231024",
       "case": "narrow_x",
       "shape": "512x256x64",
       "steps": 1024,
@@ -143488,6 +143604,7 @@
     },
     {
       "source": "horizon1024/pec-1024.json",
+      "profile": "e4533cef11a387925fb9388c92edb75f3f271bb74a4fd864eaed61781691cf3e",
       "case": "pec",
       "shape": "128x256x512",
       "steps": 1024,
@@ -143504,6 +143621,7 @@
     },
     {
       "source": "horizon1024/pec-1024.json",
+      "profile": "e4533cef11a387925fb9388c92edb75f3f271bb74a4fd864eaed61781691cf3e",
       "case": "pec",
       "shape": "128x256x512",
       "steps": 1024,
@@ -143520,6 +143638,7 @@
     },
     {
       "source": "horizon1024/pec-1024.json",
+      "profile": "e4533cef11a387925fb9388c92edb75f3f271bb74a4fd864eaed61781691cf3e",
       "case": "pec",
       "shape": "128x256x512",
       "steps": 1024,
@@ -143536,6 +143655,7 @@
     },
     {
       "source": "horizon1024/right-1024.json",
+      "profile": "6c4cf438dcae35f24823139a7614d69e03124a2525d38e98b967afe318025152",
       "case": "right",
       "shape": "128x256x512",
       "steps": 1024,
@@ -143552,6 +143672,7 @@
     },
     {
       "source": "horizon1024/right-1024.json",
+      "profile": "6c4cf438dcae35f24823139a7614d69e03124a2525d38e98b967afe318025152",
       "case": "right",
       "shape": "128x256x512",
       "steps": 1024,
@@ -143568,6 +143689,7 @@
     },
     {
       "source": "horizon1024/right-1024.json",
+      "profile": "6c4cf438dcae35f24823139a7614d69e03124a2525d38e98b967afe318025152",
       "case": "right",
       "shape": "128x256x512",
       "steps": 1024,
@@ -143584,6 +143706,7 @@
     },
     {
       "source": "horizon1024/small-1024.json",
+      "profile": "d80553a45b1d8c9a0ad80a0cb17d17e873f603b452945aa9faef86eab4d110a6",
       "case": "small",
       "shape": "64x96x128",
       "steps": 1024,
@@ -143600,6 +143723,7 @@
     },
     {
       "source": "horizon1024/small-1024.json",
+      "profile": "d80553a45b1d8c9a0ad80a0cb17d17e873f603b452945aa9faef86eab4d110a6",
       "case": "small",
       "shape": "64x96x128",
       "steps": 1024,
@@ -143616,6 +143740,7 @@
     },
     {
       "source": "horizon1024/small-1024.json",
+      "profile": "d80553a45b1d8c9a0ad80a0cb17d17e873f603b452945aa9faef86eab4d110a6",
       "case": "small",
       "shape": "64x96x128",
       "steps": 1024,
@@ -143632,6 +143757,7 @@
     },
     {
       "source": "horizon1024/thin_x-1024.json",
+      "profile": "e15f559716ac87d82bd61a5dea3b443f764e2bc67e50f7a57de0aae3d6bf0494",
       "case": "thin_x",
       "shape": "256x512x48",
       "steps": 1024,
@@ -143648,6 +143774,7 @@
     },
     {
       "source": "horizon1024/thin_x-1024.json",
+      "profile": "e15f559716ac87d82bd61a5dea3b443f764e2bc67e50f7a57de0aae3d6bf0494",
       "case": "thin_x",
       "shape": "256x512x48",
       "steps": 1024,
@@ -143664,6 +143791,7 @@
     },
     {
       "source": "horizon1024/thin_x-1024.json",
+      "profile": "e15f559716ac87d82bd61a5dea3b443f764e2bc67e50f7a57de0aae3d6bf0494",
       "case": "thin_x",
       "shape": "256x512x48",
       "steps": 1024,
@@ -143680,6 +143808,7 @@
     },
     {
       "source": "horizon1024/tiny-1024.json",
+      "profile": "7f6d15973d46ea80697494b69207d5754d93c601f3d03a0e6fc53552cebc982e",
       "case": "tiny",
       "shape": "32x48x64",
       "steps": 1024,
@@ -143696,6 +143825,7 @@
     },
     {
       "source": "horizon1024/tiny-1024.json",
+      "profile": "7f6d15973d46ea80697494b69207d5754d93c601f3d03a0e6fc53552cebc982e",
       "case": "tiny",
       "shape": "32x48x64",
       "steps": 1024,
@@ -143712,6 +143842,7 @@
     },
     {
       "source": "horizon16/crossover-16.json",
+      "profile": "d544b701ab409552f50e7856de9b3f680056c7b179a74c65b1dec5944f0d5a4d",
       "case": "crossover",
       "shape": "96x160x256",
       "steps": 16,
@@ -143728,6 +143859,7 @@
     },
     {
       "source": "horizon16/crossover-16.json",
+      "profile": "d544b701ab409552f50e7856de9b3f680056c7b179a74c65b1dec5944f0d5a4d",
       "case": "crossover",
       "shape": "96x160x256",
       "steps": 16,
@@ -143744,6 +143876,7 @@
     },
     {
       "source": "horizon16/large-16.json",
+      "profile": "acccb2048976677e83518d3bb893e01b1c3333582377e1b72a82c6e4ef013327",
       "case": "large",
       "shape": "256x512x512",
       "steps": 16,
@@ -143760,6 +143893,7 @@
     },
     {
       "source": "horizon16/large-16.json",
+      "profile": "acccb2048976677e83518d3bb893e01b1c3333582377e1b72a82c6e4ef013327",
       "case": "large",
       "shape": "256x512x512",
       "steps": 16,
@@ -143776,6 +143910,7 @@
     },
     {
       "source": "horizon16/large-16.json",
+      "profile": "acccb2048976677e83518d3bb893e01b1c3333582377e1b72a82c6e4ef013327",
       "case": "large",
       "shape": "256x512x512",
       "steps": 16,
@@ -143792,6 +143927,7 @@
     },
     {
       "source": "horizon16/medium-16.json",
+      "profile": "5b40ab40f7d3a0ec316bc68dbdb7b09eff6cb4d23b9472c56db5d75996214e75",
       "case": "medium",
       "shape": "128x256x512",
       "steps": 16,
@@ -143808,6 +143944,7 @@
     },
     {
       "source": "horizon16/medium-16.json",
+      "profile": "5b40ab40f7d3a0ec316bc68dbdb7b09eff6cb4d23b9472c56db5d75996214e75",
       "case": "medium",
       "shape": "128x256x512",
       "steps": 16,
@@ -143824,6 +143961,7 @@
     },
     {
       "source": "horizon16/medium-16.json",
+      "profile": "5b40ab40f7d3a0ec316bc68dbdb7b09eff6cb4d23b9472c56db5d75996214e75",
       "case": "medium",
       "shape": "128x256x512",
       "steps": 16,
@@ -143840,6 +143978,7 @@
     },
     {
       "source": "horizon16/narrow_x-16.json",
+      "profile": "0fc6b306c75b9b7e72f4c1d91ed6cd903faa17a05d3a5f01189490710c231024",
       "case": "narrow_x",
       "shape": "512x256x64",
       "steps": 16,
@@ -143856,6 +143995,7 @@
     },
     {
       "source": "horizon16/narrow_x-16.json",
+      "profile": "0fc6b306c75b9b7e72f4c1d91ed6cd903faa17a05d3a5f01189490710c231024",
       "case": "narrow_x",
       "shape": "512x256x64",
       "steps": 16,
@@ -143872,6 +144012,7 @@
     },
     {
       "source": "horizon16/narrow_x-16.json",
+      "profile": "0fc6b306c75b9b7e72f4c1d91ed6cd903faa17a05d3a5f01189490710c231024",
       "case": "narrow_x",
       "shape": "512x256x64",
       "steps": 16,
@@ -143888,6 +144029,7 @@
     },
     {
       "source": "horizon16/pec-16.json",
+      "profile": "e4533cef11a387925fb9388c92edb75f3f271bb74a4fd864eaed61781691cf3e",
       "case": "pec",
       "shape": "128x256x512",
       "steps": 16,
@@ -143904,6 +144046,7 @@
     },
     {
       "source": "horizon16/pec-16.json",
+      "profile": "e4533cef11a387925fb9388c92edb75f3f271bb74a4fd864eaed61781691cf3e",
       "case": "pec",
       "shape": "128x256x512",
       "steps": 16,
@@ -143920,6 +144063,7 @@
     },
     {
       "source": "horizon16/pec-16.json",
+      "profile": "e4533cef11a387925fb9388c92edb75f3f271bb74a4fd864eaed61781691cf3e",
       "case": "pec",
       "shape": "128x256x512",
       "steps": 16,
@@ -143936,6 +144080,7 @@
     },
     {
       "source": "horizon16/right-16.json",
+      "profile": "6c4cf438dcae35f24823139a7614d69e03124a2525d38e98b967afe318025152",
       "case": "right",
       "shape": "128x256x512",
       "steps": 16,
@@ -143952,6 +144097,7 @@
     },
     {
       "source": "horizon16/right-16.json",
+      "profile": "6c4cf438dcae35f24823139a7614d69e03124a2525d38e98b967afe318025152",
       "case": "right",
       "shape": "128x256x512",
       "steps": 16,
@@ -143968,6 +144114,7 @@
     },
     {
       "source": "horizon16/right-16.json",
+      "profile": "6c4cf438dcae35f24823139a7614d69e03124a2525d38e98b967afe318025152",
       "case": "right",
       "shape": "128x256x512",
       "steps": 16,
@@ -143984,6 +144131,7 @@
     },
     {
       "source": "horizon16/small-16.json",
+      "profile": "d80553a45b1d8c9a0ad80a0cb17d17e873f603b452945aa9faef86eab4d110a6",
       "case": "small",
       "shape": "64x96x128",
       "steps": 16,
@@ -144000,6 +144148,7 @@
     },
     {
       "source": "horizon16/small-16.json",
+      "profile": "d80553a45b1d8c9a0ad80a0cb17d17e873f603b452945aa9faef86eab4d110a6",
       "case": "small",
       "shape": "64x96x128",
       "steps": 16,
@@ -144016,6 +144165,7 @@
     },
     {
       "source": "horizon16/small-16.json",
+      "profile": "d80553a45b1d8c9a0ad80a0cb17d17e873f603b452945aa9faef86eab4d110a6",
       "case": "small",
       "shape": "64x96x128",
       "steps": 16,
@@ -144032,6 +144182,7 @@
     },
     {
       "source": "horizon16/thin_x-16.json",
+      "profile": "e15f559716ac87d82bd61a5dea3b443f764e2bc67e50f7a57de0aae3d6bf0494",
       "case": "thin_x",
       "shape": "256x512x48",
       "steps": 16,
@@ -144048,6 +144199,7 @@
     },
     {
       "source": "horizon16/thin_x-16.json",
+      "profile": "e15f559716ac87d82bd61a5dea3b443f764e2bc67e50f7a57de0aae3d6bf0494",
       "case": "thin_x",
       "shape": "256x512x48",
       "steps": 16,
@@ -144064,6 +144216,7 @@
     },
     {
       "source": "horizon16/thin_x-16.json",
+      "profile": "e15f559716ac87d82bd61a5dea3b443f764e2bc67e50f7a57de0aae3d6bf0494",
       "case": "thin_x",
       "shape": "256x512x48",
       "steps": 16,
@@ -144080,6 +144233,7 @@
     },
     {
       "source": "horizon16/tiny-16.json",
+      "profile": "7f6d15973d46ea80697494b69207d5754d93c601f3d03a0e6fc53552cebc982e",
       "case": "tiny",
       "shape": "32x48x64",
       "steps": 16,
@@ -144096,6 +144250,7 @@
     },
     {
       "source": "horizon16/tiny-16.json",
+      "profile": "7f6d15973d46ea80697494b69207d5754d93c601f3d03a0e6fc53552cebc982e",
       "case": "tiny",
       "shape": "32x48x64",
       "steps": 16,
@@ -144112,6 +144267,7 @@
     },
     {
       "source": "horizon4096/large-4096.json",
+      "profile": "9280f2bae0358661e4373ec4b894ec0e3be61238acb4ce9ad16757ce206f9ae1",
       "case": "large",
       "shape": "256x512x512",
       "steps": 4096,
@@ -144128,6 +144284,7 @@
     },
     {
       "source": "horizon4096/large-4096.json",
+      "profile": "9280f2bae0358661e4373ec4b894ec0e3be61238acb4ce9ad16757ce206f9ae1",
       "case": "large",
       "shape": "256x512x512",
       "steps": 4096,
@@ -144144,6 +144301,7 @@
     },
     {
       "source": "horizon4096/medium-4096.json",
+      "profile": "e3be497d77934b8e50801bf08519e34deb0d12f840b1317d9c51bad9eba3cb17",
       "case": "medium",
       "shape": "128x256x512",
       "steps": 4096,
@@ -144160,6 +144318,7 @@
     },
     {
       "source": "horizon4096/medium-4096.json",
+      "profile": "e3be497d77934b8e50801bf08519e34deb0d12f840b1317d9c51bad9eba3cb17",
       "case": "medium",
       "shape": "128x256x512",
       "steps": 4096,
@@ -144176,326 +144335,7 @@
     },
     {
       "source": "large-isolated/large-64.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 64,
-      "configuration": "mstep-16x32-64",
-      "actual_schedule": "mstep",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 1.2759931180626154,
-      "first_execution_s": 0.444395235972479,
-      "warm_s": 0.40009230887517333,
-      "warm_gcups": 10.734940914197894,
-      "cold_after_shared_setup_s": 1.7203883540350944,
-      "raw_pipeline_first_result_s": 11.430626287125051
-    },
-    {
-      "source": "large-isolated/large-64.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 64,
-      "configuration": "mstep-16x32-128",
-      "actual_schedule": "mstep",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 1.2735155350528657,
-      "first_execution_s": 0.4472197808790952,
-      "warm_s": 0.40087910601869226,
-      "warm_gcups": 10.713871667334375,
-      "cold_after_shared_setup_s": 1.720735315931961,
-      "raw_pipeline_first_result_s": 11.4460496569518
-    },
-    {
-      "source": "large-isolated/large-64.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 64,
-      "configuration": "mstep-8x16-32",
-      "actual_schedule": "mstep",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 1.2752496742177755,
-      "first_execution_s": 0.4450064718257636,
-      "warm_s": 0.4021984371356666,
-      "warm_gcups": 10.678726965195176,
-      "cold_after_shared_setup_s": 1.720256146043539,
-      "raw_pipeline_first_result_s": 11.41099464497529
-    },
-    {
-      "source": "large-isolated/large-64.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 64,
-      "configuration": "mstep-16x32-32",
-      "actual_schedule": "mstep",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 1.288952476112172,
-      "first_execution_s": 0.44571517198346555,
-      "warm_s": 0.40267085400409997,
-      "warm_gcups": 10.666198591955375,
-      "cold_after_shared_setup_s": 1.7346676480956376,
-      "raw_pipeline_first_result_s": 11.406266838079318
-    },
-    {
-      "source": "large-isolated/large-64.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 64,
-      "configuration": "mstep-8x32-32",
-      "actual_schedule": "mstep",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 1.278507333016023,
-      "first_execution_s": 0.4471561049576849,
-      "warm_s": 0.4031320351641625,
-      "warm_gcups": 10.65399651072387,
-      "cold_after_shared_setup_s": 1.725663437973708,
-      "raw_pipeline_first_result_s": 11.45941864605993
-    },
-    {
-      "source": "large-isolated/large-64.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 64,
-      "configuration": "mstep-16x32-256",
-      "actual_schedule": "mstep",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 1.284327567089349,
-      "first_execution_s": 0.45626543182879686,
-      "warm_s": 0.40421938011422753,
-      "warm_gcups": 10.625337396703477,
-      "cold_after_shared_setup_s": 1.740592998918146,
-      "raw_pipeline_first_result_s": 11.460711667081341
-    },
-    {
-      "source": "large-isolated/large-64.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 64,
-      "configuration": "mstep-16x32-whole",
-      "actual_schedule": "mstep",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 1.269286951981485,
-      "first_execution_s": 0.45370469405315816,
-      "warm_s": 0.4052923680283129,
-      "warm_gcups": 10.597207435448086,
-      "cold_after_shared_setup_s": 1.722991646034643,
-      "raw_pipeline_first_result_s": 11.412897850153968
-    },
-    {
-      "source": "large-isolated/large-64.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 64,
-      "configuration": "mstep-8x32-64",
-      "actual_schedule": "mstep",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 1.275043883593753,
-      "first_execution_s": 0.45240681106224656,
-      "warm_s": 0.41048195608891547,
-      "warm_gcups": 10.463230435078264,
-      "cold_after_shared_setup_s": 1.7274506946559995,
-      "raw_pipeline_first_result_s": 11.394232149701566
-    },
-    {
-      "source": "large-isolated/large-64.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 64,
-      "configuration": "mstep-8x16-64",
-      "actual_schedule": "mstep",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 1.2785108860116452,
-      "first_execution_s": 0.4545951320324093,
-      "warm_s": 0.41116465791128576,
-      "warm_gcups": 10.44585718485244,
-      "cold_after_shared_setup_s": 1.7331060180440545,
-      "raw_pipeline_first_result_s": 11.462830669246614
-    },
-    {
-      "source": "large-isolated/large-64.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 64,
-      "configuration": "mstep-16x16-32",
-      "actual_schedule": "mstep",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 1.276042175013572,
-      "first_execution_s": 0.45457878010347486,
-      "warm_s": 0.4125505820848048,
-      "warm_gcups": 10.41076532796436,
-      "cold_after_shared_setup_s": 1.7306209551170468,
-      "raw_pipeline_first_result_s": 11.359970038989559
-    },
-    {
-      "source": "large-isolated/large-64.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 64,
-      "configuration": "mstep-16x16-64",
-      "actual_schedule": "mstep",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 1.2736234210897237,
-      "first_execution_s": 0.46003169589675963,
-      "warm_s": 0.41801989800296724,
-      "warm_gcups": 10.274552279732658,
-      "cold_after_shared_setup_s": 1.7336551169864833,
-      "raw_pipeline_first_result_s": 11.414520983817056
-    },
-    {
-      "source": "large-isolated/large-64.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 64,
-      "configuration": "mstep-8x32-128",
-      "actual_schedule": "mstep",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 1.2800557469017804,
-      "first_execution_s": 0.4674630290828645,
-      "warm_s": 0.422079250914976,
-      "warm_gcups": 10.175736634031274,
-      "cold_after_shared_setup_s": 1.747518775984645,
-      "raw_pipeline_first_result_s": 11.459961980115622
-    },
-    {
-      "source": "large-isolated/large-64.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 64,
-      "configuration": "mstep-8x16-128",
-      "actual_schedule": "mstep",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 1.2714834311045706,
-      "first_execution_s": 0.4698963421396911,
-      "warm_s": 0.42799726012162864,
-      "warm_gcups": 10.035034557883506,
-      "cold_after_shared_setup_s": 1.7413797732442617,
-      "raw_pipeline_first_result_s": 11.43218408129178
-    },
-    {
-      "source": "large-isolated/large-64.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 64,
-      "configuration": "mstep-16x16-128",
-      "actual_schedule": "mstep",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 1.2800616330932826,
-      "first_execution_s": 0.47480420488864183,
-      "warm_s": 0.4305879329331219,
-      "warm_gcups": 9.974657828293312,
-      "cold_after_shared_setup_s": 1.7548658379819244,
-      "raw_pipeline_first_result_s": 11.490087221143767
-    },
-    {
-      "source": "large-isolated/large-64.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 64,
-      "configuration": "mstep-8x32-256",
-      "actual_schedule": "mstep",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 1.2745508609805256,
-      "first_execution_s": 0.4780709990300238,
-      "warm_s": 0.4344432728830725,
-      "warm_gcups": 9.886140640405223,
-      "cold_after_shared_setup_s": 1.7526218600105494,
-      "raw_pipeline_first_result_s": 11.443635702133179
-    },
-    {
-      "source": "large-isolated/large-64.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 64,
-      "configuration": "mstep-8x32-whole",
-      "actual_schedule": "mstep",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 1.2807149989530444,
-      "first_execution_s": 0.4798738870304078,
-      "warm_s": 0.43478691298514605,
-      "warm_gcups": 9.87832698668815,
-      "cold_after_shared_setup_s": 1.7605888859834522,
-      "raw_pipeline_first_result_s": 11.42835724609904
-    },
-    {
-      "source": "large-isolated/large-64.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 64,
-      "configuration": "mstep-16x16-256",
-      "actual_schedule": "mstep",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 1.2782856738194823,
-      "first_execution_s": 0.48764935694634914,
-      "warm_s": 0.4423087590839714,
-      "warm_gcups": 9.710337423330587,
-      "cold_after_shared_setup_s": 1.7659350307658315,
-      "raw_pipeline_first_result_s": 11.523067628731951
-    },
-    {
-      "source": "large-isolated/large-64.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 64,
-      "configuration": "mstep-16x16-whole",
-      "actual_schedule": "mstep",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 1.2823886622209102,
-      "first_execution_s": 0.48864301084540784,
-      "warm_s": 0.4432029731106013,
-      "warm_gcups": 9.690745677665369,
-      "cold_after_shared_setup_s": 1.771031673066318,
-      "raw_pipeline_first_result_s": 11.480150227202103
-    },
-    {
-      "source": "large-isolated/large-64.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 64,
-      "configuration": "mstep-8x16-whole",
-      "actual_schedule": "mstep",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 1.2814883929677308,
-      "first_execution_s": 0.4913080781698227,
-      "warm_s": 0.44827814283780754,
-      "warm_gcups": 9.581032144040918,
-      "cold_after_shared_setup_s": 1.7727964711375535,
-      "raw_pipeline_first_result_s": 11.455152241280302
-    },
-    {
-      "source": "large-isolated/large-64.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 64,
-      "configuration": "mstep-8x16-256",
-      "actual_schedule": "mstep",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 1.278973471838981,
-      "first_execution_s": 0.4922924900893122,
-      "warm_s": 0.4488095899578184,
-      "warm_gcups": 9.569686994441595,
-      "cold_after_shared_setup_s": 1.771265961928293,
-      "raw_pipeline_first_result_s": 11.511896120151505
-    },
-    {
-      "source": "large-isolated/large-64.json",
+      "profile": "b410fd2931b000fbeba44d1b0094aa90291e99c376513768da6e2eaf437c919b",
       "case": "large",
       "shape": "256x512x512",
       "steps": 64,
@@ -144512,38 +144352,7 @@
     },
     {
       "source": "large-isolated/large-64.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 64,
-      "configuration": "streamed-fused",
-      "actual_schedule": "streamed",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 0.7900865050032735,
-      "first_execution_s": 0.5916718489024788,
-      "warm_s": 0.5467031190637499,
-      "warm_gcups": 7.856123636820102,
-      "cold_after_shared_setup_s": 1.3817583539057523,
-      "raw_pipeline_first_result_s": 11.07751914509572
-    },
-    {
-      "source": "large-isolated/large-64.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 64,
-      "configuration": "streamed-spatial",
-      "actual_schedule": "streamed",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 0.7980265419464558,
-      "first_execution_s": 0.6141800361219794,
-      "warm_s": 0.5628889708314091,
-      "warm_gcups": 7.630221088994096,
-      "cold_after_shared_setup_s": 1.4122065780684352,
-      "raw_pipeline_first_result_s": 11.059036398306489
-    },
-    {
-      "source": "large-isolated/large-64.json",
+      "profile": "b410fd2931b000fbeba44d1b0094aa90291e99c376513768da6e2eaf437c919b",
       "case": "large",
       "shape": "256x512x512",
       "steps": 64,
@@ -144560,22 +144369,7 @@
     },
     {
       "source": "large-isolated/large-64.json",
-      "case": "large",
-      "shape": "256x512x512",
-      "steps": 64,
-      "configuration": "streamed-cpml-pair-oriented",
-      "actual_schedule": "streamed",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 1.6008938499726355,
-      "first_execution_s": 0.688444595085457,
-      "warm_s": 0.6307717969175428,
-      "warm_gcups": 6.8090667924416675,
-      "cold_after_shared_setup_s": 2.2893384450580925,
-      "raw_pipeline_first_result_s": 12.018235927913338
-    },
-    {
-      "source": "large-isolated/large-64.json",
+      "profile": "b410fd2931b000fbeba44d1b0094aa90291e99c376513768da6e2eaf437c919b",
       "case": "large",
       "shape": "256x512x512",
       "steps": 64,
@@ -144592,6 +144386,7 @@
     },
     {
       "source": "large-isolated/large-64.json",
+      "profile": "b410fd2931b000fbeba44d1b0094aa90291e99c376513768da6e2eaf437c919b",
       "case": "large",
       "shape": "256x512x512",
       "steps": 64,
@@ -144608,6 +144403,7 @@
     },
     {
       "source": "large-isolated/large-64.json",
+      "profile": "b410fd2931b000fbeba44d1b0094aa90291e99c376513768da6e2eaf437c919b",
       "case": "large",
       "shape": "256x512x512",
       "steps": 64,
@@ -144624,6 +144420,177 @@
     },
     {
       "source": "large-isolated/large-64.json",
+      "profile": "b410fd2931b000fbeba44d1b0094aa90291e99c376513768da6e2eaf437c919b",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 64,
+      "configuration": "streamed-pair-32x4x16",
+      "actual_schedule": "streamed",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 1.58864188590087,
+      "first_execution_s": 0.7393656931817532,
+      "warm_s": 0.6853120031300932,
+      "warm_gcups": 6.267170684860576,
+      "cold_after_shared_setup_s": 2.328007579082623,
+      "raw_pipeline_first_result_s": 12.061154684983194
+    },
+    {
+      "source": "large-isolated/large-64.json",
+      "profile": "5debcab5ee073cda77dd454813f32e7db152a98463921c4af4e9102bf9f410ba",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 64,
+      "configuration": "mstep-16x32-64",
+      "actual_schedule": "mstep",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 1.2759931180626154,
+      "first_execution_s": 0.444395235972479,
+      "warm_s": 0.40009230887517333,
+      "warm_gcups": 10.734940914197894,
+      "cold_after_shared_setup_s": 1.7203883540350944,
+      "raw_pipeline_first_result_s": 11.430626287125051
+    },
+    {
+      "source": "large-isolated/large-64.json",
+      "profile": "5debcab5ee073cda77dd454813f32e7db152a98463921c4af4e9102bf9f410ba",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 64,
+      "configuration": "mstep-16x32-128",
+      "actual_schedule": "mstep",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 1.2735155350528657,
+      "first_execution_s": 0.4472197808790952,
+      "warm_s": 0.40087910601869226,
+      "warm_gcups": 10.713871667334375,
+      "cold_after_shared_setup_s": 1.720735315931961,
+      "raw_pipeline_first_result_s": 11.4460496569518
+    },
+    {
+      "source": "large-isolated/large-64.json",
+      "profile": "5debcab5ee073cda77dd454813f32e7db152a98463921c4af4e9102bf9f410ba",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 64,
+      "configuration": "mstep-16x32-32",
+      "actual_schedule": "mstep",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 1.288952476112172,
+      "first_execution_s": 0.44571517198346555,
+      "warm_s": 0.40267085400409997,
+      "warm_gcups": 10.666198591955375,
+      "cold_after_shared_setup_s": 1.7346676480956376,
+      "raw_pipeline_first_result_s": 11.406266838079318
+    },
+    {
+      "source": "large-isolated/large-64.json",
+      "profile": "5debcab5ee073cda77dd454813f32e7db152a98463921c4af4e9102bf9f410ba",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 64,
+      "configuration": "mstep-16x32-256",
+      "actual_schedule": "mstep",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 1.284327567089349,
+      "first_execution_s": 0.45626543182879686,
+      "warm_s": 0.40421938011422753,
+      "warm_gcups": 10.625337396703477,
+      "cold_after_shared_setup_s": 1.740592998918146,
+      "raw_pipeline_first_result_s": 11.460711667081341
+    },
+    {
+      "source": "large-isolated/large-64.json",
+      "profile": "5debcab5ee073cda77dd454813f32e7db152a98463921c4af4e9102bf9f410ba",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 64,
+      "configuration": "mstep-16x32-whole",
+      "actual_schedule": "mstep",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 1.269286951981485,
+      "first_execution_s": 0.45370469405315816,
+      "warm_s": 0.4052923680283129,
+      "warm_gcups": 10.597207435448086,
+      "cold_after_shared_setup_s": 1.722991646034643,
+      "raw_pipeline_first_result_s": 11.412897850153968
+    },
+    {
+      "source": "large-isolated/large-64.json",
+      "profile": "5debcab5ee073cda77dd454813f32e7db152a98463921c4af4e9102bf9f410ba",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 64,
+      "configuration": "mstep-8x32-whole",
+      "actual_schedule": "mstep",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 1.2807149989530444,
+      "first_execution_s": 0.4798738870304078,
+      "warm_s": 0.43478691298514605,
+      "warm_gcups": 9.87832698668815,
+      "cold_after_shared_setup_s": 1.7605888859834522,
+      "raw_pipeline_first_result_s": 11.42835724609904
+    },
+    {
+      "source": "large-isolated/large-64.json",
+      "profile": "5debcab5ee073cda77dd454813f32e7db152a98463921c4af4e9102bf9f410ba",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 64,
+      "configuration": "streamed-fused",
+      "actual_schedule": "streamed",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 0.7900865050032735,
+      "first_execution_s": 0.5916718489024788,
+      "warm_s": 0.5467031190637499,
+      "warm_gcups": 7.856123636820102,
+      "cold_after_shared_setup_s": 1.3817583539057523,
+      "raw_pipeline_first_result_s": 11.07751914509572
+    },
+    {
+      "source": "large-isolated/large-64.json",
+      "profile": "5debcab5ee073cda77dd454813f32e7db152a98463921c4af4e9102bf9f410ba",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 64,
+      "configuration": "streamed-spatial",
+      "actual_schedule": "streamed",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 0.7980265419464558,
+      "first_execution_s": 0.6141800361219794,
+      "warm_s": 0.5628889708314091,
+      "warm_gcups": 7.630221088994096,
+      "cold_after_shared_setup_s": 1.4122065780684352,
+      "raw_pipeline_first_result_s": 11.059036398306489
+    },
+    {
+      "source": "large-isolated/large-64.json",
+      "profile": "5debcab5ee073cda77dd454813f32e7db152a98463921c4af4e9102bf9f410ba",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 64,
+      "configuration": "streamed-cpml-pair-oriented",
+      "actual_schedule": "streamed",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 1.6008938499726355,
+      "first_execution_s": 0.688444595085457,
+      "warm_s": 0.6307717969175428,
+      "warm_gcups": 6.8090667924416675,
+      "cold_after_shared_setup_s": 2.2893384450580925,
+      "raw_pipeline_first_result_s": 12.018235927913338
+    },
+    {
+      "source": "large-isolated/large-64.json",
+      "profile": "5debcab5ee073cda77dd454813f32e7db152a98463921c4af4e9102bf9f410ba",
       "case": "large",
       "shape": "256x512x512",
       "steps": 64,
@@ -144640,22 +144607,245 @@
     },
     {
       "source": "large-isolated/large-64.json",
+      "profile": "1d676a1021cb389737d7d062c5ad3051eb5cd814bb6d2421c76c4114363f74bc",
       "case": "large",
       "shape": "256x512x512",
       "steps": 64,
-      "configuration": "streamed-pair-32x4x16",
-      "actual_schedule": "streamed",
+      "configuration": "mstep-8x16-32",
+      "actual_schedule": "mstep",
       "ownership": "borrowed",
       "rounds": 1,
-      "preparation_s": 1.58864188590087,
-      "first_execution_s": 0.7393656931817532,
-      "warm_s": 0.6853120031300932,
-      "warm_gcups": 6.267170684860576,
-      "cold_after_shared_setup_s": 2.328007579082623,
-      "raw_pipeline_first_result_s": 12.061154684983194
+      "preparation_s": 1.2752496742177755,
+      "first_execution_s": 0.4450064718257636,
+      "warm_s": 0.4021984371356666,
+      "warm_gcups": 10.678726965195176,
+      "cold_after_shared_setup_s": 1.720256146043539,
+      "raw_pipeline_first_result_s": 11.41099464497529
+    },
+    {
+      "source": "large-isolated/large-64.json",
+      "profile": "1d676a1021cb389737d7d062c5ad3051eb5cd814bb6d2421c76c4114363f74bc",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 64,
+      "configuration": "mstep-8x32-32",
+      "actual_schedule": "mstep",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 1.278507333016023,
+      "first_execution_s": 0.4471561049576849,
+      "warm_s": 0.4031320351641625,
+      "warm_gcups": 10.65399651072387,
+      "cold_after_shared_setup_s": 1.725663437973708,
+      "raw_pipeline_first_result_s": 11.45941864605993
+    },
+    {
+      "source": "large-isolated/large-64.json",
+      "profile": "1d676a1021cb389737d7d062c5ad3051eb5cd814bb6d2421c76c4114363f74bc",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 64,
+      "configuration": "mstep-8x32-64",
+      "actual_schedule": "mstep",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 1.275043883593753,
+      "first_execution_s": 0.45240681106224656,
+      "warm_s": 0.41048195608891547,
+      "warm_gcups": 10.463230435078264,
+      "cold_after_shared_setup_s": 1.7274506946559995,
+      "raw_pipeline_first_result_s": 11.394232149701566
+    },
+    {
+      "source": "large-isolated/large-64.json",
+      "profile": "1d676a1021cb389737d7d062c5ad3051eb5cd814bb6d2421c76c4114363f74bc",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 64,
+      "configuration": "mstep-8x16-64",
+      "actual_schedule": "mstep",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 1.2785108860116452,
+      "first_execution_s": 0.4545951320324093,
+      "warm_s": 0.41116465791128576,
+      "warm_gcups": 10.44585718485244,
+      "cold_after_shared_setup_s": 1.7331060180440545,
+      "raw_pipeline_first_result_s": 11.462830669246614
+    },
+    {
+      "source": "large-isolated/large-64.json",
+      "profile": "1d676a1021cb389737d7d062c5ad3051eb5cd814bb6d2421c76c4114363f74bc",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 64,
+      "configuration": "mstep-16x16-32",
+      "actual_schedule": "mstep",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 1.276042175013572,
+      "first_execution_s": 0.45457878010347486,
+      "warm_s": 0.4125505820848048,
+      "warm_gcups": 10.41076532796436,
+      "cold_after_shared_setup_s": 1.7306209551170468,
+      "raw_pipeline_first_result_s": 11.359970038989559
+    },
+    {
+      "source": "large-isolated/large-64.json",
+      "profile": "1d676a1021cb389737d7d062c5ad3051eb5cd814bb6d2421c76c4114363f74bc",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 64,
+      "configuration": "mstep-16x16-64",
+      "actual_schedule": "mstep",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 1.2736234210897237,
+      "first_execution_s": 0.46003169589675963,
+      "warm_s": 0.41801989800296724,
+      "warm_gcups": 10.274552279732658,
+      "cold_after_shared_setup_s": 1.7336551169864833,
+      "raw_pipeline_first_result_s": 11.414520983817056
+    },
+    {
+      "source": "large-isolated/large-64.json",
+      "profile": "1d676a1021cb389737d7d062c5ad3051eb5cd814bb6d2421c76c4114363f74bc",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 64,
+      "configuration": "mstep-8x32-128",
+      "actual_schedule": "mstep",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 1.2800557469017804,
+      "first_execution_s": 0.4674630290828645,
+      "warm_s": 0.422079250914976,
+      "warm_gcups": 10.175736634031274,
+      "cold_after_shared_setup_s": 1.747518775984645,
+      "raw_pipeline_first_result_s": 11.459961980115622
+    },
+    {
+      "source": "large-isolated/large-64.json",
+      "profile": "1d676a1021cb389737d7d062c5ad3051eb5cd814bb6d2421c76c4114363f74bc",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 64,
+      "configuration": "mstep-8x16-128",
+      "actual_schedule": "mstep",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 1.2714834311045706,
+      "first_execution_s": 0.4698963421396911,
+      "warm_s": 0.42799726012162864,
+      "warm_gcups": 10.035034557883506,
+      "cold_after_shared_setup_s": 1.7413797732442617,
+      "raw_pipeline_first_result_s": 11.43218408129178
+    },
+    {
+      "source": "large-isolated/large-64.json",
+      "profile": "1d676a1021cb389737d7d062c5ad3051eb5cd814bb6d2421c76c4114363f74bc",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 64,
+      "configuration": "mstep-8x32-256",
+      "actual_schedule": "mstep",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 1.2745508609805256,
+      "first_execution_s": 0.4780709990300238,
+      "warm_s": 0.4344432728830725,
+      "warm_gcups": 9.886140640405223,
+      "cold_after_shared_setup_s": 1.7526218600105494,
+      "raw_pipeline_first_result_s": 11.443635702133179
+    },
+    {
+      "source": "large-isolated/large-64.json",
+      "profile": "1d676a1021cb389737d7d062c5ad3051eb5cd814bb6d2421c76c4114363f74bc",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 64,
+      "configuration": "mstep-16x16-whole",
+      "actual_schedule": "mstep",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 1.2823886622209102,
+      "first_execution_s": 0.48864301084540784,
+      "warm_s": 0.4432029731106013,
+      "warm_gcups": 9.690745677665369,
+      "cold_after_shared_setup_s": 1.771031673066318,
+      "raw_pipeline_first_result_s": 11.480150227202103
+    },
+    {
+      "source": "large-isolated/large-64.json",
+      "profile": "1d676a1021cb389737d7d062c5ad3051eb5cd814bb6d2421c76c4114363f74bc",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 64,
+      "configuration": "mstep-8x16-whole",
+      "actual_schedule": "mstep",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 1.2814883929677308,
+      "first_execution_s": 0.4913080781698227,
+      "warm_s": 0.44827814283780754,
+      "warm_gcups": 9.581032144040918,
+      "cold_after_shared_setup_s": 1.7727964711375535,
+      "raw_pipeline_first_result_s": 11.455152241280302
+    },
+    {
+      "source": "large-isolated/large-64.json",
+      "profile": "1d676a1021cb389737d7d062c5ad3051eb5cd814bb6d2421c76c4114363f74bc",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 64,
+      "configuration": "mstep-8x16-256",
+      "actual_schedule": "mstep",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 1.278973471838981,
+      "first_execution_s": 0.4922924900893122,
+      "warm_s": 0.4488095899578184,
+      "warm_gcups": 9.569686994441595,
+      "cold_after_shared_setup_s": 1.771265961928293,
+      "raw_pipeline_first_result_s": 11.511896120151505
+    },
+    {
+      "source": "large-isolated/large-64.json",
+      "profile": "f0a109de094bf800985fe6ac5303f376543604e901e55f51186ca51c1a3bd5ed",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 64,
+      "configuration": "mstep-16x16-128",
+      "actual_schedule": "mstep",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 1.2800616330932826,
+      "first_execution_s": 0.47480420488864183,
+      "warm_s": 0.4305879329331219,
+      "warm_gcups": 9.974657828293312,
+      "cold_after_shared_setup_s": 1.7548658379819244,
+      "raw_pipeline_first_result_s": 11.490087221143767
+    },
+    {
+      "source": "large-isolated/large-64.json",
+      "profile": "f0a109de094bf800985fe6ac5303f376543604e901e55f51186ca51c1a3bd5ed",
+      "case": "large",
+      "shape": "256x512x512",
+      "steps": 64,
+      "configuration": "mstep-16x16-256",
+      "actual_schedule": "mstep",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 1.2782856738194823,
+      "first_execution_s": 0.48764935694634914,
+      "warm_s": 0.4423087590839714,
+      "warm_gcups": 9.710337423330587,
+      "cold_after_shared_setup_s": 1.7659350307658315,
+      "raw_pipeline_first_result_s": 11.523067628731951
     },
     {
       "source": "layout-anchors/large-256.json",
+      "profile": "45c749fe15cd301e95011eee933feb7b4f60aead3e34a32c1244934440711afd",
       "case": "large",
       "shape": "256x512x512",
       "steps": 256,
@@ -144672,6 +144862,7 @@
     },
     {
       "source": "layout-anchors/large-256.json",
+      "profile": "45c749fe15cd301e95011eee933feb7b4f60aead3e34a32c1244934440711afd",
       "case": "large",
       "shape": "256x512x512",
       "steps": 256,
@@ -144688,6 +144879,7 @@
     },
     {
       "source": "layout-anchors/narrow_x-256.json",
+      "profile": "ebf3b4c2ce5fd1f3d36d04e1f0961ec7fa85440b87b6772df44ae70f14aa5f34",
       "case": "narrow_x",
       "shape": "512x256x64",
       "steps": 256,
@@ -144704,6 +144896,7 @@
     },
     {
       "source": "layout-anchors/narrow_x-256.json",
+      "profile": "ebf3b4c2ce5fd1f3d36d04e1f0961ec7fa85440b87b6772df44ae70f14aa5f34",
       "case": "narrow_x",
       "shape": "512x256x64",
       "steps": 256,
@@ -144720,22 +144913,7 @@
     },
     {
       "source": "layout-anchors/narrow_x-4096.json",
-      "case": "narrow_x",
-      "shape": "512x256x64",
-      "steps": 4096,
-      "configuration": "streamed-axes-120",
-      "actual_schedule": "streamed",
-      "ownership": "borrowed",
-      "rounds": 1,
-      "preparation_s": 2.0216683929320425,
-      "first_execution_s": 5.396516653010622,
-      "warm_s": 5.377947241067886,
-      "warm_gcups": 6.389006218881624,
-      "cold_after_shared_setup_s": 7.418185045942664,
-      "raw_pipeline_first_result_s": 15.471868806984276
-    },
-    {
-      "source": "layout-anchors/narrow_x-4096.json",
+      "profile": "274f52f1d1f0a469291785d5c52d3e93c07e1b8cb2cce67e57737e37e8dada0d",
       "case": "narrow_x",
       "shape": "512x256x64",
       "steps": 4096,
@@ -144751,7 +144929,25 @@
       "raw_pipeline_first_result_s": 16.489604194182903
     },
     {
+      "source": "layout-anchors/narrow_x-4096.json",
+      "profile": "d6ededc3478e4fd6f6ae6760a8dbe34c645a9c0ffb0a9fba05f552f9070be4d0",
+      "case": "narrow_x",
+      "shape": "512x256x64",
+      "steps": 4096,
+      "configuration": "streamed-axes-120",
+      "actual_schedule": "streamed",
+      "ownership": "borrowed",
+      "rounds": 1,
+      "preparation_s": 2.0216683929320425,
+      "first_execution_s": 5.396516653010622,
+      "warm_s": 5.377947241067886,
+      "warm_gcups": 6.389006218881624,
+      "cold_after_shared_setup_s": 7.418185045942664,
+      "raw_pipeline_first_result_s": 15.471868806984276
+    },
+    {
       "source": "layout-anchors/narrow_x_double-256.json",
+      "profile": "a2fa6f41c11f8b62b219c2d861e59892ff7beb44fa1f24f78ce68f5a6ad79325",
       "case": "narrow_x_double",
       "shape": "1024x256x64",
       "steps": 256,
@@ -144768,6 +144964,7 @@
     },
     {
       "source": "layout-anchors/narrow_x_double-256.json",
+      "profile": "a2fa6f41c11f8b62b219c2d861e59892ff7beb44fa1f24f78ce68f5a6ad79325",
       "case": "narrow_x_double",
       "shape": "1024x256x64",
       "steps": 256,
@@ -144784,6 +144981,7 @@
     },
     {
       "source": "layout-anchors/narrow_x_double-4096.json",
+      "profile": "a2fa6f41c11f8b62b219c2d861e59892ff7beb44fa1f24f78ce68f5a6ad79325",
       "case": "narrow_x_double",
       "shape": "1024x256x64",
       "steps": 4096,
@@ -144800,6 +144998,7 @@
     },
     {
       "source": "layout-anchors/narrow_x_double-4096.json",
+      "profile": "a2fa6f41c11f8b62b219c2d861e59892ff7beb44fa1f24f78ce68f5a6ad79325",
       "case": "narrow_x_double",
       "shape": "1024x256x64",
       "steps": 4096,
@@ -144816,6 +145015,7 @@
     },
     {
       "source": "policy-anchors/large_pec-256.json",
+      "profile": "8f3e34c2d5f69dcfffff6df239bd06f1ccced5538cee8b43c35943d40c6cab57",
       "case": "large_pec",
       "shape": "256x512x512",
       "steps": 256,
@@ -144832,6 +145032,7 @@
     },
     {
       "source": "policy-anchors/large_pec-256.json",
+      "profile": "8f3e34c2d5f69dcfffff6df239bd06f1ccced5538cee8b43c35943d40c6cab57",
       "case": "large_pec",
       "shape": "256x512x512",
       "steps": 256,
@@ -144848,6 +145049,7 @@
     },
     {
       "source": "policy-anchors/large_pec-256.json",
+      "profile": "8f3e34c2d5f69dcfffff6df239bd06f1ccced5538cee8b43c35943d40c6cab57",
       "case": "large_pec",
       "shape": "256x512x512",
       "steps": 256,
@@ -144864,6 +145066,7 @@
     },
     {
       "source": "policy-anchors/large_right-256.json",
+      "profile": "ae48d9b2785d8957bf9c1d30ca8d5c24ec3a09037db54b95483f7fafd8fb8345",
       "case": "large_right",
       "shape": "256x512x512",
       "steps": 256,
@@ -144880,6 +145083,7 @@
     },
     {
       "source": "policy-anchors/large_right-256.json",
+      "profile": "ae48d9b2785d8957bf9c1d30ca8d5c24ec3a09037db54b95483f7fafd8fb8345",
       "case": "large_right",
       "shape": "256x512x512",
       "steps": 256,
@@ -144896,6 +145100,7 @@
     },
     {
       "source": "policy-anchors/large_right-256.json",
+      "profile": "ae48d9b2785d8957bf9c1d30ca8d5c24ec3a09037db54b95483f7fafd8fb8345",
       "case": "large_right",
       "shape": "256x512x512",
       "steps": 256,
@@ -144912,6 +145117,7 @@
     },
     {
       "source": "policy-anchors/pec-256.json",
+      "profile": "cdd6f94003a25312ab328a2543ace2cf3250343d7cda3e5e7c4f615040966f32",
       "case": "pec",
       "shape": "128x256x512",
       "steps": 256,
@@ -144928,6 +145134,7 @@
     },
     {
       "source": "policy-anchors/pec-256.json",
+      "profile": "cdd6f94003a25312ab328a2543ace2cf3250343d7cda3e5e7c4f615040966f32",
       "case": "pec",
       "shape": "128x256x512",
       "steps": 256,
@@ -144944,6 +145151,7 @@
     },
     {
       "source": "policy-anchors/pec-256.json",
+      "profile": "cdd6f94003a25312ab328a2543ace2cf3250343d7cda3e5e7c4f615040966f32",
       "case": "pec",
       "shape": "128x256x512",
       "steps": 256,
@@ -144960,6 +145168,7 @@
     },
     {
       "source": "policy-anchors/right-256.json",
+      "profile": "c37fde4cbb409b939dac8593cbe664f8d6f30b060dec7fbf263fdce28fba6f1c",
       "case": "right",
       "shape": "128x256x512",
       "steps": 256,
@@ -144976,6 +145185,7 @@
     },
     {
       "source": "policy-anchors/right-256.json",
+      "profile": "c37fde4cbb409b939dac8593cbe664f8d6f30b060dec7fbf263fdce28fba6f1c",
       "case": "right",
       "shape": "128x256x512",
       "steps": 256,
@@ -144992,6 +145202,7 @@
     },
     {
       "source": "policy-anchors/right-256.json",
+      "profile": "c37fde4cbb409b939dac8593cbe664f8d6f30b060dec7fbf263fdce28fba6f1c",
       "case": "right",
       "shape": "128x256x512",
       "steps": 256,
@@ -145008,6 +145219,7 @@
     },
     {
       "source": "postlayout-fresh/bf16-256.json",
+      "profile": "1eaf364ff4c21e03e75e1ffc2592fa42cfbb1a791e530df3acb8b1cc30481d76",
       "case": "bf16",
       "shape": "128x256x512",
       "steps": 256,
@@ -145024,6 +145236,7 @@
     },
     {
       "source": "postlayout-fresh/cube-256.json",
+      "profile": "eec55b856f66a42d4037613a62bf3422a1fe0c606909aef2ec0ca6f6819df3f0",
       "case": "cube",
       "shape": "128x128x128",
       "steps": 256,
@@ -145040,6 +145253,7 @@
     },
     {
       "source": "postlayout-fresh/cube-256.json",
+      "profile": "eec55b856f66a42d4037613a62bf3422a1fe0c606909aef2ec0ca6f6819df3f0",
       "case": "cube",
       "shape": "128x128x128",
       "steps": 256,
@@ -145056,6 +145270,7 @@
     },
     {
       "source": "postlayout-fresh/dense_monitors-256.json",
+      "profile": "1881528dcc32c5d83be0b3b52bc1f6718ee223f87ba57db3bf61b94400f43308",
       "case": "dense_monitors",
       "shape": "128x256x512",
       "steps": 256,
@@ -145072,6 +145287,7 @@
     },
     {
       "source": "postlayout-fresh/large-256.json",
+      "profile": "9280f2bae0358661e4373ec4b894ec0e3be61238acb4ce9ad16757ce206f9ae1",
       "case": "large",
       "shape": "256x512x512",
       "steps": 256,
@@ -145088,6 +145304,7 @@
     },
     {
       "source": "postlayout-fresh/lossy-256.json",
+      "profile": "770f0128bd3458a9a2aeffa507e2dc236ef64d46fd98ff80020d041aabdd1ce5",
       "case": "lossy",
       "shape": "128x256x512",
       "steps": 256,
@@ -145104,6 +145321,7 @@
     },
     {
       "source": "postlayout-fresh/medium-256.json",
+      "profile": "e3be497d77934b8e50801bf08519e34deb0d12f840b1317d9c51bad9eba3cb17",
       "case": "medium",
       "shape": "128x256x512",
       "steps": 256,
@@ -145120,6 +145338,7 @@
     },
     {
       "source": "postlayout-fresh/narrow_z-256.json",
+      "profile": "1c7d86cc8183d5e95e1f7e3223bc84a75159132763a6574e6e658655a022e18f",
       "case": "narrow_z",
       "shape": "64x512x256",
       "steps": 256,
@@ -145136,6 +145355,7 @@
     },
     {
       "source": "postlayout-fresh/narrow_z-256.json",
+      "profile": "1c7d86cc8183d5e95e1f7e3223bc84a75159132763a6574e6e658655a022e18f",
       "case": "narrow_z",
       "shape": "64x512x256",
       "steps": 256,
@@ -145152,6 +145372,7 @@
     },
     {
       "source": "postlayout-fresh/pec-256.json",
+      "profile": "e4533cef11a387925fb9388c92edb75f3f271bb74a4fd864eaed61781691cf3e",
       "case": "pec",
       "shape": "128x256x512",
       "steps": 256,
@@ -145168,6 +145389,7 @@
     },
     {
       "source": "postlayout-fresh/right-256.json",
+      "profile": "6c4cf438dcae35f24823139a7614d69e03124a2525d38e98b967afe318025152",
       "case": "right",
       "shape": "128x256x512",
       "steps": 256,
@@ -145184,6 +145406,7 @@
     },
     {
       "source": "postlayout-fresh/small-256.json",
+      "profile": "0e18c462ed2a18a45b882d58184ccaa40742fc255f9db92aede6e95aae817667",
       "case": "small",
       "shape": "64x96x128",
       "steps": 256,
@@ -145200,6 +145423,7 @@
     },
     {
       "source": "postlayout-fresh/smooth-256.json",
+      "profile": "523eb541a6524c864b9f376d7c6535f7b35b02a7528d1ca9381f874c2467480a",
       "case": "smooth",
       "shape": "128x256x512",
       "steps": 256,
@@ -145216,6 +145440,7 @@
     },
     {
       "source": "postlayout-fresh/thin_x-256.json",
+      "profile": "e15f559716ac87d82bd61a5dea3b443f764e2bc67e50f7a57de0aae3d6bf0494",
       "case": "thin_x",
       "shape": "256x512x48",
       "steps": 256,
@@ -145232,6 +145457,7 @@
     },
     {
       "source": "postlayout-fresh/thin_x-256.json",
+      "profile": "e15f559716ac87d82bd61a5dea3b443f764e2bc67e50f7a57de0aae3d6bf0494",
       "case": "thin_x",
       "shape": "256x512x48",
       "steps": 256,
@@ -145248,6 +145474,7 @@
     },
     {
       "source": "postlayout-fresh/thin_y-256.json",
+      "profile": "767c83697a6e20e0926edfa87b735347bf607c73b3be7363c30503f31e8de241",
       "case": "thin_y",
       "shape": "256x48x512",
       "steps": 256,
@@ -145264,6 +145491,7 @@
     },
     {
       "source": "postlayout-fresh/thin_z-256.json",
+      "profile": "29a0c8e3f5d1213bcea663a7cf239f02848c6e36488db437ce1e7c47833672d1",
       "case": "thin_z",
       "shape": "48x512x512",
       "steps": 256,
@@ -145280,6 +145508,7 @@
     },
     {
       "source": "postlayout-fresh/tiny-256.json",
+      "profile": "e41246790f6859b1b67cefc1fc7edc8ca5daa5733bb2cbc9dc0efed168db961c",
       "case": "tiny",
       "shape": "32x48x64",
       "steps": 256,
@@ -145296,6 +145525,7 @@
     },
     {
       "source": "vectorized-fresh/medium-256.json",
+      "profile": "a39160c1ec58dc820649ebe35a5a86566e3d963fdc3e7474504e64c656ac8f4c",
       "case": "medium",
       "shape": "128x256x512",
       "steps": 256,
@@ -145312,6 +145542,7 @@
     },
     {
       "source": "vectorized-fresh/medium-256.json",
+      "profile": "a39160c1ec58dc820649ebe35a5a86566e3d963fdc3e7474504e64c656ac8f4c",
       "case": "medium",
       "shape": "128x256x512",
       "steps": 256,
@@ -145328,6 +145559,7 @@
     },
     {
       "source": "vectorized-fresh/medium-256.json",
+      "profile": "a39160c1ec58dc820649ebe35a5a86566e3d963fdc3e7474504e64c656ac8f4c",
       "case": "medium",
       "shape": "128x256x512",
       "steps": 256,
@@ -145342,5 +145574,1693 @@
       "cold_after_shared_setup_s": 1.1488334090681747,
       "raw_pipeline_first_result_s": 9.288339981460012
     }
-  ]
+  ],
+  "profiles": {
+    "ebf3b4c2ce5fd1f3d36d04e1f0961ec7fa85440b87b6772df44ae70f14aa5f34": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "narrow_x",
+        "shape": [
+          512,
+          256,
+          64
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "e0c9455efda86474264689711c463573b9d037f6f6ea4b6684c0dd9bfc7fa883",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "c05e8ab788e0916ce0dcd046443425923fc2ea4c3d7c478a367da940ae19e3b1",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "3d152334e32b4dec3e9e8d3035949766c572c9f38ea4e4c9a64a3f4a16a9ac8e": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "dense_conductive",
+        "source": "gaussian",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "dense_conductive",
+        "shape": [
+          128,
+          256,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "5eac40af35c3bba097f16981202ba0c4f198c82b8a465cf3290735ad90992a0c",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "3bf5c39f92196bdd97c2a5a9d724ac4b1279bdcbd20643bed942f4e13c83ac36": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "bf16",
+        "shape": [
+          128,
+          256,
+          512
+        ],
+        "base_env": {
+          "BEAMZ_CUDA_CPML_PSI_PRECISION": "bf16"
+        }
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "2a35e144452a43ea6cbfddf5a9eacee2977bf1c61b2ac65c09f386cdb9491506": {
+      "case": {
+        "pml": 20,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "cpml20",
+        "shape": [
+          128,
+          256,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "3c3b052f8f07d1854136e5f39369bbfa0041b93a756d648617dd7d72197dc3a9": {
+      "case": {
+        "pml": 4,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "cpml4",
+        "shape": [
+          128,
+          256,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "0e43257d59294952c918df5a5080d25d0b8afa835097c73da4837eb687ac37fd": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "crossover",
+        "shape": [
+          96,
+          160,
+          256
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "babe9c72b409a767a6583fdb8108920d578e5f6d2ed76de30570ff10f931370f": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "cube",
+        "shape": [
+          128,
+          128,
+          128
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "e80fcef0c6c2625cea713cd3425665b0eb06f8f8c9a013afe7f778c2096b9c5e": {
+      "case": {
+        "pml": 12,
+        "monitors": 3,
+        "frequencies": 8,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "dense_monitors",
+        "shape": [
+          128,
+          256,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "b348c3cb6bd52a8e7302a2aae0e202e677f1bb88ae9665dc790197af2155b044": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "gaussian",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "gaussian",
+        "shape": [
+          128,
+          256,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "f0a109de094bf800985fe6ac5303f376543604e901e55f51186ca51c1a3bd5ed": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "large",
+        "shape": [
+          256,
+          512,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "aae1e5f1d7a7178712bebb9291ce4a76c60901a12410461363bd6b3dd2afd976": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "lossy",
+        "source": "gaussian",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "lossy",
+        "shape": [
+          128,
+          256,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "6756a94ab2cd96e3a9df479db17e6843ed006a0bcafa8ce88cc013164d541ab2": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "medium",
+        "shape": [
+          128,
+          256,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "274f52f1d1f0a469291785d5c52d3e93c07e1b8cb2cce67e57737e37e8dada0d": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "narrow_x",
+        "shape": [
+          512,
+          256,
+          64
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "65e7442d204d61529fa87e72889999678b3df02c04a573caa5f1333321bb4192": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "narrow_z",
+        "shape": [
+          64,
+          512,
+          256
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "e3550b8c08952f4e22e3b4148cad101b9863e5130ae13823523807bb9adca297": {
+      "case": {
+        "pml": 12,
+        "monitors": 0,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "no_monitors",
+        "shape": [
+          128,
+          256,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "835e742224bfd5ca114310b55fee2425cbbde17163c651ffe1acf0bd80bb951d": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "odd",
+        "shape": [
+          127,
+          193,
+          257
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "cdd6f94003a25312ab328a2543ace2cf3250343d7cda3e5e7c4f615040966f32": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "pec",
+        "monitor_type": "field",
+        "name": "pec",
+        "shape": [
+          128,
+          256,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "c37fde4cbb409b939dac8593cbe664f8d6f30b060dec7fbf263fdce28fba6f1c": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "right",
+        "monitor_type": "field",
+        "name": "right",
+        "shape": [
+          128,
+          256,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "f8fbedefcf49eb891cbf53ee07d35cf4551d31244e2465aac00a5654fb2ae8fb": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "small",
+        "shape": [
+          64,
+          96,
+          128
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "afb9413cde54366fa694242ab5adfa7f3a7e229884d7f1911651308836e0521a": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "smooth",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "smooth",
+        "shape": [
+          128,
+          256,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "c0961b0df3314cf89718e2f5d8b37940080fc9374727288f791456b8803b007b": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "thin_x",
+        "shape": [
+          256,
+          512,
+          48
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "63421e89588bd965e7a2d5bf2f2a00fcbe239bb3c6ca988f2ca5ebbf74c7a1fb": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "thin_y",
+        "shape": [
+          256,
+          48,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "f7df3b66eb0638c7e8e172f848d0e74b9cec24f7a51256e27c3d833f1ba59027": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "thin_z",
+        "shape": [
+          48,
+          512,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "eaba0bddb4a4f5bcb7999828025dc8fd31c6b815796d16a81a6e15a8c5a74c9c": {
+      "case": {
+        "pml": 4,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "tiny",
+        "shape": [
+          32,
+          48,
+          64
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "d544b701ab409552f50e7856de9b3f680056c7b179a74c65b1dec5944f0d5a4d": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "crossover",
+        "shape": [
+          96,
+          160,
+          256
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "e0c9455efda86474264689711c463573b9d037f6f6ea4b6684c0dd9bfc7fa883",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "acccb2048976677e83518d3bb893e01b1c3333582377e1b72a82c6e4ef013327": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "large",
+        "shape": [
+          256,
+          512,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "afaa7a5a07305cfccaf5862b390de23b41996bc76fb422c81567e3c1d15b666b",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "aea27d8f620f30458e1c718856ec446b698bd6d8ee0792242050e0d1c73f5bd2": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "large",
+        "shape": [
+          256,
+          512,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "38f75c470aaf562ee0b6e275e4cc6a84612ad96f076a163b0d2c6cc3378a9de4",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "5b40ab40f7d3a0ec316bc68dbdb7b09eff6cb4d23b9472c56db5d75996214e75": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "medium",
+        "shape": [
+          128,
+          256,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "e0c9455efda86474264689711c463573b9d037f6f6ea4b6684c0dd9bfc7fa883",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "e846407e2a016041829a280679d68dfa5687cb43246dec0d27f3fdf90c3a409a": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "medium",
+        "shape": [
+          128,
+          256,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "afaa7a5a07305cfccaf5862b390de23b41996bc76fb422c81567e3c1d15b666b",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "0fc6b306c75b9b7e72f4c1d91ed6cd903faa17a05d3a5f01189490710c231024": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "narrow_x",
+        "shape": [
+          512,
+          256,
+          64
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "38f75c470aaf562ee0b6e275e4cc6a84612ad96f076a163b0d2c6cc3378a9de4",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "e4533cef11a387925fb9388c92edb75f3f271bb74a4fd864eaed61781691cf3e": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "pec",
+        "monitor_type": "field",
+        "name": "pec",
+        "shape": [
+          128,
+          256,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "5eac40af35c3bba097f16981202ba0c4f198c82b8a465cf3290735ad90992a0c",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "6c4cf438dcae35f24823139a7614d69e03124a2525d38e98b967afe318025152": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "right",
+        "monitor_type": "field",
+        "name": "right",
+        "shape": [
+          128,
+          256,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "5eac40af35c3bba097f16981202ba0c4f198c82b8a465cf3290735ad90992a0c",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "d80553a45b1d8c9a0ad80a0cb17d17e873f603b452945aa9faef86eab4d110a6": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "small",
+        "shape": [
+          64,
+          96,
+          128
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "e0c9455efda86474264689711c463573b9d037f6f6ea4b6684c0dd9bfc7fa883",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "e15f559716ac87d82bd61a5dea3b443f764e2bc67e50f7a57de0aae3d6bf0494": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "thin_x",
+        "shape": [
+          256,
+          512,
+          48
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "5eac40af35c3bba097f16981202ba0c4f198c82b8a465cf3290735ad90992a0c",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "7f6d15973d46ea80697494b69207d5754d93c601f3d03a0e6fc53552cebc982e": {
+      "case": {
+        "pml": 4,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "tiny",
+        "shape": [
+          32,
+          48,
+          64
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "e0c9455efda86474264689711c463573b9d037f6f6ea4b6684c0dd9bfc7fa883",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "9280f2bae0358661e4373ec4b894ec0e3be61238acb4ce9ad16757ce206f9ae1": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "large",
+        "shape": [
+          256,
+          512,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "5eac40af35c3bba097f16981202ba0c4f198c82b8a465cf3290735ad90992a0c",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "e3be497d77934b8e50801bf08519e34deb0d12f840b1317d9c51bad9eba3cb17": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "medium",
+        "shape": [
+          128,
+          256,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "5eac40af35c3bba097f16981202ba0c4f198c82b8a465cf3290735ad90992a0c",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "b410fd2931b000fbeba44d1b0094aa90291e99c376513768da6e2eaf437c919b": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "large",
+        "shape": [
+          256,
+          512,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "808b0bcc0e215141a7b088cbe6bcc17c07a6dd7e012e7809a03fee40add31849",
+      "benchmark_sha256": "293fb9e10c49ce91a02a58cf0ade24edfc97d1f279be431cf443d628819813be",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "5debcab5ee073cda77dd454813f32e7db152a98463921c4af4e9102bf9f410ba": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "large",
+        "shape": [
+          256,
+          512,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "daa932dae68e5d36a68fabf1dcdb8fc60167066f17d67c472862c6f9e763a3ff",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "1d676a1021cb389737d7d062c5ad3051eb5cd814bb6d2421c76c4114363f74bc": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "large",
+        "shape": [
+          256,
+          512,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "0ae899193b490a52bad9a637ba0bd41ae63cfef6aeb809943ebdd5e3e72c3689",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "45c749fe15cd301e95011eee933feb7b4f60aead3e34a32c1244934440711afd": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "large",
+        "shape": [
+          256,
+          512,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "e0c9455efda86474264689711c463573b9d037f6f6ea4b6684c0dd9bfc7fa883",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "d6ededc3478e4fd6f6ae6760a8dbe34c645a9c0ffb0a9fba05f552f9070be4d0": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "narrow_x",
+        "shape": [
+          512,
+          256,
+          64
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "e0c9455efda86474264689711c463573b9d037f6f6ea4b6684c0dd9bfc7fa883",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "a2fa6f41c11f8b62b219c2d861e59892ff7beb44fa1f24f78ce68f5a6ad79325": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "narrow_x_double",
+        "shape": [
+          1024,
+          256,
+          64
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "e0c9455efda86474264689711c463573b9d037f6f6ea4b6684c0dd9bfc7fa883",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "8f3e34c2d5f69dcfffff6df239bd06f1ccced5538cee8b43c35943d40c6cab57": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "pec",
+        "monitor_type": "field",
+        "name": "large_pec",
+        "shape": [
+          256,
+          512,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "ae48d9b2785d8957bf9c1d30ca8d5c24ec3a09037db54b95483f7fafd8fb8345": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "right",
+        "monitor_type": "field",
+        "name": "large_right",
+        "shape": [
+          256,
+          512,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "5f9624bd21d18357b11c8d705a35c61e054eaab182ec8a6a3b6a550e263f59fd",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "1eaf364ff4c21e03e75e1ffc2592fa42cfbb1a791e530df3acb8b1cc30481d76": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "bf16",
+        "shape": [
+          128,
+          256,
+          512
+        ],
+        "base_env": {
+          "BEAMZ_CUDA_CPML_PSI_PRECISION": "bf16"
+        }
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "5eac40af35c3bba097f16981202ba0c4f198c82b8a465cf3290735ad90992a0c",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "eec55b856f66a42d4037613a62bf3422a1fe0c606909aef2ec0ca6f6819df3f0": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "cube",
+        "shape": [
+          128,
+          128,
+          128
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "5eac40af35c3bba097f16981202ba0c4f198c82b8a465cf3290735ad90992a0c",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "1881528dcc32c5d83be0b3b52bc1f6718ee223f87ba57db3bf61b94400f43308": {
+      "case": {
+        "pml": 12,
+        "monitors": 3,
+        "frequencies": 8,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "dense_monitors",
+        "shape": [
+          128,
+          256,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "5eac40af35c3bba097f16981202ba0c4f198c82b8a465cf3290735ad90992a0c",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "770f0128bd3458a9a2aeffa507e2dc236ef64d46fd98ff80020d041aabdd1ce5": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "lossy",
+        "source": "gaussian",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "lossy",
+        "shape": [
+          128,
+          256,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "5eac40af35c3bba097f16981202ba0c4f198c82b8a465cf3290735ad90992a0c",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "1c7d86cc8183d5e95e1f7e3223bc84a75159132763a6574e6e658655a022e18f": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "narrow_z",
+        "shape": [
+          64,
+          512,
+          256
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "5eac40af35c3bba097f16981202ba0c4f198c82b8a465cf3290735ad90992a0c",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "0e18c462ed2a18a45b882d58184ccaa40742fc255f9db92aede6e95aae817667": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "small",
+        "shape": [
+          64,
+          96,
+          128
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "5eac40af35c3bba097f16981202ba0c4f198c82b8a465cf3290735ad90992a0c",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "523eb541a6524c864b9f376d7c6535f7b35b02a7528d1ca9381f874c2467480a": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "smooth",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "smooth",
+        "shape": [
+          128,
+          256,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "5eac40af35c3bba097f16981202ba0c4f198c82b8a465cf3290735ad90992a0c",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "767c83697a6e20e0926edfa87b735347bf607c73b3be7363c30503f31e8de241": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "thin_y",
+        "shape": [
+          256,
+          48,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "5eac40af35c3bba097f16981202ba0c4f198c82b8a465cf3290735ad90992a0c",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "29a0c8e3f5d1213bcea663a7cf239f02848c6e36488db437ce1e7c47833672d1": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "thin_z",
+        "shape": [
+          48,
+          512,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "5eac40af35c3bba097f16981202ba0c4f198c82b8a465cf3290735ad90992a0c",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "e41246790f6859b1b67cefc1fc7edc8ca5daa5733bb2cbc9dc0efed168db961c": {
+      "case": {
+        "pml": 4,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "tiny",
+        "shape": [
+          32,
+          48,
+          64
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": "5eac40af35c3bba097f16981202ba0c4f198c82b8a465cf3290735ad90992a0c",
+      "workload_sha256": "624f32e204181704a53540c0bf1783c15b3153aa649af8a8c4786037dd1db41f",
+      "benchmark_sha256": "22470000a0bfd8f2b5514ac5413d1f3977b70bdb76eff22d4265f1bb8e535939",
+      "monitor_layout": "component_blocks",
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    },
+    "a39160c1ec58dc820649ebe35a5a86566e3d963fdc3e7474504e64c656ac8f4c": {
+      "case": {
+        "pml": 12,
+        "monitors": 2,
+        "frequencies": 3,
+        "material": "binary",
+        "source": "mode",
+        "boundary": "all",
+        "monitor_type": "field",
+        "name": "medium",
+        "shape": [
+          128,
+          256,
+          512
+        ]
+      },
+      "device": "NVIDIA GeForce RTX 3090",
+      "jax": "0.9.0",
+      "extension_sha256": "c39aac1a6197e4685bca27172241d59202324070b5859af98e5c51c2e3f6c9cc",
+      "planner_sha256": "884fa7a84654787b7d41929fc63ad55527e9430c72707c2115fc68f533767f2f",
+      "implementation_sha256": null,
+      "workload_sha256": null,
+      "benchmark_sha256": "d553e8bd27ae408e5defd840ca33d4925f94b0bac52379f226081693aa2f4292",
+      "monitor_layout": null,
+      "hardware": {
+        "uuid": "GPU-19671a68-8b11-19ce-0e99-b09a3edea676",
+        "driver": "610.43.03",
+        "power_limit": 370.0
+      }
+    }
+  }
 }

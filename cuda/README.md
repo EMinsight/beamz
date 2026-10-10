@@ -82,7 +82,9 @@ Experimental launch choices retain the same 8x16 ownership and compact plan:
 `BEAMZ_CUDA_MSTEP_TILE=16x32|8x32|8x16|16x16` and
 `BEAMZ_CUDA_MSTEP_SEGMENT=whole|32|64|128|256`. Segment lengths count z planes;
 each segment uses overlapping frozen inputs and publishes only its owned
-outputs. Defaults remain 16x32/whole until the broad timing survey is assessed.
+outputs. Explicit mstep defaults remain 16x32/whole. Automatic selection uses
+8x16 / segment 32 for measured PEC/one-wall workloads and retains the original
+tile for ordinary CPML, where alternatives were close.
 Plan arrays are explicit executable input buffers, not embedded constants.
 Dependency plans are cached by grid, boundaries, source footprint and monitor
 indices, with a bounded host cache of at most two plans and 256 MiB.
@@ -126,6 +128,10 @@ must be enabled. Other GPU models and
 workloads retain streamed execution; explicit mstep remains available. Decisions
 are frozen per executable and ownership policy, and reports return the choice,
 reason, geometry and workspace without executing calibration trials.
+Unknown memory headroom or an impossible minimum pair workspace rejects mstep
+before geometry/dependency planning; the complete estimate is checked again
+against current headroom after planning. Progress and ordinary calls reject the
+same invalid reuse hints, including booleans.
 
 Run the two schedules explicitly when extending that envelope:
 
@@ -440,12 +446,14 @@ manual experiments. Configuration is frozen into the immutable program and
 isolated in the compiled-program cache. Prediction reports have `validated=False`
 because no numerical validation trial was performed for the current request.
 
-The initial automatic scope is one RTX3090, at least 8,388,608 logical cells,
-at least 32 steps, uniform 3D lossless diagonal materials, CPML12, and native-compatible
-slab sources / DFT monitors. Other workloads retain existing dispatch. The cost
-proxy omits cache effects, fused-core timing, transpose overhead and source/monitor
-cost. In particular, it cannot resolve all y-versus-z orientation effects. Short
-runs or heavy monitors may have a different optimum. The previously recorded
+The layout cost model is limited to the narrow-x family above on one RTX3090,
+at least 16 steps per call and 32 known total steps across expected reuse,
+uniform 3D lossless packed diagonal materials, CPML12, positive graph-cache
+capacity and native-compatible small slab sources / DFT monitors. Other workloads
+retain existing dispatch. Geometry supplies a candidate; measured timing anchors
+account for startup and steady execution in that family. They cannot resolve all
+y-versus-z orientation effects or arbitrary source/monitor costs. Short runs or
+heavy monitors may have a different optimum. The previously recorded
 branch-versus-main CPML numerical differences remain unresolved.
 
 Explicit `BEAMZ_CUDA_AUTOTUNE=calibrate` enables the measured selector and its

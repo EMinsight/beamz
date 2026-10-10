@@ -15,6 +15,7 @@ from beamz.lattice import (
     canonical_component_2d,
     component_axis_offsets_3d,
     component_material_at,
+    component_shape_3d,
     public_component_2d,
 )
 
@@ -36,6 +37,7 @@ from .specs import (
     GaussianBeamSource,
     GaussianSource,
     ModeSource,
+    PlaneWaveSource,
 )
 from .time import (
     analytic_subband_waveforms,
@@ -222,7 +224,12 @@ def _lower_custom_source(
                 index=source.index,
                 values=coeff,
                 waveform=TemporalWaveform(
-                    jnp.asarray(source.waveform, dtype=jnp.float32)
+                    jnp.asarray(
+                        source.waveform,
+                        dtype=jnp.complex64
+                        if np.iscomplexobj(source.waveform)
+                        else jnp.float32,
+                    )
                 ),
                 target_shape=target_shape,
             ),
@@ -262,7 +269,8 @@ def _as_slab_spec(
                 continue
             break
         else:
-            coeff_np = np.asarray(coeff, dtype=np.float32)
+            coeff_dtype = np.complex64 if np.iscomplexobj(coeff) else np.float32
+            coeff_np = np.asarray(coeff, dtype=coeff_dtype)
             slab_sizes = tuple(sizes)
             expected = int(np.prod(slab_sizes))
             if coeff_np.size == expected:
@@ -271,7 +279,7 @@ def _as_slab_spec(
                     component=component,
                     timing=timing,
                     index=index,
-                    coeff=jnp.asarray(coeff_np, dtype=jnp.float32),
+                    coeff=jnp.asarray(coeff_np),
                     waveform=waveform,
                     is_slab=True,
                     slab_starts=tuple(starts),
@@ -282,7 +290,9 @@ def _as_slab_spec(
         component=component,
         timing=timing,
         index=index,
-        coeff=jnp.asarray(coeff, dtype=jnp.float32),
+        coeff=jnp.asarray(
+            coeff, dtype=jnp.complex64 if np.iscomplexobj(coeff) else jnp.float32
+        ),
         waveform=waveform,
     )
 
@@ -314,6 +324,7 @@ def _compile_injection_plan(
     *,
     source_index: int = -1,
     imag_tol: float = 1e-30,
+    complex_fields: bool = False,
 ) -> tuple[CompiledSourceSpec, ...]:
     """Emit runtime specs through the single source scheduling path."""
     specs: list[CompiledSourceSpec] = []
@@ -321,9 +332,20 @@ def _compile_injection_plan(
         profile = entry.profile
         support = entry.support
         values = np.asarray(profile.values, dtype=np.complex128)
-        parts = [(np.real(values), entry.waveform.values)]
+        parts: list[tuple[Any, jnp.ndarray]] = [
+            (np.real(values), entry.waveform.values)
+        ]
+        if complex_fields:
+            waveform = entry.waveform.values
+            if entry.waveform.quadrature is not None:
+                waveform = waveform - 1j * entry.waveform.quadrature
+            parts = [(values, waveform)]
         imag_peak = float(np.max(np.abs(np.imag(values)))) if values.size else 0.0
-        if entry.waveform.quadrature is not None and imag_peak > float(imag_tol):
+        if (
+            not complex_fields
+            and entry.waveform.quadrature is not None
+            and imag_peak > float(imag_tol)
+        ):
             parts.append((-np.imag(values), entry.waveform.quadrature))
 
         for coeff, waveform in parts:
@@ -388,11 +410,180 @@ def compile_source_specs(
     for source_index, source in enumerate(source_specs):
         specs.extend(
             _compile_injection_plan(
-                lower_source(source, ctx), source_index=source_index
+                lower_source(source, ctx),
+                source_index=source_index,
+                complex_fields=jnp.iscomplexobj(fields.Ex),
             )
         )
 
     return tuple(specs)
+
+
+def _validate_plane_wave_background(source, ctx, component, index, *, active=None):
+    """Check the material on the active Yee support of a plane-wave current."""
+    target = getattr(ctx.fields, component)
+    if active is None:
+        active = np.ones(target[index].shape, dtype=bool)
+    if not np.any(active):
+        return
+
+    def selected(value):
+        value = np.asarray(value)
+        return np.broadcast_to(
+            value if value.ndim == 0 else value[index], active.shape
+        )[active]
+
+    if component.startswith("E"):
+        conductivity = selected(getattr(ctx.fields, "sig_" + component[-1]))
+        dispersive = any(
+            component in supports and np.any(selected(supports[component]) > 1e-7)
+            for _, supports in ctx.fields.material_grid.dispersion
+        )
+        for interface in ctx.fields.material_grid.dispersion_interfaces:
+            if interface.component != component:
+                continue
+            coordinates = np.unravel_index(interface.indices, target.shape)
+            bounds = tuple(
+                item.indices(size)
+                for item, size in zip(index, target.shape, strict=True)
+            )
+            inside = np.ones(len(interface.indices), dtype=bool)
+            for coordinate, (start, stop, step) in zip(
+                coordinates, bounds, strict=True
+            ):
+                inside &= (
+                    (coordinate >= start)
+                    & (coordinate < stop)
+                    & ((coordinate - start) % step == 0)
+                )
+            local = tuple(
+                (coordinate[inside] - start) // step
+                for coordinate, (start, _, step) in zip(
+                    coordinates, bounds, strict=True
+                )
+            )
+            if np.any(active[local]):
+                dispersive = True
+                break
+        if np.any(conductivity != 0) or dispersive:
+            raise ValueError(
+                "Plane-wave injection sheet must be in a lossless nondispersive background."
+            )
+    material = np.asarray(component_material_at(ctx.fields, component, index))
+    expected = 1.0 if component.startswith("H") else source.background_index**2
+    if not np.allclose(
+        np.broadcast_to(material, active.shape)[active], expected, rtol=1e-5, atol=1e-6
+    ):
+        raise ValueError(
+            "Plane-wave injection sheet must be in the homogeneous background."
+        )
+
+
+@lower_source.register
+def _lower_plane_wave_source(source: PlaneWaveSource, ctx: SourceLoweringContext):
+    """Normal-incidence TF/SF sheet with physical primal/dual spacings.
+
+    On rectilinear meshes the aperture must span the transverse domain. The
+    incident E and H waveforms are evaluated at their own Yee positions and
+    times; no single-frequency phase approximation is used.
+    """
+    if any(source.transverse_wavevector):
+        from .bloch import lower_bloch_plane_wave
+
+        return lower_bloch_plane_wave(source, ctx)
+    if not _source_requires_rectilinear_operator(ctx):
+        plan = _lower_gaussian_beam_source(source, ctx)
+        for entry in plan.entries:
+            _validate_plane_wave_background(
+                source,
+                ctx,
+                entry.profile.component,
+                entry.support.index,
+                active=np.abs(entry.profile.values) > 1e-30,
+            )
+        return plan
+    grid = ctx.grid
+    assert grid is not None  # The rectilinear operator requires grid metrics.
+    if np.asarray(ctx.fields.permittivity).ndim != 3:
+        raise ValueError("Rectilinear PlaneWaveSource requires a 3D grid.")
+    axis, sign = _parse_direction(source.direction)
+    axis_id = _AXES.index(axis)
+    array_axis = _INDEX_AXES.index(axis)
+    transverse = [i for i in range(3) if i != axis_id]
+    for i in transverse:
+        edges = grid.axis_edges(_AXES[i])
+        lo, hi = (
+            source.center[i] - source.size[i] / 2,
+            source.center[i] + source.size[i] / 2,
+        )
+        if lo > edges[0] + 1e-12 or hi < edges[-1] - 1e-12:
+            raise ValueError(
+                "Rectilinear PlaneWaveSource must cover the full transverse domain."
+            )
+    edges = np.asarray(grid.axis_edges(axis))
+    k = int(np.argmin(abs(edges - source.center[axis_id])))
+    if not 1 <= k < len(edges) - 1:
+        raise ValueError(
+            "PlaneWaveSource must be inside the grid, away from its walls."
+        )
+    h_index = k - 1 if sign > 0 else k
+    h_coordinate = 0.5 * (edges[h_index] + edges[h_index + 1])
+    primal = edges[h_index + 1] - edges[h_index]
+    dual = 0.5 * (edges[k + 1] - edges[k - 1])
+    t1, t2 = _TRANSVERSE_AXES[axis]
+    e_hat = np.cos(source.pol_angle) * _unit_vector(t1) + np.sin(
+        source.pol_angle
+    ) * _unit_vector(t2)
+    h_hat = np.cross(sign * _unit_vector(axis), e_hat)
+    impedance = np.sqrt(MU_0 / EPS_0) / source.background_index
+    area = np.prod([np.ptp(grid.axis_edges(_AXES[i])) for i in transverse])
+    amplitude = np.sqrt(2 * source.power * impedance / area)
+    entries = []
+    for kind, vector, plane_index, spacing, incident_coordinate, offset in (
+        ("H", h_hat, h_index, primal, edges[k], 0.0),
+        ("E", e_hat, k, dual, h_coordinate, 0.5 * ctx.dt),
+    ):
+        delay = (
+            sign
+            * (incident_coordinate - edges[k])
+            * source.background_index
+            / LIGHT_SPEED
+        )
+        values, _ = sample_source_waveforms(
+            source.source_time,
+            t0=ctx.t0,
+            dt=ctx.dt,
+            num_steps=ctx.num_steps,
+            total_steps=ctx.total_steps,
+            offset_fn=lambda t, dt, shift=offset - delay: t + shift,
+        )
+        for i, factor in enumerate(vector):
+            if abs(factor) < 1e-14:
+                continue
+            component = kind + _AXES[i]
+            target = getattr(ctx.fields, component)
+            index = [slice(None)] * 3
+            index[array_axis] = slice(plane_index, plane_index + 1)
+            index = tuple(index)
+            material = np.asarray(component_material_at(ctx.fields, component, index))
+            _validate_plane_wave_background(source, ctx, component, index)
+            coefficient = (
+                amplitude * ctx.dt / (MU_0 * spacing)
+                if kind == "H"
+                else amplitude * ctx.dt / (impedance * EPS_0 * material * spacing)
+            )
+            entries.append(
+                _injection_entry(
+                    component=component,
+                    timing=kind.lower(),
+                    index=index,
+                    values=np.broadcast_to(factor * coefficient, target[index].shape),
+                    waveform=TemporalWaveform(jnp.asarray(values, dtype=jnp.float32)),
+                    target_shape=tuple(target.shape),
+                    launched_power=float(source.power),
+                )
+            )
+    return CompiledInjectionPlan(tuple(entries))
 
 
 @lower_source.register
@@ -842,13 +1033,7 @@ def _component_field_shape(
     component: str,
     grid_shape: tuple[int, int, int],
 ) -> tuple[int, int, int]:
-    offsets = component_axis_offsets_3d(component)
-    dims = {"z": int(grid_shape[0]), "y": int(grid_shape[1]), "x": int(grid_shape[2])}
-    return (
-        max(0, dims["z"] - (1 if float(offsets["z"]) == 0.5 else 0)),
-        max(0, dims["y"] - (1 if float(offsets["y"]) == 0.5 else 0)),
-        max(0, dims["x"] - (1 if float(offsets["x"]) == 0.5 else 0)),
-    )
+    return component_shape_3d(component, grid_shape)
 
 
 @dataclass(frozen=True)
@@ -880,7 +1065,9 @@ class GaussianBeamProfile:
             "power",
         ):
             value = float(getattr(self, name))
-            if not np.isfinite(value):
+            if not np.isfinite(value) and not (
+                name == "waist_radius" and value == np.inf
+            ):
                 raise ValueError(f"{name} must be finite.")
         if float(self.waist_radius) <= 0.0:
             raise ValueError("waist_radius must be positive.")
@@ -1088,6 +1275,14 @@ class GaussianBeamProfile:
                 start + 1,
                 min(int(source_slice.stop or start + 1), int(field_shape[dim])),
             )
+            # A uniform full-cell wave includes the duplicated Yee face. The
+            # Huygens stencil needs that face when forming boundary currents.
+            if (
+                self.waist_radius == np.inf
+                and stop == grid_shape[dim]
+                and field_shape[dim] == grid_shape[dim] + 1
+            ):
+                stop += 1
             items.append(slice(start, stop))
         return tuple(items)  # type: ignore[return-value]
 
@@ -1157,6 +1352,8 @@ class GaussianBeamProfile:
 
     def _beam_radius_curvature_gouy(self) -> tuple[float, float, float]:
         waist = float(self.waist_radius)
+        if waist == np.inf:
+            return np.inf, np.inf, 0.0
         wavelength_medium = float(self.wavelength) / float(self.background_index)
         rayleigh = np.pi * waist**2 / wavelength_medium
         z = float(self.waist_distance)

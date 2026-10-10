@@ -341,11 +341,11 @@ class _BoundPlan:
         self.executable, self.buffers = executable, buffers
 
     def __call__(self, state, coefficients):
-        return self.executable(state, coefficients, self.buffers)
+        return self.executable(state, coefficients, None, self.buffers)
 
     def lower(self, state, coefficients):
         return _BoundPlanLowered(
-            self.executable.lower(state, coefficients, self.buffers), self.buffers
+            self.executable.lower(state, coefficients, None, self.buffers), self.buffers
         )
 
     def __getattr__(self, name):

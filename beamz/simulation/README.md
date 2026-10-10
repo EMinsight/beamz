@@ -26,7 +26,27 @@ The supported `beamz.simulation` surface is intentionally small:
 - `Simulation`, `SimulationState`, `SimulationRun`, `SimulationResults`, `MonitorResults`
 - `AutoTermination`, `RunTermination`
 - `GridSpec`, `GaussianPulse`, `ModeSpec`
-- `Absorber`, `PML`, `PEC`, `Port`
+- `Absorber`, `PML`, `PEC`, `Periodic`, `Bloch`, `Port`
+
+`Periodic` means zero-phase periodicity. `Bloch(axes=("x", "y"),
+wavevector=(kx, ky, 0))` applies `F(r + L_i e_i) = exp(1j * k_i * L_i) F(r)`,
+with physical Cartesian wavevectors in rad/m. Periodic and Bloch boundaries
+execute through JAX; nonzero Bloch wavevectors require single-device execution
+and complex E/H, CPML, and polarization state. CUDA periodic kernels remain
+unsupported. A zero Bloch wavevector keeps the ordinary real-field path.
+
+`PlaneWaveSource.transverse_wavevector` must match the Bloch vector. Oblique
+sources currently require 3D, full-cell apertures, and a quadrature pulse with
+`fwidth <= 0.1 * freq0`. Its polarization angle mixes s and p relative to the
+incidence plane. The wavevector is fixed over the pulse spectrum; use separate
+frequency runs for a spectrum at a fixed incidence angle. Injection sheets must
+lie in a homogeneous, lossless, nondispersive background.
+
+Complex field DFTs use the full complex sample with `exp(+i omega t)`; their
+amplitude conversion uses `1 / weight_sum`, versus `2 / weight_sum` for real
+fields. Field recorders preserve complex samples. Complex-field diagnostic
+energy uses magnitude squared, and power uses the real conjugated Poynting
+product. Nonzero Bloch mode sources/monitors are explicitly unsupported.
 
 Numerical Yee helpers, mutable mesh builders, source/monitor lowering, update
 kernels, and compiled plan types remain private implementation details rather
@@ -61,8 +81,8 @@ and final diagnostics. It remains `None` for an ordinary full-grid run.
   compiled coefficients, sources, and monitors are stored directly without wrapper plans.
 - `compile.py`: lowers a resolved request into an executable plan.
   Deterministic memory reporting lives here because it inspects that plan.
-- `kernels.py`: all canonical 2D/3D Yee, material-loss, PEC, and packed CPML
-  mathematics. PML, sponge, and PEC profile lowering lives with the boundary
+- `kernels.py`: all canonical 2D/3D Yee, material-loss, periodic, PEC, and packed CPML
+  mathematics. Periodic, PML, sponge, and PEC profile lowering lives with the boundary
   specifications in `beamz.devices._boundary_compile`.
 - `sharding.py`: optional multi-device lowering, padding, placement, and cropping.
 - `cuda/sharding.py`: explicit neighbor exchange and packed CPML ownership for
@@ -180,6 +200,57 @@ Analysis may consume specs and results. A static architecture contract prevents
 the simulation API, execution, result, monitor-result, normalization, and memory
 modules from importing analysis behavior. Lazy plotting and labeled-data convenience
 methods resolve analysis functions only when called.
+
+## Broadband dispersive materials
+
+`bz.PoleResidue(epsilon_inf, poles, frequency_range=(fmin, fmax))` describes
+scalar causal optical media. Evaluation frequencies and validity bands are in Hz;
+poles and residues are in rad/s and represent conjugate pairs under the
+`exp(-i omega t)` convention. `eps_model(freqs)` returns complex relative
+permittivity. `PoleResidue.drude(...)` and `.lorentz(...)` construct passive models;
+`bz.fit_nk(wavelengths, n, k)` fits positive-strength Lorentz oscillators to optical
+data (wavelengths in metres), returning both a material and fit diagnostics.
+`to_spec()`/`from_spec()` serialize the complete optical model. The inherited
+`to_dict()` is the native rasterizer's epsilon-infinity/mu/conductivity payload.
+
+```python
+metal = bz.PoleResidue.drude(
+    1.0,
+    plasma_frequency=1.2e16,
+    damping=2e14,
+    frequency_range=(4e14, 8e14),
+)
+```
+
+JAX advances the auxiliary polarization with a coupled trapezoidal constitutive
+solve. Complex fields retain both conjugate-pole states independently, including
+harmonic normal-interface constituents, instead of taking the real part of one
+pole state. `SimulationState.polarization` retains that memory across `advance()` and
+`step()`. Only occupied material bounding boxes carry oscillator state. The
+non-dispersive update path has no polarization arrays. The compiler includes
+pole data and Yee-support material fractions in its cache identity.
+
+Both epsilon-infinity and oscillator strengths use volume-averaged support
+fractions, including shared periodic seam supports. This deliberately replaces
+static Farjadpour smoothing for dispersive designs. Convergence studies must
+resolve metal skin depths, thin films, and the shortest internal wavelengths.
+Pole stability and sampled passivity checks, epsilon-infinity >= 1, positive
+update denominators, and the vacuum CFL bound are checked. Sampled passivity is
+not a proof for arbitrary user-provided rational functions.
+
+The first implementation supports single-device JAX (CPU or GPU), 2D TE/TM and
+3D, uniform/rectilinear update metrics, and periodic/Bloch/PEC/absorbing boundaries.
+Native CUDA kernels, multi-device sharding, coupled full-tensor media, and
+dispersive mode sources/monitors are explicitly rejected. The uniform
+`PlaneWaveSource` supports isotropic and rectilinear grids at normal
+and narrowband oblique incidence; rectilinear injection must span the transverse domain and lie in a
+lossless nondispersive background. Automatic energy termination is rejected for dispersive media because
+its diagnostic does not include stored material energy; use a fixed runtime and
+compare continued spectral acquisitions.
+
+The CMOS notebook uses one broadband device run for 200 frequencies, plus one
+empty-cell broadband reference for incident-power calibration. Its material data,
+filter-fit diagnostics, GPU runner, and analytical film checks are checked in.
 
 ### Long-run monitor time
 

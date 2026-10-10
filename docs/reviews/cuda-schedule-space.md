@@ -150,11 +150,16 @@ for repeated executions; `N` describes reuse, not an instruction to execute N
 simulations. Ranking a different horizon is labeled as an extrapolation. Validate
 close choices at the actual requested horizon. Keep the complete workload,
 physical GPU, driver, power limit, implementation and numerical precision matched.
-The replay tool deliberately separates implementation fingerprints and horizons;
-a staged study can therefore produce several rankings for the same case. The
-summary table includes the refreshed rotated finalists and retains the earlier
-canonical timings whose execution path is unchanged. Raw records preserve each
-worker's identity rather than assigning the final revision to the whole sweep.
+The analyzer and exporter share one comparison identity: complete workload,
+hardware UUID/driver/power limit, JAX, native binary, planner, implementation,
+workload code, benchmark method and monitor layout. Workers are separated before
+calculating medians. A staged study can therefore produce several rankings and
+table rows for the same case. Every CSV row has a profile ID that resolves to
+inspectable metadata in the packet's `profiles` mapping. Table comparisons stay
+within that profile; a row with only one candidate is explicitly labeled and
+cannot establish a win over a candidate from another profile. Plot lines connect
+horizons only within the same profile. Missing fingerprints are not treated as
+matching known fingerprints. Raw records retain each worker's identity.
 
 Do not run the full search on every short simulation: the search itself can cost
 more than the useful work. Use measured profiles and cheap capability/geometry
@@ -201,9 +206,11 @@ those shapes, but the best streamed layout can still be faster. Mstep remains a
 schedule of the same engine, rather than a replacement required to win every case.
 
 The 8x16 / segment-32 tile improves PEC and one-wall CPML execution by about
-9–12% over the original mstep tile at both tested sizes. Against the best streamed
-finalists, medium PEC reaches about 13.5 versus 9.1 GCUPS, and medium one-wall
-CPML about 12.4 versus 7.6. These boundary cases also repay startup at 256 steps.
+9–12% over the original mstep tile at both tested sizes. Matched-profile medium
+PEC finalists reach about 13.5 versus 8.3 GCUPS, and medium one-wall CPML about
+12.4 versus 7.3. Later rotated streamed-only profiles reach approximately 9.1
+and 7.6 respectively; those are separate measurements, not paired comparisons.
+These boundary cases also repay startup at 256 steps.
 Ordinary medium CPML reaches about 9.1 versus 7.6 for canonical streamed; its
 first 256-step result is close, so a conservative policy keeps streamed. Longer
 runs or known reuse favor mstep. Tile differences below 3% are treated as ties.
@@ -241,10 +248,10 @@ The narrow comparison rotates streamed to storage order 120.
 | Case | Steps | Canonical streamed | Compared schedule | Compared seconds |
 |---|---:|---:|---|---:|
 | Medium | 16 | 0.611 | Mstep | 0.733 |
-| Medium | 1024 | 2.866 | Mstep | 2.614 |
+| Medium† | 1024 | 2.866 | Mstep | 2.614 |
 | Medium | 4096 | 9.763 | Mstep | 8.408 |
 | Large | 16 | 0.971 | Mstep | 1.430 |
-| Large | 1024 | 9.610 | Mstep | 7.755 |
+| Large† | 1024 | 9.610 | Mstep | 7.755 |
 | Large | 4096 | 36.487 | Mstep | 27.202 |
 | Medium PEC | 16 | 0.555 | Mstep | 0.669 |
 | Medium PEC | 1024 | 2.615 | Mstep | 1.952 |
@@ -252,9 +259,15 @@ The narrow comparison rotates streamed to storage order 120.
 | Medium one-wall | 1024 | 3.005 | Mstep | 2.079 |
 | Narrow 512x256x64 | 256 | 1.288 | Rotated streamed | 2.306 |
 | Narrow 512x256x64 | 1024 | 2.736 | Rotated streamed | 3.438 |
-| Narrow 512x256x64 | 4096 | 8.378 | Rotated streamed | 7.418 |
+| Narrow 512x256x64† | 4096 | 8.378 | Rotated streamed | 7.418 |
 | Narrow 1024x256x64 | 256 | 2.119 | Rotated streamed | 3.757 |
 | Narrow 1024x256x64 | 4096 | 16.109 | Rotated streamed | 14.299 |
+
+† These historical timings come from different implementation profiles, or have
+missing method/layout fingerprints. They remain useful individual observations,
+but cannot establish a matched comparison or a precise crossover. All other
+rows compare candidates with the same complete profile and requested horizon.
+The derived table and plot now enforce that distinction automatically.
 
 The two algorithms should remain available inside the shared engine. Short runs
 need the cheap startup of canonical streamed. Large ordinary domains and the
@@ -308,10 +321,14 @@ The compact monitor transformation also passed 62 selected GPU cases; the new
 dense-bank and donation checks passed separately after correcting their test
 setup. Overlapping reruns are not added into a larger unique-case count.
 
-The CPU regression run passed 196 cases and exposed one stale expected-error
+The original CPU regression run passed 196 cases and exposed one stale expected-error
 phrase from before PEC rotation support. Updating that expectation and rerunning
-the affected case gives 197 passing unique CPU cases. Analysis tests pass all
-eight cases. Lint, formatting, generated ABI and whitespace checks pass.
+the affected case gives 197 passing unique CPU cases. The subsequent review
+regression run passes 149 affected CPU cases, including all 15 analysis cases,
+plus six focused GPU cases for unified API parity, donation under all cyclic
+orders and automatic dispatch/chunk clocks. These are overlapping runs, not
+additional unique-case totals. Lint, formatting, generated ABI and whitespace
+checks pass.
 
 The native Release component was built with CUDA 13.3 for SM86. Compute Sanitizer
 memcheck reports zero errors and racecheck reports zero hazards/errors/warnings
@@ -322,3 +339,24 @@ The byte-identical host plan comparisons cover all five dependency arrays.
 Exporting the committed packet again produces byte-identical JSON, CSV, tables
 and PNG. Validation commands, sanitizer logs, per-worker hashes and complete raw
 samples are retained in the packet. No other GPU or architecture was measured.
+
+## Review fixes
+
+Automatic mstep selection now rejects unknown headroom or an impossible minimum
+workspace before constructing geometry or dependency arrays. The complete plan
+estimate is still checked against a fresh memory reading before selection. Tests
+forbid geometry construction in those early rejection cases and exercise a
+budget that becomes inadequate between the two readings. The estimate remains
+a guard rather than a memory reservation.
+
+Progress execution validates the caller's reuse hint before multiplying by the
+known chunk count. Invalid values, including booleans, now fail consistently with
+ordinary execution instead of becoming valid integers through multiplication.
+
+The exporter uses the analyzer's comparison identity before computing medians,
+tables or plot lines. Synthetic mixed-worker tests cover changed native binaries,
+dispatch code, benchmark method and hardware. They also verify exclusion of
+shared-process workers, separate table rows and disconnected plot series. The
+recorded timings were not rerun or reassigned to the fix revision. These changes
+affect host selection, validation and analysis; native numerical kernels remain
+unchanged.
