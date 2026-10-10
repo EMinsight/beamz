@@ -94,6 +94,7 @@ def main():
     parser.add_argument("--devices", type=int, default=1)
     parser.add_argument("--shard-axis", choices=("auto", "x", "y", "z"), default="auto")
     parser.add_argument("--host-setup", action="store_true")
+    parser.add_argument("--host-placement-workers", type=int, default=1)
     parser.add_argument("--monitors", type=int, default=2)
     parser.add_argument("--frequencies", type=int, default=3)
     parser.add_argument("--monitor-offset-cells", type=int)
@@ -132,6 +133,35 @@ def main():
     from beamz.simulation import observe
     from beamz.simulation import sharding as sharding_runtime
     from beamz.simulation.execute import build_scan, initial_program_state
+
+    if args.host_placement_workers > 1:
+        # Capacity-only setup option: evaluate the unchanged bounded region
+        # reader on several host threads. GPU arrays and solver code are unchanged.
+        from concurrent.futures import ThreadPoolExecutor
+        from beamz._region_array import RegionArray
+
+        original_place = sharding_runtime.place_region_array
+
+        def parallel_place(value, target):
+            def place(item):
+                device, index = item
+                bounds = [key.indices(n) for key, n in zip(index, value.shape)]
+                shape = tuple(stop - start for start, stop, _ in bounds)
+
+                def read(region):
+                    return value[tuple(
+                        slice(start + key.start, start + key.stop)
+                        for (start, _, _), key in zip(bounds, region)
+                    )]
+
+                local = RegionArray(shape, value.dtype, read)
+                return original_place(local, jax.sharding.SingleDeviceSharding(device))
+
+            with ThreadPoolExecutor(max_workers=args.host_placement_workers) as pool:
+                arrays = list(pool.map(place, target.addressable_devices_indices_map(value.shape).items()))
+            return jax.make_array_from_single_device_arrays(value.shape, target, arrays)
+
+        sharding_runtime.place_region_array = parallel_place
 
     assert Path(beamz.__file__).resolve().parent.parent == root
     # Local development may symlink the extension into this checkout's build tree.
@@ -369,6 +399,7 @@ def main():
         device_count=args.devices,
         shard_axis=program.sharding.layout.axis_name,
         host_setup=args.host_setup,
+        host_placement_workers=args.host_placement_workers,
         kernel_device_memory=kernel_memory,
         nvml_memory=memory_before_validation,
         public_nvml_memory=public_memory,

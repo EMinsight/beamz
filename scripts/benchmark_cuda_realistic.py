@@ -43,6 +43,10 @@ def build_simulation(args):
         # material near the start of region-wise coefficient preparation.
         center_z, center_y = (min(n // 2 + 1, args.pml + 12) for n in (nz, ny))
         physical_y, physical_z = center_y * dx, center_z * dx
+    aperture_y, aperture_z = size[1] - 2 * args.pml * dx, size[2] - 2 * args.pml * dx
+    if getattr(args, "transverse_anchor", "center") == "low":
+        aperture_y = 2 * (min(physical_y, size[1] - physical_y) - args.pml * dx)
+        aperture_z = 2 * (min(physical_z, size[2] - physical_z) - args.pml * dx)
     half_z = max(1, round(160e-9 / dx))
     half_y = max(1, round(240e-9 / dx))
     eps[
@@ -81,8 +85,8 @@ def build_simulation(args):
             center=(0.3 * size[0], physical_y, physical_z),
             size=(
                 0,
-                min(1.6e-6, size[1] - 2 * args.pml * dx),
-                min(0.8e-6, size[2] - 2 * args.pml * dx),
+                min(1.6e-6, aperture_y),
+                min(0.8e-6, aperture_z),
             ),
             source_time=bz.SampledSignal(signal.astype(np.float32), dt=dt, freq0=freq),
             direction="+",
@@ -120,8 +124,8 @@ def build_simulation(args):
                 ),
                 size=(
                     0,
-                    min(1.6e-6, size[1] - 2 * args.pml * dx),
-                    min(0.8e-6, size[2] - 2 * args.pml * dx),
+                    min(1.6e-6, aperture_y),
+                    min(0.8e-6, aperture_z),
                 ),
                 freqs=np.linspace(freq * 0.97, freq * 1.03, args.frequencies),
                 mode_spec=bz.ModeSpec(polarization="te"),
