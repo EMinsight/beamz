@@ -166,37 +166,6 @@ more than the useful work. Use measured profiles and cheap capability/geometry
 checks first, then calibrate a small candidate set when sufficient future work can
 repay it. Refresh profiles after implementation or hardware changes.
 
-## Further opportunities
-
-Smaller tiles reduce scratch per block and expose more blocks. They also repeat
-more halo work. Segments increase available parallel work but repeat ring startup
-and halo reads. A rotated layout changes both memory access and which columns
-intersect sources. These effects explain why one tile or cell-count threshold
-cannot select every case.
-
-Current source exclusion covers an entire column, even when a source occupies
-only part of it. Segment-specific eligibility could recover work outside the
-source's z interval. It would require per-segment masks, dependency queues that
-cover changes along z, and the same source-timing and complete-state tests. This
-is a concrete next experiment; current measurements do not establish its benefit.
-
-Deeper temporal blocking should follow evidence of a large remaining gain.
-It expands halos, shared storage and register use, and may make small shapes
-worse. Retaining one-step streamed execution as a candidate already lets the
-shared engine handle those shapes without forcing the column algorithm to win.
-
-Smaller child tiles currently shift their parent's ownership mask. An early exit
-can still see bits belonging to another child even when this child owns no
-outputs. Cropping the mask to this child's quadrants may avoid wasted work near
-sources and boundaries. This is an optimization opportunity, not an observed
-numerical failure; it needs the same complete-state and sanitizer checks before
-changing the native kernels.
-
-Rotated layouts still compile more slowly after simplifying monitor permutations.
-Passing more static monitor data as executable inputs, and keeping rotated state
-across successive public chunks, are plausible next experiments. Their benefit
-must be measured against extra bindings, storage and runtime work.
-
 ## Findings and automatic policy
 
 The same tile does not win on every shape. Small and thin CPML domains often

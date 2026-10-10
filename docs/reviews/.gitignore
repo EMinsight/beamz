@@ -1,3 +1,5 @@
 # Retain local captures and source bundles outside Git; summaries are versioned.
 *.pb
 *.gz
+!cuda-schedule-space.json.gz
+!cuda-mstep-rtx3090.json.gz
