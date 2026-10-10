@@ -42,6 +42,8 @@ def _simulation(
     boundaries = (
         [bz.PEC(edges="all")]
         if boundary == "pec"
+        else [bz.PML(edges="all", thickness=4 * 80e-9, formulation="sponge")]
+        if boundary == "sponge"
         else [
             bz.PML(edges=["right"], thickness=4 * 80e-9, formulation="cpml"),
             bz.PEC(edges=["left", "top", "bottom", "front", "back"]),
@@ -317,8 +319,8 @@ def test_mstep_state_donation_preserves_results(monkeypatch, axes):
 
 
 def test_mstep_dense_h_coefficients_with_variable_permeability():
-    # Conductivity produces the dense H banks in the current coefficient compiler.
-    sim = _simulation(material="lossy")
+    # Sponge damping produces dense H banks; electric loss alone does not.
+    sim = _simulation(material="lossy", boundary="sponge")
     grid = sim._material_grid(progress=False)
     permeability = np.broadcast_to(
         np.linspace(1, 1.2, grid.shape[2], dtype=np.float32), grid.shape
@@ -337,7 +339,9 @@ def test_mstep_dense_h_coefficients_with_variable_permeability():
     [("012", "16x32", "whole"), ("012", "8x16", "32"), ("201", "8x16", "32")],
 )
 def test_mstep_verified_dense_conductive_coefficients(monkeypatch, axes, tile, segment):
-    sim = _simulation(material="dense_conductive", shape=(103, 65, 97), steps=5)
+    sim = _simulation(
+        material="dense_conductive", boundary="sponge", shape=(103, 65, 97), steps=5
+    )
     # JAX computes these banks during stepping; verify the native representation.
     program = sim.compile(backend="cuda_streamed", num_steps=5)
     for axis in "xyz":

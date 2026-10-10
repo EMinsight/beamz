@@ -55,7 +55,8 @@ def main():
     from beamz.simulation.execute import build_scan, initial_program_state
 
     assert Path(beamz.__file__).resolve().parent.parent == root
-    assert Path(extension.__file__).resolve().parent.parent == root
+    # Local development may symlink the extension into this checkout's build tree.
+    assert Path(extension.__file__).resolve().is_relative_to(root)
     workload_path = Path(__file__).with_name("benchmark_cuda_realistic.py")
     spec = importlib.util.spec_from_file_location("comparison_workload", workload_path)
     workload = importlib.util.module_from_spec(spec)

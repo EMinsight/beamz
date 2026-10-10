@@ -691,7 +691,7 @@ def test_streamed_cuda_realistic_sources_and_cpml_match_jax(
     )
     assert cuda_runtime._temporal_cpml_fields_supported(
         context, cuda_program.coefficients, simulation.num_steps
-    ) == (material != "lossy")
+    )
     reference_program = simulation.compile(backend="jax")
     state = initial_program_state(
         reference_program,
