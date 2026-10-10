@@ -30,10 +30,13 @@ struct BeamzBuffer {
 #else
 #define BEAMZ_HD inline
 #endif
+template <bool Compact = true>
 BEAMZ_HD int BeamzOffset3D(const BeamzBuffer& value, int z, int y, int x) {
-  if (value.compact_slots) {
-    const int q = (z * value.compact_ny + y / 8) * value.compact_nx + x / 16;
-    return value.compact_slots[q] * 128 + (y % 8) * 16 + x % 16;
+  if constexpr (Compact) {
+    if (value.compact_slots) {
+      const int q = (z * value.compact_ny + y / 8) * value.compact_nx + x / 16;
+      return value.compact_slots[q] * 128 + (y % 8) * 16 + x % 16;
+    }
   }
   return z * value.plane_stride + y * value.row_stride + x;
 }

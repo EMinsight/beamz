@@ -293,23 +293,26 @@ cudaError_t ValidatePhase(const BeamzLaunch& launch) {
   return cudaSuccess;
 }
 
+template <bool Compact = false>
 __device__ __forceinline__ int Offset(const BeamzBuffer& value, int z, int y,
                                       int x) {
   if (value.rank == 0) return 0;
   const int iz = value.dims[0] == 1 ? 0 : z;
   const int iy = value.dims[1] == 1 ? 0 : y;
   const int ix = value.dims[2] == 1 ? 0 : x;
-  return BeamzOffset3D(value, iz, iy, ix);
+  return BeamzOffset3D<Compact>(value, iz, iy, ix);
 }
 
+template <bool Compact = false>
 __device__ __forceinline__ float Read(const BeamzBuffer& value, int z, int y,
                                       int x) {
-  return static_cast<const float*>(value.data)[Offset(value, z, y, x)];
+  return static_cast<const float*>(value.data)[Offset<Compact>(value, z, y, x)];
 }
 
+template <bool Compact = false>
 __device__ __forceinline__ float Read3D(const BeamzBuffer& value, int z, int y,
                                         int x) {
-  const int offset = BeamzOffset3D(value, z, y, x);
+  const int offset = BeamzOffset3D<Compact>(value, z, y, x);
   return static_cast<const float*>(value.data)[offset];
 }
 
@@ -325,7 +328,7 @@ __device__ __forceinline__ float MetricScale(const Launch& launch, int axis,
   }
 }
 
-template <int MetricKind, typename Launch>
+template <int MetricKind, bool Compact = false, typename Launch>
 __device__ __forceinline__ float ForwardDifference(const BeamzBuffer& value,
                                                    int axis, int z, int y,
                                                    int x,
@@ -343,11 +346,11 @@ __device__ __forceinline__ float ForwardDifference(const BeamzBuffer& value,
     ++next_x;
   }
   return beamz::cuda::yee::ScaleYeeDifference(
-      Read3D(value, next_z, next_y, next_x) - Read3D(value, z, y, x),
+      Read3D<Compact>(value, next_z, next_y, next_x) - Read3D<Compact>(value, z, y, x),
       MetricScale<MetricKind>(launch, axis, coordinate));
 }
 
-template <int MetricKind, bool HasMetallicEdges = true>
+template <int MetricKind, bool HasMetallicEdges = true, bool Compact = false>
 __device__ __forceinline__ float BoundaryDifference(const BeamzBuffer& value,
                                                     int axis, int z, int y,
                                                     int x, int edge_mask,
@@ -359,7 +362,7 @@ __device__ __forceinline__ float BoundaryDifference(const BeamzBuffer& value,
     if constexpr (!HasMetallicEdges) return 0.0f;
     const bool metallic = edge_mask & (1 << (2 * axis));
     return metallic ? beamz::cuda::yee::ScaleYeeDifference(
-                          Read3D(value, z, y, x), inv_dx) : 0.0f;
+                          Read3D<Compact>(value, z, y, x), inv_dx) : 0.0f;
   }
   if (coordinate == size) {
     if constexpr (!HasMetallicEdges) return 0.0f;
@@ -369,14 +372,14 @@ __device__ __forceinline__ float BoundaryDifference(const BeamzBuffer& value,
     if (axis == 2) last_x = size - 1;
     const bool metallic = edge_mask & (1 << (2 * axis + 1));
     return metallic ? beamz::cuda::yee::ScaleYeeDifference(
-                          -Read3D(value, last_z, last_y, last_x), inv_dx) : 0.0f;
+                          -Read3D<Compact>(value, last_z, last_y, last_x), inv_dx) : 0.0f;
   }
   int low_z = z, low_y = y, low_x = x;
   if (axis == 0) --low_z;
   if (axis == 1) --low_y;
   if (axis == 2) --low_x;
   return beamz::cuda::yee::ScaleYeeDifference(
-      Read3D(value, z, y, x) - Read3D(value, low_z, low_y, low_x), inv_dx);
+      Read3D<Compact>(value, z, y, x) - Read3D<Compact>(value, low_z, low_y, low_x), inv_dx);
 }
 
 template <int Term, bool UniformCpml = false, int PsiType = -1>
@@ -459,9 +462,10 @@ __device__ __forceinline__ float CorrectCpml(float derivative, int z, int y,
       next_psi);
 }
 
+// Only mstep edge kernels opt into compact field addressing.
 template <int Phase, int Component, bool Cpml, int MetricKind,
           bool HasMetallicEdges = true, bool UniformCpml = false,
-          int PsiType = -1, bool PackedLosslessMaterial = false>
+          int PsiType = -1, bool PackedLosslessMaterial = false, bool Compact = false>
 __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
                                                 int z, int y, int x) {
   const BeamzBuffer& input = launch.inputs[Component];
@@ -477,7 +481,7 @@ __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
   }
   if constexpr (!Cpml) {
     if (zero_on_wall) {
-      static_cast<float*>(output.data)[BeamzOffset3D(output, z, y, x)] = 0.0f;
+      static_cast<float*>(output.data)[BeamzOffset3D<Compact>(output, z, y, x)] = 0.0f;
       return;
     }
   }
@@ -489,15 +493,15 @@ __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
   float derivative1;
   if constexpr (Phase == 0) {
     derivative0 =
-        ForwardDifference<MetricKind>(first, first_term.derivative_axis, z, y, x,
+        ForwardDifference<MetricKind, Compact>(first, first_term.derivative_axis, z, y, x,
                                       launch);
     derivative1 =
-        ForwardDifference<MetricKind>(second, second_term.derivative_axis, z, y, x,
+        ForwardDifference<MetricKind, Compact>(second, second_term.derivative_axis, z, y, x,
                                       launch);
   } else {
-    derivative0 = BoundaryDifference<MetricKind, HasMetallicEdges>(
+    derivative0 = BoundaryDifference<MetricKind, HasMetallicEdges, Compact>(
         first, first_term.derivative_axis, z, y, x, launch.metallic_edges, launch);
-    derivative1 = BoundaryDifference<MetricKind, HasMetallicEdges>(
+    derivative1 = BoundaryDifference<MetricKind, HasMetallicEdges, Compact>(
         second, second_term.derivative_axis, z, y, x, launch.metallic_edges, launch);
   }
   float curl;
@@ -512,12 +516,12 @@ __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
   if (zero_on_wall) {
     // CPML memory still evolves where an absorbing face intersects a PEC face;
     // only the constrained field value is masked after the recurrence update.
-    static_cast<float*>(output.data)[BeamzOffset3D(output, z, y, x)] = 0.0f;
+    static_cast<float*>(output.data)[BeamzOffset3D<Compact>(output, z, y, x)] = 0.0f;
     return;
   }
 
   const float old_field =
-      static_cast<const float*>(input.data)[BeamzOffset3D(input, z, y, x)];
+      static_cast<const float*>(input.data)[BeamzOffset3D<Compact>(input, z, y, x)];
   float decay;
   float source;
   if constexpr (PackedLosslessMaterial) {
@@ -525,10 +529,10 @@ __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
     source = beamz::cuda::yee::PackedMaterialSource(
         launch.inputs[6 + Component], launch.inputs[9 + Component], linear);
   } else {
-    decay = Read(launch.inputs[6 + Component], z, y, x);
-    source = Read(launch.inputs[9 + Component], z, y, x);
+    decay = Read<Compact>(launch.inputs[6 + Component], z, y, x);
+    source = Read<Compact>(launch.inputs[9 + Component], z, y, x);
   }
-  static_cast<float*>(output.data)[BeamzOffset3D(output, z, y, x)] =
+  static_cast<float*>(output.data)[BeamzOffset3D<Compact>(output, z, y, x)] =
       beamz::cuda::yee::AdvanceYeeField(Phase, old_field, decay, source, curl);
 }
 
@@ -570,7 +574,7 @@ __device__ __forceinline__ void UpdateFullPecScalarComponent(
   if constexpr (Phase == 0) {
     const int coordinate = normal_axis == 0 ? z : (normal_axis == 1 ? y : x);
     if (coordinate == 0 || coordinate == output.dims[normal_axis] - 1) {
-      static_cast<float*>(output.data)[BeamzOffset3D(output, z, y, x)] = 0.0f;
+      static_cast<float*>(output.data)[BeamzOffset3D<false>(output, z, y, x)] = 0.0f;
       return;
     }
   } else {
@@ -578,7 +582,7 @@ __device__ __forceinline__ void UpdateFullPecScalarComponent(
       if (axis == normal_axis) continue;
       const int coordinate = axis == 0 ? z : (axis == 1 ? y : x);
       if (coordinate == 0 || coordinate == output.dims[axis] - 1) {
-        static_cast<float*>(output.data)[BeamzOffset3D(output, z, y, x)] = 0.0f;
+        static_cast<float*>(output.data)[BeamzOffset3D<false>(output, z, y, x)] = 0.0f;
         return;
       }
     }
@@ -595,13 +599,13 @@ __device__ __forceinline__ void UpdateFullPecScalarComponent(
       launch.inputs[3 + second_source[Component]], second_axis[Component], z,
       y, x, launch.inv_resolution);
   const float old_field =
-      static_cast<const float*>(input.data)[BeamzOffset3D(input, z, y, x)];
+      static_cast<const float*>(input.data)[BeamzOffset3D<false>(input, z, y, x)];
   const float decay =
       static_cast<const float*>(launch.inputs[6 + Component].data)[0];
   const float source =
       static_cast<const float*>(launch.inputs[9 + Component].data)[0];
   const float curl = derivative0 - derivative1;
-  static_cast<float*>(output.data)[BeamzOffset3D(output, z, y, x)] =
+  static_cast<float*>(output.data)[BeamzOffset3D<false>(output, z, y, x)] =
       Phase == 0 ? decay * old_field - source * curl
                  : decay * old_field + source * curl;
 }
@@ -905,7 +909,7 @@ __global__ void FusedFullStepPec(FusedYeePhase h_launch,
     for (int component = 0; component < 3; ++component) {
       const BeamzBuffer& h_output = h_launch.outputs[component];
       if (BufferContains(h_output, z, y, x)) {
-        static_cast<float*>(h_output.data)[BeamzOffset3D(h_output, z, y, x)] =
+        static_cast<float*>(h_output.data)[BeamzOffset3D<false>(h_output, z, y, x)] =
             h_fields[component * kFusedVolume + center];
       }
     }
@@ -922,7 +926,7 @@ __global__ void FusedFullStepPec(FusedYeePhase h_launch,
     for (int component = 0; component < 3; ++component) {
       const BeamzBuffer& e_output = e_launch.outputs[component];
       if (BufferContains(e_output, z, y, x)) {
-        static_cast<float*>(e_output.data)[BeamzOffset3D(e_output, z, y, x)] =
+        static_cast<float*>(e_output.data)[BeamzOffset3D<false>(e_output, z, y, x)] =
             values[component];
       }
     }
@@ -1016,7 +1020,7 @@ __device__ void CoreEValue(const FusedYeePhase& e, const float* h_fields,
       Packed ? beamz::cuda::yee::PackedMaterialSource(
                    e.inputs[6 + Component], e.inputs[9 + Component], linear)
              : Read(e.inputs[9 + Component], z, y, x);
-  static_cast<float*>(output.data)[BeamzOffset3D(output, z, y, x)] =
+  static_cast<float*>(output.data)[BeamzOffset3D<false>(output, z, y, x)] =
       beamz::cuda::yee::AdvanceYeeField(1, Read3D(e.inputs[Component], z, y, x),
                                         decay, source, curl);
 }
@@ -1063,7 +1067,7 @@ __global__ __launch_bounds__(Tile::X* Tile::Y, 6) void FusedCpmlCore(
          y >= hy - 2 || z >= hz - 2)) {
       for (int component = 0; component < 3; ++component) {
         const auto &output = h.outputs[component];
-        static_cast<float*>(output.data)[BeamzOffset3D(output, z, y, x)] =
+        static_cast<float*>(output.data)[BeamzOffset3D<false>(output, z, y, x)] =
             h_fields[component * Tile::Volume + Tile::Offset(lz, ly, lx)];
       }
       CoreEValue<0, Packed, Tile>(e, h_fields, lz, ly, lx, z, y, x);

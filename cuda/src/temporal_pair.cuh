@@ -94,8 +94,8 @@ PairStages(float *shared, const FusedYeePhase &h, const FusedYeePhase &e,
           if (owned) {
             const auto &eh = final.fields[3 + c];
             const auto &hh = final.fields[c];
-            static_cast<float *>(eh.data)[BeamzOffset3D(eh, z, y, x)] = next;
-            static_cast<float *>(hh.data)[BeamzOffset3D(hh, z, y, x)] =
+            static_cast<float *>(eh.data)[BeamzOffset3D<false>(eh, z, y, x)] = next;
+            static_cast<float *>(hh.data)[BeamzOffset3D<false>(hh, z, y, x)] =
                 PairStage<X, Y, 2>::At(shared, c, z, iy + 1, ix + 1);
           }
         } else {
@@ -108,11 +108,11 @@ PairStages(float *shared, const FusedYeePhase &h, const FusedYeePhase &e,
                  x >= hx - 4 || y >= hy - 4 || z >= hz - 4);
             const bool observed =
                 owned && publication.data &&
-                static_cast<const int *>(publication.data)[BeamzOffset3D(
+                static_cast<const int *>(publication.data)[BeamzOffset3D<false>(
                     publication, z, y / 8, x / 16)] != 0;
             if (owned && (coupling || observed)) {
               const auto &out = launch.outputs[c];
-              static_cast<float *>(out.data)[BeamzOffset3D(out, z, y, x)] =
+              static_cast<float *>(out.data)[BeamzOffset3D<false>(out, z, y, x)] =
                   next;
             }
           }
@@ -234,8 +234,8 @@ __global__ void TemporalPairBand(FusedYeePhase h, FusedYeePhase e,
         Packed ? beamz::cuda::yee::PackedMaterialSource(
                      e.inputs[6 + c], e.inputs[9 + c], logical)
                : Read(e.inputs[9 + c], z, y, x);
-    static_cast<float *>(hout.data)[BeamzOffset3D(hout, z, y, x)] = hv[c];
-    static_cast<float *>(eout.data)[BeamzOffset3D(eout, z, y, x)] =
+    static_cast<float *>(hout.data)[BeamzOffset3D<false>(hout, z, y, x)] = hv[c];
+    static_cast<float *>(eout.data)[BeamzOffset3D<false>(eout, z, y, x)] =
         beamz::cuda::yee::AdvanceYeeField(1, Read3D(e.inputs[c], z, y, x),
                                           decay, coefficient, curl);
   }

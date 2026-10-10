@@ -56,11 +56,7 @@ def build_simulation(args):
     grid = MaterialGrid(
         permittivity=eps,
         conductivity=sigma,
-        permeability=(
-            np.broadcast_to(np.linspace(1, 1.2, nx, dtype=np.float32), eps.shape)
-            if args.material == "magnetic"
-            else np.float32(1)
-        ),
+        permeability=np.float32(1),
         resolution=dx,
         shape=eps.shape,
     )
@@ -117,8 +113,14 @@ def build_simulation(args):
             for i in range(args.monitors)
         ]
     boundary = getattr(args, "boundary", "all")
-    if boundary == "all":
-        boundaries = [bz.PML(edges="all", thickness=args.pml * dx, formulation="cpml")]
+    if boundary in {"all", "sponge"}:
+        boundaries = [
+            bz.PML(
+                edges="all",
+                thickness=args.pml * dx,
+                formulation="sponge" if boundary == "sponge" else "cpml",
+            )
+        ]
     elif boundary == "right":
         boundaries = [
             bz.PML(edges=["right"], thickness=args.pml * dx, formulation="cpml"),
@@ -150,12 +152,14 @@ def main():
     parser.add_argument("--samples", type=int, default=11)
     parser.add_argument("--warmups", type=int, default=4)
     parser.add_argument("--pml", type=int, default=12)
-    parser.add_argument("--boundary", choices=("all", "right", "pec"), default="all")
+    parser.add_argument(
+        "--boundary", choices=("all", "right", "pec", "sponge"), default="all"
+    )
     parser.add_argument("--monitors", type=int, default=2)
     parser.add_argument("--frequencies", type=int, default=3)
     parser.add_argument(
         "--material",
-        choices=("binary", "smooth", "scalar", "lossy", "magnetic", "dense_conductive"),
+        choices=("binary", "smooth", "scalar", "lossy", "dense_conductive"),
         default="binary",
     )
     parser.add_argument("--source", choices=("mode", "gaussian"), default="mode")

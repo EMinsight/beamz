@@ -1,6 +1,6 @@
 """Predictive layout selection for large, ordinary RTX3090 CPML programs.
 
-The default uses geometry and measured startup costs, without calibration.
+Existing calls use geometry; explicit schedule='auto' also weighs startup costs.
 Explicit calibration considers existing storage orders and shell tiles on a
 private state; precision, physical shape and CPML stay unchanged in either mode.
 """

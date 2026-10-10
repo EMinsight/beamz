@@ -112,6 +112,7 @@ def workloads():
         "medium": (128, 256, 512),
         "large": (256, 512, 512),
         "narrow_x": (512, 256, 64),
+        "narrow_x_double": (1024, 256, 64),
         "narrow_z": (64, 512, 256),
         "thin_z": (48, 512, 512),
         "thin_y": (256, 48, 512),
@@ -147,8 +148,9 @@ def workloads():
         "gaussian": dict(source="gaussian"),
         "no_monitors": dict(monitors=0),
         "dense_monitors": dict(monitors=3, frequencies=8),
-        "magnetic": dict(material="magnetic"),
-        "dense_conductive": dict(material="dense_conductive", source="gaussian"),
+        "dense_conductive": dict(
+            material="dense_conductive", source="gaussian", boundary="sponge"
+        ),
         "bf16": dict(base_env={"BEAMZ_CUDA_CPML_PSI_PRECISION": "bf16"}),
     }.items():
         cases.append(dict(base, name=name, shape=shapes["medium"], **changes))

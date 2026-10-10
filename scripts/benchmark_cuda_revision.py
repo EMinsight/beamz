@@ -206,7 +206,7 @@ def main():
         validation_rtol=3e-5,
         validation_atol="max(3e-6, 1e-6 * reference_leaf_max_abs)",
     )
-    assert data["cpml_dtypes"] == ["float32"]
+    assert all(dtype == "float32" for dtype in data["cpml_dtypes"])
     if (root / "beamz/simulation/cuda/tuning.py").exists():
         from beamz.simulation.cuda.tuning import tuning_report
 

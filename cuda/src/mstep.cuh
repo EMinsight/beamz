@@ -351,10 +351,10 @@ __global__ void MstepEdgePhase(const __grid_constant__ BeamzLaunch launch,
     return;
   const int row = static_cast<const int *>(cells.data)[i];
   const int z = row / (ny * nx), y = (row / nx) % ny, x = row % nx;
-  UpdateComponent<Phase, 0, Cpml, 0, true, UniformCpml, -1, Packed>(launch, z,
+  UpdateComponent<Phase, 0, Cpml, 0, true, UniformCpml, -1, Packed, true>(launch, z,
                                                                     y, x);
-  UpdateComponent<Phase, 1, Cpml, 0, true, UniformCpml, -1, Packed>(launch, z,
+  UpdateComponent<Phase, 1, Cpml, 0, true, UniformCpml, -1, Packed, true>(launch, z,
                                                                     y, x);
-  UpdateComponent<Phase, 2, Cpml, 0, true, UniformCpml, -1, Packed>(launch, z,
+  UpdateComponent<Phase, 2, Cpml, 0, true, UniformCpml, -1, Packed, true>(launch, z,
                                                                     y, x);
 }

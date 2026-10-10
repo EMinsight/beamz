@@ -36,6 +36,7 @@ FRESH = {
     "layout-anchors",
     "compact-layout-fresh",
     "postlayout-fresh",
+    "main-anchors",
 }
 IDENTITY = (
     "device",
@@ -61,6 +62,11 @@ def collect(root):
                 exclusion = (
                     "Permeability-only pilot did not produce dense H coefficients."
                 )
+            if (
+                report["case"]["name"] == "dense_conductive"
+                and report["case"].get("boundary") != "sponge"
+            ):
+                exclusion = "Historical magnetic-loss semantics before current main; current dense-H checks use sponge damping."
             if folder == "geometry" and report["case"]["name"] == "large":
                 exclusion = "Incomplete shared pilot before material-sharing fix; memory failures."
             if folder == "early-fresh":
@@ -183,6 +189,7 @@ def write_tables(measured, output):
         "layout-anchors",
         "compact-layout-fresh",
         "postlayout-fresh",
+        "main-anchors",
     }
     bycase = {}
     # The larger anchor sets replace one-round finalists for the same choice.

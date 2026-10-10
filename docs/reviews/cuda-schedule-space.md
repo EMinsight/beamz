@@ -273,12 +273,16 @@ latency distribution. The allocator peaks include setup and state conditioning;
 they are not the kernel's scratch requirement. Mstep uses more memory, so the
 existing workspace/headroom check remains necessary.
 
-The replacement dense-conductive case reaches about 5.32 GCUPS with 16x16 /
+The historical replacement dense-conductive case reaches about 5.32 GCUPS with 16x16 /
 segment 32 versus 5.14 with ordinary streamed. This modest gain fails to repay
 startup at 256 steps: 1.438 versus 1.275 seconds after common setup. At 1024
 steps, capacity streamed and mstep are within 1% of each other. Dense coefficients
 therefore remain outside the automatic mstep cost model rather than inheriting
 the much larger binary-material gain.
+These timings precede the merge of current main's corrected magnetic-loss
+semantics. They do not describe the current dense-H workload; its correctness
+checks now use sponge damping to produce magnetic loss independently of physical
+electric conductivity.
 
 ## Validation
 
