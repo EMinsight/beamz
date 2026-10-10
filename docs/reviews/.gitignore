@@ -3,3 +3,4 @@
 *.gz
 !cuda-schedule-space.json.gz
 !cuda-mstep-rtx3090.json.gz
+!cuda-h100-regression.json.gz

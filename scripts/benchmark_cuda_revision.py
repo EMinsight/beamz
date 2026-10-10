@@ -98,6 +98,7 @@ def main():
     parser.add_argument("--frequencies", type=int, default=3)
     parser.add_argument("--monitor-offset-cells", type=int)
     parser.add_argument("--transverse-offset-cells", type=int, default=0)
+    parser.add_argument("--transverse-anchor", choices=("center", "low"), default="center")
     parser.add_argument("--public-samples", type=int, default=0)
     parser.add_argument("--validation", choices=("full", "sampled"), default="full")
     parser.add_argument("--sample-points", type=int, default=2048)
@@ -152,6 +153,7 @@ def main():
         boundary=args.boundary,
         monitor_offset_cells=args.monitor_offset_cells,
         transverse_offset_cells=args.transverse_offset_cells,
+        transverse_anchor=args.transverse_anchor,
     )
     devices = jax.devices("gpu")
     assert len(devices) == args.devices, (devices, args.devices)
@@ -237,6 +239,25 @@ def main():
                 0, flat.size - 1, min(flat.size, args.sample_points), dtype=np.int64
             )
             values.append(np.asarray(jax.device_get(flat[indices])))
+            # Uniform samples can miss the pulse in a multi-billion-cell grid.
+            # Also retain the source neighbourhood of full-volume Yee leaves.
+            if leaf.ndim == 3 and all(
+                n <= m <= n + 1 for n, m in zip(args.shape, leaf.shape)
+            ):
+                nz, ny, nx = args.shape
+                centers = [nz // 2 + args.transverse_offset_cells,
+                           ny // 2 + args.transverse_offset_cells, int(0.3 * nx)]
+                if args.transverse_anchor == "low":
+                    centers[:2] = [min(n // 2 + 1, settings.pml + 12) for n in (nz, ny)]
+                local = []
+                for size, key, center, radius in zip(
+                    leaf.shape, shard.index, centers, (12, 12, 48)
+                ):
+                    start, stop, _ = key.indices(size)
+                    lo, hi = max(start, center - radius), min(stop, center + radius)
+                    local.append(slice(max(0, lo - start), max(0, hi - start)))
+                if all(key.stop > key.start for key in local):
+                    values.append(np.asarray(jax.device_get(shard.data[tuple(local)])).ravel())
         return np.concatenate(values)
 
     def fingerprints(value):
@@ -353,6 +374,7 @@ def main():
         public_nvml_memory=public_memory,
         peak_host_rss_before_validation=peak_host_rss_before_validation,
         validation_scope=args.validation,
+        sampled_source_neighbourhood=True,
         monitor_signal_max=monitor_signal_max,
         monitor_weights=monitor_weights,
         public_samples_s=public_samples,
@@ -398,7 +420,9 @@ def main():
         from beamz.simulation.cuda.tuning import tuning_report
 
         data["tuning"] = tuning_report(program)
-    args.output.write_text(json.dumps(data, indent=2) + "\n")
+    temporary = args.output.with_suffix(args.output.suffix + ".tmp")
+    temporary.write_text(json.dumps(data, indent=2) + "\n")
+    temporary.replace(args.output)
     print(
         json.dumps(
             {k: data[k] for k in ("root", "median_gcups", "actual_axes", "cuda_flags")}

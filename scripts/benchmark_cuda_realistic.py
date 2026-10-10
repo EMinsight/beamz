@@ -38,6 +38,11 @@ def build_simulation(args):
     center_y = ny // 2 + transverse_offset
     physical_y = size[1] / 2 + transverse_offset * dx
     physical_z = size[2] / 2 + transverse_offset * dx
+    if getattr(args, "transverse_anchor", "center") == "low":
+        # Keep the entire mode aperture inside CPML while finding nonuniform
+        # material near the start of region-wise coefficient preparation.
+        center_z, center_y = (min(n // 2 + 1, args.pml + 12) for n in (nz, ny))
+        physical_y, physical_z = center_y * dx, center_z * dx
     half_z = max(1, round(160e-9 / dx))
     half_y = max(1, round(240e-9 / dx))
     eps[

@@ -159,6 +159,9 @@ selection remains within that measured envelope.
 The [tile, layout and startup study](../docs/reviews/cuda-schedule-space.md)
 compares configuration choices using preparation plus execution time, and provides
 a benchmark/ranking tool for extending the measured workload and GPU envelope.
+The [H100 regression study](../docs/reviews/cuda-h100-regression.md) records
+one-, two- and eight-GPU results, memory limits, small-case regression candidates
+and unfinished capacity checks. It does not expand automatic schedule selection.
 
 ## Experimental sharded streamed execution
 
