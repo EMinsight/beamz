@@ -32,11 +32,12 @@ def material(kind):
     )
 
 
+@pytest.mark.parametrize("complex_fields", [False, True])
 @pytest.mark.parametrize("kind", ["lorentz", "drude", "static"])
 @pytest.mark.parametrize("normal", [0.0, 0.25, 1.0])
 @pytest.mark.parametrize("second_dispersive", [False, True, "equal"])
 def test_coupled_interface_matches_harmonic_transfer_function(
-    kind, normal, second_dispersive
+    kind, normal, second_dispersive, complex_fields
 ):
     media = (
         material(kind),
@@ -74,7 +75,7 @@ def test_coupled_interface_matches_harmonic_transfer_function(
         sig_x=0.0,
     )
     dt = 1e-17
-    plan = compile_dispersion(grid, dt)
+    plan = compile_dispersion(grid, dt, complex_fields=complex_fields)
     sim = bz.Simulation(material_grid=mg, time=np.arange(2) * dt, polarization="te")
     # Obtain the ordinary Yee state without compiling the deliberately isolated
     # constitutive fixture's material coefficients.
@@ -82,10 +83,13 @@ def test_coupled_interface_matches_harmonic_transfer_function(
 
     state = sim.initial_state()._replace(polarization=initial_polarization(plan))
     assert isinstance(state, SimulationState)
+    if complex_fields:
+        state = state._replace(ex=state.ex.astype(jnp.complex64))
     omega = 2 * np.pi * 5e14
 
     def step(state, k):
-        delta = jnp.cos(omega * dt * (k + 1)) - jnp.cos(omega * dt * k)
+        carrier = (lambda time: jnp.exp(-1j * time)) if complex_fields else jnp.cos
+        delta = carrier(omega * dt * (k + 1)) - carrier(omega * dt * k)
         free = state._replace(
             ex=state.ex + delta / jnp.asarray(inf.reshape(shapes["Ex"]))
         )
@@ -97,6 +101,10 @@ def test_coupled_interface_matches_harmonic_transfer_function(
     fit = np.c_[np.cos(omega * t[-3000:]), np.sin(omega * t[-3000:]), np.ones(3000)]
     coeff = np.linalg.lstsq(fit, np.asarray(trace)[-3000:], rcond=None)[0]
     measured = coeff[0] + 1j * coeff[1]
+    if complex_fields:
+        measured = np.mean(
+            np.asarray(trace)[-3000:] * np.exp(1j * omega * t[-3000:, None]), axis=0
+        )
     mapped_frequency = np.tan(omega * dt / 2) / (np.pi * dt)
     spectra = np.array(
         [

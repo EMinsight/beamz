@@ -198,7 +198,7 @@ def _field_diagnostics(state: SimulationState, plan) -> tuple[float, float, bool
         values = jnp.asarray(getattr(state, field_name))
         finite = finite & jnp.all(jnp.isfinite(values))
         max_field = jnp.maximum(max_field, jnp.max(jnp.abs(values), initial=0.0))
-        density = jnp.asarray(material) * values * values
+        density = jnp.asarray(material) * jnp.abs(values) ** 2
         energy_density = energy_density + 0.5 * float(constant) * jnp.sum(
             density * jnp.asarray(measure)
         )
@@ -222,8 +222,7 @@ def _field_diagnostics(state: SimulationState, plan) -> tuple[float, float, bool
                 )
         energy_density = energy_density + float(EPS_0) * jnp.sum(
             material
-            * centered[left_component]
-            * centered[right_component]
+            * jnp.real(centered[left_component] * jnp.conj(centered[right_component]))
             * jnp.asarray(measure)
         )
     return float(energy_density) * domain_measure, float(max_field), bool(finite)
@@ -236,7 +235,7 @@ def _remaining_source_activity(
     total_steps = int(total_steps)
     activity = np.zeros(total_steps, dtype=np.float64)
     for source in program.sources:
-        waveform = np.abs(np.asarray(source.waveform, dtype=np.float64).reshape(-1))
+        waveform = np.abs(np.asarray(source.waveform).reshape(-1))
         if waveform.size == 0:
             continue
         peak = float(np.max(waveform, initial=0.0))
@@ -542,6 +541,7 @@ def forward_step(
             (metallic.ex_mask, metallic.ey_mask, metallic.ez_mask),
             components=("Ex", "Ey", "Ez"),
             periodic_axes=ctx.boundary.periodic_axes,
+            periodic_phases=ctx.boundary.periodic_phases,
             material_shape=ctx.boundary.material_shape,
             logical_shapes=ctx.boundary.logical_component_shapes,
         )
@@ -582,6 +582,7 @@ def forward_step(
             (metallic.hx_mask, metallic.hy_mask, metallic.hz_mask),
             components=("Hx", "Hy", "Hz"),
             periodic_axes=ctx.boundary.periodic_axes,
+            periodic_phases=ctx.boundary.periodic_phases,
             material_shape=ctx.boundary.material_shape,
             logical_shapes=ctx.boundary.logical_component_shapes,
         )
@@ -609,6 +610,7 @@ def forward_step(
             (metallic.ex_mask, metallic.ey_mask, metallic.ez_mask),
             components=("Ex", "Ey", "Ez"),
             periodic_axes=ctx.boundary.periodic_axes,
+            periodic_phases=ctx.boundary.periodic_phases,
             material_shape=ctx.boundary.material_shape,
             logical_shapes=ctx.boundary.logical_component_shapes,
         )
@@ -1115,17 +1117,19 @@ def initial_program_state(
                 )()
         # Fresh runs use the compiled lattice; continuations supply evolved canonical
         # arrays without reconstructing a mutable field container.
-        return (
-            _copy_initial_field(getattr(program.grid, name))
-            if continuation is None
-            else getattr(continuation, name.lower())
-        )
+        if continuation is None:
+            return _copy_initial_field(getattr(program.grid, name))
+        value = getattr(continuation, name.lower())
+        dtype = field_dtype(name)
+        return value if value.dtype == dtype else value.astype(dtype)
 
     def field_dtype(name):
         # Query metadata without copying two additional full fields just to
         # choose the CPML dtype during fresh-state construction.
-        owner = program.grid if continuation is None else continuation
-        return getattr(owner, name if continuation is None else name.lower()).dtype
+        dtype = getattr(program.grid, name).dtype
+        if continuation is not None:
+            dtype = jnp.result_type(dtype, getattr(continuation, name.lower()).dtype)
+        return dtype
 
     def zeros(shape, dtype):
         shape = tuple(int(value) for value in shape)
@@ -1189,6 +1193,20 @@ def initial_program_state(
         monitor_values = {
             name: getattr(continuation, name) for name in monitor_runtime.MONITOR_FIELDS
         }
+    # A continuation can promote the fields (for example, Periodic -> Bloch).
+    # Promote recorder storage too, retaining all previous samples and metadata.
+    recorded_fields = list(monitor_values["recorded_fields"])
+    for spec in program.monitors:
+        if spec.recorder_index < 0:
+            continue
+        for component, index in zip(
+            spec.canonical_components, spec.field_buffer_indices, strict=True
+        ):
+            value = recorded_fields[index]
+            dtype = jnp.result_type(value.dtype, field_dtype(component))
+            if value.dtype != dtype:
+                recorded_fields[index] = value.astype(dtype)
+    monitor_values["recorded_fields"] = tuple(recorded_fields)
     from beamz.simulation.dispersion import initial_polarization
 
     return SimulationState(

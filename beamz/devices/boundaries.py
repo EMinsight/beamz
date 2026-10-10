@@ -280,9 +280,8 @@ class Periodic:
 
     Notes
     -----
-    This boundary implements zero-phase periodicity. Bloch phase shifts are not
-    accepted by this type; they require a complex-field execution path and will
-    be introduced separately. Periodic boundaries currently execute through the
+    This boundary implements zero-phase periodicity. Use ``Bloch`` for
+    nonzero phase shifts. Periodic boundaries currently execute through the
     JAX backend. Automatic backend selection chooses JAX, while an explicit CUDA
     backend request raises an unsupported-backend error.
     """
@@ -327,7 +326,72 @@ class Periodic:
         return replace(self, **changes)
 
 
-Boundary = PEC | PML | Absorber | Periodic
+@dataclass(frozen=True, slots=True)
+class Bloch(Periodic):
+    """Phase-periodic faces with a physical Cartesian wavevector in rad/m.
+
+    ``F(r + L_i e_i) = exp(1j * wavevector[i] * L_i) * F(r)``.
+    Components outside the selected axes must be zero. Nonzero wavevectors
+    require complex fields and single-device JAX execution.
+    """
+
+    wavevector: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+    def __post_init__(self) -> None:
+        Periodic.__post_init__(self)
+        vector = tuple(float(k) for k in self.wavevector)
+        if len(vector) != 3 or not all(np.isfinite(k) for k in vector):
+            raise ValueError(
+                "Bloch wavevector must contain three finite values in rad/m."
+            )
+        selected = _AXES if self.axes == "all" else self.axes
+        if any(
+            k != 0
+            for axis, k in zip(_AXES, vector, strict=True)
+            if axis not in selected
+        ):
+            raise ValueError("Bloch wavevector must be zero outside its selected axes.")
+        object.__setattr__(self, "wavevector", vector)
+
+
+Boundary = PEC | PML | Absorber | Periodic | Bloch
+
+
+def bloch_wavevector(boundaries, *, is_3d: bool, plane_2d: str = "xy"):
+    """Resolve ownership and return the physical wavevector without aliasing."""
+    active = active_physical_axes(is_3d, plane_2d)
+    owners = {}
+    for boundary in normalize_boundaries(boundaries):
+        if not isinstance(boundary, Periodic):
+            continue
+        vector = boundary.wavevector if isinstance(boundary, Bloch) else (0.0,) * 3
+        for axis in active if boundary.axes == "all" else boundary.axes:
+            k = vector[_AXES.index(axis)]
+            if axis in owners and owners[axis] != k:
+                raise ValueError(
+                    f"Conflicting periodic/Bloch wavevectors on axis {axis}."
+                )
+            owners[axis] = k
+        if any(vector[_AXES.index(axis)] != 0 for axis in _AXES if axis not in active):
+            raise ValueError("Bloch wavevector must be zero on inactive physical axes.")
+    return tuple(owners.get(axis, 0.0) for axis in _AXES)
+
+
+def bloch_storage_phases(boundaries, geometry, *, is_3d, plane_2d="xy"):
+    """Compile forward seam phases in canonical storage-axis order."""
+    vector = bloch_wavevector(boundaries, is_3d=is_3d, plane_2d=plane_2d)
+    axes = _AXES if is_3d else active_physical_axes(False, plane_2d)
+    grid_axes = _AXES if is_3d else ("x", "y")
+    return tuple(
+        complex(
+            np.exp(
+                1j * vector[_AXES.index(axis)] * np.ptp(geometry.axis_edges(grid_axis))
+            )
+        )
+        if vector[_AXES.index(axis)] != 0
+        else 1.0
+        for axis, grid_axis in reversed(tuple(zip(axes, grid_axes, strict=True)))
+    )
 
 
 def active_physical_axes(is_3d: bool, plane_2d: str = "xy") -> tuple[str, ...]:
@@ -368,6 +432,7 @@ def validate_boundary_compatibility(
 ) -> None:
     """Reject overlapping periodic and wall/absorber ownership before compilation."""
     normalized = normalize_boundaries(boundaries)
+    bloch_wavevector(normalized, is_3d=is_3d, plane_2d=plane_2d)
     periodic = periodic_storage_axes(normalized, is_3d=bool(is_3d), plane_2d=plane_2d)
     if not periodic:
         return
@@ -406,10 +471,13 @@ def normalize_boundaries(boundaries) -> tuple[Boundary, ...]:
 __all__ = [
     "Absorber",
     "Boundary",
+    "Bloch",
     "PEC",
     "PML",
     "Periodic",
     "active_physical_axes",
+    "bloch_wavevector",
+    "bloch_storage_phases",
     "periodic_storage_axes",
     "validate_boundary_compatibility",
 ]

@@ -14,12 +14,13 @@ simulation.
 - `sources/solve.py`: source-plane extraction and the 2D native-solver adapter.
 - `sources/mode_launch.py`: 2D/3D launch planning, profile conversion, and power scaling.
 - `sources/planar_tfsf.py`: discrete 3D total-field/scattered-field residuals.
+- `sources/bloch.py`: narrowband oblique surface-current injection on physical Yee supports.
 - `sources/compiler.py`: the single lowering boundary into executable source plans.
 - `monitors/monitors.py`: immutable public monitor specifications.
 - `monitors/compiler.py`: grid placement and packed acquisition plans. Runtime
   accumulation belongs to `simulation.observe`, not to device specifications.
 - `ports.py`: named modal port metadata used by S-parameter analysis.
-- `boundaries.py`: immutable periodic, PEC, sponge `Absorber`, and PML specifications.
+- `boundaries.py`: immutable periodic/Bloch, PEC, sponge `Absorber`, and PML specifications.
 - `_placement.py`: shared grid-snapping rules for sources and monitors.
 - `_boundary_compile.py`: grid-aware periodic/PEC/PML/absorber lowering kept separate from
   the public boundary values for the same reason as source and monitor compilation.

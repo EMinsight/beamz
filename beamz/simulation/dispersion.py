@@ -30,6 +30,7 @@ class DispersionPlan:
     regions: tuple[PolarizationRegion, ...]
     coefficients: tuple[tuple[str, object, object, object], ...]
     interfaces: tuple = ()
+    complex_fields: bool = False
 
 
 def periodic_support_average(value, cell_shape, periodic_axes, geometry=None):
@@ -53,13 +54,19 @@ def periodic_support_average(value, cell_shape, periodic_axes, geometry=None):
     return value
 
 
-def compile_dispersion(grid, dt, periodic_axes=frozenset()):
+def compile_dispersion(grid, dt, periodic_axes=frozenset(), *, complex_fields=False):
     regions = []
     alpha = {}
     for medium, supports in grid.material_grid.dispersion:
         poles = np.asarray(medium.poles, dtype=complex)
         a = (2 + dt * poles[:, 0]) / (2 - dt * poles[:, 0])
         b = dt * poles[:, 1] / (2 - dt * poles[:, 0])
+        response = 2 * b.real.sum()
+        # With complex E, conjugate poles have independent states: conjugating q
+        # would also conjugate the driving field and discard its second quadrature.
+        if complex_fields:
+            a = np.concatenate((a, a.conj()))
+            b = np.concatenate((b, b.conj()))
         for component, weight in supports.items():
             weight = periodic_support_average(
                 weight, grid.material_grid.shape, periodic_axes, grid.geometry
@@ -77,13 +84,15 @@ def compile_dispersion(grid, dt, periodic_axes=frozenset()):
                     jnp.asarray(a.reshape(reshape), dtype=jnp.complex64),
                     jnp.asarray(b.reshape(reshape), dtype=jnp.complex64),
                     jnp.asarray(cropped),
-                    (len(poles), *cropped.shape),
+                    (len(a), *cropped.shape),
                 )
             )
             if component not in alpha:
                 alpha[component] = np.zeros(weight.shape, dtype=np.float64)
-            alpha[component][slices] += 2 * b.real.sum() * cropped
-    interfaces = compile_interfaces(grid, dt, periodic_axes)
+            alpha[component][slices] += response * cropped
+    interfaces = compile_interfaces(
+        grid, dt, periodic_axes, complex_fields=complex_fields
+    )
     for interface in interfaces:
         name = interface.component.capitalize()
         if name not in alpha:
@@ -112,7 +121,9 @@ def compile_dispersion(grid, dt, periodic_axes=frozenset()):
                 jnp.asarray(response, dtype=jnp.float32),
             )
         )
-    return DispersionPlan(tuple(regions), tuple(coefficients), interfaces)
+    return DispersionPlan(
+        tuple(regions), tuple(coefficients), interfaces, complex_fields
+    )
 
 
 def initial_polarization(plan, continuation=None):
@@ -138,14 +149,18 @@ def update_dispersion(old, state, plan):
     bulk_states = state.polarization[: len(plan.regions)]
     interface_states = state.polarization[len(plan.regions) :]
     for region, q in zip(plan.regions, bulk_states, strict=True):
-        change = 2 * jnp.real(jnp.sum((region.a - 1) * q, axis=0))
+        total = jnp.sum((region.a - 1) * q, axis=0)
+        change = total if plan.complex_fields else 2 * jnp.real(total)
         histories[region.component] = (
             histories[region.component].at[region.slices].add(change)
         )
     contexts = []
     for interface, q in zip(plan.interfaces, interface_states, strict=True):
         history, context = interface_history(
-            interface, q, getattr(old, interface.component)
+            interface,
+            q,
+            getattr(old, interface.component),
+            complex_fields=plan.complex_fields,
         )
         contexts.append(context)
         value = histories[interface.component]

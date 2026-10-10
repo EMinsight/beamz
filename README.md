@@ -54,6 +54,8 @@ Try out notebooks from our growing **[example library](https://beamz.tech/simula
 
 
 - [CMOS RGB Image Sensor](https://beamz.tech/examples/cmos_rgb_sensor)
+- [Huygens’ dielectric surfaces](examples/notebooks/huygens_surface.ipynb)
+- [Dielectric metasurface absorber](examples/notebooks/dielectric_metasurface_absorber.ipynb)
 
 ## Integration 
 

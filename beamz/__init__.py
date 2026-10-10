@@ -45,7 +45,7 @@ from beamz.design.structures import (
     Taper,
 )
 from beamz.design.vector_fit import fit_nk_vector
-from beamz.devices.boundaries import PEC, PML, Absorber, Periodic
+from beamz.devices.boundaries import PEC, PML, Absorber, Bloch, Periodic
 from beamz.devices.monitors import FieldMonitor, FieldRecorder, FluxMonitor, ModeMonitor
 from beamz.devices.ports import Port
 from beamz.devices.sources import (
@@ -136,6 +136,7 @@ __all__ = [
     "PEC",
     "Absorber",
     "Periodic",
+    "Bloch",
     "display_status",
     "create_plain_progress",
     "get_si_scale_and_label",

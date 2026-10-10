@@ -1,0 +1,135 @@
+{
+  "description": "Lossless dielectric pillar; phase relative to empty-cell propagation. Mesh changes are measured, not a convergence guarantee.",
+  "runs": [
+    {
+      "frequency_hz": 500000000000000.0,
+      "angle_deg": 0.0,
+      "spacing_m": 4e-08,
+      "transmission": 0.999998259155395,
+      "reflection": 1.3253064181210383e-07,
+      "energy_residual": 1.6083139632305787e-06,
+      "zeroth_order_co_polarized_transmission": {
+        "real": 0.7684980956441271,
+        "imag": 0.6398500242419598
+      },
+      "transmission_phase_rad": 0.6943041879840004,
+      "transmitted_orders": [
+        {
+          "m": 0,
+          "n": 0,
+          "power_w": 0.0028103801840716055,
+          "efficiency": 0.9964118087163593
+        }
+      ],
+      "reflected_orders": [
+        {
+          "m": 0,
+          "n": 0,
+          "power_w": -3.7264812039306754e-10,
+          "efficiency": 1.3212126592696877e-07
+        }
+      ],
+      "order_sum_residual": 0.003586450848411582
+    },
+    {
+      "frequency_hz": 500000000000000.0,
+      "angle_deg": 0.0,
+      "spacing_m": 2e-08,
+      "transmission": 0.9999173297827968,
+      "reflection": 8.214624550865396e-05,
+      "energy_residual": 5.239716945881767e-07,
+      "zeroth_order_co_polarized_transmission": {
+        "real": 0.7930102371092589,
+        "imag": 0.609141616643086
+      },
+      "transmission_phase_rad": 0.6550089813742357,
+      "transmitted_orders": [
+        {
+          "m": 0,
+          "n": 0,
+          "power_w": 0.004390869246388559,
+          "efficiency": 0.9990209707270025
+        }
+      ],
+      "reflected_orders": [
+        {
+          "m": 0,
+          "n": 0,
+          "power_w": -3.607225638278367e-07,
+          "efficiency": 8.207245209472323e-05
+        }
+      ],
+      "order_sum_residual": 0.0008964328492082618,
+      "mesh_change": {
+        "transmission": 8.092937259818189e-05,
+        "reflection": 8.201371486684186e-05,
+        "phase_rad": 0.03929520660976471
+      }
+    },
+    {
+      "frequency_hz": 500000000000000.0,
+      "angle_deg": 25.0,
+      "spacing_m": 4e-08,
+      "transmission": 0.994958590544668,
+      "reflection": 0.005043093727763196,
+      "energy_residual": -1.6842724311905144e-06,
+      "zeroth_order_co_polarized_transmission": {
+        "real": 0.7282306913899188,
+        "imag": 0.6816442471036129
+      },
+      "transmission_phase_rad": 0.7523672191814533,
+      "transmitted_orders": [
+        {
+          "m": 0,
+          "n": 0,
+          "power_w": 0.004268015341353432,
+          "efficiency": 0.9913892059314477
+        }
+      ],
+      "reflected_orders": [
+        {
+          "m": 0,
+          "n": 0,
+          "power_w": -2.1633088365787396e-05,
+          "efficiency": 0.005025007780314539
+        }
+      ],
+      "order_sum_residual": 0.0035874705606687707
+    },
+    {
+      "frequency_hz": 500000000000000.0,
+      "angle_deg": 25.0,
+      "spacing_m": 2e-08,
+      "transmission": 0.9945547422711827,
+      "reflection": 0.005445206020450609,
+      "energy_residual": 5.170836669954326e-08,
+      "zeroth_order_co_polarized_transmission": {
+        "real": 0.7551481582133305,
+        "imag": 0.6513876333945466
+      },
+      "transmission_phase_rad": 0.7117612789072654,
+      "transmitted_orders": [
+        {
+          "m": 0,
+          "n": 0,
+          "power_w": 0.0043631284431984,
+          "efficiency": 0.9936629337943522
+        }
+      ],
+      "reflected_orders": [
+        {
+          "m": 0,
+          "n": 0,
+          "power_w": -2.3888237463814467e-05,
+          "efficiency": 0.005440329440329217
+        }
+      ],
+      "order_sum_residual": 0.0008966850569518403,
+      "mesh_change": {
+        "transmission": 0.0004038482734852744,
+        "reflection": 0.000402112292687413,
+        "phase_rad": 0.04060594027418796
+      }
+    }
+  ]
+}

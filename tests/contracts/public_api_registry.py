@@ -61,6 +61,7 @@ RUNTIME_EXPORTS = (
 )
 
 CONFIGURATION_CASES = (
+    PublicConfigCase("Bloch", lambda: bz.Bloch(axes="x", wavevector=(1.0, 0.0, 0.0))),
     PublicConfigCase("AutoTermination", bz.AutoTermination),
     PublicConfigCase("Material", bz.Material),
     PublicConfigCase(
