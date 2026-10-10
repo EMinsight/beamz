@@ -403,9 +403,10 @@ clang++ -std=c++17 \
 
 ### Automatic RTX3090 storage and shell selection
 
-With no manual `BEAMZ_CUDA_*` overrides, `Simulation.compile()` estimates storage
-for eligible RTX3090 programs from geometry and startup costs. **The default performs no calibration
-runs**, reads no tuning profiles and does not launch candidate executables.
+With no manual `BEAMZ_CUDA_*` overrides, existing CUDA calls retain main's
+geometry-based layout predictor and 32-step minimum. Explicit `schedule="auto"`
+adds a startup cost gate. Neither policy runs calibration trials, reads tuning
+profiles or launches candidate executables.
 It counts thread slots in the existing 64x4 CPML queue for the three cyclic
 orders (`012`, `120`, `201`), including Yee staggering and partially filled
 tiles. A work reduction of at least 25% generates a candidate. Selection also
@@ -415,11 +416,6 @@ z=512–1024, y=256 and x=63–65, small slab sources and at most two three-freq
 DFT monitors. Short calls, unknown shapes and other workloads retain canonical
 storage. Known executable reuse contributes to the cost check.
 The shell tile remains 64x4, and padding stays off.
-
-That startup gate applies only with explicit `schedule="auto"`. Calls that omit
-it preserve main's geometry predictor, including its broader shape envelope and
-32-step minimum. This preserves existing layout/performance behavior while
-allowing the new selector to optimize first-result time explicitly.
 
 The physical grid, CPML12, source/monitor sampling and FP32 precision remain
 unchanged. Existing automatic H/E fusion still applies within each layout;

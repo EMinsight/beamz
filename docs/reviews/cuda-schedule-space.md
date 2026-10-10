@@ -5,8 +5,8 @@ requested timesteps. Warm throughput alone is insufficient. The CUDA engine
 retains streamed and column multistep schedules, with shared numerical operations,
 source injection, boundaries and observation code.
 
-The saved study contains 2,198 recorded trials across 26 included workloads,
-205 fresh-process summaries and five owned-state checks. Files:
+The saved study contains 2,234 recorded trials across 26 included workloads,
+214 fresh-process summaries and five owned-state checks. Files:
 
 - [Measured 256-step choices](cuda-schedule-tables.md).
 - [First-result plot](cuda-schedule-time-to-result.png).
@@ -14,7 +14,9 @@ The saved study contains 2,198 recorded trials across 26 included workloads,
 - [Complete evidence, fingerprints and validation](cuda-schedule-space.json.gz).
 
 Recorded trials include explicitly excluded historical pilots and failed choices;
-they are preserved for auditing and are not treated as performance wins.
+they are preserved for auditing and are not treated as performance wins. A separate
+compatibility section in the same packet retains 40 current-main comparison
+workers and 14 diagnostic workers from before the streamed address fix.
 
 ## What changed
 
@@ -88,14 +90,13 @@ shape, source footprint or GPU. Shape, source coverage, monitored points, coeffi
 representation, boundary thickness, ownership and allocator headroom all matter.
 Unsupported mstep features retain the established streamed/JAX capability paths.
 
-The permeability-only pilot named `magnetic` did not exercise dense H coefficient
-banks: the present coefficient compiler uses magnetic conductivity and MU0 for
-that update. Its timings are excluded from the dense-coefficient conclusions and
-final recommendations. The replacement `dense_conductive` case uses a spatial
-conductivity gradient and checks that all H source coefficients are nonempty 3D
-banks before timing. The ordinary lossy case also covers dense H coefficients.
-Variable-permeability physics needs a separate review across the existing solvers;
-this performance work does not change that numerical behavior.
+The historical permeability-only pilot named `magnetic` did not exercise dense H
+coefficient banks and is excluded from recommendations. Current main separates
+physical electric conductivity from magnetic sponge damping. The current
+`dense_conductive` case therefore combines a spatial electric-conductivity
+gradient with sponge boundaries and verifies dense H source coefficients before
+timing. Earlier dense-conductive profiles use the old loss semantics; they remain
+in the raw packet but are excluded from current recommendations.
 
 ## Startup improvement
 
@@ -168,6 +169,10 @@ repay it. Refresh profiles after implementation or hardware changes.
 
 ## Findings and automatic policy
 
+The original tile and preparation comparisons below precede the merge of current
+main. The selector now uses fresh `main-anchors` profiles from the same workload
+family, following the streamed speed fix described in the compatibility check.
+
 The same tile does not win on every shape. Small and thin CPML domains often
 favor streamed. Rotating streamed is particularly useful for narrow-x and thin-x
 domains. Smaller mstep tiles recover much of the original whole-column loss on
@@ -208,7 +213,8 @@ available. The earlier geometry-only selection notes are historical evidence.
 
 ## Actual run lengths
 
-These are fresh-process measurements at the stated run length, in seconds after
+These historical profiles precede the current-main merge and streamed speed fix.
+They measure fresh processes at the stated run length, in seconds after
 common setup. They include schedule preparation and first execution; they are
 not projections from the 64-step screening. The mstep comparison uses 8x16 /
 segment 32 for medium, PEC and one-wall cases, and 16x32 / segment 64 for large.
@@ -251,7 +257,7 @@ search should happen once during profiling; ordinary short simulations should
 not pay for dozens of trial compilations.
 
 
-## Ownership and public API checks
+## Historical ownership and public API checks
 
 Separate fresh-process checks advance the pulse for 32 steps before timing 256
 steps. Each direct trial owns a copied state and donates it to the executable;
@@ -284,34 +290,94 @@ semantics. They do not describe the current dense-H workload; its correctness
 checks now use sponge damping to produce magnetic loss independently of physical
 electric conductivity.
 
+## Compatibility with current main
+
+The branch includes main at `3847a523`. Existing calls keep streamed execution
+and main's geometry-based layout selection. The new cost selector requires an
+explicit `schedule="auto"`; existing parameter positions and defaults remain
+available. Dispersion, Bloch fields, plane-wave sources and complex continuation
+from main are retained.
+
+A separate Release build of main uses the same CUDA 13.3 toolkit and SM86
+architecture as this branch. Two fresh processes per checkout, in reversed
+order, compare seven binary-material workloads with mode monitors. Initial
+fields, coefficients and sources match exactly. Every returned state array from
+the established default path matches main bit for bit.
+
+| Default case | Steps | Main warm GCUPS | Branch warm GCUPS | Main first result, s | Branch first result, s |
+|---|---:|---:|---:|---:|---:|
+| Tiny 32x48x64 | 64 | 1.628 | 1.577 | 7.738 | 7.619 |
+| Small 64x96x128 | 256 | 5.272 | 5.199 | 7.875 | 7.876 |
+| Medium 128x256x512 | 256 | 8.727 | 8.661 | 8.880 | 8.895 |
+| Large 256x512x512 | 256 | 9.383 | 9.318 | 11.011 | 11.031 |
+| Narrow 512x256x64 | 256 | 8.275 | 8.236 | 8.738 | 8.738 |
+| Medium, longer run | 1024 | 8.744 | 8.669 | 10.359 | 10.358 |
+| Medium, all PEC | 256 | 8.829 | 8.827 | 5.380 | 5.331 |
+
+First-result time includes material/source setup, preparation and the first
+execution; module imports and result validation are outside timing. The usual
+check uses two warmups and five samples per process. Tiny executions last only
+a few milliseconds: a repeat with four warmups and fifteen samples puts the
+branch 3.3% ahead, while 128 warmups and 31 samples put it 2.2% behind. These
+short-run measurements do not support a precise zero-overhead claim. All samples
+and fingerprints remain in the packet; other default warm differences are below
+1.5%, and first-result differences are below 2%.
+
+Opt-in automatic mstep passes the same complete-state tolerance checks. It
+reaches 9.545 GCUPS and a 10.218-second first result for the medium 1024-step
+case, versus main's 8.744 GCUPS and 10.359 seconds. For the medium PEC case it
+reaches 14.931 GCUPS and 5.189 seconds, versus 8.829 GCUPS and 5.380 seconds.
+These cases use mode monitors and are separate from the field-monitor profiles
+used to fit the automatic cost models.
+
+The comparison first exposed a roughly 10% streamed slowdown caused by compact
+address checks entering ordinary field updates. A compile-time addressing choice
+now removes those checks from streamed updates and existing temporal kernels;
+only mstep edge updates opt into compact field addressing. The numerical
+operations remain shared. Fresh field-monitor profiles refit the selector after
+recovering streamed speed. The refreshed all-face, one-wall and PEC models each
+use two domain sizes; the layout model uses both narrow-x sizes. Each candidate
+and baseline has two fresh processes in reversed order, two warmups and three
+samples. The current sponge dense-H case favors streamed (6.28 versus 5.34 GCUPS)
+and stays outside automatic mstep promotion. Raw measurements, derived model
+inputs and the older profiles are preserved separately in the evidence packet.
+
 ## Validation
 
-The final CUDA mstep suite passes all 129 cases on the RTX3090. It compares
-complete fields, CPML state, DFT accumulation and clocks, including continuation,
-odd/even run lengths, every added tile/segment variant, cyclic layouts, boundary
-families, dense coefficients, automatic variant dispatch and state donation.
-The compact monitor transformation also passed 62 selected GPU cases; the new
-dense-bank and donation checks passed separately after correcting their test
-setup. Overlapping reruns are not added into a larger unique-case count.
+After merging current main, the CPU regression suite passes 716 cases with two
+skips. It covers existing compiled execution, dispersion, Bloch fields/monitors,
+plane-wave sources and termination alongside the CUDA host policies. The final
+policy/runtime checks pass 210 cases, and the refreshed model/analysis checks
+pass 105. These scopes overlap and are not added into a unique-case total.
 
-The original CPU regression run passed 196 cases and exposed one stale expected-error
-phrase from before PEC rotation support. Updating that expectation and rerunning
-the affected case gives 197 passing unique CPU cases. The subsequent review
-regression run passes 149 affected CPU cases, including all 15 analysis cases,
-plus six focused GPU cases for unified API parity, donation under all cyclic
-orders and automatic dispatch/chunk clocks. These are overlapping runs, not
-additional unique-case totals. Lint, formatting, generated ABI and whitespace
-checks pass.
+After the native addressing fix, all 192 selected GPU cases pass: 129 mstep,
+14 capacity and 49 storage cases. They cover complete fields, CPML state, DFT
+accumulation and clocks, continuation, odd/even lengths, tile/segment variants,
+cyclic layouts, boundaries, dense coefficients, automatic dispatch and donation.
+
+The baseline backend comparisons still have three numerical failures:
+
+- `test_streamed_cuda_matches_jax_for_extended_feature_envelope[conductive]`
+- `test_streamed_cuda_realistic_sources_and_cpml_match_jax[0-smooth]`
+- `test_streamed_cuda_realistic_sources_and_cpml_match_jax[1-smooth]`
+
+Each also fails on the isolated main checkout. Tolerances are unchanged; these
+failures prevent claiming the entire existing CUDA suite is green. Two obsolete
+lossy-material eligibility assertions were corrected for main's separation of
+magnetic damping from physical conductivity, and those cases now pass.
 
 The native Release component was built with CUDA 13.3 for SM86. Compute Sanitizer
 memcheck reports zero errors and racecheck reports zero hazards/errors/warnings
-for the selected segmented cyclic kernel case. These checks use matching native
-kernel filters; they do not claim sanitizer coverage of all 72 configurations.
-The byte-identical host plan comparisons cover all five dependency arrays.
+for the selected segmented cyclic case after the addressing fix. Matching native
+kernel filters restrict coverage to that case, rather than all 72 configurations.
+Host plan comparisons cover all five dependency arrays. Lint, formatting,
+generated ABI and whitespace checks pass.
 
-Exporting the committed packet again produces byte-identical JSON, CSV, tables
-and PNG. Validation commands, sanitizer logs, per-worker hashes and complete raw
-samples are retained in the packet. No other GPU or architecture was measured.
+Exporting the committed packet again produces byte-identical compressed JSON,
+CSV, tables and PNG. Validation logs, per-worker hashes and complete raw samples
+are retained in the packet. Historical validation keeps its original revision;
+current-main checks are recorded separately. No other GPU or architecture was
+measured.
 
 ## Review fixes
 
@@ -330,6 +396,6 @@ The exporter uses the analyzer's comparison identity before computing medians,
 tables or plot lines. Synthetic mixed-worker tests cover changed native binaries,
 dispatch code, benchmark method and hardware. They also verify exclusion of
 shared-process workers, separate table rows and disconnected plot series. The
-recorded timings were not rerun or reassigned to the fix revision. These changes
-affect host selection, validation and analysis; native numerical kernels remain
-unchanged.
+recorded timings were not rerun or reassigned to the fix revision. These review
+fixes affect host selection, validation and analysis. The later compile-time
+addressing fix is documented separately above.

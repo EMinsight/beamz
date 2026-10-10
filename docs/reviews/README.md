@@ -3,6 +3,8 @@
 The [tile, layout and startup study](cuda-schedule-space.md) explores smaller
 tiles, column segments and storage rotations, and compares complete time to result.
 It distinguishes shared screening trials from independent startup measurements.
+Its [current-main comparison](cuda-schedule-space.md#compatibility-with-current-main)
+records API compatibility, complete-state checks and measured default performance.
 
 The [CUDA component README](../../cuda/README.md) documents the shared execution
 API and selection limits. The [historical multistep comparison](cuda-mstep-rtx3090.md)

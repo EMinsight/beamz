@@ -8,28 +8,36 @@
 | crossover (96x160x256) | 0e43257d | 6.76 | 7.03 | streamed | 0.728 |
 | cube (128x128x128) | babe9c72 | 5.62 | not tested | streamed-capacity | 0.645 |
 | cube (128x128x128) | eec55b85 | 5.75 | 5.77 | streamed-axes-201 | 1.196 |
-| dense_conductive (128x256x512) | 3d152334 | 5.14 | 5.32 | streamed | 1.275 |
+| dense_conductive (128x256x512) | 132faff1 | 6.28 | 5.34 | streamed | 1.089 |
 | dense_monitors (128x256x512) | 1881528d | 7.59 | not tested | streamed-axes-201 (only candidate) | 1.821 |
 | dense_monitors (128x256x512) | e80fcef0 | 7.19 | 8.53 | streamed | 1.208 |
 | gaussian (128x256x512) | b348c3cb | 8.04 | 9.10 | streamed | 0.993 |
 | large (256x512x512) | 45c749fe | 7.89 | 10.72 | streamed | 3.006 |
 | large (256x512x512) | 9280f2ba | 8.49 | not tested | streamed-axes-201 (only candidate) | 3.992 |
+| large (256x512x512) | c71369d4 | 8.53 | 10.72 | streamed | 2.833 |
 | large (256x512x512) | f0a109de | 7.91 | 10.85 | streamed | 3.000 |
 | large_pec (256x512x512) | 8f3e34c2 | 8.11 | 13.86 | mstep-8x16-32 | 2.479 |
+| large_pec (256x512x512) | f7b4605e | 8.25 | 13.87 | mstep-8x16-32 | 2.488 |
+| large_right (256x512x512) | 07a476f6 | 7.43 | 12.97 | mstep-8x16-32 | 2.582 |
 | large_right (256x512x512) | ae48d9b2 | 6.82 | 12.97 | mstep-8x16-32 | 2.627 |
 | lossy (128x256x512) | 770f0128 | 5.32 | not tested | streamed-axes-201 (only candidate) | 1.780 |
 | lossy (128x256x512) | aae1e5f1 | 5.14 | 5.34 | streamed | 1.262 |
 | medium (128x256x512) | 6756a94a | 7.62 | 9.13 | streamed | 1.134 |
 | medium (128x256x512) | e3be497d | 7.77 | not tested | streamed-axes-201 (only candidate) | 1.780 |
+| medium (128x256x512) | fc9a4caf | 8.22 | 9.04 | streamed | 1.084 |
 | narrow_x (512x256x64) | 274f52f1 | 4.61 | not tested | streamed | 1.299 |
+| narrow_x (512x256x64) | 8d458346 | 6.94 | not tested | streamed | 1.223 |
 | narrow_x (512x256x64) | ebf3b4c2 | 6.46 | 6.25 | streamed | 1.288 |
+| narrow_x_double (1024x256x64) | 96c38663 | 6.83 | not tested | streamed | 1.984 |
 | narrow_x_double (1024x256x64) | a2fa6f41 | 6.39 | not tested | streamed | 2.119 |
 | narrow_z (64x512x256) | 1c7d86cc | 7.43 | 7.08 | streamed-axes-201 | 1.485 |
 | narrow_z (64x512x256) | 65e7442d | 6.71 | not tested | streamed | 0.887 |
 | no_monitors (128x256x512) | e3550b8c | 8.06 | 9.78 | mstep-8x16-32 | 0.749 |
 | odd (127x193x257) | 835e7422 | 6.89 | 7.58 | streamed | 0.769 |
+| pec (128x256x512) | 50d477cd | 8.42 | 13.54 | mstep-8x16-32 | 0.992 |
 | pec (128x256x512) | cdd6f940 | 8.28 | 13.55 | mstep-8x16-32 | 0.965 |
 | pec (128x256x512) | e4533cef | 9.08 | not tested | streamed-axes-201 (only candidate) | 1.446 |
+| right (128x256x512) | 50ebffa8 | 8.12 | 12.44 | mstep-8x16-32 | 1.000 |
 | right (128x256x512) | 6c4cf438 | 7.59 | not tested | streamed-axes-201 (only candidate) | 1.591 |
 | right (128x256x512) | c37fde4c | 7.29 | 12.45 | mstep-8x16-32 | 1.007 |
 | small (64x96x128) | 0e18c462 | 4.45 | not tested | streamed-axes-201 (only candidate) | 1.056 |

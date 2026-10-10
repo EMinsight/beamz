@@ -12,22 +12,23 @@ import numpy as np
 
 # (physical cells, streamed GCUPS, mstep GCUPS, extra startup seconds).
 # Startup includes planning, lowering, XLA compilation and first-execution
-# overhead after shared material setup. Source: cuda-schedule-space.json.gz.
+# overhead after shared material setup. Source: cuda-schedule-space.json.gz,
+# main-anchors after restoring streamed field addressing.
 _COSTS = {
     "all": (
-        (16777216, 7.6048, 9.0340, 0.1260),
-        (67108864, 7.8861, 10.7211, 0.5217),
+        (16777216, 8.2242, 9.0441, 0.1353),
+        (67108864, 8.5313, 10.7144, 0.5245),
     ),
     "right": (
-        (16777216, 7.2903, 12.4521, 0.1315),
-        (67108864, 6.8163, 12.9725, 0.4684),
+        (16777216, 8.1159, 12.4346, 0.1353),
+        (67108864, 7.4307, 12.9735, 0.4739),
     ),
     "pec": (
-        (16777216, 8.2797, 13.5465, 0.1239),
-        (67108864, 8.1136, 13.8650, 0.4673),
+        (16777216, 8.4208, 13.5445, 0.1511),
+        (67108864, 8.2482, 13.8656, 0.4838),
     ),
 }
-_MODEL = "rtx3090-column-v2"
+_MODEL = "rtx3090-column-v3"
 
 
 def _enough_work(cfg):

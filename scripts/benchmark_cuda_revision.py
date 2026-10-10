@@ -1,7 +1,8 @@
 """Compare a selected checkout using the common realistic workload builder.
 
-Invoke in a fresh process per revision. Setup, validation and result hashing are
-outside timing; compiled scan timing includes any internal storage conversion.
+Invoke in a fresh process per revision. First-result timing includes setup and
+compilation; execution timing includes internal storage conversion. Imports,
+validation and result hashing are outside both timings.
 """
 
 import argparse

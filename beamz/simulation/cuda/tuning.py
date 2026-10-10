@@ -38,10 +38,11 @@ _GEOMETRY_MODEL = "cpml12-queue-v1"
 _MINIMUM_WORK_REDUCTION = 0.25
 # (physical cells, canonical GCUPS, rotated GCUPS, additional startup seconds).
 # Compact monitor-block ordering; two fresh rounds at 256 steps, checked at
-# 4096 steps. Source: docs/reviews/cuda-schedule-space.json.gz, layout-anchors.
+# 4096 steps. Source: docs/reviews/cuda-schedule-space.json.gz, main-anchors
+# after restoring streamed field addressing; horizons are earlier profiles.
 _LAYOUT_COSTS = (
-    (8388608, 4.6148, 6.4642, 1.1508),
-    (16777216, 4.6714, 6.3869, 1.8844),
+    (8388608, 5.2982, 6.9365, 1.1399),
+    (16777216, 5.3617, 6.8345, 1.8993),
 )
 
 
@@ -215,7 +216,7 @@ def predict_layout_time_to_result(shape, steps, expected_runs=1):
     admitted = saved > 1.25 * extra
     return {
         **report,
-        "cost_model": "rtx3090-layout-startup-v1",
+        "cost_model": "rtx3090-layout-startup-v2",
         "choice": candidate if admitted else report["choice"],
         "expected_runs": expected_runs,
         "predicted_saved_execution_s": saved,
