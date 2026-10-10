@@ -147,3 +147,107 @@ def test_evidence_export_excludes_pilots_and_reports_streamed_fallback(tmp_path)
     assert measured[0]["raw_pipeline_first_result_s"] == 4.0
     write_tables(measured, tmp_path)
     assert "fallback" in (tmp_path / "cuda-schedule-tables.md").read_text()
+
+
+def _export_report(records):
+    for record in records:
+        record.update(
+            decision={"selected": "streamed"},
+            cold_time_to_result_s=record["cold_preparation_s"] + record["first_run_s"],
+            total_time_to_result_s=8.0,
+        )
+    return _report(records)
+
+
+def _packet(*reports):
+    return {
+        "evidence": [
+            dict(
+                source=f"finalists256/{i}.json", phase="fresh", exclusion=None, report=r
+            )
+            for i, r in enumerate(reports)
+        ]
+    }
+
+
+@pytest.mark.parametrize(
+    "provenance",
+    [
+        {"extension_sha256": "different binary"},
+        {"implementation_sha256": "different dispatch"},
+        {"benchmark_sha256": "different method"},
+        {"hardware": {"uuid": "different GPU", "driver": "driver", "power_limit": 300}},
+    ],
+)
+def test_export_and_ranking_separate_resumed_profiles(tmp_path, provenance):
+    from scripts.export_cuda_schedule_study import profiles, rows
+
+    records = [_record("streamed", 0.4, 0.5), _record("streamed", 4.0, 5.0)]
+    records[1]["provenance"] = provenance
+    report = _export_report(records)
+    packet = _packet(report)
+    measured = rows(packet)
+    assert len(measured) == 2
+    assert all(r["rounds"] == 1 for r in measured)
+    assert {r["preparation_s"] for r in measured} == {0.4, 4.0}
+    assert {r["warm_s"] for r in measured} == {0.5, 5.0}
+    assert {r["profile"] for r in measured} == set(profiles(packet))
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps(report))
+    assert len(load_reports([path], fresh_only=True)) == 2
+
+
+def test_table_never_compares_choices_from_different_profiles(tmp_path):
+    from scripts.export_cuda_schedule_study import rows, write_tables
+
+    streamed = _export_report([_record("streamed", 0.4, 0.5)])
+    mstep = _export_report([_record("mstep-request", 0.1, 0.1)])
+    mstep["extension_sha256"] = "different binary"
+    mstep["records"][0]["decision"]["selected"] = "mstep"
+    measured = rows(_packet(streamed, mstep))
+    write_tables(measured, tmp_path)
+    table = (tmp_path / "cuda-schedule-tables.md").read_text()
+    assert table.count("| medium (") == 2
+    assert "streamed (only candidate)" in table
+    assert "mstep-request (only candidate)" in table
+
+
+def test_export_uses_only_fresh_workers_and_profile_spans_horizons():
+    from scripts.export_cuda_schedule_study import rows
+
+    report = _export_report(
+        [
+            _record("streamed", 0.4, 0.5),
+            _record("streamed", 0.0, 0.001, fresh=False),
+        ]
+    )
+    later = _export_report([_record("streamed", 0.4, 2.0)])
+    later["case"]["steps"] = 1024
+    measured = rows(_packet(report, later))
+    assert len(measured) == 2
+    assert len({r["profile"] for r in measured}) == 1
+    assert measured[0]["warm_s"] == 0.5
+    assert measured[0]["rounds"] == 1
+
+
+def test_plot_does_not_connect_different_profile_horizons(tmp_path, monkeypatch):
+    from matplotlib.axes import Axes
+
+    from scripts.export_cuda_schedule_study import rows, write_plot
+
+    first = _export_report([_record("streamed", 0.4, 0.5)])
+    second = _export_report([_record("streamed", 4.0, 5.0)])
+    second["case"]["steps"] = 1024
+    second["extension_sha256"] = "different binary"
+    measurements = rows(_packet(first, second))
+    original = Axes.plot
+    horizons = []
+
+    def plot(self, x, *args, **kwargs):
+        horizons.append(tuple(x))
+        return original(self, x, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "plot", plot)
+    write_plot(measurements, tmp_path)
+    assert sorted(horizons) == [(256,), (1024,)]
+    assert (tmp_path / "cuda-schedule-time-to-result.png").exists()

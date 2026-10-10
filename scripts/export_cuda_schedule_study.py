@@ -9,12 +9,17 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import statistics
 from pathlib import Path
 
-from scripts.analyze_cuda_schedule_space import summarize
+from scripts.analyze_cuda_schedule_space import (
+    measurement_identity,
+    partition_report,
+    summarize,
+)
 
 SCREEN = {"geometry", "survey", "orientation", "refined", "dense-screen"}
 FRESH = {
@@ -103,55 +108,68 @@ def collect(root):
     )
 
 
+def profile_id(report):
+    identity = measurement_identity(report, include_steps=False)
+    return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+
+
+def profiles(packet):
+    """Keep full comparison metadata inspectable outside individual workers."""
+    return {
+        profile_id(group): measurement_identity(group, include_steps=False)
+        for item in packet["evidence"]
+        if not item["exclusion"] and item["phase"] == "fresh"
+        for group in partition_report(item["report"], fresh_only=True)
+    }
+
+
 def rows(packet):
     result = []
     for item in packet["evidence"]:
-        report = item["report"]
         if item["exclusion"] or item["phase"] != "fresh":
             continue
-        summary = summarize(report)
-        for row in summary["configurations"]:
-            if not row["fresh_process"]:
-                continue
-            records = [
-                r
-                for r in report["records"]
-                if r["status"] == "ok"
-                and r["configuration"]["name"] == row["name"]
-                and not r.get("exclude_from_current_recommendations")
-            ]
-            cells = math.prod(report["case"]["shape"])
-            result.append(
-                dict(
-                    source=item["source"],
-                    case=report["case"]["name"],
-                    shape="x".join(map(str, report["case"]["shape"])),
-                    steps=report["case"]["steps"],
-                    configuration=row["name"],
-                    actual_schedule=row["actual_schedule"],
-                    ownership="borrowed",
-                    rounds=row["rounds"],
-                    preparation_s=row["cold_preparation_s"],
-                    first_execution_s=statistics.median(
-                        r["first_run_s"] for r in records
-                    ),
-                    warm_s=row["execution_s"],
-                    warm_gcups=cells
-                    * report["case"]["steps"]
-                    / row["execution_s"]
-                    / 1e9,
-                    cold_after_shared_setup_s=statistics.median(
-                        r.get(
-                            "schedule_time_to_result_s",
-                            r["cold_time_to_result_s"] - r.get("program_setup_s", 0),
-                        )
-                        for r in records
-                    ),
-                    raw_pipeline_first_result_s=statistics.median(
-                        r["total_time_to_result_s"] for r in records
-                    ),
-                )
+        for report in partition_report(item["report"], fresh_only=True):
+            result.extend(report_rows(report, item["source"]))
+    return result
+
+
+def report_rows(report, source):
+    result = []
+    summary = summarize(report)
+    for row in summary["configurations"]:
+        records = [
+            r
+            for r in report["records"]
+            if r["status"] == "ok" and r["configuration"]["name"] == row["name"]
+        ]
+        cells = math.prod(report["case"]["shape"])
+        result.append(
+            dict(
+                source=source,
+                profile=profile_id(report),
+                case=report["case"]["name"],
+                shape="x".join(map(str, report["case"]["shape"])),
+                steps=report["case"]["steps"],
+                configuration=row["name"],
+                actual_schedule=row["actual_schedule"],
+                ownership="borrowed",
+                rounds=row["rounds"],
+                preparation_s=row["cold_preparation_s"],
+                first_execution_s=statistics.median(r["first_run_s"] for r in records),
+                warm_s=row["execution_s"],
+                warm_gcups=cells * report["case"]["steps"] / row["execution_s"] / 1e9,
+                cold_after_shared_setup_s=statistics.median(
+                    r.get(
+                        "schedule_time_to_result_s",
+                        r["cold_time_to_result_s"] - r.get("program_setup_s", 0),
+                    )
+                    for r in records
+                ),
+                raw_pipeline_first_result_s=statistics.median(
+                    r["total_time_to_result_s"] for r in records
+                ),
             )
+        )
     return result
 
 
@@ -168,13 +186,15 @@ def write_tables(measured, output):
     # The larger anchor sets replace one-round finalists for the same choice.
     for row in sorted(measured, key=lambda r: (r["rounds"], r["source"])):
         if row["steps"] == 256 and row["source"].split("/")[0] in preferred:
-            bycase.setdefault(row["case"], {})[row["configuration"]] = row
+            bycase.setdefault((row["case"], row["profile"]), {})[
+                row["configuration"]
+            ] = row
     lines = [
         "<!-- Generated by scripts/export_cuda_schedule_study.py. -->",
-        "| Workload (z×y×x) | Best streamed GCUPS | Best real mstep GCUPS | Best cold choice at 256 steps | Cold seconds after shared setup |",
-        "|---|---:|---:|---|---:|",
+        "| Workload (z×y×x) | Profile | Best streamed GCUPS | Best real mstep GCUPS | Fastest tested cold choice at 256 steps | Cold seconds after shared setup |",
+        "|---|---|---:|---:|---|---:|",
     ]
-    for case, choices in sorted(bycase.items()):
+    for (case, profile), choices in sorted(bycase.items()):
         values = list(choices.values())
         streamed = [r for r in values if r["actual_schedule"] == "streamed"]
         mstep = [r for r in values if r["actual_schedule"] == "mstep"]
@@ -186,7 +206,11 @@ def write_tables(measured, output):
             <= 1.03 * fastest["cold_after_shared_setup_s"]
         ]
         cold = next((r for r in tied if r["configuration"] == "streamed"), fastest)
-        best_stream = max((r["warm_gcups"] for r in streamed), default=0)
+        best_stream = (
+            f"{max(r['warm_gcups'] for r in streamed):.2f}"
+            if streamed
+            else "not tested"
+        )
         best_mstep = (
             f"{max(r['warm_gcups'] for r in mstep):.2f}"
             if mstep
@@ -196,12 +220,17 @@ def write_tables(measured, output):
                 else "not tested"
             )
         )
+        choice = cold["configuration"]
+        if len(values) == 1:
+            choice += " (only candidate)"
         lines.append(
-            f"| {case} ({cold['shape']}) | {best_stream:.2f} | {best_mstep} | {cold['configuration']} | {cold['cold_after_shared_setup_s']:.3f} |"
+            f"| {case} ({cold['shape']}) | {profile[:8]} | {best_stream} | {best_mstep} | {choice} | {cold['cold_after_shared_setup_s']:.3f} |"
         )
     lines += [
         "",
         "Cold choice retains ordinary streamed when it is within 3% of the fastest measured finalist. GCUPS uses physical cells. Warm figures compare the tested finalists; the evidence packet also contains the broader 64-step screening. A fallback is streamed execution despite requesting mstep.",
+        "",
+        "Comparisons never cross profiles. Each CSV profile ID resolves to complete workload, hardware, JAX and implementation metadata in the packet's profiles mapping. An only-candidate row cannot establish a win over alternatives from another profile.",
         "",
     ]
     (output / "cuda-schedule-tables.md").write_text("\n".join(lines))
@@ -224,7 +253,7 @@ def write_plot(measured, output):
         ),
         strict=True,
     ):
-        for name in names:
+        for color, name in enumerate(names):
             points = {}
             for row in sorted(measured, key=lambda r: r["rounds"]):
                 if (
@@ -233,10 +262,18 @@ def write_plot(measured, output):
                     and row["steps"] in (16, 256, 1024, 4096)
                     and row["source"].split("/")[0] != "vectorized-fresh"
                 ):
-                    points[row["steps"]] = row["cold_after_shared_setup_s"]
-            ordered = sorted(points)
-            if ordered:
-                ax.plot(ordered, [points[n] for n in ordered], marker="o", label=name)
+                    points.setdefault(row["profile"], {})[row["steps"]] = row[
+                        "cold_after_shared_setup_s"
+                    ]
+            for index, (_profile, values) in enumerate(sorted(points.items())):
+                ordered = sorted(values)
+                ax.plot(
+                    ordered,
+                    [values[n] for n in ordered],
+                    marker="o",
+                    color=f"C{color}",
+                    label=name if index == 0 else "_nolegend_",
+                )
         ax.set(
             title=case,
             xlabel="Timesteps",
@@ -245,8 +282,9 @@ def write_plot(measured, output):
             yscale="log",
         )
         ax.grid(alpha=0.2)
-        ax.legend(fontsize=8)
-    fig.suptitle("Measured first-result time on RTX3090 (borrowed state)")
+        if ax.lines:
+            ax.legend(fontsize=8)
+    fig.suptitle("Measured first-result time on RTX3090 (lines stay within a profile)")
     fig.savefig(output / "cuda-schedule-time-to-result.png", dpi=180)
     plt.close(fig)
 
@@ -281,6 +319,7 @@ def main():
         owned_checks=len(packet["owned_checks"]),
     )
     packet["fresh_summaries"] = measured
+    packet["profiles"] = profiles(packet)
     (args.output_dir / "cuda-schedule-space.json").write_text(
         json.dumps(packet, indent=2) + "\n"
     )

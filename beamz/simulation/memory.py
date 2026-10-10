@@ -22,13 +22,15 @@ def cuda_memory_policy_from_env() -> str:
 
 
 def cuda_workspace_estimate(
-    program, *, donate_state: bool, mstep_plan=None, low_memory=False
+    program, *, donate_state: bool, mstep_plan=None, mstep=False, low_memory=False
 ) -> int:
     """Estimate optional fast-schedule workspace on the busiest device.
 
     Include both field banks for pair kernels, rotated materials for layout
     transforms, replicated normal CPML slabs, and retained input ownership.
     This intentionally overestimates rather than promising an exact peak.
+    With mstep=True and no plan, count only unavoidable mstep allocations. This
+    is a lower bound for early rejection, not permission to skip the full check.
     """
     layout = program.sharding.layout
     count = layout.num_devices if layout.enabled else 1
@@ -52,11 +54,13 @@ def cuda_workspace_estimate(
         if program.config.cuda_flags & abi.CUDA_TEMPORAL_PAIR
         else 2
     )
-    if mstep_plan is not None:
+    if mstep or mstep_plan is not None:
         # Output state, alternate bank, compact intermediate fields and static
         # dependency arrays. Retained caller state is accounted for below.
-        summary = mstep_plan.summary()
-        workspace = state + fields + summary["scratch_bytes"] + summary["plan_bytes"]
+        workspace = state + fields
+        if mstep_plan is not None:
+            summary = mstep_plan.summary()
+            workspace += summary["scratch_bytes"] + summary["plan_bytes"]
         workspace += sum(
             int(m.freq_count) * int(m.dft_point_count) * 6 * 2 * 4
             for m in program.monitors

@@ -138,6 +138,11 @@ def test_mstep_estimate_counts_compact_fields_and_plan():
     )
     assert donated == 2 * fields + psi + 8192 + 1024
     assert retained - donated == fields + psi
+    for donate, full in ((True, donated), (False, retained)):
+        minimum = memory.cuda_workspace_estimate(
+            program, donate_state=donate, mstep=True
+        )
+        assert full - minimum == 8192 + 1024
 
 
 @pytest.mark.parametrize("policy,available", [("auto", 1), ("capacity", 1 << 30)])

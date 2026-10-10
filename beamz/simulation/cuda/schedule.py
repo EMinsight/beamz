@@ -52,13 +52,18 @@ def normalize_schedule_request(backend, schedule, expected_runs):
         )
     if backend == "jax" and requested != "auto":
         raise ValueError("CUDA schedules require backend='cuda' or 'auto'")
+    return requested, normalize_expected_runs(expected_runs)
+
+
+def normalize_expected_runs(expected_runs):
+    """Validate the caller's reuse hint before progress multiplies it."""
     try:
         runs = operator.index(expected_runs)
     except TypeError as exc:
         raise ValueError("expected_runs must be a positive integer") from exc
     if isinstance(expected_runs, bool) or runs < 1:
         raise ValueError("expected_runs must be a positive integer")
-    return requested, runs
+    return runs
 
 
 def cuda_device_kind():
@@ -228,6 +233,23 @@ def choose_execution_schedule(
         status = cuda_backend_status(register=False)
         if abi.CUDA_MSTEP_TARGET not in status.targets:
             return None, {**decision, "reason": "optional mstep target is unavailable"}
+        available = cuda_available_bytes(program)
+        if available is None:
+            return None, {
+                **decision,
+                "available_bytes": None,
+                "reason": "mstep requires known memory headroom",
+            }
+        minimum = cuda_workspace_estimate(
+            program, donate_state=donate_state, mstep=True
+        )
+        if minimum + (64 << 20) > available:
+            return None, {
+                **decision,
+                "mstep_workspace_minimum_bytes": minimum,
+                "available_bytes": available,
+                "reason": "minimum mstep workspace exceeds known memory headroom",
+            }
     from beamz.simulation.cuda.storage import mstep_plan_inputs
 
     shapes, cpml, planning_groups, monitor_indices = mstep_plan_inputs(

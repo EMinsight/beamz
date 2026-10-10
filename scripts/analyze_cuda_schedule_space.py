@@ -95,40 +95,62 @@ def input_reports(inputs):
                 yield str(path), data
 
 
+def measurement_identity(report, record=None, *, include_steps=True):
+    """Common comparison identity for ranking, CSVs, tables and plots."""
+    identity = {**report, **(record or {}).get("provenance", {})}
+    case = dict(report["case"])
+    if not include_steps:
+        case.pop("steps", None)
+    return dict(
+        case=case,
+        **{
+            key: identity.get(key)
+            for key in (
+                "device",
+                "jax",
+                "extension_sha256",
+                "planner_sha256",
+                "implementation_sha256",
+                "workload_sha256",
+                "benchmark_sha256",
+                "monitor_layout",
+            )
+        },
+        hardware={
+            key: identity.get("hardware", {}).get(key)
+            for key in ("uuid", "driver", "power_limit")
+        }
+        if identity.get("hardware")
+        else None,
+    )
+
+
+def partition_report(report, *, fresh_only=False):
+    """Separate resumed workers before calculating any timing medians."""
+    groups = {}
+    for record in report["records"]:
+        if record.get("exclude_from_current_recommendations") or (
+            fresh_only and not record.get("fresh_process", False)
+        ):
+            continue
+        key = json.dumps(measurement_identity(report, record), sort_keys=True)
+        group = groups.setdefault(
+            key, {**report, **record.get("provenance", {}), "records": []}
+        )
+        group["records"].append(record)
+    return list(groups.values())
+
+
 def load_reports(directories, *, fresh_only=False, cases=None):
     """Merge complementary sweeps only when workload and implementation agree."""
     merged = {}
     for path, report in input_reports(directories):
         if not report.get("records") or (cases and report["case"]["name"] not in cases):
             continue
-        for record in report["records"]:
-            if record.get("exclude_from_current_recommendations") or (
-                fresh_only and not record.get("fresh_process", False)
-            ):
-                continue
-            # An interrupted/resumed sweep can span revisions. Do not assign
-            # the last worker's fingerprint to earlier measurements.
-            identity = {**report, **record.get("provenance", {})}
-            key = json.dumps(
-                [
-                    report["case"],
-                    identity["device"],
-                    identity.get("jax"),
-                    identity.get("extension_sha256"),
-                    identity.get("planner_sha256"),
-                    identity.get("implementation_sha256"),
-                    identity.get("workload_sha256"),
-                    {
-                        k: identity.get("hardware", {}).get(k)
-                        for k in ("uuid", "driver", "power_limit")
-                    }
-                    if identity.get("hardware")
-                    else None,
-                ],
-                sort_keys=True,
-            )
-            item = merged.setdefault(key, {**identity, "records": [], "sources": []})
-            item["records"].append(record)
+        for group in partition_report(report, fresh_only=fresh_only):
+            key = json.dumps(measurement_identity(group), sort_keys=True)
+            item = merged.setdefault(key, {**group, "records": [], "sources": []})
+            item["records"].extend(group["records"])
             if str(path) not in item["sources"]:
                 item["sources"].append(str(path))
     return list(merged.values())
@@ -151,6 +173,7 @@ def main():
         args.directories, fresh_only=args.fresh_only, cases=args.cases
     ):
         item = summarize(report)
+        item["comparison_identity"] = measurement_identity(report)
         item["sources"] = report["sources"]
         item["extension_sha256"] = report.get("extension_sha256")
         item["planner_sha256"] = report.get("planner_sha256")

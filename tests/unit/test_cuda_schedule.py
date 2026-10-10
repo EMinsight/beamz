@@ -217,7 +217,14 @@ def test_auto_selection_checks_actual_workspace(monkeypatch, available, chosen):
         "cuda_backend_status",
         lambda **kw: SimpleNamespace(targets=(abi.CUDA_MSTEP_TARGET,)),
     )
-    monkeypatch.setattr(mstep, "build_mstep_geometry", lambda *args: _geometry())
+
+    def geometry(*args):
+        assert available is not None and available > 1, (
+            "planned before budget rejection"
+        )
+        return _geometry()
+
+    monkeypatch.setattr(mstep, "build_mstep_geometry", geometry)
     plan = SimpleNamespace(summary=lambda: {"scratch_bytes": 8192, "plan_bytes": 1024})
     monkeypatch.setattr(mstep, "build_mstep_plan", lambda *args: plan)
     monkeypatch.setattr(memory, "cuda_available_bytes", lambda program: available)
@@ -226,6 +233,51 @@ def test_auto_selection_checks_actual_workspace(monkeypatch, available, chosen):
     )
     assert decision["selected"] == chosen
     assert (result is plan) == (chosen == "mstep")
+
+
+def test_auto_selection_still_checks_full_plan_and_refreshes_budget(monkeypatch):
+    from beamz.simulation import backend, memory
+    from beamz.simulation.cuda import mstep
+
+    program = _program(runs=32)
+    monkeypatch.setattr(schedule, "cuda_device_kind", lambda: "NVIDIA GeForce RTX 3090")
+    monkeypatch.setattr(
+        backend,
+        "cuda_backend_status",
+        lambda **kw: SimpleNamespace(targets=(abi.CUDA_MSTEP_TARGET,)),
+    )
+    monkeypatch.setattr(mstep, "build_mstep_geometry", lambda *args: _geometry())
+    plan = SimpleNamespace(summary=lambda: {"scratch_bytes": 8192, "plan_bytes": 1024})
+    monkeypatch.setattr(mstep, "build_mstep_plan", lambda *args: plan)
+    budgets = iter((20 << 30, 1))
+    monkeypatch.setattr(memory, "cuda_available_bytes", lambda _: next(budgets))
+    result, decision = schedule.choose_execution_schedule(
+        program, (None,) * 9, None, native_supported=True, donate_state=False
+    )
+    assert result is None
+    assert decision["selected"] == "streamed"
+    assert decision["available_bytes"] == 1
+    assert "workspace_bytes" in decision
+
+
+@pytest.mark.parametrize("progress", [False, True])
+@pytest.mark.parametrize("runs", [True, False, 0, -1, 1.5, "2"])
+def test_progress_preserves_reuse_hint_validation(progress, runs):
+    import beamz as bz
+
+    sim = bz.Simulation(
+        domain=(0.4 * bz.um, 0.3 * bz.um),
+        resolution=0.1 * bz.um,
+        time=np.arange(5) * 1e-17,
+    )
+    with pytest.raises(ValueError, match="expected_runs must be a positive integer"):
+        sim.advance(
+            num_steps=2,
+            backend="jax",
+            progress=progress,
+            expected_runs=runs,
+            performance=False,
+        )
 
 
 def test_schedule_and_reuse_are_execution_cache_inputs():

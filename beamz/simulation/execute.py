@@ -1564,6 +1564,9 @@ def run_simulation_with_progress(
     expected_runs: int = 1,
 ) -> SimulationRun:
     """Run a segment in compiled chunks and report actual completed timesteps."""
+    from beamz.simulation.cuda.schedule import normalize_expected_runs
+
+    expected_runs = normalize_expected_runs(expected_runs)
     chunk_lengths = _progress_chunk_lengths(num_steps)
     # This API already knows how often each executable will run. Account for
     # that work even when visible progress divides a long run into short calls.
