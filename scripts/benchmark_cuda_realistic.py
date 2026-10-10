@@ -33,11 +33,16 @@ def build_simulation(args):
     total_steps = args.steps + getattr(args, "presteps", 0)
     times = np.arange(total_steps) * dt
     eps = np.full((nz, ny, nx), 1.44**2, dtype=np.float32)
+    transverse_offset = int(getattr(args, "transverse_offset_cells", 0))
+    center_z = nz // 2 + transverse_offset
+    center_y = ny // 2 + transverse_offset
+    physical_y = size[1] / 2 + transverse_offset * dx
+    physical_z = size[2] / 2 + transverse_offset * dx
     half_z = max(1, round(160e-9 / dx))
     half_y = max(1, round(240e-9 / dx))
     eps[
-        nz // 2 - half_z : nz // 2 + half_z,
-        ny // 2 - half_y : ny // 2 + half_y,
+        center_z - half_z : center_z + half_z,
+        center_y - half_y : center_y + half_y,
         :,
     ] = 3.48**2
     if args.material == "smooth":
@@ -68,7 +73,7 @@ def build_simulation(args):
     )
     sources = [
         bz.ModeSource(
-            center=(0.3 * size[0], size[1] / 2, size[2] / 2),
+            center=(0.3 * size[0], physical_y, physical_z),
             size=(
                 0,
                 min(1.6e-6, size[1] - 2 * args.pml * dx),
@@ -82,14 +87,14 @@ def build_simulation(args):
     if args.source == "gaussian":
         sources = [
             bz.GaussianSource(
-                position=(0.3 * size[0], size[1] / 2, size[2] / 2),
+                position=(0.3 * size[0], physical_y, physical_z),
                 width=3 * dx,
                 signal=signal.astype(np.float32),
             )
         ]
     monitors = [
         bz.FieldMonitor(
-            center=((0.65 + i * 0.1) * size[0], size[1] / 2, size[2] / 2),
+            center=((0.65 + i * 0.1) * size[0], physical_y, physical_z),
             size=(0, size[1] - 2 * args.pml * dx, size[2] - 2 * args.pml * dx),
             freqs=np.linspace(freq * 0.97, freq * 1.03, args.frequencies),
             fields=("Ey", "Ez", "Hy", "Hz"),
@@ -98,9 +103,16 @@ def build_simulation(args):
         for i in range(args.monitors)
     ]
     if getattr(args, "monitor_type", "field") == "mode":
+        offset = getattr(args, "monitor_offset_cells", None)
         monitors = [
             bz.ModeMonitor(
-                center=((0.65 + i * 0.1) * size[0], size[1] / 2, size[2] / 2),
+                center=(
+                    (0.65 + i * 0.1) * size[0]
+                    if offset is None
+                    else 0.3 * size[0] + (i + 1) * offset * dx,
+                    physical_y,
+                    physical_z,
+                ),
                 size=(
                     0,
                     min(1.6e-6, size[1] - 2 * args.pml * dx),
