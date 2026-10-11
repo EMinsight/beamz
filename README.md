@@ -48,16 +48,13 @@ Try out notebooks from our growing **[example library](https://beamz.tech/simula
 - [3) Grating Coupler (3D)](https://www.beamz.tech/examples/grating_coupler)
 - [4) Microring Resooator (3D)](https://www.beamz.tech/examples/ring_resonator_add_drop)
 - [5) 1x4 MMI Powersplitter (3D)](https://www.beamz.tech/examples/mmi1x4_power_splitter)
-- [6) Topology Optimized 90° Bend (2D)](https://beamz.tech/examples/ceviche_bend)
-- [7) GDSFactory PDK 1x2 MMI (3D)](https://www.beamz.tech/examples/gdsfactory_component_sparameters)
+- [6) GDSFactory PDK 1x2 MMI (3D)](https://www.beamz.tech/examples/gdsfactory_component_sparameters)
+- [7) Inverse-designed Mode Converter (2D)](examples/notebooks/topology_mode_converter.ipynb)
+- [8) Broadband Inverse-designed Wavelength Demultiplexer](examples/notebooks/topology_broadband_demultiplexer.ipynb)
+- [9) Inverse Design: 1-to-3 Splitter](examples/notebooks/topology_inverse_design_splitter.ipynb)
+- [9) 3D Topology Waveguide Bend](examples/notebooks/topology_bend_3d.ipynb)
+- [10) Scheduled Four-channel WDM](examples/notebooks/topology_wdm_4channel.ipynb)
 
-
-- [Inverse-designed Mode Converter (2D)](examples/notebooks/topology_mode_converter.ipynb)
-- [Broadband Inverse-designed Wavelength Demultiplexer](examples/notebooks/topology_broadband_demultiplexer.ipynb)
-- [Meep's Broadband Bend: Nominal and Fabrication-Robust Inverse Design](examples/notebooks/meep_filtered_waveguide_bend.ipynb)
-- [Inverse Design: 1-to-3 Splitter](examples/notebooks/topology_inverse_design_splitter.ipynb)
-- [3D Topology Waveguide Bend](examples/notebooks/topology_bend_3d.ipynb)
-- [Scheduled Four-channel WDM](examples/notebooks/topology_wdm_4channel.ipynb)
 
 ## Integration 
 
