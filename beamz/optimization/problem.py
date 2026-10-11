@@ -555,8 +555,14 @@ class TopologyProblem:
     to_simulation = material_simulation
     to_simulation_data = simulation_data
 
-    def export_design(self, result, *, threshold=0.5):
+    def export_design(
+        self, result, *, threshold=0.5, mode="contour", sample_spacing=None
+    ):
         """Return fixed geometry plus thresholded topology polygons, for re-solving.
+
+        ``mode`` is "contour" or "pixel_exact". ``sample_spacing`` optionally
+        refines bilinear contour sampling in metres. Outside fixed structures
+        supply contour context; the region itself is clipped to exact cell edges.
 
         The base design must contain only fixed structures in the design region's
         background. A low-index region polygon overwrites any initial geometry in
@@ -578,13 +584,19 @@ class TopologyProblem:
             spec.region_mask.astype(float),
             level=0.5,
             material=Material(permittivity=spec.eps_min),
+            mode="pixel_exact",
             **kwargs,
         ):
             design += polygon
         for polygon in density_to_polygons(
-            np.where(spec.region_mask, physical, 0.0),
+            np.where(spec.region_mask, physical, spec.fixed_structure_mask),
             level=threshold,
             material=Material(permittivity=spec.eps_max),
+            mode=mode,
+            sample_spacing=sample_spacing,
+            region_mask=spec.region_mask,
+            fixed_solid=spec.fixed_solid,
+            fixed_void=spec.fixed_void,
             **kwargs,
         ):
             design += polygon

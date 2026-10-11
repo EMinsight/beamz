@@ -15,6 +15,7 @@ from beamz.design.core import Design
 from beamz.design.materials import Material
 from beamz.design.structures import Structure
 
+from ._validation import fixed_density_masks
 from .autodiff import compute_parameter_gradient_vjp, transform_density
 from .projections import validate_projection_options
 
@@ -112,6 +113,8 @@ class TopologySpec:
 
     Notes
     -----
+    Optional ``fixed_solid`` and ``fixed_void`` boolean masks pin cells inside
+    ``region_mask`` to physical density 1 and 0, including during export.
     The region and fixed-structure masks are copied and made read-only. Evolving
     density and optimizer values live in :class:`TopologyState`.
     """
@@ -131,6 +134,8 @@ class TopologySpec:
     filter_type: str = "conic"
     morphology_operation: str = "openclose"
     morphology_smooth_tau: float = 0.01
+    fixed_solid: Any = field(default=None, repr=False, compare=False)
+    fixed_void: Any = field(default=None, repr=False, compare=False)
     fixed_structure_mask: np.ndarray = field(init=False, repr=False)
     filter_radius_cells: int = field(init=False)
 
@@ -149,6 +154,12 @@ class TopologySpec:
         ssp_smoothing_radius = float(self.ssp_smoothing_radius)
         validate_projection_options(projection_type, ssp_smoothing_radius)
         mask = _readonly_array(self.region_mask, bool)
+        solid, void = fixed_density_masks(self.fixed_solid, self.fixed_void, mask.shape)
+        for pinned in (solid, void):
+            if pinned is not None and np.any(pinned & ~mask):
+                raise ValueError("Fixed density cells must lie inside region_mask.")
+        object.__setattr__(self, "fixed_solid", solid)
+        object.__setattr__(self, "fixed_void", void)
         base_grid = self.design.rasterize(resolution)
         fixed = get_fixed_structure_mask(
             base_grid, float(self.eps_min), float(self.eps_max), mask
@@ -234,6 +245,8 @@ class TopologySpec:
             fixed_structure_mask=jnp.asarray(self.fixed_structure_mask),
             projection_type=self.projection_type,
             ssp_smoothing_radius=self.ssp_smoothing_radius,
+            fixed_solid=self.fixed_solid,
+            fixed_void=self.fixed_void,
         )
 
     def density_for_step(
