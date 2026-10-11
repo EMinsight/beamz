@@ -5,7 +5,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
-from jax.scipy.signal import convolve2d
+from jax.scipy.signal import convolve
 
 from ._validation import check_density, fixed_density_masks
 from .autodiff import apply_fixed_density
@@ -82,13 +82,19 @@ class FilterProject(Specification):
         radius = self.radius / design_region_dl
         if radius > 0:
             pad = int(np.ceil(radius))
-            y, x = np.mgrid[-pad : pad + 1, -pad : pad + 1]
-            kernel = np.maximum(0, 1 - np.hypot(x, y) / pad)
+            if spatial_data.ndim not in (2, 3):
+                raise ValueError("FilterProject requires a 2D or 3D density array.")
+            coordinates = np.meshgrid(
+                *([np.arange(-pad, pad + 1)] * spatial_data.ndim), indexing="ij"
+            )
+            distance = np.sqrt(sum(axis**2 for axis in coordinates))
+            kernel = np.maximum(0, 1 - distance / pad)
             kernel /= kernel.sum()
-            spatial_data = convolve2d(
+            spatial_data = convolve(
                 jnp.pad(spatial_data, pad, mode=self.padding),
                 jnp.asarray(kernel),
                 mode="valid",
+                method="fft" if spatial_data.ndim == 3 else "direct",
             )
         # Convolution/projection can overshoot by one float32 ulp at a constant
         # zero/one region. Preserve the transformation's declared density range.
@@ -161,12 +167,14 @@ class ErosionDilationPenalty(Specification):
 
 @dataclass(frozen=True)
 class TopologyDesignRegion(Specification):
-    """Planar density region in the simulation's public coordinates.
+    """Planar or volumetric density region in public simulation coordinates.
 
-    All lengths are metres. Parameters have BeamZ's (y, x) order and are
-    uniform along z through the specified thickness in 3D simulations. Bounds
-    must align to the grid, with pixel_size == resolution. Optional boolean
-    ``fixed_solid`` / ``fixed_void`` masks have ``params_shape`` and pin physical
+    All lengths are metres. ``parameterization="planar"`` (default) uses (y, x)
+    parameters extruded through z. ``"volumetric"`` uses independent (z, y, x)
+    voxels. Bounds must align to the simulation grid. The density grid may have
+    a different pixel_size; physical density is linearly sampled at FDTD cell
+    centers, and gradients use the exact transpose of that interpolation.
+    Optional boolean ``fixed_solid`` / ``fixed_void`` masks have ``params_shape`` and pin physical
     density to 1 / 0 before and after every transform, with zero parameter
     gradients at those cells. Export preserves their exact cell footprints.
     """
@@ -181,8 +189,11 @@ class TopologyDesignRegion(Specification):
     penalty_input: str = field(default="density", metadata={"beamz_cache": False})
     fixed_solid: Any = field(default=None, repr=False, compare=False)
     fixed_void: Any = field(default=None, repr=False, compare=False)
+    parameterization: str = "planar"
 
     def __post_init__(self):
+        if self.parameterization not in ("planar", "volumetric"):
+            raise ValueError("parameterization must be planar or volumetric.")
         if self.penalty_input not in ("density", "parameters"):
             raise ValueError("penalty_input must be density or parameters.")
         for name in ("size", "center", "eps_bounds", "transformations", "penalties"):
@@ -210,8 +221,15 @@ class TopologyDesignRegion(Specification):
             or not 0 < self.eps_bounds[0] < self.eps_bounds[1]
         ):
             raise ValueError("Require finite 0 < eps_bounds[0] < eps_bounds[1].")
-        cells = np.asarray(self.size[:2]) / self.pixel_size
-        if not np.allclose(cells, np.round(cells), rtol=0, atol=1e-6):
+        if self.parameterization == "volumetric" and (
+            not np.isfinite(self.size[2]) or self.size[2] <= 0
+        ):
+            raise ValueError("Volumetric regions require finite positive z size.")
+        sizes = self.size if self.parameterization == "volumetric" else self.size[:2]
+        cells = np.asarray(sizes) / self.pixel_size
+        if np.any(np.round(cells) < 1) or not np.allclose(
+            cells, np.round(cells), rtol=0, atol=1e-6
+        ):
             raise ValueError(
                 "Design-region sizes must be integer multiples of pixel_size."
             )
@@ -230,7 +248,8 @@ class TopologyDesignRegion(Specification):
 
     @property
     def params_shape(self):
-        return tuple(int(round(size / self.pixel_size)) for size in self.size[1::-1])
+        sizes = self.size if self.parameterization == "volumetric" else self.size[:2]
+        return tuple(int(round(size / self.pixel_size)) for size in sizes[::-1])
 
     @property
     def initial_parameters(self):
