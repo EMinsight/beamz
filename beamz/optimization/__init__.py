@@ -1,6 +1,6 @@
 """Inverse design with BeamZ objects, metre units, and selectable gradients."""
 
-from . import adjoint_memmap, topology
+from . import adjoint_memmap, topology, utils
 from .design import InverseDesign
 from .objectives import ModePower, SoftMinModePower, WeightedObjective
 from .optimizer import AdamOptimizer
@@ -37,6 +37,7 @@ __all__ = [
     "RandomInitializationSpec",
     "TopologyDesignRegion",
     "UniformInitializationSpec",
+    "utils",
     "ModePower",
     "SoftMinModePower",
     "WeightedObjective",

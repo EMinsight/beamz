@@ -28,8 +28,8 @@ design = opt.InverseDesign(
 
 
 def transmission(data):
-    incoming = data["input"].amps.sel(direction="+", mode_index=0).values
-    outgoing = data["output"].amps.sel(direction="+", mode_index=0).values
+    incoming = opt.utils.get_amps(data, "input", direction="+", mode_index=0)
+    outgoing = opt.utils.get_amps(data, "output", direction="+", mode_index=0)
     return jnp.mean(jnp.abs(outgoing / incoming) ** 2)
 
 
@@ -74,10 +74,9 @@ rejected explicitly; rerun the examples to generate current checkpoints.
 Numerical fingerprint 5 also rejects earlier histories, whose reference powers
 could be paired with the wrong frequencies when monitor frequency orders differ.
 
-See the [mode converter](../../examples/notebooks/topology_mode_converter.ipynb),
-[broadband demultiplexer](../../examples/notebooks/topology_broadband_demultiplexer.ipynb),
-and [3D bend](../../examples/notebooks/topology_bend_3d.ipynb) notebooks for complete
-inverse-design examples.
+See the [mode-converter notebook](../../examples/notebooks/topology_mode_converter.ipynb)
+and [scheduled WDM notebook](../../examples/notebooks/topology_wdm_4channel.ipynb)
+for complete inverse-design examples.
 
 ## Lower-level control
 

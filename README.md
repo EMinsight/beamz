@@ -54,7 +54,10 @@ Try out notebooks from our growing **[example library](https://beamz.tech/simula
 
 - [Inverse-designed Mode Converter (2D)](examples/notebooks/topology_mode_converter.ipynb)
 - [Broadband Inverse-designed Wavelength Demultiplexer](examples/notebooks/topology_broadband_demultiplexer.ipynb)
+- [Meep's Broadband Bend: Nominal and Fabrication-Robust Inverse Design](examples/notebooks/meep_filtered_waveguide_bend.ipynb)
+- [Inverse Design: 1-to-3 Splitter](examples/notebooks/topology_inverse_design_splitter.ipynb)
 - [3D Topology Waveguide Bend](examples/notebooks/topology_bend_3d.ipynb)
+- [Scheduled Four-channel WDM](examples/notebooks/topology_wdm_4channel.ipynb)
 
 ## Integration 
 

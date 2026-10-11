@@ -161,6 +161,7 @@ EXPECTED_EXPORTS = {
         "RandomInitializationSpec",
         "TopologyDesignRegion",
         "UniformInitializationSpec",
+        "utils",
         "ModePower",
         "SoftMinModePower",
         "WeightedObjective",
