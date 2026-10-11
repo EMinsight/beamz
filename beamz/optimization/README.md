@@ -74,8 +74,9 @@ rejected explicitly; rerun the examples to generate current checkpoints.
 Numerical fingerprint 5 also rejects earlier histories, whose reference powers
 could be paired with the wrong frequencies when monitor frequency orders differ.
 
-See the [workflow guide](../../docs/inverse-design-workflow.md) for schedules,
-restart semantics, native plotting, export, and executed notebook examples.
+See the [mode-converter notebook](../../examples/notebooks/topology_mode_converter.ipynb)
+and [scheduled WDM notebook](../../examples/notebooks/topology_wdm_4channel.ipynb)
+for complete inverse-design examples.
 
 ## Lower-level control
 
@@ -94,7 +95,6 @@ geometry = problem.export_design(result)
 ```
 
 `ModePower` and `SoftMinModePower` combine using arithmetic, for example
-`transmission - 0.2 * reflection`. The [backend guide](../../docs/inverse-design.md)
-describes this workflow and gradient validation. `autodiff.py`, `projections.py`,
-and `polygonize.py` contain the density transforms, SSP projection, and geometry
-export helpers for custom loops.
+`transmission - 0.2 * reflection`. `autodiff.py`, `projections.py`, and
+`polygonize.py` contain the density transforms, SSP projection, and geometry export
+helpers for custom loops.
