@@ -1672,10 +1672,6 @@ class Simulation:
             ``ax``, ``figsize``, ``z``, ``y``, axis limits, and marker controls.
             ``show`` defaults to ``False`` for this method.
 
-            Two-dimensional layouts share the 3D material palette, shaded PML
-            bands, and source/monitor glyphs. Display coordinates and axis limits
-            are in micrometres; slice positions and simulation inputs use metres.
-
             For a native three-dimensional :class:`~beamz.Design`, passing ``z``
             or ``y`` creates antialiased geometry cross sections. These setup
             plots preserve polygon boundaries and do not compile or show the FDTD

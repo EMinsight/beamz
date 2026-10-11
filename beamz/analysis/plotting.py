@@ -711,29 +711,6 @@ def _device_geometry(device):
 
 
 def _draw_device_slice_overlay(ax, device, *, normal, origin, color, source):
-    spec = visual_spec_from_device(device)
-    if spec is not None and (spec.style or {}).get("shape") == "circle":
-        from matplotlib.patches import Circle
-
-        vertical, horizontal = _PLANE_AXES[normal]
-        indices = tuple("xyz".index(axis) for axis in (horizontal, vertical))
-        center = (
-            spec.center
-            if len(spec.center) == 2
-            else tuple(spec.center[i] for i in indices)
-        )
-        patch = Circle(
-            tuple(
-                (value - origin[i]) / _UM
-                for value, i in zip(center, indices, strict=True)
-            ),
-            radius=0.5 * spec.size[0] / _UM,
-            fill=False,
-            edgecolor=color,
-            linewidth=2.0,
-        )
-        ax.add_patch(patch)
-        return patch
     geometry = _device_geometry(device)
     if geometry is None:
         return
@@ -846,7 +823,7 @@ def _layout_slice(normal, position, *, design, origin) -> AxisSlice:
     extents: dict[str, float] = {
         "x": float(design.width),
         "y": float(design.height),
-        "z": float(design.depth or 0.0),
+        "z": float(design.depth),
     }
     origin_by_axis: dict[str, float] = dict(zip(("x", "y", "z"), origin, strict=True))
     extent = (
@@ -1111,15 +1088,6 @@ def _draw_geometry_cross_section(ax, sim, *, normal, position, origin, colors):
         material = getattr(structure, "material", None)
         if material is None:
             continue
-        if not design.is_3d:
-            _path_patch(
-                ax,
-                _planar_structure_geometry(structure),
-                normal=normal,
-                origin=origin,
-                facecolor=_layout_color(material, colors),
-            )
-            continue
         _draw_structure_slice(
             ax,
             structure,
@@ -1310,21 +1278,6 @@ def _overlay_layout_devices(
             )
 
 
-def _overlay_layout_pml(ax, sim, *, normal, extent):
-    for thickness, edges in _pml_section_layers(sim, normal):
-        overlay_boundaries(
-            ax,
-            extent,
-            thickness / _UM,
-            edges=edges,
-            facecolor="#666666",
-            alpha=0.22,
-            hatch="///",
-            edgecolor="#666666",
-            linewidth=0.0,
-        )
-
-
 def _plot_3d_material_cross_sections(
     sim,
     *,
@@ -1399,8 +1352,22 @@ def _plot_3d_geometry_cross_sections(
             colors=colors,
         )
 
+    style = dict(
+        facecolor="#666666",
+        alpha=0.22,
+        hatch="///",
+        edgecolor="#666666",
+        linewidth=0.0,
+    )
     for ax, item in zip(axes, slices, strict=True):
-        _overlay_layout_pml(ax, sim, normal=item.normal, extent=item.extent)
+        for thickness, edges in _pml_section_layers(sim, item.normal):
+            overlay_boundaries(
+                ax,
+                item.extent,
+                thickness / _UM,
+                edges=edges,
+                **style,
+            )
 
     overlay_simulation_devices(
         axes,
@@ -1566,81 +1533,6 @@ def plot_simulation_permittivity(
     return fig, ax
 
 
-def _plot_2d_layout(
-    sim,
-    *,
-    origin,
-    ax,
-    figsize,
-    show,
-    title,
-    source_markers,
-    monitor_markers,
-    xlim,
-    ylim,
-):
-    """Draw the stored 2D plane with the same visual language as 3D sections."""
-    from beamz.lattice import (
-        grid_axes_in_physical_frame_2d,
-        physical_vector_to_grid_2d,
-    )
-
-    origin = _simulation_origin(sim) if origin is None else origin
-    local_origin = physical_vector_to_grid_2d(origin, sim.plane_2d)
-    horizontal, vertical, normal = grid_axes_in_physical_frame_2d(sim.plane_2d)
-    item = _layout_slice("z", 0.0, design=sim.design, origin=local_origin)
-    fig, ax = _figure_axes(ax, figsize=figsize or (7.0, 4.5))
-    if sim.material_grid is None:
-        _draw_geometry_cross_section(
-            ax,
-            sim,
-            normal="z",
-            position=0.0,
-            origin=local_origin,
-            colors=_layout_material_colors(sim.design),
-        )
-    else:
-        # Imported/material-only simulations must show their actual design,
-        # rather than the placeholder analytic background.
-        materials = sim._material_grid()
-        grid = materials.grid
-        edges = [
-            (np.asarray(grid.axis_edges(axis)) - grid.origin[i] - local_origin[i]) / _UM
-            for i, axis in enumerate(("x", "y"))
-        ]
-        cmap, norm = _material_cmap()
-        plot_field_view(
-            ax,
-            _material_category_array(materials.permittivity),
-            x_edges=edges[0],
-            y_edges=edges[1],
-            cmap=cmap,
-            norm=norm,
-        )
-    # Boundary names refer to the stored plane; device positions are physical.
-    _overlay_layout_pml(ax, sim, normal="z", extent=item.extent)
-    _overlay_layout_devices(
-        ax,
-        sim,
-        normal=normal,
-        origin=origin,
-        source_markers=source_markers,
-        monitor_markers=monitor_markers,
-    )
-    ax.set(
-        title=title,
-        xlabel=f"{horizontal} (um)",
-        ylabel=f"{vertical} (um)",
-        xlim=item.extent[:2] if xlim is None else xlim,
-        ylim=item.extent[2:] if ylim is None else ylim,
-    )
-    ax.set_aspect("equal", adjustable="box")
-    ax.grid(False)
-    fig.tight_layout()
-    _maybe_show(fig, show=show)
-    return fig, ax
-
-
 def plot_simulation(
     sim,
     *,
@@ -1660,21 +1552,8 @@ def plot_simulation(
     title="Simulation Layout",
     **_kwargs,
 ):
-    """Plot styled 2D layouts or 3D cross sections, with axes in micrometres."""
-    if not sim.is_3d:
-        return _plot_2d_layout(
-            sim,
-            origin=origin,
-            ax=ax,
-            figsize=figsize,
-            show=show,
-            title=title,
-            source_markers=source_markers,
-            monitor_markers=monitor_markers,
-            xlim=xlim,
-            ylim=ylim,
-        )
-    if z is not None or y is not None:
+    """Plot a simulation layout or styled 3D cross sections."""
+    if bool(getattr(sim, "is_3d", False)) and (z is not None or y is not None):
         if ax is not None:
             raise ValueError("3D cross-section plots create their own axes.")
         if not categorical_cross_sections:

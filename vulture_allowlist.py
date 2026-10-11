@@ -101,8 +101,6 @@ _.elapsed_seconds
 _.post_process_val
 _.schedule_history
 _.plot_optimization
-get_amps
-sum_abs_squared
 
 # CUDA diagnostics are consumed by benchmark scripts; cache fields are serialized.
 tuning_report
