@@ -150,3 +150,111 @@ def test_subnanometre_contour_survives_native_rasterization():
     raster = design.rasterize(25e-9).permittivity
     assert np.isfinite(raster).all()
     assert raster.max() > 1.0
+
+
+@pytest.mark.parametrize("mode", ["contour", "pixel_exact"])
+@pytest.mark.parametrize("level,value", [(0.5, 1), (0.5, 0.51), (0.8, 0.9)])
+def test_solid_density_reaches_exact_cell_edges(mode, level, value):
+    from shapely.geometry import box
+
+    # Regression for #331: old padding inset a solid edge by dx/6 at level=.5.
+    geometry = density_to_shapely_geometry(
+        np.full((8, 12), value),
+        level=level,
+        mode=mode,
+        x0=-300e-9,
+        y0=200e-9,
+        dx=60e-9,
+        dy=80e-9,
+    )
+    expected = box(-300e-9, 200e-9, 420e-9, 840e-9)
+    assert geometry.symmetric_difference(expected).area < 1e-26
+
+
+def test_pixel_exact_preserves_diagonal_pixels_holes_and_nested_islands():
+    from shapely.geometry import box
+    from shapely.ops import unary_union
+
+    density = np.zeros((12, 15))
+    density[1:10, 2:13] = 1
+    density[3:8, 4:11] = 0
+    density[4:6, 5:7] = 1
+    density[10, 13] = 1  # Corner-only contact must not become a finite-width bridge.
+    geometry = density_to_shapely_geometry(density, mode="pixel_exact")
+    expected = unary_union([box(x, y, x + 1, y + 1) for y, x in np.argwhere(density)])
+    assert geometry.equals(expected)
+    assert geometry.area == density.sum()
+    assert len(list(_iter_polygons(geometry))) == 3
+
+
+def test_contour_sampling_converges_to_bilinear_interface():
+    from shapely.geometry import box
+
+    yy, xx = np.mgrid[:8, :10] + 0.5
+    density = xx * yy / 100
+    domain = box(0.5, 0.5, 9.5, 7.5)
+    # Analytic area above x*y=25, restricted to the sample-center domain.
+    exact_area = 7.5 * (9.5 - 25 / 7.5) - 25 * np.log(9.5 / (25 / 7.5))
+    errors = []
+    for spacing in [1, 0.25, 0.0625]:
+        geometry = density_to_shapely_geometry(
+            density,
+            level=0.25,
+            sample_spacing=spacing,
+        ).intersection(domain)
+        errors.append(abs(geometry.area - exact_area))
+    assert errors[1] < errors[0] / 8
+    assert errors[2] < errors[1] / 8
+
+
+@pytest.mark.parametrize("mode", ["contour", "pixel_exact"])
+def test_fixed_cells_and_nonrectangular_region_are_exact(mode):
+    from shapely.geometry import box
+
+    density = np.full((10, 12), 0.51)
+    solid = np.zeros_like(density, dtype=bool)
+    void = solid.copy()
+    solid[4:6, :3] = True
+    void[:4, :3] = True
+    void[6:, :3] = True
+    region = np.ones_like(solid)
+    region[8:, 8:] = False
+    geometry = density_to_shapely_geometry(
+        density,
+        fixed_solid=solid,
+        fixed_void=void,
+        region_mask=region,
+        mode=mode,
+    )
+    assert geometry.covers(box(0, 4, 3, 6))
+    assert geometry.intersection(box(0, 0, 3, 4)).area == 0
+    assert geometry.intersection(box(8, 8, 12, 10)).area == 0
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"dx": 0},
+        {"dy": -1},
+        {"dx": np.inf},
+        {"x0": np.nan},
+        {"level": np.nan},
+        {"min_area": -1},
+        {"mode": "smooth"},
+        {"sample_spacing": 0},
+        {"sample_spacing": np.inf},
+        {"mode": "pixel_exact", "sample_spacing": 0.1},
+        {"fixed_solid": np.ones((2, 2))},
+    ],
+)
+def test_invalid_geometry_options_fail_explicitly(kwargs):
+    with pytest.raises(ValueError):
+        density_to_shapely_geometry(np.ones((2, 2)), **kwargs)
+
+
+@pytest.mark.parametrize(
+    "density", [np.empty((0, 2)), np.ones((2, 2, 2)), np.full((2, 2), np.nan)]
+)
+def test_invalid_density_fails_explicitly(density):
+    with pytest.raises(ValueError):
+        density_to_shapely_geometry(density)

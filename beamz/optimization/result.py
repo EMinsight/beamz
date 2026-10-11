@@ -90,12 +90,16 @@ class InverseDesignResult:
         beta = self.beta if self.schedule is None else self.settings(index)["beta"]
         return self.design.to_simulation_data(self.params[index], beta=beta)
 
-    def export_design(self, index=-1, *, threshold=0.5):
+    def export_design(
+        self, index=-1, *, threshold=0.5, mode="contour", sample_spacing=None
+    ):
+        """Export physical density as contours or exact pixels (lengths in metres)."""
+        options = dict(threshold=threshold, mode=mode, sample_spacing=sample_spacing)
         if hasattr(self.design, "topology"):
-            return self.design.export_design(self, threshold=threshold)
+            return self.design.export_design(self, **options)
         return self.design.export_design(
             self.params[index],
-            threshold=threshold,
+            **options,
             beta=self.settings(index).get("beta"),
         )
 

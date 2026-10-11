@@ -98,3 +98,65 @@ geometry = problem.export_design(result)
 `transmission - 0.2 * reflection`. `autodiff.py`, `projections.py`, and
 `polygonize.py` contain the density transforms, SSP projection, and geometry export
 helpers for custom loops.
+
+## Export topology to GDS
+
+Both workflows and their results accept the same geometry controls:
+
+```python
+from beamz import Material
+from beamz.design import export_gds
+
+pixels = result.export_design(mode="pixel_exact")
+contours = result.export_design(mode="contour")  # default
+refined = result.export_design(mode="contour", sample_spacing=10e-9)
+
+export_gds(
+    refined,
+    "device.gds",
+    precision=1e-9,  # metres; 1 nm database grid
+    layer_map={Material(4.0): (1, 0)},  # select your core material/layer
+)
+```
+
+- `pixel_exact` unions the full footprints of density cells strictly above the
+  threshold. It preserves the thresholded mask, including its staircase edges.
+- `contour` reconstructs boundaries by linear interpolation. Edge samples extend
+  to the exact region boundary, so contour closure cannot inset connecting ports.
+- `sample_spacing` sets the maximum spacing of optional bilinear sampling before
+  contour extraction, in metres. It is only valid for contour mode and refines
+  the representation without recovering missing physical information. It does
+  not change the FDTD mesh or smooth the density with an additional filter.
+
+All density arrays use `(y, x)` order. For `density_to_polygons` and
+`density_to_shapely_geometry`, `x0, y0` are **cell-edge origins**, while density
+values are at cell centers. `dx, dy` are the physical cell sizes. Cropped arrays
+need their true edge origin; retain surrounding samples when external material
+context matters. `region_mask` clips a full density field to an exact union of
+cells, with the exterior values supplying interpolation context.
+
+To hold a waveguide connection during optimization, pass disjoint boolean
+`fixed_solid` and `fixed_void` arrays to `TopologyDesignRegion` or `TopologySpec`.
+Region arrays have `params_shape`; spec arrays have `region_mask.shape` and must
+lie inside that region. Fixed cells are applied before filtering and after
+projection, have zero gradients with respect to their parameters, and retain
+exact footprints during geometry export. They do not guarantee connectivity
+elsewhere in the design. Masks are copied and participate in checkpoint identity.
+
+`export_gds` preserves holes and uses a private database at the requested
+precision, without changing gdsfactory's global grid. `layer_map` selects only
+specified materials; omitting it retains automatic material-to-layer assignment.
+Explicitly select the core to exclude region-clearing and background polygons.
+
+Run the [export showcase](../../examples/optimization/topology_gds_export.py) to
+optimize a small 2D mode converter, compare the previous export with all three
+current variants, and reimport and simulate the actual GDS files on two meshes:
+
+```bash
+JAX_PLATFORMS=cpu uv run --extra gds python examples/optimization/topology_gds_export.py
+```
+
+The script writes GDS masks, boundary zooms, an interpolation comparison, and
+measured transmission to the ignored `results/gds-export/` directory. Revalidate
+geometry changes and GDS quantization separately from mesh convergence; smoother
+contours alone do not establish better performance.

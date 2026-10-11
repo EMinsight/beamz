@@ -58,3 +58,29 @@ settings, layer, PML, frequency grid, and port order in `result.provenance`.
 The first release supports axis-aligned optical ports, fundamental TE-like
 mode 1, and local 3D FDTD. Use `setup.simulation_for(...)` plus
 `Simulation.updated_copy(...)` to make non-default numerical choices explicit.
+
+## Export optimized geometry
+
+`export_gds` accepts metre-valued `precision` and an optional mapping from
+`Material` values to GDS `(layer, datatype)` pairs. The mapping selects the
+materials to export; other materials, including clearing polygons, are omitted.
+Without a mapping, material layers are assigned automatically as before.
+
+```python
+from beamz import Material
+from beamz.design import export_gds
+
+layout = result.export_design(mode="contour", sample_spacing=10e-9)
+export_gds(layout, "optimized.gds", precision=1e-9,
+           layer_map={Material(4.0): (1, 0)})
+```
+
+Use the permittivity of your actual core material in the mapping. For an exact
+thresholded cell mask, use `mode="pixel_exact"` without `sample_spacing`.
+Contours and cell footprints share the same physical cell-edge coordinates.
+The GDS database is local to the export, so finer precision does not depend on
+or alter gdsfactory's active grid. Excessively fine precision that would overflow
+GDS coordinates is rejected. Holes are preserved during serialization.
+
+See the [optimization guide](https://github.com/beamzorg/beamz/blob/main/beamz/optimization/README.md#export-topology-to-gds)
+for fixed port masks and the reproducible export/reimport simulation example.

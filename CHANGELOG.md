@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Fix topology contours shrinking away from design-region boundaries (#331).
+  Region clearing now uses exact cell footprints and fixed geometry supplies
+  interpolation context in `TopologyProblem`.
+- Add `mode="pixel_exact"` and optional bilinear contour `sample_spacing` to both
+  optimization export workflows, and fixed solid/void masks for port cells.
+- Add explicit GDS coordinate precision and material/layer selection, preserving
+  holes without intermediate quantization through a global layout grid.
+- Add a runnable mode-converter export showcase with GDS round-trip geometry and
+  transmission comparisons on 100 nm and 50 nm meshes.
+
 ## v0.5.3 - 2026-10-04
 
 ### What's Changed
