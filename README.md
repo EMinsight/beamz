@@ -9,7 +9,7 @@
   <h3>
 
   [Homepage](https://www.beamz.tech) / [Documentation](https://www.beamz.tech/docs/getting-started/) / [Example Library](https://www.beamz.tech/simulation-examples)
-  
+
   </h3>
 
   [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](https://github.com/beamzorg/beamz/blob/main/LICENSE)
@@ -36,7 +36,7 @@
 - Full-tensor and diagonal Farjadpour (polarized averaging) **subpixel-smoothing**.
 - Simple **GDS**, **GMSH** and **STL** import and export.
 - Streamlined, integrated **parametric design** module.
-- Projection kernels and utilies for inverse design via **auto-diff and adjoint-method** workflow.
+- 2D and extruded 3D topology **inverse design** in `beamz.optimization`, with selectable JAX autodiff or spectral adjoint FDTD gradients.
 
 
 ## Examples
@@ -51,6 +51,13 @@ Try out notebooks from our growing **[example library](https://beamz.tech/simula
 - [6) Topology Optimized 90° Bend (2D)](https://beamz.tech/examples/ceviche_bend)
 - [7) GDSFactory PDK 1x2 MMI (3D)](https://www.beamz.tech/examples/gdsfactory_component_sparameters)
 
+
+- [Inverse-designed Mode Converter (2D)](examples/notebooks/topology_mode_converter.ipynb)
+- [Broadband Inverse-designed Wavelength Demultiplexer](examples/notebooks/topology_broadband_demultiplexer.ipynb)
+- [Meep's Broadband Bend: Nominal and Fabrication-Robust Inverse Design](examples/notebooks/meep_filtered_waveguide_bend.ipynb)
+- [Inverse Design: 1-to-3 Splitter](examples/notebooks/topology_inverse_design_splitter.ipynb)
+- [3D Topology Waveguide Bend](examples/notebooks/topology_bend_3d.ipynb)
+- [Scheduled Four-channel WDM](examples/notebooks/topology_wdm_4channel.ipynb)
 
 ## Integration 
 

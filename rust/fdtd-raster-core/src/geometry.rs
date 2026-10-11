@@ -1222,6 +1222,30 @@ mod tests {
     }
 
     #[test]
+    fn polygon_normalization_preserves_nanometre_features() {
+        for scale in [1.0_f64, 1e-6, 1e-9] {
+            let x = 1.7e-6;
+            let y = 3.55e-6;
+            let polygon = Polygon2::new(
+                vec![
+                    [x, y],
+                    [x + scale, y],
+                    [x + scale, y + scale],
+                    [x, y + scale],
+                ],
+                vec![],
+            )
+            .unwrap();
+            assert_eq!(polygon.exterior.len(), 4);
+            assert_abs_diff_eq!(
+                polygon.area(),
+                scale * scale,
+                epsilon = scale * scale * 1e-8
+            );
+        }
+    }
+
+    #[test]
     fn exact_overlap_respects_holes() {
         let polygon = Polygon2::new(
             vec![[0.0, 0.0], [2.0, 0.0], [2.0, 2.0], [0.0, 2.0]],
