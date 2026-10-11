@@ -36,7 +36,7 @@
 - Full-tensor and diagonal Farjadpour (polarized averaging) **subpixel-smoothing**.
 - Simple **GDS**, **GMSH** and **STL** import and export.
 - Streamlined, integrated **parametric design** module.
-- 2D and extruded 3D topology **inverse design** in `beamz.optimization`, with selectable JAX autodiff or spectral adjoint FDTD gradients.
+- 2D and 3D topology **inverse design** with autodiff or adjoint method.
 
 
 ## Examples
