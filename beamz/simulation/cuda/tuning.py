@@ -128,7 +128,7 @@ def _queue_work(shape):
     )
 
 
-def predict_layout(shape):
+def predict_layout(shape) -> dict[str, Any]:
     """Estimate an RTX3090 CPML12 storage order from logical (z,y,x) extents.
 
     Pure host arithmetic: no device queries, trials or persistent profiles.

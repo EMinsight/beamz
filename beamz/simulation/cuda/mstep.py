@@ -117,7 +117,7 @@ def build_mstep_geometry(field_shapes, cpml, groups):
     return MstepGeometry(
         shape,
         np.asarray((zb, zt), np.int32),
-        masks,
+        np.asarray(masks, dtype=np.int32),
         int(core.sum()) * QUAD_Y * QUAD_X * max(0, zt - zb),
     )
 

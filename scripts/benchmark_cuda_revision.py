@@ -73,6 +73,47 @@ class DeviceMemorySampler:
         )
 
 
+def enable_parallel_host_placement(workers):
+    """Parallelize bounded host reads for capacity benchmarks only."""
+    # Capacity-only setup option: evaluate the unchanged bounded region
+    # reader on several host threads. GPU arrays and solver code are unchanged.
+    from concurrent.futures import ThreadPoolExecutor
+
+    import jax
+
+    from beamz._region_array import RegionArray
+    from beamz.simulation import sharding as sharding_runtime
+
+    original_place = sharding_runtime.place_region_array
+
+    def parallel_place(value, target):
+        def place(item):
+            device, index = item
+            bounds = [key.indices(n) for key, n in zip(index, value.shape, strict=True)]
+            shape = tuple(stop - start for start, stop, _ in bounds)
+
+            def read(region):
+                return value[
+                    tuple(
+                        slice(start + key.start, start + key.stop)
+                        for (start, _, _), key in zip(bounds, region, strict=True)
+                    )
+                ]
+
+            local = RegionArray(shape, value.dtype, read)
+            return original_place(local, jax.sharding.SingleDeviceSharding(device))
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            arrays = list(
+                pool.map(
+                    place, target.addressable_devices_indices_map(value.shape).items()
+                )
+            )
+        return jax.make_array_from_single_device_arrays(value.shape, target, arrays)
+
+    sharding_runtime.place_region_array = parallel_place
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
@@ -99,7 +140,9 @@ def main():
     parser.add_argument("--frequencies", type=int, default=3)
     parser.add_argument("--monitor-offset-cells", type=int)
     parser.add_argument("--transverse-offset-cells", type=int, default=0)
-    parser.add_argument("--transverse-anchor", choices=("center", "low"), default="center")
+    parser.add_argument(
+        "--transverse-anchor", choices=("center", "low"), default="center"
+    )
     parser.add_argument("--public-samples", type=int, default=0)
     parser.add_argument("--validation", choices=("full", "sampled"), default="full")
     parser.add_argument("--sample-points", type=int, default=2048)
@@ -135,33 +178,7 @@ def main():
     from beamz.simulation.execute import build_scan, initial_program_state
 
     if args.host_placement_workers > 1:
-        # Capacity-only setup option: evaluate the unchanged bounded region
-        # reader on several host threads. GPU arrays and solver code are unchanged.
-        from concurrent.futures import ThreadPoolExecutor
-        from beamz._region_array import RegionArray
-
-        original_place = sharding_runtime.place_region_array
-
-        def parallel_place(value, target):
-            def place(item):
-                device, index = item
-                bounds = [key.indices(n) for key, n in zip(index, value.shape)]
-                shape = tuple(stop - start for start, stop, _ in bounds)
-
-                def read(region):
-                    return value[tuple(
-                        slice(start + key.start, start + key.stop)
-                        for (start, _, _), key in zip(bounds, region)
-                    )]
-
-                local = RegionArray(shape, value.dtype, read)
-                return original_place(local, jax.sharding.SingleDeviceSharding(device))
-
-            with ThreadPoolExecutor(max_workers=args.host_placement_workers) as pool:
-                arrays = list(pool.map(place, target.addressable_devices_indices_map(value.shape).items()))
-            return jax.make_array_from_single_device_arrays(value.shape, target, arrays)
-
-        sharding_runtime.place_region_array = parallel_place
+        enable_parallel_host_placement(args.host_placement_workers)
 
     assert Path(beamz.__file__).resolve().parent.parent == root
     # Local development may symlink the extension into this checkout's build tree.
@@ -272,22 +289,27 @@ def main():
             # Uniform samples can miss the pulse in a multi-billion-cell grid.
             # Also retain the source neighbourhood of full-volume Yee leaves.
             if leaf.ndim == 3 and all(
-                n <= m <= n + 1 for n, m in zip(args.shape, leaf.shape)
+                n <= m <= n + 1 for n, m in zip(args.shape, leaf.shape, strict=True)
             ):
                 nz, ny, nx = args.shape
-                centers = [nz // 2 + args.transverse_offset_cells,
-                           ny // 2 + args.transverse_offset_cells, int(0.3 * nx)]
+                centers = [
+                    nz // 2 + args.transverse_offset_cells,
+                    ny // 2 + args.transverse_offset_cells,
+                    int(0.3 * nx),
+                ]
                 if args.transverse_anchor == "low":
                     centers[:2] = [min(n // 2 + 1, settings.pml + 12) for n in (nz, ny)]
                 local = []
                 for size, key, center, radius in zip(
-                    leaf.shape, shard.index, centers, (12, 12, 48)
+                    leaf.shape, shard.index, centers, (12, 12, 48), strict=True
                 ):
                     start, stop, _ = key.indices(size)
                     lo, hi = max(start, center - radius), min(stop, center + radius)
                     local.append(slice(max(0, lo - start), max(0, hi - start)))
                 if all(key.stop > key.start for key in local):
-                    values.append(np.asarray(jax.device_get(shard.data[tuple(local)])).ravel())
+                    values.append(
+                        np.asarray(jax.device_get(shard.data[tuple(local)])).ravel()
+                    )
         return np.concatenate(values)
 
     def fingerprints(value):

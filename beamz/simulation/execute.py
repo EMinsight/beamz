@@ -11,7 +11,7 @@ from collections import Counter, OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from time import perf_counter
-from typing import cast
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -704,7 +704,7 @@ def build_step_context(program, *, donate_state: bool = False):
     )
 
 
-def build_scan(program, *, donate_state: bool = False, checkpoint_interval=None):
+def build_scan(program, *, donate_state: bool = False, checkpoint_interval=None) -> Any:
     """Build the compiled scan, optionally rematerializing chunks for reverse AD.
 
     Checkpointed JAX execution uses the ordinary timestep, source, boundary,
@@ -894,7 +894,7 @@ def build_scan(program, *, donate_state: bool = False, checkpoint_interval=None)
             from beamz.simulation.cuda.mstep import run_mstep
             from beamz.simulation.cuda.runtime import run_native_steps
 
-            def mstep_call(
+            def invoke_mstep(
                 chunk_state, ctx, coefficients, groups, monitors, steps, **clock
             ):
                 return run_mstep(
@@ -909,6 +909,7 @@ def build_scan(program, *, donate_state: bool = False, checkpoint_interval=None)
                     **clock,
                 )
 
+            mstep_call: Callable = invoke_mstep
             if mstep_plan is not None and cfg.cuda_storage_axes != (0, 1, 2):
                 from beamz.simulation.cuda.storage import wrap_program_call
 
@@ -1068,6 +1069,8 @@ def build_scan(program, *, donate_state: bool = False, checkpoint_interval=None)
     # Empirical fusion autotuning allocates full-sized trial inputs/outputs during
     # compilation, outside executable.memory_analysis(). Use default emitters for
     # both FDTD backends so an otherwise fitting run can compile near capacity.
+    # JAX and the plan adapters expose a dynamic callable/lowering interface.
+    scan: Any
     if "compiler_options" in inspect.signature(jax.jit).parameters:
         scan = _BoundedCompileScan(
             run_scan,
