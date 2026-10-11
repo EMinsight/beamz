@@ -89,6 +89,35 @@ _.plot_sparameters
 _.check_reciprocity
 _.check_passivity
 
+# Public inverse-design and plotting entry points are exercised by notebooks
+# and downstream callers, outside Vulture's package-only scan.
+plot_simulation_permittivity
+_.plot_eps
+_.initial_simulation
+_.make_objective_fn
+_.eps_values
+_.gradient_norm
+_.elapsed_seconds
+_.post_process_val
+_.schedule_history
+_.plot_optimization
+get_amps
+sum_abs_squared
+
 # CUDA diagnostics are consumed by benchmark scripts; cache fields are serialized.
 tuning_report
 _.cuda_tuning_policy
+
+# Public dispersive-material APIs are used by user code and validation examples.
+_.to_spec
+_.from_spec
+_.lorentz
+_.drude
+# singledispatch invokes this registered source compiler.
+_lower_plane_wave_source
+
+# Public bundled material metadata and optical constants.
+MaterialVariant.license
+MaterialVariant.nk_data
+MaterialVariant.fit
+MaterialVariant.conditions

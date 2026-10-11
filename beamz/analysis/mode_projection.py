@@ -8,7 +8,6 @@ from beamz.analysis.modal_projection.diagnostics import (
     _modal_projection_reconstruction_diagnostics_from_matrix,
 )
 from beamz.analysis.modal_projection.geometry import (
-    _analysis_plane_sample_area,
     _modal_projection_plane_delay_s,
     _mode_components_for_port,
     _monitor_analysis_plane_3d,
@@ -128,18 +127,38 @@ def _monitor_profile_slice(sim, monitor, axis, pad_cells):
     if not points:
         raise ValueError(f"Monitor '{monitor.name}' contains no sample points.")
     p = np.asarray(points, dtype=float)
+    node_sampled = sim.coordinates.polarization_2d == "tm"
+
+    def transverse_material(profile):
+        if not node_sampled:
+            return profile
+        # Uniform TM monitors acquire Ez and tangential H on transverse nodes.
+        # Solve their basis on that same support, not on cell centers shifted by
+        # half a pixel. Do this before cropping so opposite ports retain exactly
+        # reflected material neighborhoods.
+        extended = np.pad(profile, (1, 1), mode="edge")
+        return 0.5 * (extended[:-1] + extended[1:])
+
     if axis == "x":
         x_idx = int(np.clip(round(float(np.mean(p[:, 0]))), 0, full_shape[1] - 1))
-        eps_profile_full = perm[:, x_idx - origin[1]]
+        eps_profile_full = transverse_material(perm[:, x_idx - origin[1]])
         sample_idx = np.asarray(
-            [int(np.clip(pi[1], 0, full_shape[0] - 1)) - origin[0] for pi in points],
+            [
+                int(np.clip(pi[1], 0, full_shape[0] - int(not node_sampled)))
+                - origin[0]
+                for pi in points
+            ],
             dtype=int,
         )
     else:
         y_idx = int(np.clip(round(float(np.mean(p[:, 1]))), 0, full_shape[0] - 1))
-        eps_profile_full = perm[y_idx - origin[0], :]
+        eps_profile_full = transverse_material(perm[y_idx - origin[0], :])
         sample_idx = np.asarray(
-            [int(np.clip(pi[0], 0, full_shape[1] - 1)) - origin[1] for pi in points],
+            [
+                int(np.clip(pi[0], 0, full_shape[1] - int(not node_sampled)))
+                - origin[1]
+                for pi in points
+            ],
             dtype=int,
         )
     lo = max(0, int(np.min(sample_idx)) - int(pad_cells))
@@ -276,11 +295,8 @@ def _build_discrete_port_projection_3d(
     proj_components = tuple(parts.get("projection_components_3d", ()))
     if not proj_components:
         raise ValueError(f"Port axis {axis!r} has no 3D projection components.")
-    d_area = _analysis_plane_sample_area(
-        analysis_coords0,
-        analysis_coords1,
-        float(sim.resolution),
-    )
+    # Match the flux monitor's cell-center aperture quadrature.
+    d_area = width * height / max(analysis_coords0.size * analysis_coords1.size, 1)
     if grid is not None and grid.metric_kind != "isotropic_uniform":
         if snapped_region is None:
             raise RuntimeError("Rectilinear mode projection requires a snapped region.")
@@ -504,6 +520,11 @@ def _build_port_projection_2d(
             weights * parts["signed_flux_sign"] * e_profile * np.conjugate(h_profile)
         )
     )
+    # The line-mode adapter retains legacy launch signs, including a magnetic
+    # sign reversal for y-normal planes. A port's '+' basis must instead carry
+    # positive physical flux along its normal, independent of that convention.
+    if power < 0:
+        h_profile = -h_profile
     normalization = np.sqrt(max(abs(power), 1e-30))
     e_forward = e_profile / normalization
     h_forward = h_profile / normalization
@@ -588,6 +609,52 @@ def _build_port_projection(
 
     cache[key] = projection
     return projection
+
+
+def _modal_coefficient_rows_3d(projections):
+    """Linear rows for the ordinary coupled forward/backward overlap system.
+
+    Rows multiply concatenated, colocated tangential E/H samples. Keeping this
+    reduction explicit lets optimization differentiate the same modal measurement.
+    """
+    first = projections[0]
+    components = first["components"]
+    axis = first["axis"]
+    pairs = {
+        "x": (("Ey", "Hz"), ("Ez", "Hy")),
+        "y": (("Ez", "Hx"), ("Ex", "Hz")),
+        "z": (("Ex", "Hy"), ("Ey", "Hx")),
+    }[axis]
+    measure = first.get("integration_weights", first["d_area"])
+    basis = [
+        p[key]
+        for p in projections
+        for key in ("mode_components", "mode_components_bwd")
+    ]
+    rhs_rows = []
+    for mode in basis:
+        row = {}
+        for (e, h), sign in zip(pairs, (1, -1), strict=True):
+            weights = np.asarray(
+                measure[e] if isinstance(measure, dict) else measure
+            ).reshape(-1)
+            scale = 0.25 * first["direction_sign"] * sign * weights
+            row[e] = scale * np.conj(np.asarray(mode[h]).ravel())
+            row[h] = scale * np.conj(np.asarray(mode[e]).ravel())
+        rhs_rows.append(np.concatenate([row[c] for c in components]))
+    rhs_rows = np.asarray(rhs_rows)
+    mode_matrix = np.column_stack(
+        [
+            np.concatenate([np.asarray(mode[c]).ravel() for c in components])
+            for mode in basis
+        ]
+    )
+    system = rhs_rows @ mode_matrix
+    if not np.isfinite(system).all():
+        raise ValueError("Invalid 3D modal overlap system.")
+    if np.linalg.cond(system) < 1e8:
+        return np.linalg.solve(system, rhs_rows)
+    return np.linalg.pinv(system) @ rhs_rows
 
 
 def _project_modal_coefficients_3d_group(field_components, projections):

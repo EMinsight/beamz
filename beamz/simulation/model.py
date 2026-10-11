@@ -155,6 +155,9 @@ class SimulationState(NamedTuple):
     cpml_psi_h_terms, cpml_psi_e_terms : tuple of array-like
         Packed convolutional-PML recurrence memory for magnetic and electric
         updates. Empty when CPML is disabled.
+    polarization : tuple of array-like
+        Complex auxiliary polarization arrays for occupied dispersive supports.
+        Empty for nondispersive simulations. Preserved during continuation.
     powers, timestamps, counts : array-like
         Time-domain monitor accumulators and valid-sample counts.
     freq_flux_re, freq_flux_im : array-like
@@ -217,6 +220,7 @@ class SimulationState(NamedTuple):
     recorded_counts: tuple[Any, ...]
     t: Any
     current_step: Any
+    polarization: tuple[Any, ...] = ()
 
     @classmethod
     def initial(cls, fields, *, t: float, current_step: int = 0):
@@ -470,6 +474,7 @@ class RunConfig:
     num_steps: int
     plane_2d: str
     is_3d: bool
+    t0: float = 0.0
     metric_kind: str = "isotropic_uniform"
     polarization_2d: str = "tm"
     loop_kind: str = "scan"
@@ -503,9 +508,13 @@ class CpmlPlan:
 @dataclass(frozen=True, slots=True, eq=False)
 class BoundaryPlan:
     metallic_edges_2d: frozenset[str]
+    periodic_axes: frozenset[int]
     cpml: CpmlPlan
     metallic: MetallicPlan
+    material_shape: tuple[int, ...]
     logical_component_shapes: Mapping[str, tuple[int, ...]]
+
+    periodic_phases: tuple[complex | float, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -533,3 +542,4 @@ class CompiledProgram:
     sources: tuple[CompiledSourceSpec, ...]
     monitors: tuple[CompiledMonitorSpec, ...]
     sharding: ShardingPlan
+    dispersion: Any = None

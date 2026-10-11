@@ -10,8 +10,10 @@ import numpy as np
 from beamz.const import µm
 
 BoundaryEdges = tuple[str, ...] | str
+BoundaryAxes = tuple[str, ...] | str
 _PLANAR_EDGES = ("left", "right", "top", "bottom")
 _VOLUME_EDGES = (*_PLANAR_EDGES, "front", "back")
+_AXES = ("x", "y", "z")
 
 
 def normalize_edges(edges: BoundaryEdges) -> BoundaryEdges:
@@ -261,17 +263,221 @@ class Absorber:
         return list(edges_for_dimension(self.edges, bool(is_3d)))
 
 
-Boundary = PEC | PML | Absorber
+@dataclass(frozen=True, slots=True)
+class Periodic:
+    """Identify axes whose opposite domain faces are periodically coupled.
+
+    Parameters
+    ----------
+    axes : "all", str, or sequence of str, default="all"
+        Physical Cartesian axes to wrap. A periodic axis always owns both of its
+        domain faces, so mismatched one-sided periodic configurations cannot be
+        represented.
+
+    Examples
+    --------
+    >>> boundary = Periodic(axes=("x", "y"))
+
+    Notes
+    -----
+    This boundary implements zero-phase periodicity. Use ``Bloch`` for
+    nonzero phase shifts. Periodic boundaries currently execute through the
+    JAX backend. Automatic backend selection chooses JAX, while an explicit CUDA
+    backend request raises an unsupported-backend error.
+    """
+
+    axes: BoundaryAxes = "all"
+
+    def __post_init__(self) -> None:
+        axes = self.axes
+        if isinstance(axes, str) and axes.lower() == "all":
+            object.__setattr__(self, "axes", "all")
+            return
+        values = sorted(axes) if isinstance(axes, set) else axes
+        values = values if isinstance(values, (list, tuple)) else (values,)
+        normalized = tuple(str(axis).lower() for axis in values)
+        invalid = set(normalized).difference(_AXES)
+        if invalid:
+            raise ValueError(f"Unsupported periodic axes: {sorted(invalid)}")
+        if not normalized:
+            raise ValueError("Periodic axes cannot be empty.")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("Periodic axes must be unique.")
+        object.__setattr__(self, "axes", normalized)
+
+    def updated_copy(self, **changes):
+        """Return a validated periodic boundary with selected fields replaced.
+
+        Parameters
+        ----------
+        **changes : object
+            Dataclass fields to replace.
+
+        Returns
+        -------
+        Periodic
+            New immutable periodic-boundary specification.
+
+        Raises
+        ------
+        TypeError or ValueError
+            If a field is unknown or a replacement is invalid.
+        """
+        return replace(self, **changes)
+
+
+@dataclass(frozen=True, slots=True)
+class Bloch(Periodic):
+    """Phase-periodic faces with a physical Cartesian wavevector in rad/m.
+
+    ``F(r + L_i e_i) = exp(1j * wavevector[i] * L_i) * F(r)``.
+    Components outside the selected axes must be zero. Nonzero wavevectors
+    require complex fields and single-device JAX execution.
+    """
+
+    wavevector: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+    def __post_init__(self) -> None:
+        Periodic.__post_init__(self)
+        vector = tuple(float(k) for k in self.wavevector)
+        if len(vector) != 3 or not all(np.isfinite(k) for k in vector):
+            raise ValueError(
+                "Bloch wavevector must contain three finite values in rad/m."
+            )
+        selected = _AXES if self.axes == "all" else self.axes
+        if any(
+            k != 0
+            for axis, k in zip(_AXES, vector, strict=True)
+            if axis not in selected
+        ):
+            raise ValueError("Bloch wavevector must be zero outside its selected axes.")
+        object.__setattr__(self, "wavevector", vector)
+
+
+Boundary = PEC | PML | Absorber | Periodic | Bloch
+
+
+def bloch_wavevector(boundaries, *, is_3d: bool, plane_2d: str = "xy"):
+    """Resolve ownership and return the physical wavevector without aliasing."""
+    active = active_physical_axes(is_3d, plane_2d)
+    owners = {}
+    for boundary in normalize_boundaries(boundaries):
+        if not isinstance(boundary, Periodic):
+            continue
+        vector = boundary.wavevector if isinstance(boundary, Bloch) else (0.0,) * 3
+        for axis in active if boundary.axes == "all" else boundary.axes:
+            k = vector[_AXES.index(axis)]
+            if axis in owners and owners[axis] != k:
+                raise ValueError(
+                    f"Conflicting periodic/Bloch wavevectors on axis {axis}."
+                )
+            owners[axis] = k
+        if any(vector[_AXES.index(axis)] != 0 for axis in _AXES if axis not in active):
+            raise ValueError("Bloch wavevector must be zero on inactive physical axes.")
+    return tuple(owners.get(axis, 0.0) for axis in _AXES)
+
+
+def bloch_storage_phases(boundaries, geometry, *, is_3d, plane_2d="xy"):
+    """Compile forward seam phases in canonical storage-axis order."""
+    vector = bloch_wavevector(boundaries, is_3d=is_3d, plane_2d=plane_2d)
+    axes = _AXES if is_3d else active_physical_axes(False, plane_2d)
+    grid_axes = _AXES if is_3d else ("x", "y")
+    return tuple(
+        complex(
+            np.exp(
+                1j * vector[_AXES.index(axis)] * np.ptp(geometry.axis_edges(grid_axis))
+            )
+        )
+        if vector[_AXES.index(axis)] != 0
+        else 1.0
+        for axis, grid_axis in reversed(tuple(zip(axes, grid_axes, strict=True)))
+    )
+
+
+def active_physical_axes(is_3d: bool, plane_2d: str = "xy") -> tuple[str, ...]:
+    """Return public Cartesian axes represented by a simulation lattice."""
+    if is_3d:
+        return _AXES
+    try:
+        return {
+            "xy": ("x", "y"),
+            "xz": ("x", "z"),
+            "yz": ("y", "z"),
+        }[str(plane_2d).lower()]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported 2D plane {plane_2d!r}.") from exc
+
+
+def periodic_storage_axes(
+    boundaries, *, is_3d: bool, plane_2d: str = "xy"
+) -> frozenset[int]:
+    """Resolve periodic physical axes to canonical array-axis indices."""
+    physical = active_physical_axes(bool(is_3d), plane_2d)
+    requested: set[str] = set()
+    for boundary in normalize_boundaries(boundaries):
+        if not isinstance(boundary, Periodic):
+            continue
+        requested.update(physical if boundary.axes == "all" else boundary.axes)
+    inactive = requested.difference(physical)
+    if inactive:
+        raise ValueError(
+            f"Periodic axes {sorted(inactive)} are not active in a {plane_2d} simulation."
+        )
+    storage = ("z", "y", "x") if is_3d else tuple(reversed(physical))
+    return frozenset(storage.index(axis) for axis in requested)
+
+
+def validate_boundary_compatibility(
+    boundaries, *, is_3d: bool, plane_2d: str = "xy"
+) -> None:
+    """Reject overlapping periodic and wall/absorber ownership before compilation."""
+    normalized = normalize_boundaries(boundaries)
+    bloch_wavevector(normalized, is_3d=is_3d, plane_2d=plane_2d)
+    periodic = periodic_storage_axes(normalized, is_3d=bool(is_3d), plane_2d=plane_2d)
+    if not periodic:
+        return
+    edge_pairs = (
+        (("front", "back"), ("bottom", "top"), ("left", "right"))
+        if is_3d
+        else (("bottom", "top"), ("left", "right"))
+    )
+    periodic_edges = {edge for axis in periodic for edge in edge_pairs[axis]}
+    conflicts: set[str] = set()
+    for boundary in normalized:
+        if isinstance(boundary, Periodic):
+            continue
+        conflicts.update(
+            periodic_edges.intersection(edges_for_dimension(boundary.edges, is_3d))
+        )
+    if conflicts:
+        raise ValueError(
+            "Periodic axes cannot also use PEC, PML, or Absorber faces; "
+            f"conflicting edges: {sorted(conflicts)}."
+        )
 
 
 def normalize_boundaries(boundaries) -> tuple[Boundary, ...]:
     """Freeze boundary input and preserve Beamz's historical all-PEC default."""
     resolved = tuple(boundaries) if boundaries else (PEC(),)
-    if not all(isinstance(boundary, (PEC, PML, Absorber)) for boundary in resolved):
+    if not all(
+        isinstance(boundary, (PEC, PML, Absorber, Periodic)) for boundary in resolved
+    ):
         raise TypeError(
-            "boundaries must contain only PEC, PML, or Absorber specifications"
+            "boundaries must contain only PEC, PML, Absorber, or Periodic specifications"
         )
     return resolved
 
 
-__all__ = ["Absorber", "Boundary", "PEC", "PML"]
+__all__ = [
+    "Absorber",
+    "Boundary",
+    "Bloch",
+    "PEC",
+    "PML",
+    "Periodic",
+    "active_physical_axes",
+    "bloch_wavevector",
+    "bloch_storage_phases",
+    "periodic_storage_axes",
+    "validate_boundary_compatibility",
+]

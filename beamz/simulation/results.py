@@ -632,6 +632,9 @@ class MonitorResults:
     )
     dft_weight_sum: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=float))
     dft_base_dt: float = 0.0
+    # A real carrier contains half its phasor at positive frequency; a complex
+    # exp(-i omega t) carrier contains the full phasor.
+    dft_amplitude_scale: float = 2.0
     resolution: float = 0.0
     normal_axis: int = -1
     normal_sign: float = 1.0
@@ -942,6 +945,9 @@ class MonitorResults:
                 dtype=np.float64,
             ).copy(),
             dft_base_dt=float(config.dt),
+            dft_amplitude_scale=1.0
+            if np.iscomplexobj(getattr(state, "ex", 0.0))
+            else 2.0,
             resolution=float(config.resolution),
             normal_axis=int(spec.normal_axis),
             normal_sign=float(spec.normal_sign),
@@ -1294,6 +1300,7 @@ class SimulationResults:
         store_full_materials: bool = False,
         source_launch_powers: tuple[float | None, ...] = (),
         performance: SimulationPerformance | None = None,
+        completed_steps: int | None = None,
     ) -> "SimulationResults":
         """Detach canonical analysis outputs from completed runtime buffers.
 
@@ -1311,6 +1318,9 @@ class SimulationResults:
             Calibrated launched powers corresponding to simulation sources.
         performance : SimulationPerformance, optional
             Execution statistics measured around the compiled simulation executable.
+        completed_steps : int, optional
+            Number of acquired steps, including continuation history. Source DFT
+            normalization uses this elapsed window rather than the future run horizon.
 
         Returns
         -------
@@ -1340,6 +1350,13 @@ class SimulationResults:
             runtime_fields=runtime_fields,
             store_full_materials=store_full_materials,
         )
+        if completed_steps is not None:
+            metadata = replace(
+                metadata,
+                time=_array_snapshot(
+                    simulation.time[: int(completed_steps)], dtype=float
+                ),
+            )
         monitor_results_dict = {
             name: replace(
                 result,

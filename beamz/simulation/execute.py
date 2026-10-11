@@ -11,6 +11,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from time import perf_counter
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -198,7 +199,7 @@ def _field_diagnostics(state: SimulationState, plan) -> tuple[float, float, bool
         values = jnp.asarray(getattr(state, field_name))
         finite = finite & jnp.all(jnp.isfinite(values))
         max_field = jnp.maximum(max_field, jnp.max(jnp.abs(values), initial=0.0))
-        density = jnp.asarray(material) * values * values
+        density = jnp.asarray(material) * jnp.abs(values) ** 2
         energy_density = energy_density + 0.5 * float(constant) * jnp.sum(
             density * jnp.asarray(measure)
         )
@@ -222,8 +223,7 @@ def _field_diagnostics(state: SimulationState, plan) -> tuple[float, float, bool
                 )
         energy_density = energy_density + float(EPS_0) * jnp.sum(
             material
-            * centered[left_component]
-            * centered[right_component]
+            * jnp.real(centered[left_component] * jnp.conj(centered[right_component]))
             * jnp.asarray(measure)
         )
     return float(energy_density) * domain_measure, float(max_field), bool(finite)
@@ -236,7 +236,7 @@ def _remaining_source_activity(
     total_steps = int(total_steps)
     activity = np.zeros(total_steps, dtype=np.float64)
     for source in program.sources:
-        waveform = np.abs(np.asarray(source.waveform, dtype=np.float64).reshape(-1))
+        waveform = np.abs(np.asarray(source.waveform).reshape(-1))
         if waveform.size == 0:
             continue
         peak = float(np.max(waveform, initial=0.0))
@@ -280,12 +280,12 @@ def _selected_monitor_names(program: CompiledProgram, policy: AutoTermination):
 
 
 def _monitor_vectors(
-    results: SimulationResults, names: tuple[str, ...]
+    monitors: dict[str, MonitorResults], names: tuple[str, ...]
 ) -> dict[tuple[str, str, int], np.ndarray]:
     """Return one raw DFT convergence vector per monitor, component, and frequency."""
     values = {}
     for name in names:
-        monitor = results.monitors[name]
+        monitor = monitors[name]
         fields = monitor._raw_dft_fields or monitor.dft_fields
         for component in sorted(fields):
             field = np.asarray(fields[component], dtype=np.complex128)
@@ -357,7 +357,15 @@ def _complete_converged_dft_weights(
         total_weight = _configured_dft_weight_sum(simulation, spec)
         weights = np.full(result.dft_weight_sum.shape, total_weight, dtype=np.float64)
         monitors[name] = replace(result, dft_weight_sum=weights)
-    return replace(results, monitors=monitors)
+    # The DFT denominator now covers the configured window. Source spectra
+    # must use that same window, including its negligible unsimulated tail.
+    # Actual executed steps remain available in the termination report.
+    completed = replace(
+        results,
+        monitors=monitors,
+        metadata=replace(results.metadata, time=np.asarray(simulation.time)),
+    )
+    return completed.renormalize(results.normalization_source)
 
 
 def compiled_source_batches(
@@ -528,6 +536,17 @@ def forward_step(
         sharding_plan=program.sharding,
         local_single_owner=cfg.backend == "cuda_streamed",
     )
+    if ctx.boundary.periodic_axes:
+        ex, ey, ez = update_runtime.apply_post_source_boundaries(
+            (state.ex, state.ey, state.ez),
+            (metallic.ex_mask, metallic.ey_mask, metallic.ez_mask),
+            components=("Ex", "Ey", "Ez"),
+            periodic_axes=ctx.boundary.periodic_axes,
+            periodic_phases=ctx.boundary.periodic_phases,
+            material_shape=ctx.boundary.material_shape,
+            logical_shapes=ctx.boundary.logical_component_shapes,
+        )
+        state = state._replace(ex=ex, ey=ey, ez=ez)
     state = update_kernel.update_h(state, ctx, coeffs)
 
     # 2. H-phase sources may overwrite constrained cells, so reapply the compiled masks
@@ -562,10 +581,16 @@ def forward_step(
         hx, hy, hz = update_runtime.apply_post_source_boundaries(
             (state.hx, state.hy, state.hz),
             (metallic.hx_mask, metallic.hy_mask, metallic.hz_mask),
+            components=("Hx", "Hy", "Hz"),
+            periodic_axes=ctx.boundary.periodic_axes,
+            periodic_phases=ctx.boundary.periodic_phases,
+            material_shape=ctx.boundary.material_shape,
+            logical_shapes=ctx.boundary.logical_component_shapes,
         )
         state = state._replace(hx=hx, hy=hy, hz=hz)
 
     # 3. Advance E, inject its sources, and restore its masks before observation.
+    old_e_state = state
     state = update_kernel.update_e(state, ctx, coeffs)
     state = apply_source_phase(
         state,
@@ -576,15 +601,31 @@ def forward_step(
         sharding_plan=program.sharding,
         local_single_owner=cfg.backend == "cuda_streamed",
     )
+    from beamz.simulation.dispersion import update_dispersion
+
+    if program.dispersion is not None:
+        state = update_dispersion(old_e_state, state, program.dispersion)
     if not kernel_owns_pec:
         ex, ey, ez = update_runtime.apply_post_source_boundaries(
             (state.ex, state.ey, state.ez),
             (metallic.ex_mask, metallic.ey_mask, metallic.ez_mask),
+            components=("Ex", "Ey", "Ez"),
+            periodic_axes=ctx.boundary.periodic_axes,
+            periodic_phases=ctx.boundary.periodic_phases,
+            material_shape=ctx.boundary.material_shape,
+            logical_shapes=ctx.boundary.logical_component_shapes,
         )
         state = state._replace(ex=ex, ey=ey, ez=ez)
 
     # 4. Observe only fully constrained end-of-step fields, then advance both clocks.
-    t_phys = state.t + ctx.dt_scalar if observation_time is None else observation_time
+    # Derive the default from the absolute source index, retaining explicit
+    # observation times for streamed schedules.
+    t_phys = (
+        jnp.asarray(cfg.t0, dtype=jnp.float32)
+        + (state.current_step + 1).astype(jnp.float32) * ctx.dt_scalar
+        if observation_time is None
+        else observation_time
+    )
     state = monitor_runtime.update_monitors(
         program,
         state,
@@ -635,54 +676,61 @@ class _BoundedCompileScan:
         self.body = body
         self.compiled = compiled
 
-    def __call__(self, state, coefficients):
-        if any(
-            isinstance(value, Tracer)
-            for value in jax.tree.leaves((state, coefficients))
-        ):
-            return self.body(state, coefficients)
-        return self.compiled(state, coefficients)
+    def __call__(self, *arguments):
+        if any(isinstance(value, Tracer) for value in jax.tree.leaves(arguments)):
+            return self.body(*arguments)
+        return self.compiled(*arguments)
 
     def __getattr__(self, name):
         return getattr(self.compiled, name)
 
 
-def build_scan(program, *, donate_state: bool = False):
-    """Build the jitted compiled scan for a program."""
-
-    # 1. Pull immutable configuration out of the program before tracing. These values
-    # select shapes and kernels, so they should remain static for executable reuse.
-    # TODO(adjoint-checkpointing): Once trainable material arrays are dynamic
-    # runtime inputs, expose chunked scan transitions here and rematerialize at
-    # chunk boundaries. Keep parameter *values* out of the compiled-program key
-    # so optimization iterations reuse one executable.
-
+def build_step_context(program, *, donate_state: bool = False):
+    """Bind the shared source, boundary, and memory plan for one timestep."""
     cfg = program.config
     boundary = program.boundary
     if cfg.backend == "jax" or cfg.sharding.enabled:
         boundary = compact_boundary_masks(boundary)
-    resolution = float(cfg.resolution)
-    dt = float(cfg.dt)
-    dt_scalar = jnp.asarray(dt, dtype=jnp.float32)
-    is_3d = cfg.is_3d
-
-    # 2. Batch sources once; monitors are already canonical executable plans.
-    source_batches = compiled_source_batches(program.sources)
-
-    # 3. Assemble the shared step context and select the specialized update kernel before
-    # JIT compilation begins.
-    step_context = update_runtime.CompiledStepContext(
+    return update_runtime.CompiledStepContext(
         config=cfg,
         boundary=boundary,
-        source_batches=source_batches,
+        source_batches=compiled_source_batches(program.sources),
         metrics=program.metrics,
-        resolution=resolution,
-        dt=dt,
-        dt_scalar=dt_scalar,
-        is_3d=is_3d,
+        resolution=float(cfg.resolution),
+        dt=float(cfg.dt),
+        dt_scalar=jnp.asarray(cfg.dt, dtype=jnp.float32),
+        is_3d=cfg.is_3d,
         sharding_plan=program.sharding,
         low_memory=cuda_capacity_schedule(program, donate_state=donate_state),
     )
+
+
+def build_scan(program, *, donate_state: bool = False, checkpoint_interval=None):
+    """Build the compiled scan, optionally rematerializing chunks for reverse AD.
+
+    Checkpointed JAX execution uses the ordinary timestep, source, boundary,
+    dispersion, and absolute observation-clock transition.
+    """
+    if checkpoint_interval is not None:
+        if (
+            isinstance(checkpoint_interval, bool)
+            or int(checkpoint_interval) != checkpoint_interval
+            or checkpoint_interval < 1
+        ):
+            raise ValueError("checkpoint_interval must be a positive integer.")
+        if program.config.backend != "jax":
+            raise ValueError("Checkpointed differentiation requires backend='jax'.")
+        checkpoint_interval = int(checkpoint_interval)
+
+    # 1. Pull immutable configuration out of the program before tracing. These values
+    # select shapes and kernels, so they should remain static for executable reuse.
+    # Material coefficients remain dynamic inputs across optimization steps.
+    cfg = program.config
+    step_context = build_step_context(program, donate_state=donate_state)
+    boundary = step_context.boundary
+    dt_scalar = step_context.dt_scalar
+    source_batches = step_context.source_batches
+
     update_kernel = update_runtime.select_update_kernel(step_context)
     from beamz.simulation import distributed_monitors, jax_sharding
 
@@ -741,7 +789,11 @@ def build_scan(program, *, donate_state: bool = False):
                 "use backend='jax' for recorders, flux or power monitors"
             )
     native_graph_calls = None
-    if cfg.cuda_storage_axes != (0, 1, 2) and not step_context.low_memory:
+    if (
+        cfg.cuda_storage_axes != (0, 1, 2)
+        and not cfg.sharding.enabled
+        and not step_context.low_memory
+    ):
         if not (
             cuda_multi_step
             and cfg.is_3d
@@ -766,7 +818,35 @@ def build_scan(program, *, donate_state: bool = False):
     def run_scan(
         state: SimulationState,
         coeffs: UpdateCoefficients,
+        dispersion_coefficients=None,
     ):
+        runtime_program = program
+        if dispersion_coefficients is not None:
+            runtime_program = replace(
+                program,
+                dispersion=replace(
+                    program.dispersion,
+                    coefficients=tuple(
+                        (record[0], *values)
+                        for record, values in zip(
+                            program.dispersion.coefficients,
+                            dispersion_coefficients,
+                            strict=True,
+                        )
+                    ),
+                ),
+            )
+        # Normal continuations keep one absolute integer clock. Explicit states
+        # may intentionally supply a different time origin; preserve that API
+        # contract without accumulating rounding at ordinary chunk boundaries.
+        t0 = jnp.asarray(cfg.t0, dtype=jnp.float32)
+        grid_time = t0 + dt_scalar * state.current_step.astype(jnp.float32)
+        clock_tolerance = jnp.finfo(jnp.float32).eps * jnp.maximum(
+            jnp.abs(grid_time), jnp.finfo(jnp.float32).tiny
+        )
+        on_grid = jnp.abs(state.t - grid_time) <= clock_tolerance
+        observation_origin = cast(jax.Array, jnp.where(on_grid, t0, state.t))
+        observation_offset = cast(jax.Array, jnp.where(on_grid, state.current_step, 0))
         if local_dft:
             state = distributed_monitors.scan_local_dft(state, program)
         local_cuda_cpml = (
@@ -828,10 +908,11 @@ def build_scan(program, *, donate_state: bool = False):
             def advance_native_chunk(chunk_state, chunk_steps: int, elapsed_steps):
                 elapsed_steps = jnp.asarray(elapsed_steps, dtype=jnp.int32)
                 chunk_state = chunk_state._replace(
-                    # Derive clocks from the immutable run origin. Incrementally
-                    # accumulating float32 chunk times would perturb long-run DFT
-                    # phases relative to one unbounded native launch.
-                    t=state.t + dt_scalar * elapsed_steps,
+                    # Derive clocks from the simulation origin, including across
+                    # separate advance() calls and automatic-termination chunks.
+                    t=observation_origin
+                    + dt_scalar
+                    * (observation_offset + elapsed_steps).astype(jnp.float32),
                     current_step=state.current_step + elapsed_steps,
                 )
                 chunk_out = (
@@ -844,8 +925,8 @@ def build_scan(program, *, donate_state: bool = False):
                         graph_source_groups,
                         packed_graph_monitors,
                         chunk_steps,
-                        observation_origin=state.t,
-                        observation_step_offset=elapsed_steps,
+                        observation_origin=observation_origin,
+                        observation_step_offset=observation_offset + elapsed_steps,
                     )
                     if program.monitors
                     else run_source_group_steps(
@@ -860,7 +941,9 @@ def build_scan(program, *, donate_state: bool = False):
                     chunk_steps, dtype=jnp.int32
                 )
                 return chunk_out._replace(
-                    t=state.t + dt_scalar * completed_steps,
+                    t=observation_origin
+                    + dt_scalar
+                    * (observation_offset + completed_steps).astype(jnp.float32),
                     current_step=state.current_step + completed_steps,
                 )
 
@@ -887,9 +970,40 @@ def build_scan(program, *, donate_state: bool = False):
                         tail_steps,
                         full_chunks * CUDA_GRAPH_MAX_STEPS,
                     )
-        # Every observation uses the immutable run origin, as native CUDA does.
-        # Repeated float32 additions drift over long optical simulations. The
-        # entry time remains authoritative for explicit continuation states.
+        elif checkpoint_interval is not None:
+
+            def step(carry, step_index):
+                return forward_step(
+                    carry,
+                    ctx=step_context,
+                    coeffs=coeffs,
+                    program=runtime_program,
+                    update_kernel=update_kernel,
+                    observation_time=observation_origin
+                    + dt_scalar
+                    * (observation_offset + step_index + 1).astype(jnp.float32),
+                ), None
+
+            def chunk(carry, chunk_index):
+                indices = chunk_index * checkpoint_interval + jnp.arange(
+                    checkpoint_interval, dtype=jnp.int32
+                )
+                return jax.lax.scan(jax.checkpoint(step), carry, indices)[0], None
+
+            chunks, tail = divmod(cfg.num_steps, checkpoint_interval)
+            scan_out, _ = jax.lax.scan(
+                jax.checkpoint(chunk), state, jnp.arange(chunks, dtype=jnp.int32)
+            )
+            if tail:
+                scan_out, _ = jax.lax.scan(
+                    jax.checkpoint(step),
+                    scan_out,
+                    jnp.arange(
+                        chunks * checkpoint_interval, cfg.num_steps, dtype=jnp.int32
+                    ),
+                )
+        # Every observation uses the simulation origin and absolute integer
+        # step, including continuation calls, as native CUDA does.
         elif cfg.loop_kind == "scan":
 
             def _scan_body(carry, step_index):
@@ -899,9 +1013,11 @@ def build_scan(program, *, donate_state: bool = False):
                         carry,
                         ctx=step_context,
                         coeffs=coeffs,
-                        program=program,
+                        program=runtime_program,
                         update_kernel=update_kernel,
-                        observation_time=state.t + dt_scalar * (step_index + 1),
+                        observation_time=observation_origin
+                        + dt_scalar
+                        * (observation_offset + step_index + 1).astype(jnp.float32),
                     ),
                     None,
                 )
@@ -919,9 +1035,10 @@ def build_scan(program, *, donate_state: bool = False):
                     c,
                     ctx=step_context,
                     coeffs=coeffs,
-                    program=program,
+                    program=runtime_program,
                     update_kernel=update_kernel,
-                    observation_time=state.t + dt_scalar * (_i + 1),
+                    observation_time=observation_origin
+                    + dt_scalar * (observation_offset + _i + 1).astype(jnp.float32),
                 ),
                 state,
             )
@@ -1079,17 +1196,19 @@ def initial_program_state(
                 )()
         # Fresh runs use the compiled lattice; continuations supply evolved canonical
         # arrays without reconstructing a mutable field container.
-        return (
-            _copy_initial_field(getattr(program.grid, name))
-            if continuation is None
-            else getattr(continuation, name.lower())
-        )
+        if continuation is None:
+            return _copy_initial_field(getattr(program.grid, name))
+        value = getattr(continuation, name.lower())
+        dtype = field_dtype(name)
+        return value if value.dtype == dtype else value.astype(dtype)
 
     def field_dtype(name):
         # Query metadata without copying two additional full fields just to
         # choose the CPML dtype during fresh-state construction.
-        owner = program.grid if continuation is None else continuation
-        return getattr(owner, name if continuation is None else name.lower()).dtype
+        dtype = getattr(program.grid, name).dtype
+        if continuation is not None:
+            dtype = jnp.result_type(dtype, getattr(continuation, name.lower()).dtype)
+        return dtype
 
     def zeros(shape, dtype):
         shape = tuple(int(value) for value in shape)
@@ -1153,7 +1272,26 @@ def initial_program_state(
         monitor_values = {
             name: getattr(continuation, name) for name in monitor_runtime.MONITOR_FIELDS
         }
+    # A continuation can promote the fields (for example, Periodic -> Bloch).
+    # Promote recorder storage too, retaining all previous samples and metadata.
+    recorded_fields = list(monitor_values["recorded_fields"])
+    for spec in program.monitors:
+        if spec.recorder_index < 0:
+            continue
+        for component, index in zip(
+            spec.canonical_components, spec.field_buffer_indices, strict=True
+        ):
+            value = recorded_fields[index]
+            dtype = jnp.result_type(value.dtype, field_dtype(component))
+            if value.dtype != dtype:
+                recorded_fields[index] = value.astype(dtype)
+    monitor_values["recorded_fields"] = tuple(recorded_fields)
+    from beamz.simulation.dispersion import initial_polarization
+
     return SimulationState(
+        polarization=initial_polarization(program.dispersion, continuation)
+        if program.dispersion is not None
+        else (),
         ex=field("Ex"),
         ey=field("Ey"),
         ez=field("Ez"),
@@ -1208,7 +1346,18 @@ def run_program(
     compiled_scan = (
         cache.compiled_scan_donating if donate_state else cache.compiled_scan
     ) or build_program_scan(program, donate_state=donate_state)
-    return compiled_scan(state, coeffs)
+    return compiled_scan(*_execution_arguments(program, state, coeffs))
+
+
+def _execution_arguments(program, state, coeffs):
+    """Keep grid-sized ADE arrays out of the compiled loop's constant payload."""
+    if program.dispersion is not None and program.dispersion.coefficients:
+        return (
+            state,
+            coeffs,
+            tuple(record[1:] for record in program.dispersion.coefficients),
+        )
+    return state, coeffs
 
 
 def compile_program_execution(
@@ -1242,7 +1391,9 @@ def _compiled_program_execution(
     ) or build_program_scan(program, donate_state=donate_state)
     if ready:
         return compiled_scan
-    compiled = compiled_scan.lower(state, coeffs).compile()
+    compiled = compiled_scan.lower(
+        *_execution_arguments(program, state, coeffs)
+    ).compile()
     if donate_state:
         cache.compiled_scan_donating = compiled
         cache.executable_donating_ready = True
@@ -1365,7 +1516,7 @@ def _run_program_state_timed(
         program, state, coeffs, donate_state=donate_state
     )
     started = perf_counter()
-    state = executable(state, coeffs)
+    state = executable(*_execution_arguments(program, state, coeffs))
     state.ez.block_until_ready()
     runtime_s = max(perf_counter() - started, np.finfo(float).tiny)
     return sharding_runtime.crop_state(program, state), runtime_s
@@ -1402,7 +1553,9 @@ def compiled_xla_memory_analysis(
     coeffs = sharding_runtime.place_tree(program, program.coefficients)
     cache = execution_cache(program)
     compiled_scan = cache.compiled_scan or build_program_scan(program)
-    compiled = compiled_scan.lower(state, coeffs).compile()
+    compiled = compiled_scan.lower(
+        *_execution_arguments(program, state, coeffs)
+    ).compile()
     analysis = getattr(compiled, "memory_analysis", lambda: None)()
     if analysis is None:
         return {"available": False}
@@ -1465,6 +1618,7 @@ def run_simulation_program(
         simulation,
         runtime_fields=program.grid,
         monitor_results=_decode_monitor_results(simulation, program, state),
+        completed_steps=int(state.current_step),
         store_full_materials=store_full_materials,
         source_launch_powers=_compiled_source_launch_powers(
             program, len(simulation.sources)
@@ -1561,6 +1715,7 @@ def run_simulation_with_progress(
         simulation,
         runtime_fields=program.grid,
         monitor_results=_decode_monitor_results(simulation, program, state),
+        completed_steps=int(state.current_step),
         store_full_materials=store_full_materials,
         source_launch_powers=_compiled_source_launch_powers(
             program, len(simulation.sources)
@@ -1592,6 +1747,10 @@ def run_until_terminated(
         backend=backend,
         progress=progress,
     )
+    if first_program.grid.material_grid.dispersion:
+        raise ValueError(
+            "Automatic energy termination does not yet include dispersive material energy. Use a fixed run_time and check spectral convergence with advance()."
+        )
     monitor_names = _selected_monitor_names(first_program, policy)
     monitor_tolerance = (
         None if policy.monitor_change is None else float(policy.monitor_change)
@@ -1612,7 +1771,8 @@ def run_until_terminated(
     source_decay = _source_residual(source_activity, 0)
     successful_checks = growth_checks = 0
     reason = "time_limit"
-    last_run: SimulationRun | None = None
+    monitor_results: dict[str, MonitorResults] | None = None
+    program = first_program
     runtime_s = 0.0
     compiling = progress and not program_is_compiled(first_program, donate_state=True)
     if compiling:
@@ -1635,20 +1795,18 @@ def run_until_terminated(
                     progress=False,
                 )
             )
-            last_run = run_simulation_program(
-                simulation,
-                program,
-                state,
-                progress=False,
-                store_full_materials=store_full_materials,
-                monitor_steps=remaining,
-                donate_state=True,
-                performance=performance,
-                report_performance=False,
-            )
-            state = last_run.state
-            if last_run.results.performance is not None:
-                runtime_s += last_run.results.performance.runtime_s
+            if performance:
+                state, elapsed = _run_program_state_timed(
+                    program, state, monitor_steps=remaining, donate_state=True
+                )
+                runtime_s += elapsed
+            else:
+                state = _run_program_state(
+                    program, state, monitor_steps=remaining, donate_state=True
+                )
+            # Convergence uses raw acquisitions. Building a durable result here
+            # repeatedly normalizes the full source record and copies metadata.
+            monitor_results = _decode_monitor_results(simulation, program, state)
             current_step = int(state.current_step)
             if progress:
                 if compiling:
@@ -1664,7 +1822,7 @@ def run_until_terminated(
                 )
 
             energy, max_field, fields_finite = _field_diagnostics(state, terms)
-            current_monitor = _monitor_vectors(last_run.results, monitor_names)
+            current_monitor = _monitor_vectors(monitor_results, monitor_names)
             monitors_finite = all(
                 np.isfinite(value).all() for value in current_monitor.values()
             )
@@ -1716,7 +1874,7 @@ def run_until_terminated(
         if progress:
             _finish_inline_progress()
 
-    if last_run is None:
+    if monitor_results is None:
         raise RuntimeError("Automatic termination executed no simulation steps.")
     report = RunTermination(
         reason=reason,
@@ -1731,7 +1889,15 @@ def run_until_terminated(
         max_field=max_field,
         consecutive_checks=successful_checks,
     )
-    results = last_run.results
+    results = SimulationResults.from_run(
+        simulation,
+        runtime_fields=program.grid,
+        monitor_results=monitor_results,
+        store_full_materials=store_full_materials,
+        source_launch_powers=_compiled_source_launch_powers(
+            program, len(simulation.sources)
+        ),
+    )
     if reason == "converged":
         results = _complete_converged_dft_weights(results, simulation, first_program)
     stats = (

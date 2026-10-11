@@ -1,11 +1,16 @@
 """Region preparation must preserve global interpolation and bounded reads."""
 
+from types import SimpleNamespace
+
 import jax
 import numpy as np
 import pytest
 
 from beamz._region_array import RegionArray, place_region_array, tiles
-from beamz.devices.sources.mode_launch import _material_mirror_symmetric
+from beamz.devices.sources.mode_launch import (
+    _centered_transverse_symmetry_axes,
+    _material_mirror_symmetric,
+)
 from beamz.lattice import component_shapes, sample_voxel_grid_at_component_3d
 from beamz.simulation.kernels import precompute_e_update_coefficients
 from beamz.simulation.region_materials import electric_coefficients, sample_material
@@ -82,6 +87,17 @@ def test_symmetry_matches_full_volume(axis):
     assert not _material_mirror_symmetric(a, axis)
 
 
+def test_source_symmetry_depends_on_local_material():
+    source = SimpleNamespace(axis="x", center=(1.5, 6.0, 4.0))
+    material = np.ones((8, 12, 10), dtype=np.float32)
+    fields = SimpleNamespace(permittivity=material)
+    assert _centered_transverse_symmetry_axes(source, fields, None, 1.0) == (0, 1)
+    material[0, 1, 8] = 2.0
+    assert _centered_transverse_symmetry_axes(source, fields, None, 1.0) == (0, 1)
+    material[0, 1, 1] = 2.0
+    assert _centered_transverse_symmetry_axes(source, fields, None, 1.0) == ()
+
+
 def test_public_partitioned_pipeline_without_recipe_materialization():
     import os
     import subprocess
@@ -150,3 +166,31 @@ def test_region_basic_negative_and_strided_slices():
         (slice(1, 0), slice(None), slice(None)),
     ]:
         np.testing.assert_array_equal(recipe[key], value[key])
+
+
+@pytest.mark.parametrize("scalar", [False, True])
+def test_region_physical_conductivity_keeps_magnetic_update_lossless(scalar):
+    from types import SimpleNamespace
+
+    from beamz.lattice import build_material_coefficients
+    from beamz.simulation.region_materials import build_region_materials
+
+    shape = (3, 4, 5)
+    sigma = np.asarray(100, np.float32) if scalar else np.full(shape, 100, np.float32)
+    fields = SimpleNamespace(
+        permittivity=np.full(shape, 2, np.float32),
+        conductivity=sigma,
+        permeability=np.ones(shape, np.float32),
+        has_pml=True,
+        has_cpml=True,
+        **{c: np.zeros(s, np.float32) for c, s in component_shapes(shape).items()},
+    )
+    eager = build_material_coefficients(fields)
+    regional = build_region_materials(fields)
+    for axis in "xyz":
+        np.testing.assert_array_equal(getattr(regional, "sigma_m_h" + axis), 0)
+        np.testing.assert_array_equal(getattr(eager, "sigma_m_h" + axis), 0)
+        np.testing.assert_allclose(
+            np.asarray(getattr(regional, "sig_" + axis)),
+            np.asarray(getattr(eager, "sig_" + axis)),
+        )

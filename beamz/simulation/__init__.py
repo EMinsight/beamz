@@ -1,7 +1,7 @@
 """Simulation module for BEAMZ."""
 
 from beamz.design.grid_spec import GridSpec
-from beamz.devices.boundaries import PEC, PML, Absorber
+from beamz.devices.boundaries import PEC, PML, Absorber, Bloch, Periodic
 from beamz.devices.modes.specs import ModeSpec
 from beamz.devices.ports import Port
 from beamz.devices.sources.time import GaussianPulse
@@ -34,4 +34,6 @@ __all__ = [
     "PML",
     "PEC",
     "Absorber",
+    "Periodic",
+    "Bloch",
 ]

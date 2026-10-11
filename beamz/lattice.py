@@ -369,18 +369,6 @@ def _component_plane_plan_3d(
     return flat_indices, combined_weights
 
 
-def plane_sample_area(coordinates, fallback_step: float) -> float:
-    def step(values):
-        values = np.asarray(values, dtype=np.float64).reshape(-1)
-        if values.size > 1:
-            spacing = float(np.median(np.abs(np.diff(values))))
-            if np.isfinite(spacing) and spacing > 0.0:
-                return spacing * float(values.size) / float(values.size - 1)
-        return float(fallback_step)
-
-    return float(step(coordinates[0]) * step(coordinates[1]))
-
-
 @dataclass(frozen=True, slots=True)
 class YeePlaneQuadrature:
     """Compiled field colocation and area integration for one Yee-grid plane."""
@@ -438,18 +426,32 @@ def compile_yee_plane_quadrature_3d(
             grid=grid,
         )
     if grid is None:
-        sample_area = plane_sample_area(coordinates, float(resolution))
+        # These samples are cell centers inside the requested aperture, not
+        # endpoint samples. An N/(N-1) endpoint correction overcounts its area.
+        axis0, axis1 = plane_axes_3d(normal_axis)
+        positions = {"x": 0, "y": 1, "z": 2}
+        count = int(coordinates[0].size * coordinates[1].size)
+        sample_area = float(size[positions[axis0]] * size[positions[axis1]]) / max(
+            count, 1
+        )
         integration_weights = np.empty((0,), dtype=np.float64)
     else:
         axis0, axis1 = plane_axes_3d(normal_axis)
         interval0 = region.axis_interval(axis0)
         interval1 = region.axis_interval(axis1)
-        widths0 = np.asarray(grid.cell_widths(axis0))[
-            int(interval0.start) : int(interval0.stop)
-        ]
-        widths1 = np.asarray(grid.cell_widths(axis1))[
-            int(interval1.start) : int(interval1.stop)
-        ]
+
+        def clipped_widths(axis, interval):
+            edges = np.asarray(grid.axis_edges(axis))
+            i = {"x": 0, "y": 1, "z": 2}[axis]
+            lower = float(center[i]) - float(size[i]) / 2
+            upper = float(center[i]) + float(size[i]) / 2
+            widths = np.maximum(
+                0.0, np.minimum(edges[1:], upper) - np.maximum(edges[:-1], lower)
+            )
+            return widths[int(interval.start) : int(interval.stop)]
+
+        widths0 = clipped_widths(axis0, interval0)
+        widths1 = clipped_widths(axis1, interval1)
         integration_weights = (widths0[:, None] * widths1[None, :]).reshape(-1)
         sample_area = float(np.mean(integration_weights))
     return YeePlaneQuadrature(
@@ -536,7 +538,13 @@ def metric_adjacent_difference(array, axis, inverse_distance):
 
 
 def _pad_with_boundary_ghosts(
-    array, axis, metallic_edges, *, logical_size: int | None = None
+    array,
+    axis,
+    metallic_edges,
+    *,
+    logical_size: int | None = None,
+    periodic: bool = False,
+    periodic_phase=1.0,
 ):
     logical_size = int(array.shape[axis]) if logical_size is None else int(logical_size)
     if logical_size <= 0 or logical_size > int(array.shape[axis]):
@@ -555,19 +563,32 @@ def _pad_with_boundary_ghosts(
     low_edge, high_edge = (("front", "back"), ("bottom", "top"), ("left", "right"))[
         axis
     ]
-    low = (
-        zero if low_edge in metallic_edges else jnp.take(physical, jnp.array([0]), axis)
-    )
-    high = (
-        zero
-        if high_edge in metallic_edges
-        else jnp.take(physical, jnp.array([logical_size - 1]), axis)
-    )
+    if periodic:
+        low = jnp.take(physical, jnp.array([logical_size - 1]), axis) / periodic_phase
+        high = jnp.take(physical, jnp.array([0]), axis) * periodic_phase
+    else:
+        low = (
+            zero
+            if low_edge in metallic_edges
+            else jnp.take(physical, jnp.array([0]), axis)
+        )
+        high = (
+            zero
+            if high_edge in metallic_edges
+            else jnp.take(physical, jnp.array([logical_size - 1]), axis)
+        )
     return jnp.concatenate((low, physical, high, storage_padding), axis=axis)
 
 
 def build_h_boundary_views_for_e_3d(
-    hx, hy, hz, metallic_edges=frozenset(), *, logical_shapes=None
+    hx,
+    hy,
+    hz,
+    metallic_edges=frozenset(),
+    *,
+    logical_shapes=None,
+    periodic_axes=frozenset(),
+    periodic_phases=(),
 ):
     """Create the six ghost-padded H views consumed by the 3D E curl."""
     return {
@@ -578,6 +599,8 @@ def build_h_boundary_views_for_e_3d(
             logical_size=(
                 None if logical_shapes is None else logical_shapes[component][axis]
             ),
+            periodic=axis in periodic_axes,
+            periodic_phase=periodic_phases[axis] if periodic_phases else 1.0,
         )
         for name, component, field, axis in (
             ("hz_y", "Hz", hz, 1),
@@ -941,20 +964,20 @@ def sample_voxel_grid_at_component_2d(
     region: tuple[slice, slice] | None = None,
 ):
     """Sample a material raster on the selected canonical 2D Yee support."""
-    grid_np = np.asarray(grid)
+    grid_values = jnp.asarray(grid)
     canonical = canonical_component_2d(component, plane, polarization)
     if canonical is None:
-        return jnp.asarray(grid_np[:1, :1])
+        return grid_values[:1, :1]
     shape = component_shape_2d(
         component,
-        tuple(int(v) for v in grid_np.shape),
+        tuple(int(v) for v in grid_values.shape),
         plane,
         polarization,
     )
     if stored_shape is not None and tuple(int(v) for v in stored_shape) != shape:
         raise ValueError(f"stored_shape={stored_shape!r} does not match {shape!r}")
     region = region or (slice(None), slice(None))
-    ny, nx = (int(v) for v in grid_np.shape)
+    ny, nx = (int(v) for v in grid_values.shape)
     y_len, x_len = shape
     y_offset, x_offset = {
         "Ez": (0.0, 0.0),
@@ -966,7 +989,7 @@ def sample_voxel_grid_at_component_2d(
     }[canonical]
     y_idx = np.clip(np.floor(np.arange(y_len) + y_offset).astype(np.int32), 0, ny - 1)
     x_idx = np.clip(np.floor(np.arange(x_len) + x_offset).astype(np.int32), 0, nx - 1)
-    sampled = jnp.asarray(grid)
+    sampled = grid_values
     sampled = jnp.take(sampled, jnp.asarray(y_idx), axis=0)
     sampled = jnp.take(sampled, jnp.asarray(x_idx), axis=1)
     return sampled[region]
@@ -1086,13 +1109,21 @@ def build_material_coefficients(fields):
     """Collocate every material array once before runtime execution."""
 
     total_sigma = _total_conductivity(fields)
+    # Only the artificial sponge loss has a matched magnetic counterpart.
+    # Material.conductivity describes electric current, not magnetic loss.
+    # CPML applies its damping through the auxiliary fields instead.
+    magnetic_sigma = (
+        total_sigma - fields.conductivity
+        if fields.has_pml and not fields.has_cpml
+        else jnp.zeros((), dtype=jnp.asarray(total_sigma).dtype)
+    )
     if fields.permittivity.ndim == 3:
         e_terms = tuple(
             _material_slice_for_e_3d(fields.permittivity, total_sigma, axis)
             for axis in "xyz"
         )
         sigma_m = _magnetic_conductivity_terms_3d(
-            total_sigma,
+            magnetic_sigma,
             fields.permeability,
             fields.Hx.shape,
             fields.Hy.shape,
@@ -1131,11 +1162,14 @@ def build_material_coefficients(fields):
         else (inactive_eps, inactive_sig, region)
         for component in ("Ex", "Ey", "Ez")
     )
-    if jnp.asarray(total_sigma).ndim == 0 and float(jnp.asarray(total_sigma)) == 0.0:
-        sigma_m = (total_sigma,) * 3
+    if jnp.asarray(magnetic_sigma).ndim == 0 and float(magnetic_sigma) == 0.0:
+        sigma_m = (magnetic_sigma,) * 3
     else:
         base = (
-            jnp.asarray(total_sigma) * jnp.asarray(fields.permeability) * MU_0 / EPS_0
+            jnp.asarray(magnetic_sigma)
+            * jnp.asarray(fields.permeability)
+            * MU_0
+            / EPS_0
         )
         active_h = ("Hx", "Hy") if polarization == "tm" else ("Hz",)
         sigma_m = tuple(
