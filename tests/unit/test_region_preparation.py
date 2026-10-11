@@ -1,11 +1,16 @@
 """Region preparation must preserve global interpolation and bounded reads."""
 
+from types import SimpleNamespace
+
 import jax
 import numpy as np
 import pytest
 
 from beamz._region_array import RegionArray, place_region_array, tiles
-from beamz.devices.sources.mode_launch import _material_mirror_symmetric
+from beamz.devices.sources.mode_launch import (
+    _centered_transverse_symmetry_axes,
+    _material_mirror_symmetric,
+)
 from beamz.lattice import component_shapes, sample_voxel_grid_at_component_3d
 from beamz.simulation.kernels import precompute_e_update_coefficients
 from beamz.simulation.region_materials import electric_coefficients, sample_material
@@ -80,6 +85,17 @@ def test_symmetry_matches_full_volume(axis):
     assert _material_mirror_symmetric(a, axis)
     a[0, 0, 0] += 1e-3
     assert not _material_mirror_symmetric(a, axis)
+
+
+def test_source_symmetry_depends_on_local_material():
+    source = SimpleNamespace(axis="x", center=(1.5, 6.0, 4.0))
+    material = np.ones((8, 12, 10), dtype=np.float32)
+    fields = SimpleNamespace(permittivity=material)
+    assert _centered_transverse_symmetry_axes(source, fields, None, 1.0) == (0, 1)
+    material[0, 1, 8] = 2.0
+    assert _centered_transverse_symmetry_axes(source, fields, None, 1.0) == (0, 1)
+    material[0, 1, 1] = 2.0
+    assert _centered_transverse_symmetry_axes(source, fields, None, 1.0) == ()
 
 
 def test_public_partitioned_pipeline_without_recipe_materialization():

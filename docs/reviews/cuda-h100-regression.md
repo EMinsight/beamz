@@ -1,10 +1,147 @@
 # H100 regression checks — 2026-10-10
 
+## Eight-GPU capacity follow-up (additional $20 budget)
+
+The follow-up reached near-full physical GPU memory with **streamed CUDA**.
+JAX completed large 3D and flat workloads, but its larger 3D trial failed in
+XLA compilation on **both the branch and origin/main**. `cuda_mstep` rejects
+multi-device sharding, so an eight-GPU distributed mstep capacity result is
+not available. These results do not establish that all three backends can
+saturate eight GPUs, or an unconditional no-regression sign-off.
+
+All rows below use eight H100 SXM GPUs. Shapes are physical **(z, y, x)** cells.
+Memory is the range of per-GPU **peak NVML usage**, including allocator pools
+and native allocations; the last column is maximum live memory tracked by JAX.
+These are different measures, not quantities to add together. No unrelated
+allocations were used to fill memory.
+
+| Backend / revision | Shape | Billion cells | Warm GCUPS | Peak GiB/GPU (min–max) | Live JAX peak GiB/GPU |
+|---|---|---:|---:|---:|---:|
+| cuda_streamed / branch | 6912×1024×1024 | 7.248 | 160.486 | 66.60–66.98 | 52.86 |
+| cuda_streamed / main | 6912×1024×1024 | 7.248 | 160.785 | 66.60–66.98 | 52.86 |
+| jax / branch | 4096×1024×1024 | 4.295 | 69.350 | 66.91–67.29 | 48.03 |
+| cuda_streamed / branch | 40×10240×12288 | 5.033 | 88.025 | 66.65–67.03 | 47.27 |
+| cuda_streamed / branch | 40×12288×13312 | 6.543 | 88.297 | 73.99–74.36 | 61.40 |
+| jax / branch | 40×8192×12288 | 4.027 | 54.962 | 66.66–67.61 | 53.31 |
+| cuda_streamed / branch | 13312×40×12288 | 6.543 | 98.278 | 73.99–74.36 | 61.40 |
+
+The matched 7.25-billion-cell streamed comparison measured **160.486 GCUPS on
+this branch and 160.785 on main: −0.19%**. Peak memory matched to the displayed
+precision, and all 30 output leaves matched exactly at the inspected samples.
+This is one fresh process per revision with three timed executions, not a
+confidence interval or proof about every workload. Other capacity rows have
+no matched main run at their exact shape and size.
+
+The 6.54-billion-cell flat-Z streamed case reached **73.99–74.36 GiB on every
+GPU**, up to **93.37%** of the 79.65 GiB reported per device. The flat-Y
+case reached the same peak. One-second telemetry independently shows all
+eight GPUs above **73.53 GiB simultaneously** in the final flat-Y run. Its live JAX peak
+was 61.40 GiB/GPU; the remaining NVML use includes pool capacity and native
+allocations. JAX reached 67.29 GiB/GPU in the successful 4.29-billion-cell 3D
+case and 67.61 GiB/GPU in the 4.03-billion-cell flat case. Those are substantial
+loads, but they are **not near-full physical memory results**. These trials
+are observed successful sizes, not a binary search for the largest fitting grid.
+
+### Validation and limitations
+
+- The eight-GPU public continuation gates passed for streamed CUDA with Z
+  sharding and JAX with X sharding: **2 tests passed in 63.88 seconds**. They
+  compare 17+31 donated steps with an unsharded 48-step JAX reference, including
+  seeded fields, CPML and monitors. These are small full-state correctness gates.
+- A separate eight-GPU small case compared ordinary serial placement with the
+  optional parallel host placement used here: all **30 state leaves were
+  exactly equal**, and peak NVML usage matched on every GPU.
+- Large capacity trials inspect uniform samples from every addressable shard,
+  additional field samples around the mode source, and the complete small
+  monitor arrays. They check sampled finiteness and retain nonzero DFT signals.
+  Full-volume finiteness/equality was not checked. A self-reference row is not
+  an independent numerical validation; CSV labels distinguish it from paired
+  comparisons.
+- At **5120×1024×1024**, both branch and main JAX fail during
+  `scan.lower(...).compile()` with
+  `IndexError: absl::container_internal::raw_hash_map<>::at`, following an XLA
+  rematerialization memory warning. Neither reaches execution. This is an
+  observed compiler failure on both revisions, not a demonstrated GPU OOM or
+  a diagnosed root cause. Reducing to 4096×1024×1024 completed on the branch.
+- A live `cuda_mstep` request with eight devices fails with
+  `CUDA multi-device sharding requires backend='cuda_streamed'`. Independent
+  single-GPU replicas were not substituted for a distributed mstep simulation.
+- Flat-X capacity and JAX flat-Y coverage were not completed within this budget.
+  The queued JAX flat-Y process was stopped before producing a result after the final
+  streamed result was retrieved; it is not recorded as an OOM or compiler failure.
+  No claim is made that this follow-up closes every shape or backend combination.
+
+### Method and reproducibility
+
+The runtime snapshots, native builds, Python and GPU dependencies are the same
+as in the initial study below. This node used driver 570.211.01 and all-to-all
+NV18 links, with 700 W default power limits. There were eight visible GPUs and
+actual nonreplicated field sharding, asserted by the worker. GPU preallocation
+was disabled and the JAX allocator fraction was 0.90.
+
+Every capacity workload retains all-face **12-cell float32 CPML**, one TE mode
+source and one mode monitor with three frequencies eight cells downstream,
+80 nm cells, binary waveguide material and 32 timesteps. Warm execution has
+one warmup, at least 0.5 seconds of additional warmup, and three samples.
+Inputs are borrowed and prior outputs are freed between samples. This does
+not prove the maximum capacity of every public API output/cropping path.
+
+The distinct `--transverse-anchor low` fixture moves the waveguide, source and
+monitor together near the low transverse corner, keeping the mode apertures
+in the non-PML interior. This lets coefficient preparation find the nonuniform material
+without scanning half of a multi-billion-cell domain. Do not compare its
+fields or DFTs with the earlier centered fixture. Thin-Y apertures are reduced
+where needed to stay in the non-PML interior. Local full-state JAX/streamed/mstep checks
+passed for both the low-anchor fixture and the thin-Y aperture.
+
+The optional `--host-placement-workers 8` benchmark path evaluates the existing
+bounded region readers concurrently across devices. Solver kernels and default
+public API behavior are unchanged. Both matched revisions use this option.
+Setup timings therefore describe this benchmark preparation path. The large
+streamed branch case took 151.13 seconds to prepare, 2.31 seconds to compile,
+and about 1.45 seconds per 32-step warm execution. The near-full flat-Z case
+took 196.50 seconds to prepare and 2.39 seconds to compile. CPU preparation,
+not CUDA compilation, dominated time to first result in these checks.
+
+An initial serial-placement 7.25-billion-cell attempt was stopped after about
+247 seconds while still preparing coefficients; it is retained as a cancelled
+setup attempt, not a timing or memory-capacity result. Worker outputs now use
+atomic replacement, and an independent collector saves immutable snapshots
+locally throughout the run. This avoids the lost-final-export problem of the
+initial study.
+
+Example capacity worker invocation (with eight GPUs visible):
+
+```bash
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export JAX_PLATFORMS=cuda,cpu
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
+export XLA_PYTHON_CLIENT_MEM_FRACTION=.90
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+python scripts/benchmark_cuda_revision.py --root /checkouts/branch \
+  --backend cuda_streamed --shape 40 12288 13312 --steps 32 \
+  --material binary --monitors 1 --frequencies 3 --monitor-offset-cells 8 \
+  --transverse-anchor low --devices 8 --shard-axis auto --host-setup \
+  --host-placement-workers 8 --samples 3 --warmups 1 --warmup-seconds .5 \
+  --validation sampled --reference /tmp/capacity-ref --save-reference \
+  --output /tmp/capacity.json
+```
+
+The pod was deleted. Rental-time cost including quoted storage is **$18.911**, within the additional $20 budget. The account-balance change observed after teardown was **$18.908**; billing can lag. An account-wide pod listing after teardown was empty.
+
+The existing [CSV](cuda-h100-regression.csv) includes the follow-up rows under
+`capacity_followup_*`. The existing [evidence packet](cuda-h100-regression.json.gz)
+retains the initial results and adds a `capacity_followup` object with raw
+worker outputs, failures, telemetry, source, dependency and controller records.
+
+## Initial $30 study (retained historical results)
+
 This study does **not yet support an unconditional no-regression sign-off**.
 Larger completed branch/main comparisons are within 1% in warm throughput,
 and all 62 retained branch trials match their main references exactly within
-the validation scope below. Two small-case slowdowns need follow-up. Eight-GPU
-near-full-memory coverage and its continuation gate remain incomplete.
+the validation scope below. Two small-case slowdowns need follow-up. At the end of this initial study, eight-GPU
+near-full-memory coverage and its continuation gate remained incomplete;
+the follow-up above updates that status.
 
 The observed account charge after teardown is **$29.334 of the $30 budget**.
 Elapsed rental time times the quoted rates gives $29.274, including setup and

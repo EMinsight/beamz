@@ -684,42 +684,52 @@ class _BoundedCompileScan:
         return getattr(self.compiled, name)
 
 
-def build_scan(program, *, donate_state: bool = False):
-    """Build the jitted compiled scan for a program."""
-
-    # 1. Pull immutable configuration out of the program before tracing. These values
-    # select shapes and kernels, so they should remain static for executable reuse.
-    # TODO(adjoint-checkpointing): Once trainable material arrays are dynamic
-    # runtime inputs, expose chunked scan transitions here and rematerialize at
-    # chunk boundaries. Keep parameter *values* out of the compiled-program key
-    # so optimization iterations reuse one executable.
-
+def build_step_context(program, *, donate_state: bool = False):
+    """Bind the shared source, boundary, and memory plan for one timestep."""
     cfg = program.config
     boundary = program.boundary
     if cfg.backend == "jax" or cfg.sharding.enabled:
         boundary = compact_boundary_masks(boundary)
-    resolution = float(cfg.resolution)
-    dt = float(cfg.dt)
-    dt_scalar = jnp.asarray(dt, dtype=jnp.float32)
-    is_3d = cfg.is_3d
-
-    # 2. Batch sources once; monitors are already canonical executable plans.
-    source_batches = compiled_source_batches(program.sources)
-
-    # 3. Assemble the shared step context and select the specialized update kernel before
-    # JIT compilation begins.
-    step_context = update_runtime.CompiledStepContext(
+    return update_runtime.CompiledStepContext(
         config=cfg,
         boundary=boundary,
-        source_batches=source_batches,
+        source_batches=compiled_source_batches(program.sources),
         metrics=program.metrics,
-        resolution=resolution,
-        dt=dt,
-        dt_scalar=dt_scalar,
-        is_3d=is_3d,
+        resolution=float(cfg.resolution),
+        dt=float(cfg.dt),
+        dt_scalar=jnp.asarray(cfg.dt, dtype=jnp.float32),
+        is_3d=cfg.is_3d,
         sharding_plan=program.sharding,
         low_memory=cuda_capacity_schedule(program, donate_state=donate_state),
     )
+
+
+def build_scan(program, *, donate_state: bool = False, checkpoint_interval=None):
+    """Build the compiled scan, optionally rematerializing chunks for reverse AD.
+
+    Checkpointed JAX execution uses the ordinary timestep, source, boundary,
+    dispersion, and absolute observation-clock transition.
+    """
+    if checkpoint_interval is not None:
+        if (
+            isinstance(checkpoint_interval, bool)
+            or int(checkpoint_interval) != checkpoint_interval
+            or checkpoint_interval < 1
+        ):
+            raise ValueError("checkpoint_interval must be a positive integer.")
+        if program.config.backend != "jax":
+            raise ValueError("Checkpointed differentiation requires backend='jax'.")
+        checkpoint_interval = int(checkpoint_interval)
+
+    # 1. Pull immutable configuration out of the program before tracing. These values
+    # select shapes and kernels, so they should remain static for executable reuse.
+    # Material coefficients remain dynamic inputs across optimization steps.
+    cfg = program.config
+    step_context = build_step_context(program, donate_state=donate_state)
+    boundary = step_context.boundary
+    dt_scalar = step_context.dt_scalar
+    source_batches = step_context.source_batches
+
     update_kernel = update_runtime.select_update_kernel(step_context)
     from beamz.simulation import distributed_monitors, jax_sharding
 
@@ -793,7 +803,11 @@ def build_scan(program, *, donate_state: bool = False):
         )
         schedule_decision["capacity_schedule"] = step_context.low_memory
     native_graph_calls = None
-    if cfg.cuda_storage_axes != (0, 1, 2) and not step_context.low_memory:
+    if (
+        cfg.cuda_storage_axes != (0, 1, 2)
+        and not cfg.sharding.enabled
+        and not step_context.low_memory
+    ):
         if not (
             cuda_multi_step and cfg.is_3d and cfg.metric_kind == "isotropic_uniform"
         ):
@@ -967,6 +981,38 @@ def build_scan(program, *, donate_state: bool = False):
                         tail_steps,
                         full_chunks * CUDA_GRAPH_MAX_STEPS,
                     )
+        elif checkpoint_interval is not None:
+
+            def step(carry, step_index):
+                return forward_step(
+                    carry,
+                    ctx=step_context,
+                    coeffs=coeffs,
+                    program=runtime_program,
+                    update_kernel=update_kernel,
+                    observation_time=observation_origin
+                    + dt_scalar
+                    * (observation_offset + step_index + 1).astype(jnp.float32),
+                ), None
+
+            def chunk(carry, chunk_index):
+                indices = chunk_index * checkpoint_interval + jnp.arange(
+                    checkpoint_interval, dtype=jnp.int32
+                )
+                return jax.lax.scan(jax.checkpoint(step), carry, indices)[0], None
+
+            chunks, tail = divmod(cfg.num_steps, checkpoint_interval)
+            scan_out, _ = jax.lax.scan(
+                jax.checkpoint(chunk), state, jnp.arange(chunks, dtype=jnp.int32)
+            )
+            if tail:
+                scan_out, _ = jax.lax.scan(
+                    jax.checkpoint(step),
+                    scan_out,
+                    jnp.arange(
+                        chunks * checkpoint_interval, cfg.num_steps, dtype=jnp.int32
+                    ),
+                )
         # Every observation uses the simulation origin and absolute integer
         # step, including continuation calls, as native CUDA does.
         elif cfg.loop_kind == "scan":

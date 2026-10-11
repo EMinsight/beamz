@@ -73,7 +73,7 @@ _PUBLIC_AXIS_POSITION = {"x": 0, "y": 1, "z": 2}
 
 
 def _material_mirror_symmetric(material, axis):
-    """Preserve the full-volume symmetry criterion with bounded float64 scratch."""
+    """Test material mirror symmetry with bounded float64 scratch."""
     scale = 1.0
     for tile in tiles(material.shape, np.float64):
         values = np.asarray(material[tile], dtype=float)
@@ -97,6 +97,31 @@ def _centered_transverse_symmetry_axes(source, fields, grid, resolution):
     """Return transverse storage axes that are physically mirror symmetric."""
     permittivity = np.asarray(fields.permittivity)
     normal_position = _STORAGE_AXES_3D.index(source.axis)
+    # A fixed modal source depends on its local cross-section, not on distant
+    # device geometry. Global symmetry tests changed the launch when a topology
+    # update elsewhere broke symmetry, invalidating independent verification.
+    normal_edges = (
+        np.asarray(grid.axis_edges(source.axis), dtype=float)
+        if grid is not None
+        else np.arange(permittivity.shape[normal_position] + 1) * resolution
+    )
+    plane = int(
+        np.clip(
+            np.searchsorted(
+                normal_edges,
+                source.center[_PUBLIC_AXIS_POSITION[source.axis]],
+                side="right",
+            )
+            - 1,
+            0,
+            permittivity.shape[normal_position] - 1,
+        )
+    )
+    local = [slice(None)] * 3
+    local[normal_position] = slice(
+        max(0, plane - 1), min(permittivity.shape[normal_position], plane + 2)
+    )
+    material = permittivity[tuple(local)]
     symmetric = []
     for storage_position, axis in enumerate(_STORAGE_AXES_3D):
         if storage_position == normal_position:
@@ -125,7 +150,7 @@ def _centered_transverse_symmetry_axes(source, fields, grid, resolution):
             atol=tolerance,
         ):
             continue
-        if not _material_mirror_symmetric(permittivity, storage_position):
+        if not _material_mirror_symmetric(material, storage_position):
             continue
         symmetric.append(storage_position)
     return tuple(symmetric)
@@ -411,6 +436,10 @@ def _plan_2d_entries(
         e_aligned = _impedance_match_e_profile(
             e_raw * np.exp(-1j * phase_ref), h_aligned, z_target
         )
+        # TM tangential E/H live on transverse nodes. A cell interval [start,end)
+        # has end-start+1 bounding nodes; omitting the high node shifts the taper
+        # by half a cell and breaks an otherwise symmetric launch.
+        end = min(end + 1, len(h_aligned), len(e_aligned))
         window = _make_1d_window(end - start)
         h_crop, e_crop = h_aligned[start:end], e_aligned[start:end]
         if len(h_crop) == len(window):
@@ -581,6 +610,9 @@ def _plan_2d_mode_source(
         measure = np.asarray(metric_grid.cell_widths(transverse_axis))[
             int(interval.start) : int(interval.stop)
         ]
+        if polarization == "tm":
+            # TM profiles occupy the bounding nodes, rather than cell centres.
+            measure = 0.5 * (np.pad(measure, (1, 0)) + np.pad(measure, (0, 1)))
     else:
         grid_edges = None
         measure = None
