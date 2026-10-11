@@ -156,7 +156,7 @@ current variants, and reimport and simulate the actual GDS files on two meshes:
 JAX_PLATFORMS=cpu uv run --extra gds python examples/optimization/topology_gds_export.py
 ```
 
-The [recorded comparison](../../examples/results/topology_gds_export/README.md)
-includes the GDS masks, boundary zooms, interpolation comparison, and measured
-transmission. Revalidate geometry changes and GDS quantization separately from
-mesh convergence; smoother contours alone do not establish better performance.
+The script writes GDS masks, boundary zooms, an interpolation comparison, and
+measured transmission to the ignored `results/gds-export/` directory. Revalidate
+geometry changes and GDS quantization separately from mesh convergence; smoother
+contours alone do not establish better performance.

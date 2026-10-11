@@ -82,5 +82,5 @@ The GDS database is local to the export, so finer precision does not depend on
 or alter gdsfactory's active grid. Excessively fine precision that would overflow
 GDS coordinates is rejected. Holes are preserved during serialization.
 
-See the [optimization guide](../beamz/optimization/README.md#export-topology-to-gds)
+See the [optimization guide](https://github.com/beamzorg/beamz/blob/main/beamz/optimization/README.md#export-topology-to-gds)
 for fixed port masks and the reproducible export/reimport simulation example.
