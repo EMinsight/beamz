@@ -436,7 +436,7 @@ def test_cuda_storage_axes_follow_single_device_fallback(monkeypatch, order):
     assert not program.sharding.layout.enabled
     assert program.config.cuda_storage_axes == tuple(map(int, order or "012"))
     if order == "201":
-        with pytest.raises(ValueError, match="uniform-grid CPML native graph"):
+        with pytest.raises(ValueError, match="3D uniform-grid native graph"):
             build_scan(program)
     else:
         build_scan(program)

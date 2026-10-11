@@ -73,15 +73,6 @@ def rank(summary, steps, *, cached=False, expected_runs=1):
     return sorted(values, key=lambda r: r["seconds"])
 
 
-def recommend(summary, steps, *, cached=False, expected_runs=1):
-    values = rank(summary, steps, cached=cached, expected_runs=expected_runs)
-    return (
-        (values[0]["seconds"], values[0]["configuration"]["name"])
-        if values
-        else (None, None)
-    )
-
-
 def read_report(path):
     opener = gzip.open if path.suffix == ".gz" else open
     with opener(path, "rt") as handle:
@@ -186,31 +177,6 @@ def main():
         item = summarize(report)
         item["comparison_identity"] = measurement_identity(report)
         item["sources"] = report["sources"]
-        item["extension_sha256"] = report.get("extension_sha256")
-        item["planner_sha256"] = report.get("planner_sha256")
-        item["implementation_sha256"] = report.get("implementation_sha256")
-        item["workload_sha256"] = report.get("workload_sha256")
-        item["jax"] = report.get("jax")
-        item["predictions"] = [
-            dict(
-                steps=n,
-                cold=dict(
-                    zip(
-                        ("seconds", "configuration"),
-                        recommend(item, n),
-                        strict=True,
-                    )
-                ),
-                cached=dict(
-                    zip(
-                        ("seconds", "configuration"),
-                        recommend(item, n, cached=True),
-                        strict=True,
-                    )
-                ),
-            )
-            for n in (16, 64, 256, 1024, 4096, 16384)
-        ]
         item["requested_ranking"] = rank(
             item,
             args.steps or item["case"]["steps"],
@@ -240,17 +206,10 @@ def main():
         + "\n"
     )
     for study in studies:
-        best = study["configurations"][0] if study["configurations"] else None
-        print(
-            study["case"]["name"],
-            study["case"]["shape"],
-            "warm:",
-            best["name"] if best else None,
-            "cold256:",
-            recommend(study, 256)[1],
-            "cold4096:",
-            recommend(study, 4096)[1],
-        )
+        ranking = study["requested_ranking"]
+        if ranking:
+            best = ranking[0]
+            print(study["case"]["name"], best["configuration"]["name"], best["seconds"])
 
 
 if __name__ == "__main__":

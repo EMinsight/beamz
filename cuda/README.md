@@ -51,117 +51,79 @@ registers it lazily; `backend="cuda_streamed"` requests it explicitly. The first
 release supports float32 3D grids. `auto` retains JAX for multi-GPU and 2D
 simulations; only the explicitly selected CPML recurrence state may use BF16.
 
-## Explicit whole-column multistep execution
+## Streamed and multistep schedules
 
-`backend="cuda_mstep"` selects a second scheduler inside the same CUDA component
-(**0.23.0 / ABI 23**). It ports the whole-column temporal tiling in
-[PR #308](https://github.com/beamzorg/beamz/pull/308), credited to Pepijn de Vos.
-Both schedules share the CUDA compiler and numerical operations.
-
-```python
-result = simulation.advance(num_steps=256, backend="cuda_mstep")
-```
-
-The core uses 16x32 tiles and three shared two-plane rings to finish two timesteps
-while traversing the full z column. Eligibility is determined per 8x16 quadrant,
-excluding CPML, PEC boundaries and a two-cell halo around source columns.
-First-step intermediates are allocated in compact quadrant slots for boundary
-dependencies and DFT samples. A full second field bank holds pair outputs. CPML
-recurrence, PEC masks, source injection and DFT accumulation reuse the established
-CUDA operations and retain their phase and absolute timestep. Odd tails use the
-ordinary CUDA phase kernels. Returned state and continuation are unchanged.
-
-For packed E coefficients and scalar H coefficients, a compact kernel view
-hoists invariant metadata and carries linear field addresses along the column.
-A two-plane E input ring prefetches the next plane with CUDA pipeline copies
-while the current wave finishes H2/E2. This specialization uses 61,392 shared
-bytes per block and retains the same material and Yee update primitives.
-Other coefficient representations use the general column core.
-
-Experimental launch choices retain the same 8x16 ownership and compact plan:
-`BEAMZ_CUDA_MSTEP_TILE=16x32|8x32|8x16|16x16` and
-`BEAMZ_CUDA_MSTEP_SEGMENT=whole|32|64|128|256`. Segment lengths count z planes;
-each segment uses overlapping frozen inputs and publishes only its owned
-outputs. Explicit mstep defaults remain 16x32/whole. Automatic selection uses
-8x16 / segment 32 for measured PEC/one-wall workloads and retains the original
-tile for ordinary CPML, where alternatives were close.
-Plan arrays are explicit executable input buffers, not embedded constants.
-Dependency plans are cached by grid, boundaries, source footprint and monitor
-indices, with a bounded host cache of at most two plans and 256 MiB.
-
-The initial scope is unsharded isotropic uniform float32 3D simulations with
-diagonal materials, packed slab sources and vector DFT monitors. Dense/lossy
-materials, asymmetric CPML and optional BF16 recurrence storage are supported.
-Recorder, flux/power, nonuniform-grid and tensor requests raise a diagnostic.
-Right-handed cyclic storage orders (012, 120 and 201) use the shared transform,
-including all-PEC programs. The column schedule retains two timesteps;
-its tile/segment overrides, graph caching and recurrence precision settings apply.
-Single-step and zero-core requests reuse the shared in-place program before
-allocating a pair workspace. Forced mstep checks its complete workspace against
-available allocator headroom and rejects incompatible capacity-only policy.
-
-`backend="cuda"` exposes both schedules through one engine. Omitting `schedule`
-preserves main's streamed schedule and geometry-based layout policy. The existing
-`cuda_streamed` and `cuda_mstep` names remain explicit compatibility overrides.
-Explicit `schedule="auto"` enables the new time-to-result selector; `"streamed"`
-and `"mstep"` force a schedule:
+`backend="cuda"` uses one CUDA component (**0.23.0 / ABI 23**) with two schedules.
+Omitting `schedule` preserves main's streamed and geometry-based layout policy.
+The aliases `cuda_streamed` and `cuda_mstep` force their respective schedules.
+Explicit `schedule="auto"` enables the time-to-result selector:
 
 ```python
-program = simulation.compile(
-    num_steps=1024, backend="cuda", schedule="auto"
-)
+program = simulation.compile(num_steps=1024, backend="cuda", schedule="auto")
 print(program.cuda_schedule_report())
-result = simulation.advance(
-    num_steps=256, backend="cuda", schedule="mstep"
-)
+result = simulation.advance(num_steps=256, backend="cuda", schedule="mstep")
 ```
 
-Automatic selection assumes one execution by default. `expected_runs` is a reuse
-hint, not an instruction to run multiple simulations. Progress runs account for
-their known chunk reuse automatically. Selection considers additional preparation
-cost, active column tiles, depth, core coverage, material and monitor
-workload, feature support and memory. The conservative model is limited to the
-recorded RTX3090 packed-E/scalar-H workloads, CPML12/all-PEC boundary families,
-16–67 million cells, calls of at least 16 steps and known total work of at least
-256 steps. Predicted execution savings must repay preparation and first-execution
-overhead with a 25% margin. PEC and one-wall CPML use 8x16 / segment-32; ordinary
-CPML retains the original tile because its variants were close. Graph caching
-must be enabled. Other GPU models and
-workloads retain streamed execution; explicit mstep remains available. Decisions
-are frozen per executable and ownership policy, and reports return the choice,
-reason, geometry and workspace without executing calibration trials.
-Unknown memory headroom or an impossible minimum pair workspace rejects mstep
-before geometry/dependency planning; the complete estimate is checked again
-against current headroom after planning. Progress and ordinary calls reject the
-same invalid reuse hints, including booleans.
+Mstep ports [Pepijn de Vos's PR #308](https://github.com/beamzorg/beamz/pull/308).
+It advances eligible columns by two timesteps using shared plane rings. The
+16×32 default tile owns 8×16 quadrants, excluding CPML, PEC and source halos.
+Compact first-step scratch holds boundary dependencies and DFT samples; a second
+field bank holds pair outputs. Edges, sources and monitors use the shared CUDA
+operations. Odd tails and domains without eligible columns use ordinary updates.
+Returned logical state, absolute clocks and continuation semantics are preserved.
 
-Run the two schedules explicitly when extending that envelope:
+Packed-E/scalar-H specialization hoists metadata, advances linear addresses and
+prefetches two E planes using 61,392 shared bytes per block. Other coefficients
+use the general core. Both share Yee/material arithmetic; streamed kernels keep
+their original addressing. Plan arrays are runtime inputs, with a bounded host
+cache of two plans / 256 MiB, rather than embedded compiled constants.
+
+Mstep supports unsharded isotropic uniform float32 3D grids, diagonal materials,
+batched slab sources and vector DFT monitors, including asymmetric CPML,
+conductive materials and optional BF16 recurrence. Recorders, flux/power,
+nonuniform grids and tensor materials require streamed/JAX. Explicit unsupported
+requests raise a diagnostic. Additional field/scratch memory is checked against
+allocator headroom; a capacity-only memory policy requires in-place execution.
+
+Experimental settings retain the same two-step ownership/dependency plan:
+
+| Setting | Values (default first) |
+|---|---|
+| `BEAMZ_CUDA_MSTEP_TILE` | `16x32`, `8x32`, `8x16`, `16x16` |
+| `BEAMZ_CUDA_MSTEP_SEGMENT` | `whole`, `32`, `64`, `128`, `256` z planes |
+| `BEAMZ_CUDA_STORAGE_AXES` | `012`, `120`, `201` right-handed cyclic orders |
+
+Segments overlap frozen inputs and publish only owned results. Storage transforms
+are shared with streamed execution. Automatic selection changes tile/segment only
+inside its measured envelope: 8×16/32 for PEC and one-wall CPML, original tile for
+ordinary CPML.
+
+`expected_runs` is an executable-reuse hint, defaulting to one; it does not run
+extra simulations. Progress chunks contribute known reuse automatically. The
+selector considers preparation/first-execution costs, geometry/core coverage,
+material and monitor load, hardware and memory. It runs no calibration trials.
+Decisions are frozen per executable and ownership policy and reported by
+`cuda_schedule_report()`.
+
+The current model covers RTX3090 packed-E/scalar-H workloads, CPML12/all-PEC
+families, 16–67 million cells, calls of at least 16 steps and known total work of
+at least 256 steps. Graph caching must be enabled, and predicted savings must
+repay extra startup with a 25% margin. Unsupported/unmeasured cases retain
+streamed execution. Unknown headroom or an impossible minimum workspace prevents
+planning; complete workspace is checked again after planning. Explicit overrides
+remain available on other supported GPUs.
 
 ```console
 python -m pytest tests/hardware/test_cuda_mstep.py
-python scripts/benchmark_cuda_schedule_space.py --cases small medium large narrow_x --configs streamed mstep-16x32-whole --isolated --output-dir .cache/cuda-mstep-results
+python scripts/benchmark_cuda_schedule_space.py --cases small medium large narrow_x --configs streamed mstep-16x32-whole --isolated --output-dir .cache/cuda-study
+python -m scripts.analyze_cuda_schedule_space .cache/cuda-study --fresh-only --steps 256 --output .cache/cuda-ranking.json
 ```
 
-Each benchmark case runs in a fresh process, with reversed backend order on the
-second round. Reports include warm samples, setup/compilation/first execution,
-executable/device memory and multistep core coverage. Extending the selector needs
-measurements across shape, CPML thickness, material layout, source coverage,
-monitor density, run length and GPU model. Keep an explicit override; a cell-count
-threshold alone cannot express these costs. OpenCL remains a separate portability proposal until this scheduler and
-its parity contract are stable.
-
-The [RTX3090 benchmark report](../docs/reviews/cuda-mstep-rtx3090.md)
-retains the algorithm ideas and historical Futhark baseline: nine wins and one
-match within 0.3% across ten geometry/boundary cases. It includes raw timings,
-selected core profiles, correctness and sanitizer gates. Keep explicit schedule
-overrides: domain geometry and boundary work affect its crossover, and automatic
-selection remains within that measured envelope.
-The [tile, layout and startup study](../docs/reviews/cuda-schedule-space.md)
-compares configuration choices using preparation plus execution time, and provides
-a benchmark/ranking tool for extending the measured workload and GPU envelope.
-The [H100 regression study](../docs/reviews/cuda-h100-regression.md) records
-one-, two- and eight-GPU results, memory limits, small-case regression candidates
-and unfinished capacity checks. It does not expand automatic schedule selection.
+The [evidence index](../docs/reviews/README.md) links the historical Futhark
+comparison, RTX3090 tile/startup study and H100 performance/capacity checks.
+Small/narrow shapes can favor streamed, and mstep uses extra memory. These
+measurements do not establish a universal optimum or expand the automatic model
+to H100. OpenCL remains a separate portability task sharing the schedule contract.
 
 ## Experimental sharded streamed execution
 
@@ -179,13 +141,12 @@ result = simulation.advance(
 )
 ```
 
-This path has native C++ arithmetic and CPU FFI coverage, but has **not yet been
-validated on multiple CUDA GPUs**. `auto` continues selecting JAX for sharded
-requests. Rebuild the optional CUDA extension: this path requires component
-**0.22.0 / ABI 22**, including `beamz_cuda_sharded`. ABI 20 passes separate neighbor faces to sharded
-phases, avoiding full-field halo concatenations. ABI 21 adds an integer DFT
-chunk offset so every graph uses the same invocation time origin. Rebuild the native wheel when
-updating Python code across this ABI boundary.
+This path has native C++/CPU FFI coverage and recorded two/eight-H100 parity and
+capacity checks; remaining gaps are listed in the [H100 study](../docs/reviews/cuda-h100-regression.md).
+`auto` continues selecting JAX for sharded requests. Rebuild the optional native
+component when updating Python across an ABI boundary; this branch uses ABI 23,
+including `beamz_cuda_sharded`. Sharded phases pass separate neighbor faces to
+avoid full-field halo concatenations and retain integer DFT chunk offsets.
 
 All six components share partition interfaces along the selected x, y, or z
 axis. `shard_map` exchanges one-cell neighbor halos before each H/E phase and

@@ -71,36 +71,26 @@ def configurations(*, exhaustive_layouts=False):
             "env": {"BEAMZ_CUDA_CPML_CORE_FUSION": "1"},
         },
     ]
-    candidates += [
-        {
-            "name": f"mstep-{tile}-{segment}",
-            "backend": "cuda_mstep",
-            "env": {"BEAMZ_CUDA_MSTEP_TILE": tile, "BEAMZ_CUDA_MSTEP_SEGMENT": segment},
-        }
+    variants = [
+        (tile, segment)
         for tile in ("16x32", "8x32", "8x16", "16x16")
         for segment in ("whole", "32", "64", "128", "256")
     ]
-    candidates += [
-        {
-            "name": f"mstep-axes-{axes}-{tile}-{segment}",
-            "backend": "cuda_mstep",
-            "env": {
-                "BEAMZ_CUDA_STORAGE_AXES": axes,
-                "BEAMZ_CUDA_MSTEP_TILE": tile,
-                "BEAMZ_CUDA_MSTEP_SEGMENT": segment,
-            },
-        }
-        for axes in ("120", "201")
-        for tile, segment in (
-            [
-                (tile, segment)
-                for tile in ("16x32", "8x32", "8x16", "16x16")
-                for segment in ("whole", "32", "64", "128", "256")
-            ]
-            if exhaustive_layouts
+    for axes in ("012", "120", "201"):
+        selected = (
+            variants
+            if axes == "012" or exhaustive_layouts
             else (("16x32", "whole"), ("8x32", "64"), ("8x16", "32"))
         )
-    ]
+        for tile, segment in selected:
+            env = {"BEAMZ_CUDA_MSTEP_TILE": tile, "BEAMZ_CUDA_MSTEP_SEGMENT": segment}
+            prefix = "mstep"
+            if axes != "012":
+                env["BEAMZ_CUDA_STORAGE_AXES"] = axes
+                prefix += f"-axes-{axes}"
+            candidates.append(
+                dict(name=f"{prefix}-{tile}-{segment}", backend="cuda_mstep", env=env)
+            )
     return candidates
 
 

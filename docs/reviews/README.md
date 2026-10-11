@@ -1,30 +1,19 @@
 # CUDA optimization evidence
 
-The [tile, layout and startup study](cuda-schedule-space.md) explores smaller
-tiles, column segments and storage rotations, and compares complete time to result.
-It distinguishes shared screening trials from independent startup measurements.
-Its [current-main comparison](cuda-schedule-space.md#compatibility-with-current-main)
-records API compatibility, complete-state checks and measured default performance.
+- [CUDA component](../../cuda/README.md): API, shared architecture and selection limits.
+- [Futhark baseline](cuda-mstep-rtx3090.md): Pepijn de Vos's algorithm ideas and the ten matched RTX3090 cases.
+- [Tile/layout/startup study](cuda-schedule-space.md): measured configurations, time-to-result ranking and main compatibility.
+- [H100 regression study](cuda-h100-regression.md): one/two/eight-GPU performance, memory, validation and remaining gaps.
 
-The [CUDA component README](../../cuda/README.md) documents the shared execution
-API and selection limits. The [historical multistep comparison](cuda-mstep-rtx3090.md)
-retains the algorithm ideas, credit and reference timings from PR #308.
-Raw evidence is compressed JSON; the analyzer/exporter reads it directly.
+Each study keeps its raw measurements, identities and exclusions in a compressed
+JSON archive. The schedule analyzer reads its archive directly; generated CSV,
+plot and table copies are omitted. Benchmark commit identifiers refer to the
+original measured snapshots before history consolidation, not the current tip.
+The three evidence archives are unchanged by that consolidation.
 
-Start with the [main-merge validation and notebook comparison](cuda-merge-validation-2026-09-24.md),
-the [original random-domain comparison](cuda-random-final-comparison-2026-09-18.md),
-and [automatic layout prediction](cuda-layout-prediction-2026-09-18.md).
-The dated studies retain the earlier experiments, including unsuccessful ones;
-their settings and measurements should not be confused with the final defaults.
-
-Raw timing/validation JSON, CSV summaries, logs and experimental source patches
-are included alongside the reports. Binary profiler captures and compressed
-source snapshots remain local and are excluded from Git. References to captured
-source archives in historical reports describe those local artifacts. Current
-solver and benchmark sources are versioned in the repository.
-
-FP32 remains the default. The September studies did not establish consistent
-9 GCUPS and complete CPML numerical parity with origin/main. The October
-multistep results above describe a separately validated explicit schedule. H100 numbers discussed so far are
-estimates; the [RunPod setup](https://github.com/beamzorg/beamz/blob/fa151d28/docker/runpod/H100.md) has not yet been tested
-end to end on H100.
+Earlier studies remain historical: [main-merge validation](cuda-merge-validation-2026-09-24.md),
+[random domains](cuda-random-final-comparison-2026-09-18.md), and
+[layout prediction](cuda-layout-prediction-2026-09-18.md). Their unsuccessful
+experiments and settings should not be treated as current defaults.
+Binary profiler captures/source bundles remain local and ignored; references
+to them in older reports do not imply they are shipped in the repository.
