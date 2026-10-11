@@ -1078,6 +1078,7 @@ def compile_program(
         normalize_backend,
         resolve_backend,
     )
+    from .sharding import _jax_devices_for_config
 
     requested_backend = normalize_backend(backend)
     sharding_token = sharding_cache_token(sharding)
@@ -1142,7 +1143,10 @@ def compile_program(
     )
     cuda_flags = cuda_flags_from_env() if resolved_backend != "jax" else 0
     cuda_storage_axes = (
-        cuda_storage_axes_from_env(sharded=multi_device)
+        cuda_storage_axes_from_env(
+            # Automatic sharding can resolve to a single-device execution plan.
+            sharded=bool(_jax_devices_for_config(normalize_sharding_config(sharding)))
+        )
         if resolved_backend != "jax"
         else (0, 1, 2)
     )
