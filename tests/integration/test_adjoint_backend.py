@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from beamz import PML, Bloch, Periodic
 from beamz.optimization import TopologyProblem
 from tests.topology_case import make_problem
 
@@ -81,6 +82,23 @@ def test_rejects_downsampled_monitors(base):
         TopologyProblem(
             simulation, base.topology, base.objective, gradient_backend="adjoint"
         )
+
+
+@pytest.mark.parametrize("boundary", [Periodic(axes="y"), Bloch(axes="y")])
+def test_spectral_adjoint_rejects_periodic_seams(base, boundary):
+    simulation = base.simulation.updated_copy(
+        boundaries=[
+            PML(thickness=0.6e-6, edges=("left", "right"), formulation="cpml"),
+            boundary,
+        ]
+    )
+    with pytest.raises(ValueError, match="adjoint.*periodic"):
+        TopologyProblem(
+            simulation, base.topology, base.objective, gradient_backend="adjoint"
+        )
+    # The discrete autodiff path differentiates the ordinary seam update.
+    problem = TopologyProblem(simulation, base.topology, base.objective)
+    assert problem.program.boundary.periodic_axes
 
 
 @pytest.mark.parametrize("backend", ["unknown", "spectral_adjoint", None])

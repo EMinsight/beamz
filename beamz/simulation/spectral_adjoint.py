@@ -133,6 +133,10 @@ class SpectralAdjoint:
 
     def _validate(self):
         program = self.program
+        if program.boundary.periodic_axes:
+            raise ValueError(
+                "adjoint does not support periodic boundaries; use gradient_backend='autodiff'."
+            )
         for mon in program.monitors:
             if (
                 mon.dft_window_code != 0

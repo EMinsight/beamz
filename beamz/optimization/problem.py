@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import replace
 
 import jax
 import jax.numpy as jnp
@@ -33,7 +32,7 @@ from .autodiff import transform_density
 from .objectives import ModePower, WeightedObjective
 from .polygonize import density_to_polygons
 from .result import TopologyResult, load_result
-from .topology import TopologySpec, TopologyState
+from .topology import TopologySpec, TopologyState, _readonly_array
 
 
 class TopologyProblem:
@@ -501,19 +500,15 @@ class TopologyProblem:
                     "Resume must preserve the total beta schedule and completed steps."
                 )
         else:
-            state = self.topology.initial_state(initial_density)
-            density = self._density(state.density)
-            state = replace(
-                state,
-                density=np.asarray(density),
-                optimizer_state=self.topology._optimizer().init(density),
+            density = self._density(
+                self.topology.initial_state(initial_density).density
             )
             beta = self.topology.beta(0, num_steps)
             result = TopologyResult(
                 self,
-                (state.density,),
-                state.optimizer_state,
-                initial_objective=self.value(state.density, beta=beta),
+                (_readonly_array(density, float),),
+                self.topology._optimizer().init(density),
+                initial_objective=self.value(density, beta=beta),
                 fingerprint=self.fingerprint,
                 total_steps=num_steps,
                 _initial_beta=beta,

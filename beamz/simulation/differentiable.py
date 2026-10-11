@@ -9,8 +9,9 @@ from beamz.lattice import canonical_component_2d, component_axis_offsets_3d
 from beamz.simulation.kernels import precompute_e_update_coefficients
 
 # Histories created before the material/source/projection and observation-clock
-# corrections or the physical-thickness CPML default cannot resume this objective.
-TOPOLOGY_NUMERICS_VERSION = 4
+# corrections, physical-thickness CPML default, or frequency-aligned reference
+# normalization cannot resume this objective.
+TOPOLOGY_NUMERICS_VERSION = 5
 
 
 def _cell_centers_to_yee(values, component, polarization):

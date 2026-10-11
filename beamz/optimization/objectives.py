@@ -145,10 +145,16 @@ class ModePower(ModalObjective):
         return (1.0,)
 
     def __call__(self, data):
+        frequencies = (
+            data[self.monitor].amps.coords["f"]
+            if self.frequencies is None
+            else self.frequencies
+        )
+
         def power(name, direction, mode_index):
-            amps = data[name].amps.sel(direction=direction, mode_index=mode_index)
-            if self.frequencies is not None:
-                amps = amps.sel(f=self.frequencies)
+            amps = data[name].amps.sel(
+                direction=direction, mode_index=mode_index, f=frequencies
+            )
             return jnp.abs(amps.values) ** 2
 
         values = power(self.monitor, self.direction, self.mode_index)

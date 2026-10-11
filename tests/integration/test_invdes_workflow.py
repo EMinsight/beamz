@@ -161,8 +161,9 @@ def test_checkpoint_rejects_old_schema_and_wrong_identity(design, tmp_path):
 
 
 @pytest.mark.parametrize("interface", ["optimizer", "topology"])
+@pytest.mark.parametrize("previous_version", [3, 4])
 def test_checkpoint_rejects_pre_merge_solver_numerics(
-    design, tmp_path, monkeypatch, interface
+    design, tmp_path, monkeypatch, interface, previous_version
 ):
     if interface == "optimizer":
         import beamz.optimization.optimizer as module
@@ -170,7 +171,7 @@ def test_checkpoint_rejects_pre_merge_solver_numerics(
         optimizer = bi.AdamOptimizer(design, learning_rate=0.02)
         current = optimizer._fingerprint(transmission)
         with monkeypatch.context() as previous:
-            previous.setattr(module, "TOPOLOGY_NUMERICS_VERSION", 3)
+            previous.setattr(module, "TOPOLOGY_NUMERICS_VERSION", previous_version)
             old = optimizer._fingerprint(transmission)
 
         def load(path):
@@ -181,7 +182,7 @@ def test_checkpoint_rejects_pre_merge_solver_numerics(
         problem = make_problem()
         current = problem.fingerprint
         with monkeypatch.context() as previous:
-            previous.setattr(module, "TOPOLOGY_NUMERICS_VERSION", 3)
+            previous.setattr(module, "TOPOLOGY_NUMERICS_VERSION", previous_version)
             old = make_problem().fingerprint
         load = problem.load
     assert old != current

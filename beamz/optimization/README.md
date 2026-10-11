@@ -46,7 +46,8 @@ Parameters use `(y, x)` order. In 3D, the planar pattern is extruded through the
 region's finite z thickness. The design must align to an unsharded uniform grid,
 use scalar lossless materials, and stay outside the absorber and fixed mode
 planes. The spectral adjoint additionally requires decayed fields and full-run
-rectangular DFT monitors.
+rectangular DFT monitors and nonperiodic boundaries. Use autodiff for periodic
+boundaries; nonzero Bloch wavevectors do not support mode sources or monitors.
 
 `FilterProject` and `ErosionDilationPenalty` provide differentiable smoothing,
 projection, and soft geometric penalties. They do not guarantee minimum feature
@@ -70,6 +71,8 @@ state. Set `store_full_results=True` to retain parameter/gradient snapshots.
 receive `callback(result)`. Both workflows share the same result and checkpoint
 format. The two checkpoint formats previously introduced on this branch are
 rejected explicitly; rerun the examples to generate current checkpoints.
+Numerical fingerprint 5 also rejects earlier histories, whose reference powers
+could be paired with the wrong frequencies when monitor frequency orders differ.
 
 See the [workflow guide](../../docs/inverse-design-workflow.md) for schedules,
 restart semantics, native plotting, export, and executed notebook examples.

@@ -1,9 +1,53 @@
 """Composition semantics and immutable objective specifications."""
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from beamz.optimization import ModePower, WeightedObjective
+from beamz.optimization import ModePower, SoftMinModePower, WeightedObjective
+from beamz.optimization.data import ModeAmplitudes, ModeData
+
+
+@pytest.mark.parametrize("objective_type", [ModePower, SoftMinModePower])
+@pytest.mark.parametrize("frequencies", [None, (3e14, 2e14)])
+@pytest.mark.parametrize("extra_frequency", [False, True])
+def test_reference_power_aligns_frequency_coordinates(
+    objective_type, frequencies, extra_frequency
+):
+    def monitor(values, coords):
+        return ModeData(
+            ModeAmplitudes(
+                values[None, :, None],
+                ("direction", "f", "mode_index"),
+                {"f": coords, "direction": ("+",), "mode_index": (0,)},
+            )
+        )
+
+    objective = objective_type(
+        "output", reference_monitor="input", frequencies=frequencies
+    )
+
+    def evaluate(incoming, coords):
+        data = {
+            "output": monitor(jnp.array([2.0, 3.0]), (2e14, 3e14)),
+            "input": monitor(incoming, coords),
+        }
+        return objective(data)
+
+    expected, gradient = jax.value_and_grad(evaluate)(
+        jnp.array([4.0, 6.0]), (2e14, 3e14)
+    )
+    actual, reordered_gradient = jax.value_and_grad(evaluate)(
+        jnp.array([6.0, 4.0, 10.0] if extra_frequency else [6.0, 4.0]),
+        (3e14, 2e14, 4e14) if extra_frequency else (3e14, 2e14),
+    )
+    np.testing.assert_allclose(actual, expected)
+    expected_gradient = [gradient[1], gradient[0]] + ([0] if extra_frequency else [])
+    np.testing.assert_allclose(reordered_gradient, expected_gradient)
+
+    with pytest.raises(KeyError, match="not recorded"):
+        evaluate(jnp.array([4.0]), (2e14,))
 
 
 def test_objective_arithmetic_keeps_signs_and_spectral_identity():

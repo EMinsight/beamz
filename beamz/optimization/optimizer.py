@@ -215,12 +215,13 @@ class AdamOptimizer(Specification):
         """
         steps = step_count(steps, "steps")
         fingerprint = self._fingerprint(objective)
+        optimizer = optax.adam(self.learning_rate)
         if resume is None:
             params = self.design.design_region.initial_parameters
             result = InverseDesignResult(
                 self.design,
                 (_frozen(params),),
-                optax.adam(self.learning_rate).init(jnp.asarray(params)),
+                optimizer.init(jnp.asarray(params)),
                 fingerprint=fingerprint,
                 schedule=self.schedule,
             )
@@ -234,7 +235,6 @@ class AdamOptimizer(Specification):
                 raise ValueError(
                     "Result belongs to a different design, objective, or optimizer."
                 )
-        optimizer = optax.adam(self.learning_rate)
         evaluate = jax.value_and_grad(
             lambda params, settings: self.design._evaluate(
                 params, objective, self.maximize, **settings
