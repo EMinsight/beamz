@@ -544,6 +544,7 @@ def _pad_with_boundary_ghosts(
     *,
     logical_size: int | None = None,
     periodic: bool = False,
+    periodic_phase=1.0,
 ):
     logical_size = int(array.shape[axis]) if logical_size is None else int(logical_size)
     if logical_size <= 0 or logical_size > int(array.shape[axis]):
@@ -563,8 +564,8 @@ def _pad_with_boundary_ghosts(
         axis
     ]
     if periodic:
-        low = jnp.take(physical, jnp.array([logical_size - 1]), axis)
-        high = jnp.take(physical, jnp.array([0]), axis)
+        low = jnp.take(physical, jnp.array([logical_size - 1]), axis) / periodic_phase
+        high = jnp.take(physical, jnp.array([0]), axis) * periodic_phase
     else:
         low = (
             zero
@@ -587,6 +588,7 @@ def build_h_boundary_views_for_e_3d(
     *,
     logical_shapes=None,
     periodic_axes=frozenset(),
+    periodic_phases=(),
 ):
     """Create the six ghost-padded H views consumed by the 3D E curl."""
     return {
@@ -598,6 +600,7 @@ def build_h_boundary_views_for_e_3d(
                 None if logical_shapes is None else logical_shapes[component][axis]
             ),
             periodic=axis in periodic_axes,
+            periodic_phase=periodic_phases[axis] if periodic_phases else 1.0,
         )
         for name, component, field, axis in (
             ("hz_y", "Hz", hz, 1),

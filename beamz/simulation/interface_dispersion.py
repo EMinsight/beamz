@@ -52,7 +52,7 @@ def _periodic_copies(interface, shape, periodic_axes, geometry):
     return indices, fractions, weights
 
 
-def compile_interfaces(grid, dt, periodic_axes):
+def compile_interfaces(grid, dt, periodic_axes, *, complex_fields=False):
     plans = []
     for interface in grid.material_grid.dispersion_interfaces:
         component = interface.component.lower()
@@ -72,6 +72,9 @@ def compile_interfaces(grid, dt, periodic_axes):
             :, None
         ]
         response = 2 * b.real.sum(axis=1)
+        if complex_fields:
+            a = np.concatenate((a, a.conj()), axis=1)
+            b = np.concatenate((b, b.conj()), axis=1)
         if np.any(epsilon + response <= 0):
             raise ValueError(
                 "Dispersive interface has a nonpositive constituent step denominator."
@@ -92,21 +95,23 @@ def compile_interfaces(grid, dt, periodic_axes):
                 harmonic_inf=jnp.asarray(harmonic_inf, dtype=jnp.float32),
                 harmonic_step=jnp.asarray(harmonic_step, dtype=jnp.float32),
                 delta=jnp.asarray(delta, dtype=jnp.float32),
-                shape=(len(pole_lists), max_poles, len(indices)),
+                shape=(len(pole_lists), a.shape[1], len(indices)),
             )
         )
     return tuple(plans)
 
 
-def interface_history(plan, q, old_e):
+def interface_history(plan, q, old_e, *, complex_fields=False):
     e = old_e.reshape(-1)[plan.indices]
-    polarization = 2 * jnp.real(jnp.sum(q, axis=1))
+    total = jnp.sum(q, axis=1)
+    polarization = total if complex_fields else 2 * jnp.real(total)
     normal_p = plan.harmonic_inf * jnp.sum(
         plan.fractions * polarization / plan.epsilon, axis=0
     )
     normal_d = plan.harmonic_inf * e + normal_p
     local_old = (normal_d - polarization) / plan.epsilon
-    h = 2 * jnp.real(jnp.sum(plan.a * q, axis=1)) + plan.response * local_old
+    total = jnp.sum(plan.a * q, axis=1)
+    h = (total if complex_fields else 2 * jnp.real(total)) + plan.response * local_old
     harmonic_h = plan.harmonic_step * jnp.sum(
         plan.fractions * h / (plan.epsilon + plan.response), axis=0
     )

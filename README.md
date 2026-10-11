@@ -27,14 +27,13 @@
 - **Multi-GPU** runs, handling **large-scale simulations** with _billions of cells_.
 - CPU-capable for **fast prototyping**, even on your laptop.
 - Dedicated CUDA-backend for acceleration beyond default Jax.
-- **CPML**, absorbing layers, PEC and zero-phase periodic boundaries (JAX).
+- **CPML**, absorbing layers and PEC boundaries.
 - **Unidirectional mode sources** (single freq. and broadband, Huygens fields + TFSF, TE/TM).
 - **3D Gaussian sources**, e.g. for grating coupler simulations.
-- **Broadband dispersive materials** (pole-residue, Drude/Lorentz) and uniform plane-wave sources on single-device JAX.
 - **DFT monitors** and S-parameter extraction workflow for compact modeling.
 - Integrated **FDFD mode solver** and **rasterization module**.
 - Regular and **rectilinear meshing**.
-- Full-tensor and diagonal Farjadpour (polarized averaging) **subpixel-smoothing**; dielectrics default to diagonal averaging and optical metals to staircasing.
+- Full-tensor and diagonal Farjadpour (polarized averaging) **subpixel-smoothing**.
 - Simple **GDS**, **GMSH** and **STL** import and export.
 - Streamlined, integrated **parametric design** module.
 - 2D and extruded 3D topology **inverse design** in `beamz.optimization`, with selectable JAX autodiff or spectral adjoint FDTD gradients.
@@ -53,7 +52,6 @@ Try out notebooks from our growing **[example library](https://beamz.tech/simula
 - [7) GDSFactory PDK 1x2 MMI (3D)](https://www.beamz.tech/examples/gdsfactory_component_sparameters)
 
 
-- [CMOS RGB Image Sensor](https://beamz.tech/examples/cmos_rgb_sensor)
 - [Inverse-designed Mode Converter (2D)](examples/notebooks/topology_mode_converter.ipynb)
 - [Topology Gradient Checks: Autodiff and Adjoint FDTD](examples/notebooks/topology_gradient_checks.ipynb)
 - [Broadband Inverse-designed Wavelength Demultiplexer](examples/notebooks/topology_broadband_demultiplexer.ipynb)

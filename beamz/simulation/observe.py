@@ -176,7 +176,7 @@ def monitor_dft_component(monitor, component):
     weights = np.maximum(
         np.asarray(monitor.dft_weight_sum, dtype=float), 1e-18
     ).reshape(nfreq, 1)
-    return (2.0 / weights) * values
+    return (getattr(monitor, "dft_amplitude_scale", 2.0) / weights) * values
 
 
 def _flux_component(monitor, component):
@@ -492,7 +492,7 @@ def empty_monitor_values(program, num_steps: int | None = None) -> dict[str, Any
                     int(np.ceil(recorder_steps / spec.record_interval)),
                     *shape,
                 ),
-                dtype=jnp.float32,
+                dtype=program.grid.Ex.dtype,
             )
             for spec in recorder_specs
             for shape in spec.field_shapes
@@ -528,6 +528,7 @@ def _reduce_power(samples: jnp.ndarray, spec: CompiledMonitorSpec):
                 if spec.integration_weights.size
                 else spec.power_scale
             ),
+            phasor=jnp.iscomplexobj(samples),
         ),
         dtype=jnp.float32,
     )
@@ -585,15 +586,23 @@ def _accumulate_dft(
             active_mask=np.asarray(mon.dft_component_mask),
         )
     component_mask = mon.dft_component_mask.astype(dtype)[:, None, None]
+    vector_re = jnp.real(vectors).astype(dtype)
+    vector_im = jnp.imag(vectors).astype(dtype)
     delta_re = (
         scale
         * component_mask
-        * jnp.einsum("f,cp->cfp", phase_re, vectors.astype(dtype))
+        * (
+            jnp.einsum("f,cp->cfp", phase_re, vector_re)
+            - jnp.einsum("f,cp->cfp", phase_im, vector_im)
+        )
     )
     delta_im = (
         scale
         * component_mask
-        * jnp.einsum("f,cp->cfp", phase_im, vectors.astype(dtype))
+        * (
+            jnp.einsum("f,cp->cfp", phase_im, vector_re)
+            + jnp.einsum("f,cp->cfp", phase_re, vector_im)
+        )
     )
     nf, npnt = mon.freq_count, mon.dft_point_count
     value_offset = int(mon.dft_value_offset)

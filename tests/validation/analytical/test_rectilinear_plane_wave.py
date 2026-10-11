@@ -129,7 +129,8 @@ def test_periodic_dispersive_seam_uses_physical_support_volumes():
     np.testing.assert_allclose(joined[:, :, -1], 2 / 3)
 
 
-def test_rectilinear_source_rejects_dispersive_injection_sheet():
+@pytest.mark.parametrize("uniform", [False, True])
+def test_plane_wave_rejects_dispersive_injection_sheet(uniform):
     medium = bz.PoleResidue.lorentz(
         1.0, strength=0.5, resonance=6e15, damping=1e14, frequency_range=(4e14, 8e14)
     )
@@ -144,7 +145,9 @@ def test_rectilinear_source_rejects_dispersive_injection_sheet():
                 direction="-z",
             )
         ],
-        grid_spec=bz.GridSpec.auto(
+        grid_spec=bz.GridSpec.uniform(25e-9)
+        if uniform
+        else bz.GridSpec.auto(
             wavelength=500e-9,
             dl_max=30e-9,
             overrides=(
@@ -159,6 +162,87 @@ def test_rectilinear_source_rejects_dispersive_injection_sheet():
     )
     with pytest.raises(ValueError, match="lossless nondispersive"):
         sim.compile(backend="jax")
+
+
+@pytest.mark.parametrize("uniform", [False, True])
+@pytest.mark.parametrize("kind", ["conductive", "wrong_index"])
+def test_plane_wave_rejects_invalid_background(uniform, kind):
+    medium = (
+        bz.Material(conductivity=10)
+        if kind == "conductive"
+        else bz.Material(permittivity=2)
+    )
+    sim = bz.Simulation(
+        size=(0.2e-6, 0.2e-6, 1e-6),
+        background=medium,
+        sources=[
+            bz.PlaneWaveSource(
+                center=(0, 0, 0.2e-6),
+                size=(0.2e-6, 0.2e-6, 0),
+                source_time=bz.GaussianPulse(6e14, 2e14),
+                direction="-z",
+            )
+        ],
+        grid_spec=bz.GridSpec.uniform(25e-9)
+        if uniform
+        else bz.GridSpec.auto(
+            wavelength=500e-9,
+            dl_max=30e-9,
+            overrides=(
+                bz.MeshOverride(
+                    center=(0, 0, 0),
+                    size=(0.2e-6, 0.2e-6, 0.2e-6),
+                    dl=(None, None, 10e-9),
+                ),
+            ),
+        ),
+        run_time=1e-15,
+    )
+    message = (
+        "lossless nondispersive" if kind == "conductive" else "homogeneous background"
+    )
+    with pytest.raises(ValueError, match=message):
+        sim.compile(backend="jax")
+
+
+@pytest.mark.parametrize("kind", ["conductive", "dispersive", "matching_index"])
+def test_uniform_plane_wave_accepts_valid_sheet_with_material_elsewhere(kind):
+    background_index = 1.4 if kind == "matching_index" else 1.0
+    background = bz.Material(permittivity=background_index**2)
+    medium = (
+        bz.PoleResidue.lorentz(
+            1.0,
+            strength=0.5,
+            resonance=6e15,
+            damping=1e14,
+            frequency_range=(4e14, 8e14),
+        )
+        if kind == "dispersive"
+        else bz.Material(conductivity=10)
+    )
+    design = bz.Design(background=background).with_structure(
+        bz.Box(
+            center=(0, 0, -0.3e-6),
+            size=(bz.inf, bz.inf, 0.1e-6),
+            material=medium,
+        )
+    )
+    sim = bz.Simulation(
+        size=(0.2e-6, 0.2e-6, 1e-6),
+        design=design,
+        sources=[
+            bz.PlaneWaveSource(
+                center=(0, 0, 0.2e-6),
+                size=(0.1e-6, 0.1e-6, 0),
+                source_time=bz.GaussianPulse(6e14, 2e14),
+                direction="-z",
+                background_index=background_index,
+            )
+        ],
+        resolution=25e-9,
+        run_time=1e-15,
+    )
+    assert sim.compile(backend="jax").sources
 
 
 def test_uniform_cell_center_quadrature_has_exact_aperture_area():

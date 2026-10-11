@@ -26,10 +26,27 @@ The supported `beamz.simulation` surface is intentionally small:
 - `Simulation`, `SimulationState`, `SimulationRun`, `SimulationResults`, `MonitorResults`
 - `AutoTermination`, `RunTermination`
 - `GridSpec`, `GaussianPulse`, `ModeSpec`
-- `Absorber`, `PML`, `PEC`, `Periodic`, `Port`
+- `Absorber`, `PML`, `PEC`, `Periodic`, `Bloch`, `Port`
 
-`Periodic` currently means zero-phase periodicity and executes through the JAX
-backend; nonzero Bloch phase and CUDA periodic kernels are not yet supported.
+`Periodic` means zero-phase periodicity. `Bloch(axes=("x", "y"),
+wavevector=(kx, ky, 0))` applies `F(r + L_i e_i) = exp(1j * k_i * L_i) F(r)`,
+with physical Cartesian wavevectors in rad/m. Periodic and Bloch boundaries
+execute through JAX; nonzero Bloch wavevectors require single-device execution
+and complex E/H, CPML, and polarization state. CUDA periodic kernels remain
+unsupported. A zero Bloch wavevector keeps the ordinary real-field path.
+
+`PlaneWaveSource.transverse_wavevector` must match the Bloch vector. Oblique
+sources currently require 3D, full-cell apertures, and a quadrature pulse with
+`fwidth <= 0.1 * freq0`. Its polarization angle mixes s and p relative to the
+incidence plane. The wavevector is fixed over the pulse spectrum; use separate
+frequency runs for a spectrum at a fixed incidence angle. Injection sheets must
+lie in a homogeneous, lossless, nondispersive background.
+
+Complex field DFTs use the full complex sample with `exp(+i omega t)`; their
+amplitude conversion uses `1 / weight_sum`, versus `2 / weight_sum` for real
+fields. Field recorders preserve complex samples. Complex-field diagnostic
+energy uses magnitude squared, and power uses the real conjugated Poynting
+product. Nonzero Bloch mode sources/monitors are explicitly unsupported.
 
 Numerical Yee helpers, mutable mesh builders, source/monitor lowering, update
 kernels, and compiled plan types remain private implementation details rather
@@ -206,7 +223,9 @@ metal = bz.PoleResidue.drude(
 ```
 
 JAX advances the auxiliary polarization with a coupled trapezoidal constitutive
-solve. `SimulationState.polarization` retains that memory across `advance()` and
+solve. Complex fields retain both conjugate-pole states independently, including
+harmonic normal-interface constituents, instead of taking the real part of one
+pole state. `SimulationState.polarization` retains that memory across `advance()` and
 `step()`. Only occupied material bounding boxes carry oscillator state. The
 non-dispersive update path has no polarization arrays. The compiler includes
 pole data and Yee-support material fractions in its cache identity.
@@ -220,11 +239,11 @@ update denominators, and the vacuum CFL bound are checked. Sampled passivity is
 not a proof for arbitrary user-provided rational functions.
 
 The first implementation supports single-device JAX (CPU or GPU), 2D TE/TM and
-3D, uniform/rectilinear update metrics, and periodic/PEC/absorbing boundaries.
+3D, uniform/rectilinear update metrics, and periodic/Bloch/PEC/absorbing boundaries.
 Native CUDA kernels, multi-device sharding, coupled full-tensor media, and
 dispersive mode sources/monitors are explicitly rejected. The uniform
 `PlaneWaveSource` supports isotropic and rectilinear grids at normal
-incidence; rectilinear injection must span the transverse domain and lie in a
+and narrowband oblique incidence; rectilinear injection must span the transverse domain and lie in a
 lossless nondispersive background. Automatic energy termination is rejected for dispersive media because
 its diagnostic does not include stored material energy; use a fixed runtime and
 compare continued spectral acquisitions.

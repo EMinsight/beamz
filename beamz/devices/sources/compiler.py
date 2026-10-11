@@ -224,7 +224,12 @@ def _lower_custom_source(
                 index=source.index,
                 values=coeff,
                 waveform=TemporalWaveform(
-                    jnp.asarray(source.waveform, dtype=jnp.float32)
+                    jnp.asarray(
+                        source.waveform,
+                        dtype=jnp.complex64
+                        if np.iscomplexobj(source.waveform)
+                        else jnp.float32,
+                    )
                 ),
                 target_shape=target_shape,
             ),
@@ -264,7 +269,8 @@ def _as_slab_spec(
                 continue
             break
         else:
-            coeff_np = np.asarray(coeff, dtype=np.float32)
+            coeff_dtype = np.complex64 if np.iscomplexobj(coeff) else np.float32
+            coeff_np = np.asarray(coeff, dtype=coeff_dtype)
             slab_sizes = tuple(sizes)
             expected = int(np.prod(slab_sizes))
             if coeff_np.size == expected:
@@ -273,7 +279,7 @@ def _as_slab_spec(
                     component=component,
                     timing=timing,
                     index=index,
-                    coeff=jnp.asarray(coeff_np, dtype=jnp.float32),
+                    coeff=jnp.asarray(coeff_np),
                     waveform=waveform,
                     is_slab=True,
                     slab_starts=tuple(starts),
@@ -284,7 +290,9 @@ def _as_slab_spec(
         component=component,
         timing=timing,
         index=index,
-        coeff=jnp.asarray(coeff, dtype=jnp.float32),
+        coeff=jnp.asarray(
+            coeff, dtype=jnp.complex64 if np.iscomplexobj(coeff) else jnp.float32
+        ),
         waveform=waveform,
     )
 
@@ -316,6 +324,7 @@ def _compile_injection_plan(
     *,
     source_index: int = -1,
     imag_tol: float = 1e-30,
+    complex_fields: bool = False,
 ) -> tuple[CompiledSourceSpec, ...]:
     """Emit runtime specs through the single source scheduling path."""
     specs: list[CompiledSourceSpec] = []
@@ -323,9 +332,20 @@ def _compile_injection_plan(
         profile = entry.profile
         support = entry.support
         values = np.asarray(profile.values, dtype=np.complex128)
-        parts = [(np.real(values), entry.waveform.values)]
+        parts: list[tuple[Any, jnp.ndarray]] = [
+            (np.real(values), entry.waveform.values)
+        ]
+        if complex_fields:
+            waveform = entry.waveform.values
+            if entry.waveform.quadrature is not None:
+                waveform = waveform - 1j * entry.waveform.quadrature
+            parts = [(values, waveform)]
         imag_peak = float(np.max(np.abs(np.imag(values)))) if values.size else 0.0
-        if entry.waveform.quadrature is not None and imag_peak > float(imag_tol):
+        if (
+            not complex_fields
+            and entry.waveform.quadrature is not None
+            and imag_peak > float(imag_tol)
+        ):
             parts.append((-np.imag(values), entry.waveform.quadrature))
 
         for coeff, waveform in parts:
@@ -390,11 +410,73 @@ def compile_source_specs(
     for source_index, source in enumerate(source_specs):
         specs.extend(
             _compile_injection_plan(
-                lower_source(source, ctx), source_index=source_index
+                lower_source(source, ctx),
+                source_index=source_index,
+                complex_fields=jnp.iscomplexobj(fields.Ex),
             )
         )
 
     return tuple(specs)
+
+
+def _validate_plane_wave_background(source, ctx, component, index, *, active=None):
+    """Check the material on the active Yee support of a plane-wave current."""
+    target = getattr(ctx.fields, component)
+    if active is None:
+        active = np.ones(target[index].shape, dtype=bool)
+    if not np.any(active):
+        return
+
+    def selected(value):
+        value = np.asarray(value)
+        return np.broadcast_to(
+            value if value.ndim == 0 else value[index], active.shape
+        )[active]
+
+    if component.startswith("E"):
+        conductivity = selected(getattr(ctx.fields, "sig_" + component[-1]))
+        dispersive = any(
+            component in supports and np.any(selected(supports[component]) > 1e-7)
+            for _, supports in ctx.fields.material_grid.dispersion
+        )
+        for interface in ctx.fields.material_grid.dispersion_interfaces:
+            if interface.component != component:
+                continue
+            coordinates = np.unravel_index(interface.indices, target.shape)
+            bounds = tuple(
+                item.indices(size)
+                for item, size in zip(index, target.shape, strict=True)
+            )
+            inside = np.ones(len(interface.indices), dtype=bool)
+            for coordinate, (start, stop, step) in zip(
+                coordinates, bounds, strict=True
+            ):
+                inside &= (
+                    (coordinate >= start)
+                    & (coordinate < stop)
+                    & ((coordinate - start) % step == 0)
+                )
+            local = tuple(
+                (coordinate[inside] - start) // step
+                for coordinate, (start, _, step) in zip(
+                    coordinates, bounds, strict=True
+                )
+            )
+            if np.any(active[local]):
+                dispersive = True
+                break
+        if np.any(conductivity != 0) or dispersive:
+            raise ValueError(
+                "Plane-wave injection sheet must be in a lossless nondispersive background."
+            )
+    material = np.asarray(component_material_at(ctx.fields, component, index))
+    expected = 1.0 if component.startswith("H") else source.background_index**2
+    if not np.allclose(
+        np.broadcast_to(material, active.shape)[active], expected, rtol=1e-5, atol=1e-6
+    ):
+        raise ValueError(
+            "Plane-wave injection sheet must be in the homogeneous background."
+        )
 
 
 @lower_source.register
@@ -405,8 +487,21 @@ def _lower_plane_wave_source(source: PlaneWaveSource, ctx: SourceLoweringContext
     incident E and H waveforms are evaluated at their own Yee positions and
     times; no single-frequency phase approximation is used.
     """
+    if any(source.transverse_wavevector):
+        from .bloch import lower_bloch_plane_wave
+
+        return lower_bloch_plane_wave(source, ctx)
     if not _source_requires_rectilinear_operator(ctx):
-        return _lower_gaussian_beam_source(source, ctx)
+        plan = _lower_gaussian_beam_source(source, ctx)
+        for entry in plan.entries:
+            _validate_plane_wave_background(
+                source,
+                ctx,
+                entry.profile.component,
+                entry.support.index,
+                active=np.abs(entry.profile.values) > 1e-30,
+            )
+        return plan
     grid = ctx.grid
     assert grid is not None  # The rectilinear operator requires grid metrics.
     if np.asarray(ctx.fields.permittivity).ndim != 3:
@@ -471,32 +566,7 @@ def _lower_plane_wave_source(source: PlaneWaveSource, ctx: SourceLoweringContext
             index[array_axis] = slice(plane_index, plane_index + 1)
             index = tuple(index)
             material = np.asarray(component_material_at(ctx.fields, component, index))
-            if kind == "E":
-                conductivity = getattr(ctx.fields, "sig_" + _AXES[i])
-                conductivity = np.asarray(
-                    conductivity if np.ndim(conductivity) == 0 else conductivity[index]
-                )
-                dispersive = any(
-                    component in supports and np.any(supports[component][index] > 1e-7)
-                    for _, supports in ctx.fields.material_grid.dispersion
-                )
-                dispersive = dispersive or any(
-                    interface.component == component
-                    and np.any(
-                        np.unravel_index(interface.indices, target.shape)[array_axis]
-                        == plane_index
-                    )
-                    for interface in ctx.fields.material_grid.dispersion_interfaces
-                )
-                if np.any(conductivity != 0) or dispersive:
-                    raise ValueError(
-                        "Plane-wave injection sheet must be in a lossless nondispersive background."
-                    )
-            expected = 1.0 if kind == "H" else source.background_index**2
-            if not np.allclose(material, expected, rtol=1e-5, atol=1e-6):
-                raise ValueError(
-                    "Plane-wave injection sheet must be in the homogeneous background."
-                )
+            _validate_plane_wave_background(source, ctx, component, index)
             coefficient = (
                 amplitude * ctx.dt / (MU_0 * spacing)
                 if kind == "H"
