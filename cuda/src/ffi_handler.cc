@@ -394,6 +394,58 @@ ffi::Error ShardedHostHandler(ffi::RemainingArgs args, ffi::RemainingRets rets,
 }
 #endif
 
+#ifndef BEAMZ_CUDA_CPU_CONTRACT
+ffi::Error AdjointHandler(void* stream, ffi::RemainingArgs args,
+                          ffi::RemainingRets rets, int32_t abi_version,
+                          int32_t cuda_flags, int32_t phase, int32_t nterms,
+                          float dt, float resolution, int32_t boundary_code,
+                          int32_t metric_kind, int64_t gradient_mask) {
+  if (abi_version != kAbiVersion || phase < 0 || phase > 1 ||
+      (nterms != 0 && nterms != 6) || metric_kind < 0 || metric_kind > 2) {
+    return ffi::Error::InvalidArgument("invalid BeamZ CUDA adjoint attributes");
+  }
+  const size_t payload = 13 + 4 * static_cast<size_t>(nterms);
+  const size_t output_count = 3 + static_cast<size_t>(nterms);
+  if (args.size() != payload + 3 + output_count ||
+      rets.size() != payload + 2) {
+    return ffi::Error::InvalidArgument("invalid BeamZ CUDA adjoint buffer count");
+  }
+  BeamzAdjointLaunch launch{};
+  launch.gradient_mask = static_cast<uint64_t>(gradient_mask);
+  launch.phase = InitializeLaunch(abi_version, cuda_flags, phase, nterms,
+                                  metric_kind, dt, resolution, boundary_code);
+  if (auto error = DecodeArgs(args, launch.phase.inputs, payload);
+      error.failure()) return error;
+  for (size_t axis = 0; axis < 3; ++axis) {
+    auto decoded = args.get<ffi::AnyBuffer>(payload + axis);
+    if (!decoded) return decoded.error();
+    if (auto error = DecodeBuffer(*decoded, &launch.phase.metrics[axis]);
+        error.failure()) return error;
+    auto gradient = rets.get<ffi::AnyBuffer>(payload - 1 + axis);
+    if (!gradient) return gradient.error();
+    if (auto error = DecodeBuffer(**gradient, &launch.metric_gradients[axis]);
+        error.failure()) return error;
+  }
+  for (size_t index = 0; index < payload; ++index) {
+    if (index == 12) continue;
+    auto decoded = rets.get<ffi::AnyBuffer>(index < 12 ? index : index - 1);
+    if (!decoded) return decoded.error();
+    if (auto error = DecodeBuffer(**decoded, &launch.gradients[index]);
+        error.failure()) return error;
+  }
+  for (size_t index = 0; index < output_count; ++index) {
+    auto decoded = args.get<ffi::AnyBuffer>(payload + 3 + index);
+    if (!decoded) return decoded.error();
+    if (auto error = DecodeBuffer(*decoded, &launch.phase.outputs[index]);
+        error.failure()) return error;
+  }
+  const int error = BeamzLaunchAdjoint(stream, launch);
+  return error == 0 ? ffi::Error::Success() :
+      ffi::Error::Internal("BeamZ CUDA adjoint launch failed: " + std::to_string(error));
+}
+
+#endif
+
 ffi::Error StreamedStepsHandler(void* stream, ffi::RemainingArgs args,
                                 ffi::RemainingRets rets, int32_t abi_version,
                                 int32_t cuda_flags, int32_t nsteps, float dt,
@@ -934,7 +986,8 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_streamed, StreamedHandler,
                                   .Attr<float>("dt")
                                   .Attr<float>("resolution")
                                   .Attr<int32_t>("boundary_code")
-                                  .Attr<int32_t>("metric_kind"));
+                                  .Attr<int32_t>("metric_kind"),
+                              {ffi::Traits::kCmdBufferCompatible});
 
 // This handler only validates descriptors and enqueues kernels on XLA's stream.
 // Declaring capture compatibility lets XLA include distributed phases in its
@@ -982,3 +1035,22 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_program, ProgramHandler,
                                   .Attr<int32_t>("logical_y")
                                   .Attr<int32_t>("logical_x")
                                   .Attr<int32_t>("temporal_steps"));
+
+#ifndef BEAMZ_CUDA_CPU_CONTRACT
+XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_adjoint, AdjointHandler,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<void*>>()
+                                  .RemainingArgs()
+                                  .RemainingRets()
+                                  .Attr<int32_t>("abi_version")
+                                  .Attr<int32_t>("cuda_flags")
+                                  .Attr<int32_t>("phase")
+                                  .Attr<int32_t>("nterms")
+                                  .Attr<float>("dt")
+                                  .Attr<float>("resolution")
+                                  .Attr<int32_t>("boundary_code")
+                                  .Attr<int32_t>("metric_kind")
+                                  .Attr<int64_t>("gradient_mask"),
+                              {ffi::Traits::kCmdBufferCompatible});
+
+#endif

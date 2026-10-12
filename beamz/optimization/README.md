@@ -4,6 +4,104 @@ Use `beamz.optimization` for topology inverse design with BeamZ simulations,
 metre units, and JAX objectives. The same workflow supports full autodiff and
 spectral adjoint gradients.
 
+## End-to-end FDTD autodiff
+
+`Simulation.differentiable()` builds a reusable, pure solver whose fields and raw
+monitor accumulators can be differentiated with `jax.grad`. Construct it once
+outside JAX transformations; material values are runtime inputs and do not change
+the compiled-program cache key.
+
+```python
+import jax
+import jax.numpy as jnp
+
+solver = simulation.differentiable(backend="cuda", checkpoint_interval=32)
+
+
+def loss(density):
+    epsilon = 1.0 + 11.0 * jax.nn.sigmoid(density)
+    state = solver(epsilon)
+    return -jnp.sum(solver.monitor_flux(state, "output"))
+
+
+value, gradient = jax.value_and_grad(loss)(density)
+```
+
+JAX density maps and pointwise projections can replace `sigmoid` in this
+example; apply the existing 2D filters slice by slice for a 3D design. This path
+differentiates the discrete electromagnetic updates and the
+objective together; it does not need `compute_overlap_gradient` or a manually
+constructed adjoint source. A complete runnable example is
+[`autodiff_cuda.py`](../../examples/optimization/autodiff_cuda.py).
+For a step-by-step waveguide example with gradient checks and before/after field
+plots, open [`cuda_autodiff_waveguide_bend.ipynb`](../../examples/notebooks/cuda_autodiff_waveguide_bend.ipynb).
+
+- `backend="jax"` supports the portable 2D TM/TE and 3D solvers.
+- `backend="cuda"` uses native streamed forward and reverse-mode Yee/CPML
+  kernels for the existing single-GPU, float32 3D physics. Both lossy materials
+  and mixed absorbing/PEC faces are supported. The CUDA component must be
+  rebuilt for ABI 24.
+- `checkpoint_interval=None` selects approximately sqrt(T) steps per chunk;
+  a positive integer controls the memory/recomputation tradeoff. Zero retains
+  the trajectory for small reference problems. Chunk recomputation works with
+  conductive materials and CPML; no time-reversible assumption is needed.
+- `solver(epsilon, conductivity=sigma, state=initial_state,
+  source_amplitudes=amplitudes)` accepts differentiable material values, initial
+  fields/CPML memories, and one real amplitude per original source. Omitted
+  arguments preserve compiled materials and use a fresh initial state.
+- Uniform-grid cell permittivity is sampled differentiably onto the Yee
+  supports, including the transpose of averaging and clipped edge sampling.
+  Directly rasterized or nonuniform Yee materials should be supplied as an
+  `(epsilon_x, epsilon_y, epsilon_z)` tuple on the compiled Ex/Ey/Ez supports.
+  Conductivity accepts cell arrays, scalars, or corresponding Yee arrays. Cell
+  conductivity updates both electric losses and BeamZ's equivalent magnetic
+  losses; a Yee tuple updates electric losses only.
+- `solver.monitor_fields(state, name)` returns complex DFT fields on canonical
+  axes in `(Ex, Ey, Ez, Hx, Hy, Hz)` order, normalized by the actual window weight
+  with H phasors aligned to E time. `solver.monitor_flux` returns signed planar
+  flux per frequency and includes the compiled integration weights. These
+  helpers preserve the monitor's configured native/physical units; source
+  normalization belongs in the objective.
+
+For guided-wave devices, optimize mode power rather than total flux, which can
+include radiation. Freeze a projector from an ordinary unnormalized run with a
+3D `ModeMonitor`; it uses the same mode basis as detached result analysis:
+
+```python
+from beamz.optimization.modes import build_mode_projector
+
+initial_result = simulation.run(backend="cuda")  # normalize_source=None
+project = build_mode_projector(initial_result, "output")
+
+
+def loss(epsilon):
+    state = solver(epsilon)
+    amplitudes = project(solver.monitor_fields(state, "output"))
+    # Shape: (frequency, direction, mode). Directions 0/1 mean +axis/-axis.
+    return -(jnp.abs(amplitudes[0, 1, 0]) ** 2) / fixed_reference_mode_power
+```
+
+Keep the projector's port materials, geometry, frequencies, and mesh fixed. Its
+mode solve and normalization are setup operations; its linear field projection
+is differentiable. Gradient agreement verifies the discrete objective, while
+binary layouts, longer time windows, and finer meshes require forward checks.
+
+The differentiable path retains fixed geometry, grid/time spacing, boundaries,
+source profiles and their launch normalization, and monitor definitions. Source
+mode solving and rasterization are setup operations, and source profiles are not
+recomputed when a design changes. Keep design regions away from source supports
+when their normalization depends on local material values. `Simulation.run()`
+continues to provide ordinary decoded analysis results; use the differentiable
+state and helpers within a gradient objective.
+
+CUDA provides first-order reverse mode; forward-mode JVPs and higher derivatives
+of native FFI calls are not implemented. BF16 absorber state, sharded execution,
+and coupled full-tensor constitutive updates are outside the native autodiff
+path. For JAX tensor optimization or independent magnetic losses, use
+`solver.run_coefficients(state, coefficients, source_amplitudes=None)` with
+dynamic `UpdateCoefficients`. Checkpointing stores full chunk-boundary states, so
+large field-recorder histories still consume their configured storage.
+
 ## Recommended workflow
 
 Given an ordinary `simulation` with fixed mode sources and monitors:

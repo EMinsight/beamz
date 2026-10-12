@@ -1862,9 +1862,11 @@ def _monitor_dft_values(data, field_name, *, frequency=None, val="real"):
     return _field_view(values[idx], val=val).values, freqs[idx]
 
 
-def _monitor_plane_shape_and_coords(simulation, monitor):
+def _monitor_plane_shape_and_coords(simulation, monitor, *, region=None):
     plane_shape = getattr(monitor, "_compiled_dft_shape_3d", None)
-    region, coords0, coords1 = monitor_plane_coordinates_3d(simulation, monitor)
+    region, coords0, coords1 = monitor_plane_coordinates_3d(
+        simulation, monitor, region=region
+    )
     if plane_shape is None:
         plane_shape = (int(coords0.size), int(coords1.size))
     else:
@@ -2127,6 +2129,7 @@ def plot_dft_field(
     val="real",
     source_normalization=None,
     source_normalize=True,
+    sample_region=None,
     origin=None,
     percentile=99.5,
     vmin=None,
@@ -2177,7 +2180,7 @@ def plot_dft_field(
     field_key = str(field)
     coordinate_context = data.coordinates if data is not None else simulation
     plane_shape, target0, target1, sample_region = _monitor_plane_shape_and_coords(
-        coordinate_context, monitor
+        coordinate_context, monitor, region=sample_region
     )
     components, vector = _dft_plane_components(data, field_key, f_idx, plane_shape)
 
@@ -2379,6 +2382,7 @@ def plot_result_field(
                     frequency=frequency,
                     val=val,
                     source_normalization=None,
+                    sample_region=results.monitors[str(monitor_name)].sample_region,
                     ax=ax,
                     figsize=figsize,
                     cmap=image_cmap,

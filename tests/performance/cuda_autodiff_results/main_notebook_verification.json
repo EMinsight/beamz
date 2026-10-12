@@ -1,0 +1,82 @@
+[
+  {
+    "layout": "Continuous",
+    "dx_nm": 99.99999999999999,
+    "window_fs": 200.0,
+    "direction": "Forward",
+    "modal_transmission": 0.8833272960360168,
+    "net_flux_ratio": 0.899946792823902
+  },
+  {
+    "layout": "Binary",
+    "dx_nm": 99.99999999999999,
+    "window_fs": 200.0,
+    "direction": "Forward",
+    "modal_transmission": 0.8598914594564113,
+    "net_flux_ratio": 0.8835498934192323
+  },
+  {
+    "layout": "Continuous",
+    "dx_nm": 99.99999999999999,
+    "window_fs": 400.0,
+    "direction": "Forward",
+    "modal_transmission": 0.8838662475104173,
+    "net_flux_ratio": 0.9004956870771407
+  },
+  {
+    "layout": "Binary",
+    "dx_nm": 99.99999999999999,
+    "window_fs": 400.0,
+    "direction": "Forward",
+    "modal_transmission": 0.8604190922401148,
+    "net_flux_ratio": 0.884092757940401
+  },
+  {
+    "layout": "Continuous",
+    "dx_nm": 49.99999999999999,
+    "window_fs": 400.0,
+    "direction": "Forward",
+    "modal_transmission": 0.8070442421463446,
+    "net_flux_ratio": 0.8244936971958176
+  },
+  {
+    "layout": "Binary",
+    "dx_nm": 49.99999999999999,
+    "window_fs": 400.0,
+    "direction": "Forward",
+    "modal_transmission": 0.7989781365767422,
+    "net_flux_ratio": 0.8291119650566126
+  },
+  {
+    "layout": "Continuous",
+    "dx_nm": 49.99999999999999,
+    "window_fs": 400.0,
+    "direction": "Reverse",
+    "modal_transmission": 0.8070441903115446,
+    "net_flux_ratio": 0.8244936435034973
+  },
+  {
+    "layout": "Binary",
+    "dx_nm": 49.99999999999999,
+    "window_fs": 400.0,
+    "direction": "Reverse",
+    "modal_transmission": 0.7989781365767422,
+    "net_flux_ratio": 0.8291119650566126
+  },
+  {
+    "layout": "Continuous",
+    "dx_nm": 24.999999999999996,
+    "window_fs": 400.0,
+    "direction": "Forward",
+    "modal_transmission": 0.8003213425441298,
+    "net_flux_ratio": 0.8191247543434913
+  },
+  {
+    "layout": "Binary",
+    "dx_nm": 24.999999999999996,
+    "window_fs": 400.0,
+    "direction": "Forward",
+    "modal_transmission": 0.786035045123034,
+    "net_flux_ratio": 0.8189922705656003
+  }
+]

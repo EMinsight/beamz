@@ -1818,6 +1818,7 @@ class CompiledStepContext:
     dt: float
     dt_scalar: jnp.ndarray
     is_3d: bool
+    differentiable: bool = False
     sharding_plan: Any = None
     # Capacity scheduling is selected separately from buffer donation.
     low_memory: bool = False

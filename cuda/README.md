@@ -13,14 +13,15 @@ monitor schedules. JAX still owns tracing, buffers, and orchestration around tha
 small native interface, preserving BeamZ's public numerical semantics and JAX
 fallback without duplicating configuration-specific FFI targets.
 
-The native boundary has three typed FFI targets: a phase update, a sharded phase,
-and a complete multi-step program. The implementation is
+The native boundary has four typed FFI targets: a phase update, a sharded phase,
+a complete multi-step program, and a phase VJP. The implementation is
 split by responsibility:
 
 - `ffi_handler.cc` decodes JAX buffers into a validated `BeamzProgramLaunch`;
 - `program.cu` owns timestep order and selects the in-place or temporal schedule;
 - `graph.cu` owns bounded capture, semantic cache keys, and replay;
 - `update.cu` owns Yee and CPML kernels;
+- `adjoint.cu` applies the Yee/CPML transpose and accumulates parameter gradients;
 - `sharded.cu` launches the global-coordinate-aware cells in `sharded_cell.h`;
 - `io.cu` owns source injection and DFT monitor accumulation.
 
@@ -32,6 +33,31 @@ single-kernel path so an extra launch cannot dominate their work.
 `abi_layout.json` is the source of truth for target names, layout selectors, and
 positional buffer constants. After editing it, regenerate both language bindings
 with `python scripts/generate_cuda_abi.py`; CI uses `--check` to reject drift.
+
+Build against the JAX version used by the runtime. The isolated wheel build uses
+the pinned JAX headers in `cuda/pyproject.toml`; when disabling build isolation,
+the build environment must supply compatible headers as well as the CUDA toolkit.
+
+`Simulation.differentiable(backend="cuda")` uses float32 native timestep graphs
+for packed slab sources and vector DFT monitors, with streamed phase calls as
+the fallback for recorder and other monitor plans. JAX preserves input values
+around the graph's declared buffer aliases. The phase VJP writes separate
+cotangent buffers; checkpointed chunk recomputation bounds trajectory storage.
+The backward kernel applies the actual discrete stencil transpose, including
+PEC ghost cells and masks, packed CPML recurrence memory, and nonuniform metric
+scales. Source-field cotangents use a gather stencil with one writer per element;
+full material-grid gradients also use direct stores. Only trainable broadcast
+coefficients require atomic reductions. Symbolic-zero masks skip fixed-parameter
+gradients, and residual pruning avoids saving primal arrays their VJPs do not read.
+Streamed and adjoint handlers support XLA command-buffer capture. The complete
+program handler retains its own bounded graph cache.
+Backward linearization reuses the native step's post-source fields with the
+verified phase VJPs and JAX source/monitor transposes. Unused forward phase
+launches disappear from the backward executable. Trainable material codebooks
+and BF16 recurrence buffers are bypassed. See [the optimization guide](../beamz/optimization/README.md) for
+the API, supported parameter layouts, and first-order limitations. ABI 24 is
+required by the gradient-mask interface. See the [performance audit](../tests/performance/CUDA_AUTODIFF.md)
+for matched GPU benchmarks and reproducible commands.
 
 Install BeamZ from this checkout, then build its optional component in a CUDA 12
 development environment:

@@ -1,0 +1,91 @@
+{
+  "metadata": {
+    "jax_version": "0.9.0",
+    "devices": [
+      "cuda:0"
+    ],
+    "gpu": "NVIDIA GeForce RTX 3090, 610.43.03",
+    "dtype": "float32",
+    "mesh_nm": 50,
+    "shape_zyx": [
+      44,
+      100,
+      100
+    ],
+    "timesteps": 2597,
+    "run_time_s": 2e-13,
+    "checkpoint_interval": 32,
+    "warmup_calls": 3,
+    "samples": 5,
+    "notebook_sha256": "68fb89b0882125ee0dd7f41a109a4d0cd3b768d3b74f3c5d45cd95b5421c3d36",
+    "gradient_relative_difference": 1.1452959824964637e-06,
+    "objective_absolute_difference": 2.7939677238464355e-09,
+    "compilation_cache_enabled": false
+  },
+  "measurements": {
+    "cuda": {
+      "objective": {
+        "lower_and_compile_s": 0.7603581820148975,
+        "temporary_bytes": 38021192,
+        "samples_s": [
+          0.5012128748930991,
+          0.5000720699317753,
+          0.5006065929774195,
+          0.5001045560929924,
+          0.5003943091724068
+        ],
+        "median_s": 0.5003943091724068,
+        "minimum_s": 0.5000720699317753,
+        "maximum_s": 0.5012128748930991
+      },
+      "value_and_grad": {
+        "lower_and_compile_s": 5.457705578999594,
+        "temporary_bytes": 1941480984,
+        "samples_s": [
+          13.355960004031658,
+          13.37217499082908,
+          13.355281741824001,
+          13.37354482198134,
+          13.355237832991406
+        ],
+        "median_s": 13.355960004031658,
+        "minimum_s": 13.355237832991406,
+        "maximum_s": 13.37354482198134
+      }
+    },
+    "jax": {
+      "objective": {
+        "lower_and_compile_s": 2.3925557651091367,
+        "temporary_bytes": 27079472,
+        "samples_s": [
+          0.6050895838998258,
+          0.6048602820374072,
+          0.604435269953683,
+          0.6048073370475322,
+          0.6047615259885788
+        ],
+        "median_s": 0.6048073370475322,
+        "minimum_s": 0.604435269953683,
+        "maximum_s": 0.6050895838998258
+      },
+      "value_and_grad": {
+        "lower_and_compile_s": 10.821146033937111,
+        "temporary_bytes": 1835380944,
+        "samples_s": [
+          3.6607700230088085,
+          3.6605838420800865,
+          3.660543884150684,
+          3.6606008319649845,
+          3.6609874449204654
+        ],
+        "median_s": 3.6606008319649845,
+        "minimum_s": 3.660543884150684,
+        "maximum_s": 3.6609874449204654
+      }
+    }
+  },
+  "cuda_speedup_over_jax": {
+    "objective": 1.2086615014623412,
+    "value_and_grad": 0.2740799486416542
+  }
+}

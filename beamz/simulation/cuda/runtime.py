@@ -118,6 +118,131 @@ def _ffi_call(target, result_values, aliases):
     )
 
 
+@jax.tree_util.register_static
+@dataclass(frozen=True)
+class _GradientMask:
+    bits: int
+
+
+def _phase_with_vjp(arguments, result_values, attributes):
+    """Keep primal buffers immutable and transpose the native phase on CUDA."""
+    for index, value in enumerate(arguments):
+        if index != 12 and value.dtype != jnp.float32:
+            raise ValueError(
+                "CUDA autodiff requires dense float32 fields, coefficients, and CPML state"
+            )
+    forward = _ffi_call(abi.CUDA_STREAMED_TARGET, result_values, {})
+
+    @jax.custom_vjp
+    def phase_call(*inputs):
+        return tuple(forward(*inputs, **attributes))
+
+    def phase_forward(*inputs):
+        values = tuple(primal.value for primal in inputs)
+        mask = sum(
+            1 << i for i, primal in enumerate(inputs) if i != 12 and primal.perturbed
+        )
+        # Field/psi cotangents depend on the coefficients and output cotangents,
+        # not on old fields. Save primal arrays only for coefficient derivatives
+        # that actually need them. Constant placeholders retain shape metadata
+        # for the native ABI without keeping/copying unused time trajectories.
+        nterms = int(attributes["nterms"])
+        needed = [True] * len(values)
+
+        def active(index):
+            return bool(mask & (1 << index))
+
+        for component in range(3):
+            needed[component] = active(6 + component)
+            needed[3 + component] = False
+        for term, (source, axis) in enumerate(
+            zip((2, 1, 0, 2, 1, 0), (1, 0, 0, 2, 2, 1), strict=True)
+        ):
+            component, base = term // 2, 13 + 3 * term
+            raw_needed = active(9 + component) or (
+                int(attributes["metric_kind"]) != 0 and active(13 + 4 * nterms + axis)
+            )
+            if nterms:
+                raw_needed |= active(base) or active(base + 2)
+                needed[13 + 3 * nterms + term] = active(9 + component) or active(
+                    base + 1
+                )
+            needed[3 + source] |= raw_needed
+        residuals = tuple(
+            value if save else jnp.zeros_like(value)
+            for value, save in zip(values, needed, strict=True)
+        )
+        return tuple(forward(*values, **attributes)), (residuals, _GradientMask(mask))
+
+    def phase_backward(residuals, cotangents):
+        inputs, mask = residuals
+        # Keep the diagonal target-field transpose visible to XLA. In lossless
+        # media this becomes an identity, allowing scan to reuse the cotangent
+        # instead of allocating/copying three new native output grids per phase.
+        native_mask = mask.bits & ~7
+        # Fixed coefficients have zero Jacobian columns. Do not allocate or
+        # compute their often highly contended broadcast reductions on CUDA.
+        gradient_values = tuple(
+            value if native_mask & (1 << i) else _EMPTY
+            for i, value in enumerate(inputs)
+            if i != 12
+        )
+        backward = _ffi_call(abi.CUDA_ADJOINT_TARGET, gradient_values, {})
+        cotangents = tuple(
+            jnp.zeros(value.shape, value.dtype)
+            if isinstance(g, jax.custom_derivatives.SymbolicZero)
+            else g
+            for g, value in zip(cotangents, result_values, strict=True)
+        )
+        gradients = iter(
+            backward(
+                *inputs, *cotangents, gradient_mask=np.int64(native_mask), **attributes
+            )
+        )
+        result = []
+        for i in range(len(inputs)):
+            if i == 12:
+                result.append(None)
+            elif i < 3:
+                _discard(gradients)
+                result.append(
+                    _target_cotangent(cotangents[i], inputs[6 + i], i, attributes)
+                    if mask.bits & (1 << i)
+                    else None
+                )
+            else:
+                result.append(
+                    next(gradients) if native_mask & (1 << i) else _discard(gradients)
+                )
+        return tuple(result)
+
+    phase_call.defvjp(phase_forward, phase_backward, symbolic_zeros=True)
+    return phase_call(*arguments)
+
+
+def _discard(values):
+    next(values)
+    return None
+
+
+def _target_cotangent(cotangent, decay, component, attributes):
+    phase, edges = int(attributes["phase"]), int(attributes["boundary_code"]) & 63
+    normal = 2 - component
+    for axis, size in enumerate(cotangent.shape):
+        if (phase == _PHASE_H) != (axis == normal):
+            continue
+        low, high = edges & (1 << (2 * axis)), edges & (1 << (2 * axis + 1))
+        if low or high:
+            coordinate = jnp.arange(size).reshape(
+                tuple(size if a == axis else 1 for a in range(3))
+            )
+            mask = ((coordinate == 0) & bool(low)) | (
+                (coordinate == size - 1) & bool(high)
+            )
+            cotangent = jnp.where(mask, jnp.float32(0), cotangent)
+    return decay * cotangent
+
+
 def _phase_metrics(ctx, phase: int):
     """Return CUDA-axis-ordered derivative metrics for one Yee phase."""
     metrics = ctx.metrics
@@ -178,6 +303,7 @@ def _ffi_phase(
     resolution,
     cuda_flags,
     metallic_edges,
+    differentiable=False,
     shard_geometry=None,
     shard_halos=(),
 ):
@@ -205,9 +331,7 @@ def _ffi_phase(
     psi_start = 13 + 3 * len(terms)
     aliases = {0: 0, 1: 1, 2: 2}
     aliases.update({psi_start + index: 3 + index for index in range(len(psi_terms))})
-    call = _ffi_call(target, (*targets, *psi_terms), aliases)
-    outputs = call(
-        *arguments,
+    attributes = dict(
         abi_version=np.int32(CUDA_ABI_VERSION),
         cuda_flags=np.int32(cuda_flags),
         phase=np.int32(phase),
@@ -217,6 +341,10 @@ def _ffi_phase(
         boundary_code=np.int32(_boundary_code(metallic_edges, terms)),
         metric_kind=np.int32(metric_kind),
     )
+    if differentiable:
+        return _phase_with_vjp(arguments, (*targets, *psi_terms), attributes)
+    call = _ffi_call(target, (*targets, *psi_terms), aliases)
+    outputs = call(*arguments, **attributes)
     return tuple(outputs)
 
 
@@ -246,6 +374,7 @@ def update_h(state, ctx, coeffs) -> SimulationState:
         resolution=ctx.resolution,
         cuda_flags=ctx.config.cuda_flags,
         metallic_edges=ctx.boundary.cpml.metallic_edges,
+        differentiable=ctx.differentiable,
     )
     return state._replace(
         hx=outputs[0],
@@ -281,6 +410,7 @@ def update_e(state, ctx, coeffs) -> SimulationState:
         resolution=ctx.resolution,
         cuda_flags=ctx.config.cuda_flags,
         metallic_edges=ctx.boundary.cpml.metallic_edges,
+        differentiable=ctx.differentiable,
     )
     return state._replace(
         ex=outputs[0],

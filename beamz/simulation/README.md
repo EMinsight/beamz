@@ -201,6 +201,15 @@ the simulation API, execution, result, monitor-result, normalization, and memory
 modules from importing analysis behavior. Lazy plotting and labeled-data convenience
 methods resolve analysis functions only when called.
 
+## Differentiable execution
+
+Build `solver = simulation.differentiable(backend="cuda")` once (or select `"jax"`), then
+call `solver(permittivity, conductivity=..., state=..., source_amplitudes=...)`
+inside `jax.grad` or `jax.value_and_grad`. It returns a JAX-native
+`SimulationState`, including differentiable monitor accumulators. Use
+`solver.monitor_fields(state, name)` and `solver.monitor_flux(state, name)` for
+frequency-domain objectives. The [optimization guide](../optimization/README.md)
+covers checkpointing, native CUDA reverse mode, and parameter restrictions.
 ## Broadband dispersive materials
 
 `bz.PoleResidue(epsilon_inf, poles, frequency_range=(fmin, fmax))` describes

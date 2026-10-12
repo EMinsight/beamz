@@ -1,0 +1,135 @@
+{
+  "metadata": {
+    "jax_version": "0.9.0",
+    "devices": [
+      "cuda:0"
+    ],
+    "gpu": "NVIDIA GeForce RTX 3090, 610.43.03",
+    "dtype": "float32",
+    "mesh_nm": 50,
+    "shape_zyx": [
+      44,
+      100,
+      100
+    ],
+    "timesteps": 2597,
+    "run_time_s": 2e-13,
+    "checkpoint_interval": 32,
+    "warmup_calls": 3,
+    "samples": 7,
+    "notebook_sha256": "9240b64bc2a0390b07455df9ce6f425918c381186e316dffa7294c235c34a77a",
+    "gradient_relative_difference": 1.1465045872682822e-06,
+    "objective_absolute_difference": 2.7939677238464355e-09,
+    "compilation_cache_enabled": false,
+    "provenance": {
+      "python_version": "3.11.15",
+      "jaxlib_version": "0.9.0",
+      "cuda_component_version": "0.14.0",
+      "cuda_abi": 14,
+      "native_binary_sha256": "0c76cc54dfa12c2386f65e4aae872015611ecf29a147bfd5f037cd4eb6235842",
+      "source_sha256": {
+        "beamz/simulation/cuda/runtime.py": "19532636fe3b9277d3efdd36a522642fc39c7135d55844b0c6b58581b6d16d8b",
+        "beamz/simulation/cuda/differentiation.py": "f8d4172b4e2019eeeea1537f238928a341804835b716fb317eff6e9edde5383d",
+        "beamz/simulation/differentiation.py": "f0efb2a729ce10a2e7c8eabd70758ae16149de2e27ab4b251cef5530cc0a59f9",
+        "beamz/simulation/execute.py": "d509acd3400b08d609f706a3a062400b9efb8448d8900634cb0f18698e47f583",
+        "beamz/simulation/observe.py": "ac268a4054e5b6742a3fa6d7b0afe0efde0e94bced2638a77f95058f82bdf7b9",
+        "cuda/src/adjoint.cu": "1a0e37013224a1159ae9d78fd9f21f9a3f5be51ec98a72fb6fc69cf45f2ad951",
+        "cuda/src/update.cu": "beed90e8ed55105dc6aef3953961ffea9f626c27fad8bd71ac57e6af9e06c432",
+        "cuda/src/ffi_handler.cc": "39745dde0c10c20eec8dd0250ab12269d35cab20093ce57336ad9db4a8622a25"
+      },
+      "xla_flags": "",
+      "cpml_precision": "fp32",
+      "preallocate": "false"
+    },
+    "objective_value": -0.005546474829316139,
+    "gradient_norm": 0.002510863123461604,
+    "beta": 2.0,
+    "parameters_npz": null,
+    "parameters_sha256": "e7e2dcff542de95352682dc186432e98f0188084896773f1973276b0577d5305"
+  },
+  "measurements": {
+    "cuda": {
+      "objective": {
+        "lower_and_compile_s": 0.392651021014899,
+        "temporary_bytes": 19959528,
+        "samples_s": [
+          0.2583813101518899,
+          0.2581426140386611,
+          0.2583669940941036,
+          0.25774732301943004,
+          0.2583166789263487,
+          0.2577571019064635,
+          0.25793035700917244
+        ],
+        "median_s": 0.2581426140386611,
+        "minimum_s": 0.25774732301943004,
+        "maximum_s": 0.2583813101518899
+      },
+      "value_and_grad": {
+        "lower_and_compile_s": 3.2274091590661556,
+        "temporary_bytes": 1491306400,
+        "samples_s": [
+          1.6553682030644268,
+          1.6587456869892776,
+          1.6616061909589916,
+          1.6611751329619437,
+          1.6629835988860577,
+          1.6629033479839563,
+          1.6634631070774049
+        ],
+        "median_s": 1.6616061909589916,
+        "minimum_s": 1.6553682030644268,
+        "maximum_s": 1.6634631070774049
+      }
+    },
+    "jax": {
+      "objective": {
+        "lower_and_compile_s": 2.4046188320498914,
+        "temporary_bytes": 26629936,
+        "samples_s": [
+          0.5983563400804996,
+          0.5974866019096226,
+          0.597785621881485,
+          0.5974634990561754,
+          0.5978610529564321,
+          0.5975404130294919,
+          0.5977508970536292
+        ],
+        "median_s": 0.5977508970536292,
+        "minimum_s": 0.5974634990561754,
+        "maximum_s": 0.5983563400804996
+      },
+      "value_and_grad": {
+        "lower_and_compile_s": 11.681112237041816,
+        "temporary_bytes": 1831760448,
+        "samples_s": [
+          3.0872912839986384,
+          3.0875209630466998,
+          3.095922440988943,
+          3.0960666208993644,
+          3.0960850559640676,
+          3.0964353401213884,
+          3.0967601351439953
+        ],
+        "median_s": 3.0960666208993644,
+        "minimum_s": 3.0872912839986384,
+        "maximum_s": 3.0967601351439953
+      }
+    }
+  },
+  "cuda_speedup_over_jax": {
+    "objective": 2.315583962298089,
+    "value_and_grad": 1.8632974755062015
+  },
+  "finite_differences": [],
+  "speedup_95_percent_intervals": {
+    "objective": [
+      2.312758311581599,
+      2.3191819641827487
+    ],
+    "value_and_grad": [
+      1.8567050014000501,
+      1.8665218425276793
+    ]
+  }
+}

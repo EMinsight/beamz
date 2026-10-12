@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -549,7 +549,14 @@ def _dft_phase_angle(frequencies, time, dtype):
 
 
 def _accumulate_dft(
-    mon, carry, field_arrays, t_phys, dt_scalar, *, sampled_vectors=None
+    mon,
+    carry,
+    field_arrays,
+    t_phys,
+    dt_scalar,
+    *,
+    sampled_vectors=None,
+    local_offsets=False,
 ):
     """Gather and accumulate one monitor's compiled field-vector DFT."""
     d_re, d_im, d_w = carry
@@ -605,9 +612,9 @@ def _accumulate_dft(
         )
     )
     nf, npnt = mon.freq_count, mon.dft_point_count
-    value_offset = int(mon.dft_value_offset)
+    value_offset = 0 if local_offsets else int(mon.dft_value_offset)
     value_count = 6 * int(nf) * int(npnt)
-    weight_offset = int(mon.dft_weight_offset)
+    weight_offset = 0 if local_offsets else int(mon.dft_weight_offset)
     d_re = d_re.at[value_offset : value_offset + value_count].add(
         delta_re[:, :nf, :npnt].reshape(-1)
     )
@@ -715,12 +722,22 @@ def update_monitors(
     dft_vec_re = state.dft_vec_re
     dft_vec_im = state.dft_vec_im
     dft_weight_sum = state.dft_weight_sum
+    # Differentiable scans keep monitors as independent pytree leaves, allowing
+    # AD to discard the transpose of a monitor unused by the objective. Ordinary
+    # execution and the public state retain the existing packed-array layout.
+    segmented_dft = isinstance(dft_vec_re, tuple)
+    if segmented_dft:
+        dft_vec_re, dft_vec_im, dft_weight_sum = (
+            list(dft_vec_re),
+            list(dft_vec_im),
+            list(dft_weight_sum),
+        )
     max_records = powers.shape[1]
     field_arrays = (ex, ey, ez, hx, hy, hz)
 
     # 3. Every scalar and spectral monitor follows the same sampling and accumulator path;
     # geometry and dimensional choices are already encoded in its weighted gathers.
-    for mon in program.monitors:
+    for monitor_position, mon in enumerate(program.monitors):
         if mon.recorder_index >= 0:
             continue
         should_record = monitor_records_on_step(abs_step, mon.record_interval)
@@ -803,6 +820,16 @@ def update_monitors(
                 mon.dft_record_interval,
             )
 
+            carry = (
+                (
+                    dft_vec_re[monitor_position],
+                    dft_vec_im[monitor_position],
+                    dft_weight_sum[monitor_position],
+                )
+                if segmented_dft
+                else (dft_vec_re, dft_vec_im, dft_weight_sum)
+            )
+
             def accumulate(carry, mon=mon):
                 if carry[0].ndim == 2:
                     from .distributed_monitors import accumulate_dft
@@ -810,14 +837,39 @@ def update_monitors(
                     return accumulate_dft(
                         program, mon, carry, field_arrays, t_phys, dt_scalar
                     )
-                return _accumulate_dft(mon, carry, field_arrays, t_phys, dt_scalar)
+                return _accumulate_dft(
+                    mon,
+                    carry,
+                    field_arrays,
+                    t_phys,
+                    dt_scalar,
+                    local_offsets=segmented_dft,
+                )
 
-            dft_vec_re, dft_vec_im, dft_weight_sum = jax.lax.cond(
-                do_dft,
-                accumulate,
-                lambda carry: carry,
-                (dft_vec_re, dft_vec_im, dft_weight_sum),
-            )
+            if (
+                mon.dft_record_interval == 1
+                and mon.dft_t_start == 0.0
+                and np.isinf(mon.dft_t_end)
+            ):
+                # Continuous monitors do not benefit from a CPU-controlled GPU
+                # conditional each timestep. Predicate the accumulator instead;
+                # this also preserves the gate for a negative initial clock.
+                updated_dft = tuple(
+                    jnp.where(do_dft, cast(jax.Array, new), cast(jax.Array, old))
+                    for new, old in zip(accumulate(carry), carry, strict=True)
+                )
+            else:
+                updated_dft = jax.lax.cond(
+                    do_dft, accumulate, lambda carry: carry, carry
+                )
+            if segmented_dft:
+                (
+                    dft_vec_re[monitor_position],
+                    dft_vec_im[monitor_position],
+                    dft_weight_sum[monitor_position],
+                ) = updated_dft
+            else:
+                dft_vec_re, dft_vec_im, dft_weight_sum = updated_dft
 
     recorder_updates = _record_fields(
         program,
@@ -834,8 +886,8 @@ def update_monitors(
         freq_flux_im=freq_flux_im,
         freq_phase_re=freq_phase_re,
         freq_phase_im=freq_phase_im,
-        dft_vec_re=dft_vec_re,
-        dft_vec_im=dft_vec_im,
-        dft_weight_sum=dft_weight_sum,
+        dft_vec_re=tuple(dft_vec_re) if segmented_dft else dft_vec_re,
+        dft_vec_im=tuple(dft_vec_im) if segmented_dft else dft_vec_im,
+        dft_weight_sum=tuple(dft_weight_sum) if segmented_dft else dft_weight_sum,
         **recorder_updates,
     )

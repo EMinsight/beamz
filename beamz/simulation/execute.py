@@ -401,11 +401,36 @@ def _apply_specs(
             and spec.slab_starts is not None
             and spec.slab_sizes is not None
         ):
-            cur = jax.lax.dynamic_slice(out, spec.slab_starts, spec.slab_sizes)
-            out = jax.lax.dynamic_update_slice(out, cur + patch, spec.slab_starts)
+            out = _add_source_slab(out, spec.slab_starts, patch)
         else:
             out = out.at[spec.index].add(patch)
     return out
+
+
+def _add_source_slab(arr, starts, patch):
+    # Scatter-add expresses the exact identity derivative with respect to the
+    # incoming field. Slice/read/update has the same forward value but its VJP
+    # unnecessarily slices, zeroes and rebuilds whole field grids each step.
+    ndim = arr.ndim
+    # Match dynamic_slice's negative-index normalization and origin clamping
+    # before promising an in-bounds scatter, including clipped source slabs.
+    starts = tuple(
+        jnp.clip(jnp.where(start < 0, start + size, start), 0, size - patch.shape[axis])
+        for axis, (start, size) in enumerate(zip(starts, arr.shape, strict=True))
+    )
+    return jax.lax.scatter_add(
+        arr,
+        jnp.asarray(starts, dtype=jnp.int32),
+        patch,
+        dimension_numbers=jax.lax.ScatterDimensionNumbers(
+            update_window_dims=tuple(range(ndim)),
+            inserted_window_dims=(),
+            scatter_dims_to_operand_dims=tuple(range(ndim)),
+        ),
+        indices_are_sorted=True,
+        unique_indices=True,
+        mode=jax.lax.GatherScatterMode.PROMISE_IN_BOUNDS,
+    )
 
 
 def _apply_batched_slabs(
@@ -459,8 +484,7 @@ def _apply_batched_slabs(
         amp = group.waveforms[i, safe_idx]
         patch = (group.coeffs[i] * amp).astype(out.dtype)
         starts_i = [group.starts[i, d] for d in range(ndim)]
-        cur = jax.lax.dynamic_slice(out, starts_i, group.max_sizes)
-        return jax.lax.dynamic_update_slice(out, cur + patch, starts_i)
+        return _add_source_slab(out, starts_i, patch)
 
     return jax.lax.fori_loop(0, group.n, body, arr)
 
@@ -511,6 +535,23 @@ def apply_source_phase(
 ScanResult = SimulationState
 
 
+@jax.custom_vjp
+def _known_primal(value, known):
+    """Use an already computed primal while preserving this operation's VJP."""
+    return known
+
+
+def _known_primal_forward(value, known):
+    return known, ()
+
+
+def _known_primal_backward(_residuals, cotangent):
+    return cotangent, None
+
+
+_known_primal.defvjp(_known_primal_forward, _known_primal_backward)
+
+
 def forward_step(
     carry,
     *,
@@ -518,6 +559,7 @@ def forward_step(
     coeffs: UpdateCoefficients,
     program,
     update_kernel: update_runtime.StepUpdateKernel,
+    known_fields=None,
     observation_time=None,
 ):
     """Advance one compiled timestep."""
@@ -587,6 +629,13 @@ def forward_step(
             logical_shapes=ctx.boundary.logical_component_shapes,
         )
         state = state._replace(hx=hx, hy=hy, hz=hz)
+    if known_fields is not None:
+        state = state._replace(
+            **{
+                name: _known_primal(getattr(state, name), getattr(known_fields, name))
+                for name in ("hx", "hy", "hz")
+            }
+        )
 
     # 3. Advance E, inject its sources, and restore its masks before observation.
     old_e_state = state
@@ -615,6 +664,13 @@ def forward_step(
             logical_shapes=ctx.boundary.logical_component_shapes,
         )
         state = state._replace(ex=ex, ey=ey, ez=ez)
+    if known_fields is not None:
+        state = state._replace(
+            **{
+                name: _known_primal(getattr(state, name), getattr(known_fields, name))
+                for name in ("ex", "ey", "ez")
+            }
+        )
 
     # 4. Observe only fully constrained end-of-step fields, then advance both clocks.
     # Derive the default from the absolute source index, retaining explicit

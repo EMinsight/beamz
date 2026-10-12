@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -38,6 +41,45 @@ def test_auto_preserves_jax_when_cuda_is_not_visible(monkeypatch):
     assert backend_runtime.resolve_backend("auto") == "jax"
     with pytest.raises(backend_runtime.CudaBackendUnavailable, match="no visible"):
         backend_runtime.resolve_backend("cuda")
+
+
+def test_portable_import_without_custom_call_target_traits():
+    """A fresh CPU import must work when the optional JAXLIB enum is absent."""
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import jaxlib.xla_client as xc; "
+            "hasattr(xc, 'CustomCallTargetTraits') and delattr(xc, 'CustomCallTargetTraits'); "
+            "import beamz; "
+            "from beamz.simulation.backend import resolve_backend; "
+            "assert resolve_backend('auto') == 'jax'",
+        ],
+        env={**os.environ, "JAX_PLATFORMS": "cpu"},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_cuda_registration_without_custom_call_target_traits(monkeypatch):
+    from jaxlib import xla_client
+
+    monkeypatch.delattr(xla_client, "CustomCallTargetTraits", raising=False)
+    extension = _extension("beamz_cuda_streamed", "beamz_cuda_program")
+    monkeypatch.setattr(backend_runtime, "_REGISTERED_MODULE", None)
+    registrations = []
+    monkeypatch.setattr(
+        backend_runtime.jax.ffi,
+        "register_ffi_target",
+        lambda name, _capsule, **options: registrations.append((name, options)),
+    )
+    targets = backend_runtime.register_cuda_ffi_targets(extension)
+    assert sorted(name for name, _ in registrations) == list(targets)
+    assert all(
+        options == {"platform": "CUDA", "api_version": 1}
+        for _, options in registrations
+    )
 
 
 def test_auto_preserves_jax_for_unsupported_2d_simulations(monkeypatch):
@@ -256,15 +298,61 @@ def test_typed_ffi_registrations_use_cuda_api_v1(monkeypatch):
     targets = backend_runtime.register_cuda_ffi_targets(extension)
 
     assert targets == (
+        "beamz_cuda_adjoint",
         "beamz_cuda_program",
         "beamz_cuda_sharded",
         "beamz_cuda_streamed",
     )
     assert {name for name, _, _ in registrations} == set(targets)
-    assert all(
-        kwargs == {"platform": "CUDA", "api_version": 1}
-        for _, _, kwargs in registrations
-    )
+    for name, _, kwargs in registrations:
+        expected_traits = (
+            1
+            if name
+            in {
+                backend_runtime.CUDA_STREAMED_TARGET,
+                backend_runtime.CUDA_ADJOINT_TARGET,
+            }
+            else 0
+        )
+        assert kwargs == {
+            "platform": "CUDA",
+            "api_version": 1,
+            "traits": expected_traits,
+        }
+
+
+def test_cuda_registration_falls_back_for_plugins_without_registration_traits(
+    monkeypatch,
+):
+    extension = _extension("beamz_cuda_streamed", "beamz_cuda_program")
+    monkeypatch.setattr(backend_runtime, "_REGISTERED_MODULE", None)
+    successful, rejected = [], []
+
+    def register(name, capsule, **options):
+        if options.get("traits", 0):
+            rejected.append(name)
+            raise RuntimeError(
+                "UNIMPLEMENTED: The plugin does not support custom call traits."
+            )
+        successful.append(name)
+
+    monkeypatch.setattr(backend_runtime.jax.ffi, "register_ffi_target", register)
+    targets = backend_runtime.register_cuda_ffi_targets(extension)
+    assert len(rejected) == 1
+    assert sorted(successful) == list(targets)
+    assert backend_runtime._REGISTERED_MODULE is extension
+
+
+def test_cuda_registration_does_not_hide_other_plugin_errors(monkeypatch):
+    extension = _extension("beamz_cuda_streamed")
+    monkeypatch.setattr(backend_runtime, "_REGISTERED_MODULE", None)
+
+    def register(*_args, **_kwargs):
+        raise RuntimeError("bad FFI capsule")
+
+    monkeypatch.setattr(backend_runtime.jax.ffi, "register_ffi_target", register)
+    with pytest.raises(RuntimeError, match="bad FFI capsule"):
+        backend_runtime.register_cuda_ffi_targets(extension)
 
 
 @pytest.mark.parametrize(
