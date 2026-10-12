@@ -68,6 +68,12 @@ struct BeamzAdjointLaunch {
   uint64_t gradient_mask;
   BeamzBuffer gradients[37];
   BeamzBuffer metric_gradients[3];
+  bool accumulate_sources = false;
+  bool accumulate_material = false;
+  BeamzBuffer source_cotangents[3]{};
+  BeamzBuffer source_decays[3]{};
+  BeamzBuffer reverse_iteration{};
+  int32_t psi_bank_stride[6]{};
 };
 
 struct BeamzSourceGroupLaunch {

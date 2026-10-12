@@ -30,7 +30,7 @@ int64_t Elements(const BeamzBuffer& value) {
   return count;
 }
 
-bool SameShape(const BeamzBuffer& a, const BeamzBuffer& b) {
+__host__ __device__ bool SameShape(const BeamzBuffer& a, const BeamzBuffer& b) {
   if (a.rank != b.rank) return false;
   for (int axis = 0; axis < a.rank; ++axis) {
     if (a.dims[axis] != b.dims[axis]) return false;
@@ -124,12 +124,25 @@ __device__ __forceinline__ float Difference(const BeamzLaunch& launch, int input
          (*has_low ? Read(value, low) : 0.0f);
 }
 
+__device__ __forceinline__ int CotangentBank(const BeamzAdjointLaunch& launch) {
+  return launch.reverse_iteration.data ?
+      (*static_cast<const int32_t*>(launch.reverse_iteration.data) & 1) : 0;
+}
+
+__device__ __forceinline__ float ReadPsiCotangent(const BeamzAdjointLaunch& launch,
+                                                  int term, const int* p) {
+  const auto& value = launch.phase.outputs[3 + term];
+  return static_cast<const float*>(value.data)[
+      Offset(value, p) + CotangentBank(launch) * launch.psi_bank_stride[term]];
+}
+
 // Cotangent of one unscaled difference at a target cell. This needs neither
 // the primal fields nor the old CPML memory. Each source cell gathers its
 // neighboring target contributions, transposing the exact boundary stencil.
 template <int Phase, int Term>
-__device__ __forceinline__ float DifferenceCotangent(const BeamzLaunch& phase,
+__device__ __forceinline__ float DifferenceCotangent(const BeamzAdjointLaunch& launch,
                                                      const int* p) {
+  const auto& phase = launch.phase;
   constexpr int term = Term;
   constexpr int component = Term / 2;
   constexpr int axes[6] = {1, 0, 0, 2, 2, 1};
@@ -155,7 +168,7 @@ __device__ __forceinline__ float DifferenceCotangent(const BeamzLaunch& phase,
       int q[3] = {p[0], p[1], p[2]};
       q[axis] = packed;
       const int base = 13 + 3 * term;
-      const float gp = Read(phase.outputs[3 + term], q) + gd;
+      const float gp = ReadPsiCotangent(launch, term, q) + gd;
       gd = Read(phase.inputs[base + 2], q) * gd +
            Read(phase.inputs[base], q) * gp;
     }
@@ -167,27 +180,28 @@ __device__ __forceinline__ float DifferenceCotangent(const BeamzLaunch& phase,
 }
 
 template <int Phase, int Term>
-__device__ __forceinline__ float GatherTerm(const BeamzLaunch& phase,
+__device__ __forceinline__ float GatherTerm(const BeamzAdjointLaunch& launch,
                                             const BeamzBuffer& source,
                                             const int* p) {
   constexpr int axes[6] = {1, 0, 0, 2, 2, 1};
+  const auto& phase = launch.phase;
   constexpr int axis = axes[Term];
   int neighbor[3] = {p[0], p[1], p[2]};
   float gradient = 0.0f;
   if constexpr (Phase == 0) {
     if (p[axis] > 0) {
       neighbor[axis]--;
-      gradient += DifferenceCotangent<Phase, Term>(phase, neighbor);
+      gradient += DifferenceCotangent<Phase, Term>(launch, neighbor);
     }
     if (p[axis] + 1 < source.dims[axis])
-      gradient -= DifferenceCotangent<Phase, Term>(phase, p);
+      gradient -= DifferenceCotangent<Phase, Term>(launch, p);
   } else {
     if (p[axis] > 0 || (phase.metallic_edges & (1 << (2 * axis))))
-      gradient += DifferenceCotangent<Phase, Term>(phase, p);
+      gradient += DifferenceCotangent<Phase, Term>(launch, p);
     if (p[axis] + 1 < source.dims[axis] ||
         (phase.metallic_edges & (1 << (2 * axis + 1)))) {
       neighbor[axis]++;
-      gradient -= DifferenceCotangent<Phase, Term>(phase, neighbor);
+      gradient -= DifferenceCotangent<Phase, Term>(launch, neighbor);
     }
   }
   return gradient;
@@ -203,8 +217,25 @@ __device__ __forceinline__ void GatherSource(const BeamzAdjointLaunch& launch,
     if (p[axis] >= static_cast<int>(source.dims[axis])) return;
   constexpr int first[3] = {2, 1, 0};
   constexpr int second[3] = {5, 4, 3};
-  const float gradient = GatherTerm<Phase, first[Component]>(phase, source, p) +
-                         GatherTerm<Phase, second[Component]>(phase, source, p);
+  float gradient = GatherTerm<Phase, first[Component]>(launch, source, p) +
+                   GatherTerm<Phase, second[Component]>(launch, source, p);
+  if (launch.accumulate_sources) {
+    float base = Read(launch.source_cotangents[Component], p);
+    if constexpr (Phase == 0) {
+      // E's diagonal transpose is added only after the H transpose has read
+      // its magnetic cotangents. PEC constraints mask this diagonal, not the
+      // pre-E fields consumed by the forward H stencil.
+      constexpr int normal = 2 - Component;
+      for (int axis = 0; axis < 3; ++axis) {
+        if (axis == normal) continue;
+        if ((p[axis] == 0 && (phase.metallic_edges & (1 << (2 * axis)))) ||
+            (p[axis] == source.dims[axis] - 1 &&
+             (phase.metallic_edges & (1 << (2 * axis + 1))))) base = 0.0f;
+      }
+      base *= Read(launch.source_decays[Component], p);
+    }
+    gradient += base;
+  }
   static_cast<float*>(launch.gradients[3 + Component].data)[Offset(source, p)] = gradient;
 }
 
@@ -273,13 +304,14 @@ __device__ __forceinline__ void ComponentAdjoint(const BeamzAdjointLaunch& launc
         const float old = (material_gradient ||
             (CoefficientMode == 2 && Active(launch, base + 1))) ?
             Read(phase.inputs[psi], q) : 0.0f;
-        const float gp = Read(phase.outputs[3 + term], q) + gd;
+        const float gp = ReadPsiCotangent(launch, term, q) + gd;
         if (material_gradient) corrected = k * derivative + (b * old + a * derivative);
         if (CoefficientMode == 2 && Active(launch, base)) Add(launch.gradients[base], q, derivative * gp);
         if (CoefficientMode == 2 && Active(launch, base + 1)) Add(launch.gradients[base + 1], q, old * gp);
         if (CoefficientMode == 2 && Active(launch, base + 2)) Add(launch.gradients[base + 2], q, derivative * gd);
         if (Active(launch, psi))
-          static_cast<float*>(launch.gradients[psi].data)[Offset(phase.inputs[psi], q)] =
+          static_cast<float*>(launch.gradients[psi].data)[Offset(phase.inputs[psi], q) +
+              (CotangentBank(launch) ^ 1) * launch.psi_bank_stride[term]] =
               b * gp;
         gd = k * gd + a * gp;
       }
@@ -294,7 +326,11 @@ __device__ __forceinline__ void ComponentAdjoint(const BeamzAdjointLaunch& launc
     }
   }
   if (CoefficientMode == 1 || (CoefficientMode == 2 && Active(launch, 9 + component)))
-    Accumulate(launch.gradients[9 + component], field, p, sign * curl * g);
+    Accumulate(launch.gradients[9 + component], field, p,
+               sign * curl * g +
+               ((launch.accumulate_material &&
+                 SameShape(launch.gradients[9 + component], field))
+                ? Read(launch.gradients[9 + component], p) : 0.0f));
 }
 
 template <int Phase, int CoefficientMode>
@@ -376,6 +412,7 @@ int BeamzLaunchAdjoint(void* stream, const BeamzAdjointLaunch& launch) {
   auto cuda_stream = static_cast<cudaStream_t>(stream);
   for (int index = 0; index < payload; ++index) {
     if (index == 12) continue;
+    if (launch.accumulate_material && index >= 9 && index < 12) continue;
     // Fields, recurrence memories, and whole-grid coefficients have exactly
     // one writer per element. Only broadcast reductions need initialization.
     if (index < 6 || index >= 13 + 3 * phase.nterms) continue;

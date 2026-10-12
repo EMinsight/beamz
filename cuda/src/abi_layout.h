@@ -7,12 +7,13 @@
 
 namespace beamz::cuda::abi {
 
-inline constexpr int32_t kAbiVersion = 24;
-inline constexpr char kComponentVersion[] = "0.24.0";
+inline constexpr int32_t kAbiVersion = 27;
+inline constexpr char kComponentVersion[] = "0.27.0";
 inline constexpr char kStreamedTarget[] = "beamz_cuda_streamed";
 inline constexpr char kShardedTarget[] = "beamz_cuda_sharded";
 inline constexpr char kProgramTarget[] = "beamz_cuda_program";
 inline constexpr char kAdjointTarget[] = "beamz_cuda_adjoint";
+inline constexpr char kMaterialAdjointTarget[] = "beamz_cuda_material_adjoint";
 
 inline constexpr int32_t kBeamzGraphCache = 1 << 7;
 inline constexpr int32_t kBeamzBf16Psi = 1 << 12;

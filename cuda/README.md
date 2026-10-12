@@ -13,8 +13,8 @@ monitor schedules. JAX still owns tracing, buffers, and orchestration around tha
 small native interface, preserving BeamZ's public numerical semantics and JAX
 fallback without duplicating configuration-specific FFI targets.
 
-The native boundary has four typed FFI targets: a phase update, a sharded phase,
-a complete multi-step program, and a phase VJP. The implementation is
+The native boundary has five typed FFI targets: a phase update, a sharded phase,
+a complete multi-step program, a phase VJP, and a complete material/state reverse step. The implementation is
 split by responsibility:
 
 - `ffi_handler.cc` decodes JAX buffers into a validated `BeamzProgramLaunch`;
@@ -55,9 +55,22 @@ Backward linearization reuses the native step's post-source fields with the
 verified phase VJPs and JAX source/monitor transposes. Unused forward phase
 launches disappear from the backward executable. Trainable material codebooks
 and BF16 recurrence buffers are bypassed. See [the optimization guide](../beamz/optimization/README.md) for
-the API, supported parameter layouts, and first-order limitations. ABI 24 is
-required by the gradient-mask interface. See the [performance audit](../tests/performance/CUDA_AUTODIFF.md)
+the API, supported parameter layouts, and first-order limitations. ABI 27 is
+required by the sparse residual and material/state reverse interfaces. See the [performance audit](../tests/performance/CUDA_AUTODIFF.md)
 for matched GPU benchmarks and reproducible commands.
+
+Eligible checkpoint chunks run through a native forward graph. The
+`beamz_cuda_material_adjoint` handler applies E then H transposes, accumulating
+material gradients and field cotangents inside the launches. It handles arbitrary
+fixed electric and magnetic decay coefficients. Field and material accumulators
+are declared XLA input/output aliases; three intermediate H cotangent arrays
+remain separate to avoid stencil races. Packed CPML cotangents use aliased
+`(2, *psi_shape)` buffers: the device reverse-iteration scalar selects the read
+bank and the opposite bank receives the next cotangent. Full-grid material sums
+have one writer per cell; broadcast sums use atomic reductions. The general phase
+VJP remains available for trainable losses, source amplitudes, clocks, and raw
+recurrence/metric coefficients. Inactive phase residuals use empty slots whose
+logical shape metadata is reconstructed from cotangents without reading them.
 
 Install BeamZ from this checkout, then build its optional component in a CUDA 12
 development environment:

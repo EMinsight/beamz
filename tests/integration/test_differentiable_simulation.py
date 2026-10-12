@@ -182,19 +182,25 @@ def test_material_inputs_reuse_executable_and_are_differentiable():
     sim, epsilon = make_simulation()
     solver = sim.differentiable()
     state = seeded_state(solver)
-    objective = jax.jit(
-        lambda eps, sig: field_loss(solver(eps, conductivity=sig, state=state))
-    )
-    first = objective(epsilon, jnp.float32(120.0))
-    second = objective(epsilon * 1.1, jnp.float32(130.0))
-    assert first != second
-    assert objective._cache_size() == 1
-    gradient = jax.grad(objective, argnums=1)(epsilon, jnp.float32(120.0))
-    delta = jnp.float32(0.5)
-    fd = (objective(epsilon, 120.0 + delta) - objective(epsilon, 120.0 - delta)) / (
-        2 * delta
-    )
-    np.testing.assert_allclose(gradient, fd, rtol=0.015, atol=2e-7)
+    traces = []
+
+    @jax.jit
+    def objective(eps, sig):
+        traces.append(None)
+        return field_loss(solver(eps, conductivity=sig, state=state))
+
+    # Count tracing directly rather than depending on JAX's private cache size.
+    with jax.disable_jit(False):
+        first = objective(epsilon, jnp.float32(120.0))
+        second = objective(epsilon * 1.1, jnp.float32(130.0))
+        assert first != second
+        assert len(traces) == 1
+        gradient = jax.grad(objective, argnums=1)(epsilon, jnp.float32(120.0))
+        delta = jnp.float32(0.5)
+        fd = (objective(epsilon, 120.0 + delta) - objective(epsilon, 120.0 - delta)) / (
+            2 * delta
+        )
+        np.testing.assert_allclose(gradient, fd, rtol=0.015, atol=2e-7)
 
 
 def test_monitor_and_source_objectives_have_end_to_end_gradients():

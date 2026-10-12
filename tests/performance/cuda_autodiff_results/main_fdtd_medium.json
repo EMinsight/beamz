@@ -22,18 +22,18 @@
     "provenance": {
       "python_version": "3.11.15",
       "jaxlib_version": "0.9.0",
-      "cuda_component_version": "0.24.0",
-      "cuda_abi": 24,
-      "native_binary_sha256": "8e6e475d3513eaa0c68e891f679802545abd4d5cce4ce89a0021d6ca261f4890",
+      "cuda_component_version": "0.27.0",
+      "cuda_abi": 27,
+      "native_binary_sha256": "05189f509631aff92a88cacfdee5e5e59d075102333cfaebbe2de9340b804151",
       "source_sha256": {
-        "beamz/simulation/cuda/runtime.py": "e1b0304a3f43f563aa36fc0cbcfd2ecddc9015a7027fbf2c88ae8af148470369",
-        "beamz/simulation/cuda/differentiation.py": "1616c6c8b19f59462d3cf3bf331f257e2a7098dab5471b1fa52da4ab3eb61716",
-        "beamz/simulation/differentiation.py": "aaef6efcc87f220f80917156b30bb7dbad6e15eca52042df2689b5175eaee7a9",
+        "beamz/simulation/cuda/runtime.py": "5d27e9bcb65c8d18b93148779de80f0cc1a2f9ac68e64114505cefdd789645f2",
+        "beamz/simulation/cuda/differentiation.py": "e43749c63551dae7938b1ef2592549f86d379b4ad12884e091b75fe29af4f415",
+        "beamz/simulation/differentiation.py": "ed1dfc09a74a905d37d54ff79bf08fcc38afa00bb64f35bfac5d42352bc2f40b",
         "beamz/simulation/execute.py": "eda58a38d560d2af7a2153ee71e95f0924e0d7520de36b483691bd113ad967e5",
         "beamz/simulation/observe.py": "72062982d24b7ca05e5ec2bbc4a02c8628e10a7354f5ea3c227e2253a95172c0",
-        "cuda/src/adjoint.cu": "1a0e37013224a1159ae9d78fd9f21f9a3f5be51ec98a72fb6fc69cf45f2ad951",
+        "cuda/src/adjoint.cu": "bcf15adfd1c3be292176174ecd0b228e49e4cefe39b73a04a509985150b39c61",
         "cuda/src/update.cu": "ac064e8d8939156fc480f3b496b80c036cb4db0743290b673d3c05988aa90013",
-        "cuda/src/ffi_handler.cc": "5ccb783c4ad73a684e01581e6e14768c805a9bf87d30a3c069c58060bdb81ba9"
+        "cuda/src/ffi_handler.cc": "014aeaf98c115acd3f7213ce1a6d28234dd23cd8fd0f35a090040479180620c2"
       },
       "xla_flags": "",
       "cpml_precision": "fp32",
@@ -43,42 +43,42 @@
   "measurements": {
     "cuda": {
       "standard": {
-        "compile_s": 0.13967797299847007,
+        "compile_s": 0.13886575493961573,
         "temporary_bytes": 47016704,
         "samples_s": [
-          0.11007741885259748,
-          0.10685903602279723,
-          0.10691114398650825,
-          0.10742366313934326,
-          0.10770082008093596,
-          0.10656137904152274,
-          0.1073992180172354,
-          0.10730572091415524,
-          0.10777819599024951
+          0.11018993007019162,
+          0.10673508909530938,
+          0.10723229986615479,
+          0.10693943104706705,
+          0.10810789000242949,
+          0.10696622193790972,
+          0.10747031611390412,
+          0.10697637195698917,
+          0.10800413601100445
         ],
-        "median_s": 0.1073992180172354,
-        "min_s": 0.10656137904152274,
-        "max_s": 0.11007741885259748
+        "median_s": 0.10723229986615479,
+        "min_s": 0.10673508909530938,
+        "max_s": 0.11018993007019162
       }
     },
     "jax": {
       "standard": {
-        "compile_s": 0.747353034093976,
+        "compile_s": 0.7477883449755609,
         "temporary_bytes": 26144568,
         "samples_s": [
-          0.1880035400390625,
-          0.18721449212171137,
-          0.1879279580898583,
-          0.18747328594326973,
-          0.18780429614707828,
-          0.18757811398245394,
-          0.18809107295237482,
-          0.1873781499452889,
-          0.1876659980043769
+          0.1881573509890586,
+          0.187254668911919,
+          0.1878438328858465,
+          0.1875776241067797,
+          0.187833352945745,
+          0.18788531003519893,
+          0.18787565315142274,
+          0.18789982912130654,
+          0.18794917012564838
         ],
-        "median_s": 0.1876659980043769,
-        "min_s": 0.18721449212171137,
-        "max_s": 0.18809107295237482
+        "median_s": 0.18787565315142274,
+        "min_s": 0.187254668911919,
+        "max_s": 0.1881573509890586
       }
     }
   },
@@ -86,12 +86,12 @@
     "standard": 8.050761971389875e-05
   },
   "cuda_speedup_over_jax": {
-    "standard": 1.7473683837647709
+    "standard": 1.7520434923612136
   },
   "speedup_95_percent_intervals": {
     "standard": [
-      1.740685779387619,
-      1.757495698417233
+      1.7379426240857778,
+      1.7568417122841564
     ]
   }
 }

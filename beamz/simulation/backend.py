@@ -20,6 +20,7 @@ from beamz.simulation._cuda_abi import (
     CUDA_FIELD_PAD64,
     CUDA_FIELD_PAD_Y8,
     CUDA_GRAPH_CACHE,
+    CUDA_MATERIAL_ADJOINT_TARGET,
     CUDA_SHELL32X4,
     CUDA_SHELL32X8,
     CUDA_STREAMED_TARGET,
@@ -240,7 +241,12 @@ def register_cuda_ffi_targets(module: ModuleType | None = None) -> tuple[str, ..
         if target_traits is not None and supports_registration_traits:
             options["traits"] = (
                 target_traits.COMMAND_BUFFER_COMPATIBLE
-                if str(name) in {CUDA_STREAMED_TARGET, CUDA_ADJOINT_TARGET}
+                if str(name)
+                in {
+                    CUDA_STREAMED_TARGET,
+                    CUDA_ADJOINT_TARGET,
+                    CUDA_MATERIAL_ADJOINT_TARGET,
+                }
                 else target_traits.DEFAULT
             )
         try:

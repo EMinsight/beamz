@@ -299,6 +299,7 @@ def test_typed_ffi_registrations_use_cuda_api_v1(monkeypatch):
 
     assert targets == (
         "beamz_cuda_adjoint",
+        "beamz_cuda_material_adjoint",
         "beamz_cuda_program",
         "beamz_cuda_sharded",
         "beamz_cuda_streamed",
@@ -311,6 +312,7 @@ def test_typed_ffi_registrations_use_cuda_api_v1(monkeypatch):
             in {
                 backend_runtime.CUDA_STREAMED_TARGET,
                 backend_runtime.CUDA_ADJOINT_TARGET,
+                backend_runtime.CUDA_MATERIAL_ADJOINT_TARGET,
             }
             else 0
         )

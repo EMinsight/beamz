@@ -4,8 +4,8 @@
     "dx_nm": 99.99999999999999,
     "window_fs": 200.0,
     "direction": "Forward",
-    "modal_transmission": 0.8833272960360168,
-    "net_flux_ratio": 0.899946792823902
+    "modal_transmission": 0.883327365216465,
+    "net_flux_ratio": 0.8999468527798449
   },
   {
     "layout": "Binary",
@@ -20,8 +20,8 @@
     "dx_nm": 99.99999999999999,
     "window_fs": 400.0,
     "direction": "Forward",
-    "modal_transmission": 0.8838662475104173,
-    "net_flux_ratio": 0.9004956870771407
+    "modal_transmission": 0.8838662866965701,
+    "net_flux_ratio": 0.9004957192940501
   },
   {
     "layout": "Binary",
@@ -36,8 +36,8 @@
     "dx_nm": 49.99999999999999,
     "window_fs": 400.0,
     "direction": "Forward",
-    "modal_transmission": 0.8070442421463446,
-    "net_flux_ratio": 0.8244936971958176
+    "modal_transmission": 0.8070442440285331,
+    "net_flux_ratio": 0.8244936913235955
   },
   {
     "layout": "Binary",
@@ -52,8 +52,8 @@
     "dx_nm": 49.99999999999999,
     "window_fs": 400.0,
     "direction": "Reverse",
-    "modal_transmission": 0.8070441903115446,
-    "net_flux_ratio": 0.8244936435034973
+    "modal_transmission": 0.807044185613963,
+    "net_flux_ratio": 0.824493633623318
   },
   {
     "layout": "Binary",
@@ -68,8 +68,8 @@
     "dx_nm": 24.999999999999996,
     "window_fs": 400.0,
     "direction": "Forward",
-    "modal_transmission": 0.8003213425441298,
-    "net_flux_ratio": 0.8191247543434913
+    "modal_transmission": 0.8003213464425769,
+    "net_flux_ratio": 0.8191247534648594
   },
   {
     "layout": "Binary",

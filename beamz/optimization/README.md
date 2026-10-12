@@ -40,7 +40,7 @@ plots, open [`cuda_autodiff_waveguide_bend.ipynb`](../../examples/notebooks/cuda
 - `backend="cuda"` uses native streamed forward and reverse-mode Yee/CPML
   kernels for the existing single-GPU, float32 3D physics. Both lossy materials
   and mixed absorbing/PEC faces are supported. The CUDA component must be
-  rebuilt for ABI 24.
+  rebuilt for ABI 27.
 - `checkpoint_interval=None` selects approximately sqrt(T) steps per chunk;
   a positive integer controls the memory/recomputation tradeoff. Zero retains
   the trajectory for small reference problems. Chunk recomputation works with
@@ -62,6 +62,13 @@ plots, open [`cuda_autodiff_waveguide_bend.ipynb`](../../examples/notebooks/cuda
   flux per frequency and includes the compiled integration weights. These
   helpers preserve the monitor's configured native/physical units; source
   normalization belongs in the objective.
+
+For eligible slab-source/vector-DFT plans, checkpoint chunks use native forward
+graphs. Permittivity and initial-state gradients with fixed source amplitudes and
+decay coefficients use a fused native reverse step with aliased field cotangents,
+material accumulation, and two CPML cotangent banks. Conductivity, source-amplitude,
+and clock derivatives retain the general native phase VJP path. Both paths
+differentiate every discrete timestep and the monitor objective.
 
 For guided-wave devices, optimize mode power rather than total flux, which can
 include radiation. Freeze a projector from an ordinary unnormalized run with a

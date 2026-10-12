@@ -59,16 +59,27 @@ class Adjoint(ct.Structure):
         ("gradient_mask", ct.c_uint64),
         ("gradients", Buffer * 37),
         ("metric_gradients", Buffer * 3),
+        ("accumulate_sources", ct.c_bool),
+        ("accumulate_material", ct.c_bool),
+        ("source_cotangents", Buffer * 3),
+        ("source_decays", Buffer * 3),
+        ("reverse_iteration", Buffer),
+        ("psi_bank_stride", ct.c_int32 * 6),
     ]
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cudart", required=True, type=Path)
+    parser.add_argument(
+        "--banked",
+        action="store_true",
+        help="Exercise aliased source/material gradients and both CPML banks",
+    )
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     abi = json.loads((root / "cuda/abi_layout.json").read_text())["abi_version"]
-    if abi != 24 or ct.sizeof(Phase) != 3184 or ct.sizeof(Adjoint) != 5432:
+    if abi != 27 or ct.sizeof(Phase) != 3184 or ct.sizeof(Adjoint) != 5856:
         raise RuntimeError("Update this harness when launch.h/ABI changes")
     extension = next((root / "beamz").glob("_cuda*.so"))
     native, runtime = ct.CDLL(str(extension)), ct.CDLL(str(args.cudart))
@@ -93,8 +104,10 @@ def main():
         shapes, sources = (h_shapes, e_shapes) if phase == 0 else (e_shapes, h_shapes)
         for cpml in (False, True):
             for walls in (0, 42):
-                for layout, mode in product(
-                    ("scalar", "profile", "grid"), ("fields", "sources", "all")
+                for layout, mode, bank in product(
+                    ("scalar", "profile", "grid"),
+                    ("fields", "sources", "all"),
+                    (0, 1) if args.banked and cpml else (0,),
                 ):
                     allocations = []
 
@@ -133,6 +146,13 @@ def main():
                         return result
 
                     work = Adjoint()
+                    work.accumulate_sources = args.banked
+                    work.accumulate_material = args.banked
+                    if args.banked:
+                        work.reverse_iteration = allocate((), bank, np.int32)
+                        for component, shape in enumerate(sources):
+                            work.source_cotangents[component] = allocate(shape, 0.15)
+                            work.source_decays[component] = allocate((), 0.93)
                     work.phase.abi_version = abi
                     work.phase.phase = phase
                     work.phase.nterms = 6 if cpml else 0
@@ -205,7 +225,29 @@ def main():
                             shape = tuple(shape)
                             psi_cot = rng.normal(size=shape).astype(np.float32) * 0.1
                             work.phase.inputs[31 + term] = allocate(shape, 0.03)
-                            work.phase.outputs[3 + term] = allocate(shape, psi_cot)
+                            if args.banked:
+                                backing = allocate((2, *shape))
+                                stride = int(np.prod(shape))
+                                work.psi_bank_stride[term] = stride
+                                logical = Buffer(
+                                    backing.data,
+                                    3,
+                                    0,
+                                    (ct.c_int64 * 4)(*shape),
+                                    shape[2],
+                                    shape[1] * shape[2],
+                                )
+                                work.phase.outputs[3 + term] = logical
+                                check(
+                                    runtime.cudaMemcpy(
+                                        ct.c_void_p(backing.data + bank * stride * 4),
+                                        psi_cot.ctypes.data,
+                                        psi_cot.nbytes,
+                                        1,
+                                    )
+                                )
+                            else:
+                                work.phase.outputs[3 + term] = allocate(shape, psi_cot)
                             field = masked[term // 2]
                             packed_field = np.take(
                                 field,
@@ -229,9 +271,15 @@ def main():
                             work.gradients[index] = empty
                             continue
                         value = work.phase.inputs[index]
-                        work.gradients[index] = allocate(
-                            tuple(value.dims[: value.rank])
-                        )
+                        if args.banked and 3 <= index < 6:
+                            work.gradients[index] = work.source_cotangents[index - 3]
+                        elif args.banked and index >= 31:
+                            work.gradients[index] = work.phase.outputs[3 + index - 31]
+                        else:
+                            work.gradients[index] = allocate(
+                                tuple(value.dims[: value.rank]),
+                                0.25 if args.banked and 9 <= index < 12 else None,
+                            )
                     try:
                         check(launch(None, ct.byref(work)))
                         check(runtime.cudaDeviceSynchronize())
@@ -244,7 +292,19 @@ def main():
                             )
                             check(
                                 runtime.cudaMemcpy(
-                                    array.ctypes.data, value.data, array.nbytes, 2
+                                    array.ctypes.data,
+                                    ct.c_void_p(
+                                        value.data
+                                        + (
+                                            (bank ^ 1)
+                                            * work.psi_bank_stride[index - 31]
+                                            * 4
+                                        )
+                                    )
+                                    if args.banked and index >= 31
+                                    else value.data,
+                                    array.nbytes,
+                                    2,
                                 )
                             )
                             assert np.all(np.isfinite(array)), (
@@ -268,6 +328,13 @@ def main():
                                     rtol=2e-6,
                                     atol=1e-7,
                                 )
+                            if (
+                                args.banked
+                                and not cpml
+                                and not walls
+                                and 9 <= index < 12
+                            ):
+                                np.testing.assert_allclose(array, 0.25, atol=1e-7)
                         cases += 1
                     finally:
                         for pointer in allocations:

@@ -179,6 +179,33 @@ def build_differentiable_scan(program: CompiledProgram, *, checkpoint_interval=N
         if interval == 0:
             return pack_dft(jax.lax.scan(step, state, xs=None, length=cfg.num_steps)[0])
 
+        if native_step is not None:
+            # One native forward graph per checkpoint. Its custom VJP retains
+            # the boundary state, replays the local trajectory, and applies the
+            # same complete discrete timestep transposes as the phase path.
+            native_chunk = native_step.for_steps(interval)
+
+            def chunk(carry, _unused):
+                return native_chunk(
+                    carry,
+                    coefficients,
+                    ctx,
+                    observation_origin,
+                    carry.current_step - initial_step,
+                ), None
+
+            chunks, tail = divmod(cfg.num_steps, interval)
+            out = jax.lax.scan(chunk, state, xs=None, length=chunks)[0]
+            if tail:
+                out = native_step.for_steps(tail)(
+                    out,
+                    coefficients,
+                    ctx,
+                    observation_origin,
+                    out.current_step - initial_step,
+                )
+            return pack_dft(out)
+
         def chunk(carry, _unused):
             return jax.lax.scan(step, carry, xs=None, length=interval)[0], None
 

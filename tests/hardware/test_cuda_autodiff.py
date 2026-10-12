@@ -462,3 +462,146 @@ def test_cuda_trainable_broadcast_and_grid_coefficients_match_jax(phase, layout)
     ):
         assert_close(actual, expected)
     assert sum(float(jnp.linalg.norm(g)) for g in outcomes[1][1]) > 0
+
+
+@pytest.mark.parametrize("cpml,mixed", [(False, False), (True, False), (True, True)])
+@pytest.mark.parametrize("layout", ["scalar", "profile", "grid"])
+def test_native_material_chunk_matches_phase_path_with_fixed_losses(
+    monkeypatch, cpml, mixed, layout
+):
+    """Exercise aliased cotangents, bank parity, and broadcast accumulation."""
+    from beamz.simulation.cuda import differentiation
+
+    sim, epsilon = make_simulation(
+        cpml=cpml, mixed=mixed, sources=True, monitors=True, timesteps=7
+    )
+    native = sim.differentiable(backend="cuda", checkpoint_interval=3)
+    monkeypatch.setattr(differentiation, "build_native_step", lambda *args: None)
+    reference = sim.differentiable(backend="cuda", checkpoint_interval=3)
+    state = seeded_state(native)
+    coefficients = native.coefficients(epsilon)
+    updates = {}
+    for axis in "xyz":
+        shape = getattr(state, f"e{axis}").shape
+        source = getattr(coefficients, f"e_source_{axis}")
+        value = jnp.mean(source)
+        selected_shape = (
+            ()
+            if layout == "scalar"
+            else (1, shape[1], 1)
+            if layout == "profile"
+            else shape
+        )
+        updates[f"e_source_{axis}"] = jnp.full(selected_shape, value)
+        updates[f"h_decay_{axis}"] = jnp.float32(0.93)
+        updates[f"e_decay_{axis}"] = jnp.linspace(0.91, 0.99, shape[1]).reshape(
+            (1, shape[1], 1)
+        )
+    coefficients = coefficients._replace(**updates)
+
+    def objective(solver, factors, ex, hx, hpsi, epsi):
+        initial = state._replace(
+            ex=ex, hx=hx, cpml_psi_h_terms=hpsi, cpml_psi_e_terms=epsi
+        )
+        dynamic = coefficients._replace(
+            **{
+                f"e_source_{axis}": getattr(coefficients, f"e_source_{axis}")
+                * factors[index]
+                for index, axis in enumerate("xyz")
+            }
+        )
+        out = solver.run_coefficients(initial, dynamic)
+        return (
+            field_loss(out)
+            + 0.001
+            * sum(jnp.sum(p**2) for p in (*out.cpml_psi_h_terms, *out.cpml_psi_e_terms))
+            + jnp.sum(out.dft_vec_re**2 + out.dft_vec_im**2)
+        )
+
+    args = (
+        jnp.ones(3, jnp.float32),
+        state.ex,
+        state.hx,
+        state.cpml_psi_h_terms,
+        state.cpml_psi_e_terms,
+    )
+    outcomes = [
+        jax.value_and_grad(
+            lambda *args, solver=solver: objective(solver, *args),
+            argnums=(0, 1, 2, 3, 4),
+        )(*args)
+        for solver in (reference, native)
+    ]
+    for actual, expected in zip(
+        jax.tree.leaves(outcomes[1]), jax.tree.leaves(outcomes[0]), strict=True
+    ):
+        assert_close(actual, expected)
+    direction = jnp.array([0.3, -0.4, 0.5], jnp.float32)
+    derivative = jnp.vdot(outcomes[1][1][0], direction)
+    delta = 0.01
+    high = objective(native, args[0] + delta * direction, *args[1:])
+    low = objective(native, args[0] - delta * direction, *args[1:])
+    np.testing.assert_allclose(
+        derivative, (high - low) / (2 * delta), rtol=0.01, atol=2e-5
+    )
+
+
+@pytest.mark.parametrize("cpml,mixed", [(False, False), (True, False), (True, True)])
+def test_native_fixed_material_state_chunk_needs_no_primal_tape(
+    monkeypatch, cpml, mixed
+):
+    from beamz.simulation.cuda import differentiation
+
+    sim, epsilon = make_simulation(
+        cpml=cpml, mixed=mixed, sources=True, monitors=True, timesteps=7
+    )
+    native = sim.differentiable(backend="cuda", checkpoint_interval=2)
+    monkeypatch.setattr(differentiation, "build_native_step", lambda *args: None)
+    reference = sim.differentiable(backend="cuda", checkpoint_interval=2)
+    state = seeded_state(native)
+    coefficients = native.coefficients(epsilon)._replace(
+        **{
+            f"{phase}_decay_{axis}": jnp.float32(0.93 if phase == "h" else 0.91)
+            for phase in "he"
+            for axis in "xyz"
+        }
+    )
+
+    def objective(solver, initial):
+        ex, hx, hpsi, epsi, re, im, weights = initial
+        dynamic = state._replace(
+            ex=ex,
+            hx=hx,
+            cpml_psi_h_terms=hpsi,
+            cpml_psi_e_terms=epsi,
+            dft_vec_re=re,
+            dft_vec_im=im,
+            dft_weight_sum=weights,
+        )
+        out = solver.run_coefficients(dynamic, coefficients)
+        return (
+            field_loss(out)
+            + 0.001
+            * sum(jnp.sum(p**2) for p in (*out.cpml_psi_h_terms, *out.cpml_psi_e_terms))
+            + jnp.sum(out.dft_vec_re**2 + out.dft_vec_im**2)
+        )
+
+    initial = (
+        state.ex,
+        state.hx,
+        state.cpml_psi_h_terms,
+        state.cpml_psi_e_terms,
+        state.dft_vec_re,
+        state.dft_vec_im,
+        state.dft_weight_sum,
+    )
+    outcomes = [
+        jax.value_and_grad(lambda initial, solver=solver: objective(solver, initial))(
+            initial
+        )
+        for solver in (reference, native)
+    ]
+    for actual, expected in zip(
+        jax.tree.leaves(outcomes[1]), jax.tree.leaves(outcomes[0]), strict=True
+    ):
+        assert_close(actual, expected)

@@ -1375,6 +1375,22 @@ class Simulation:
         uses native float32 forward and reverse-mode Yee/CPML kernels on one GPU.
         ``checkpoint_interval=None`` selects sqrt(T) chunking; zero disables it.
         Geometry, source profiles, boundaries, and monitor definitions stay fixed.
+
+        Parameters
+        ----------
+        num_steps : int, optional
+            Number of fixed timesteps to execute; defaults to this time grid.
+        backend : str, default "jax"
+            Execution backend. "cuda" selects first-order FP32 native autodiff.
+        checkpoint_interval : int or None, optional
+            Steps per retained checkpoint. None selects sqrt(T); zero stores
+            the complete trajectory instead of rematerializing chunks.
+
+        Returns
+        -------
+        DifferentiableSimulation
+            Callable solver with dynamic material/source parameters and raw,
+            differentiable field and monitor state.
         """
         from beamz.simulation.differentiation import DifferentiableSimulation
 

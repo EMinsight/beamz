@@ -144,8 +144,8 @@ def _phase_with_vjp(arguments, result_values, attributes):
         )
         # Field/psi cotangents depend on the coefficients and output cotangents,
         # not on old fields. Save primal arrays only for coefficient derivatives
-        # that actually need them. Constant placeholders retain shape metadata
-        # for the native ABI without keeping/copying unused time trajectories.
+        # that actually need them. Empty slots let the adjoint decoder recover
+        # unused Yee/psi shapes from cotangents without full-sized zero arrays.
         nterms = int(attributes["nterms"])
         needed = [True] * len(values)
 
@@ -169,7 +169,7 @@ def _phase_with_vjp(arguments, result_values, attributes):
                 )
             needed[3 + source] |= raw_needed
         residuals = tuple(
-            value if save else jnp.zeros_like(value)
+            value if save else _EMPTY
             for value, save in zip(values, needed, strict=True)
         )
         return tuple(forward(*values, **attributes)), (residuals, _GradientMask(mask))
@@ -184,7 +184,7 @@ def _phase_with_vjp(arguments, result_values, attributes):
         # compute their often highly contended broadcast reductions on CUDA.
         gradient_values = tuple(
             value if native_mask & (1 << i) else _EMPTY
-            for i, value in enumerate(inputs)
+            for i, value in enumerate(arguments)
             if i != 12
         )
         backward = _ffi_call(abi.CUDA_ADJOINT_TARGET, gradient_values, {})
@@ -218,6 +218,95 @@ def _phase_with_vjp(arguments, result_values, attributes):
 
     phase_call.defvjp(phase_forward, phase_backward, symbolic_zeros=True)
     return phase_call(*arguments)
+
+
+def reverse_material_step(
+    cotangent, known_h, old_psi_e, ctx, coeffs, gradients, axes, psi_banks, iteration
+):
+    """Transpose E then H, reusing field and coefficient cotangent buffers.
+
+    Source profiles, clocks, CPML coefficients, and metrics are fixed on this
+    specialization. The generic VJP remains available for those trainable leaves.
+    """
+    h_terms, e_terms = ctx.boundary.cpml.h_terms, ctx.boundary.cpml.e_terms
+    nterms = len(h_terms)
+    if len(e_terms) != nterms or nterms not in (0, 6):
+        raise ValueError(
+            "The native material transpose requires matching H/E CPML plans"
+        )
+    fields = tuple(
+        getattr(cotangent, name) for name in ("ex", "ey", "ez", "hx", "hy", "hz")
+    )
+    sources = tuple(getattr(coeffs, f"e_source_{axis}") for axis in "xyz")
+    arguments = (
+        *(
+            getattr(coeffs, f"{phase}_{kind}_{axis}")
+            for phase in ("h", "e")
+            for kind in ("decay", "source")
+            for axis in "xyz"
+        ),
+        _term_metadata(h_terms),
+        *(value for term in h_terms for value in (term.a, term.b, term.inv_kappa)),
+        _term_metadata(e_terms),
+        *(value for term in e_terms for value in (term.a, term.b, term.inv_kappa)),
+        *_phase_metrics(ctx, _PHASE_H),
+        *_phase_metrics(ctx, _PHASE_E),
+        *known_h,
+        *old_psi_e,
+        *fields,
+        *psi_banks,
+        *gradients,
+        iteration,
+    )
+    cotangent_start = 23 + 7 * nterms
+    material_start = 6 + 2 * nterms
+    accumulated_start = cotangent_start + 6 + 2 * nterms
+    results = (
+        *fields,
+        *psi_banks,
+        *(
+            source if active else _EMPTY
+            for source, active in zip(sources, axes, strict=True)
+        ),
+        *fields[3:],
+    )
+    aliases = {cotangent_start + index: index for index in range(6 + 2 * nterms)}
+    aliases.update(
+        {
+            accumulated_start + index: material_start + index
+            for index, active in enumerate(axes)
+            if active
+        }
+    )
+    call = _ffi_call(abi.CUDA_MATERIAL_ADJOINT_TARGET, results, aliases)
+    outputs = call(
+        *arguments,
+        abi_version=np.int32(CUDA_ABI_VERSION),
+        cuda_flags=np.int32(ctx.config.cuda_flags),
+        nterms=np.int32(nterms),
+        dt=np.float32(ctx.dt),
+        resolution=np.float32(ctx.resolution),
+        boundary_code_h=np.int32(
+            _boundary_code(ctx.boundary.cpml.metallic_edges, h_terms)
+        ),
+        boundary_code_e=np.int32(
+            _boundary_code(ctx.boundary.cpml.metallic_edges, e_terms)
+        ),
+        metric_kind=_metric_kind_code(ctx),
+        e_gradient_mask=np.int32(
+            sum(1 << index for index, active in enumerate(axes) if active)
+        ),
+    )
+    state = cotangent._replace(
+        **dict(zip(("ex", "ey", "ez", "hx", "hy", "hz"), outputs[:6], strict=True)),
+        cpml_psi_h_terms=cotangent.cpml_psi_h_terms,
+        cpml_psi_e_terms=cotangent.cpml_psi_e_terms,
+    )
+    return (
+        state,
+        tuple(outputs[material_start : material_start + 3]),
+        tuple(outputs[6 : 6 + 2 * nterms]),
+    )
 
 
 def _discard(values):

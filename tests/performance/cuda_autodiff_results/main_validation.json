@@ -1,27 +1,29 @@
 {
   "main_base": "6836a6fe",
-  "native_abi": 24,
-  "native_binary_sha256": "8e6e475d3513eaa0c68e891f679802545abd4d5cce4ce89a0021d6ca261f4890",
-  "cpu_selected_unique_passed": 246,
-  "cuda_autodiff_passed": 28,
+  "native_abi": 27,
+  "native_binary_sha256": "05189f509631aff92a88cacfdee5e5e59d075102333cfaebbe2de9340b804151",
+  "cpu_selected_unique_passed": 112,
+  "cuda_autodiff_passed": 40,
   "cuda_forward_selected_passed": 11,
   "cuda_forward_selected_failed": 4,
   "baseline_reproduced_failed": 4,
-  "baseline_method": "origin/main Python with ABI number adapted to 24; native forward kernels/program/graph/io sources unchanged from origin/main",
-  "standalone_initcheck_cases": 72,
+  "baseline_method": "Prior ABI-24 run: origin/main Python with ABI number adapted to 24; forward kernels/program/graph/io identical to origin/main. See abi24_validation.json.",
+  "standalone_initcheck_cases": 108,
   "standalone_initcheck_errors": 0,
-  "standalone_racecheck_cases": 72,
+  "standalone_racecheck_cases": 108,
   "standalone_racecheck_hazards": 0,
   "notebook": {
     "cells": 25,
     "updates": 160,
     "backend": "cuda_streamed",
-    "symmetry_error": 2.159181278216238e-08,
-    "final_gradient_relative_error": 0.003940414425597486,
+    "symmetry_error": 3.031579964840603e-08,
+    "final_gradient_relative_error": 0.0043368704718922384,
     "verification": "main_notebook_verification.json",
     "executed_notebook": "results/cuda_performance/main_executed_waveguide_bend.ipynb",
     "figures_visually_inspected": true,
-    "html_preview": "Exported; T3 browser connection refused at localhost and 127.0.0.1"
+    "html_preview": "Earlier export browser inspection incomplete: T3 connection refused. Updated executed notebook has embedded saved PNGs; new optimization and field PNGs visually inspected.",
+    "final_gradient_error_definition": "Maximum relative directional finite-difference error for steps 0.2 and 0.1; this is not CUDA/JAX gradient disagreement.",
+    "final_cuda_jax_gradient_relative_error_rounded": 6e-06
   },
   "source_checksums_verified": true,
   "contributor_checks": {
@@ -31,6 +33,34 @@
     "dead_code": "passed",
     "native_cmake": "passed",
     "distribution_build_and_validation": "passed",
-    "audit": "blocked by 5 existing gdsfactory attribute errors in beamz/design/gds.py; full test/coverage stage not run"
-  }
+    "audit": "blocked by 5 existing gdsfactory attribute errors in beamz/design/gds.py; full test/coverage stage not run",
+    "targeted_coverage_run": "31 public-method/differentiation cases passed with pytest-cov; local full-suite coverage not run"
+  },
+  "cuda_autodiff_runs": {
+    "complete_suite": 37,
+    "additional_fixed_material_state": 3
+  },
+  "cpu_runs": {
+    "selected_regression_suite": 103,
+    "public_api_contracts_and_cache_reuse": 10,
+    "overlapping_cache_case": 1,
+    "public_api_and_differentiation_with_coverage": 31
+  },
+  "integration_memcheck": {
+    "jax_version": "0.10.2",
+    "material_cases": 9,
+    "replay_free_state_cases": 3,
+    "errors": 0,
+    "timing_jax_version": "0.9.0",
+    "jax_0_9_probe_diagnostics": "Tests pass but instrumentation reports CUDA_ERROR_NOT_FOUND in XLA cuModuleGetGlobal_v2 symbol probes; used 0.10.2 for clean memcheck."
+  },
+  "benchmark_records": [
+    "main_fdtd_medium.json",
+    "main_inverse_100nm.json",
+    "main_inverse_50nm.json"
+  ],
+  "ci_repairs": [
+    "Added Returns section to Simulation.differentiable docstring.",
+    "Cache-reuse test counts traces directly instead of relying on private JAX _cache_size, and enables JIT locally."
+  ]
 }
