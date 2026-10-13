@@ -10,8 +10,8 @@ from beamz.simulation.kernels import precompute_e_update_coefficients
 
 # Histories created before the material/source/projection and observation-clock
 # corrections, physical-thickness CPML default, or frequency-aligned reference
-# normalization cannot resume this objective.
-TOPOLOGY_NUMERICS_VERSION = 5
+# normalization, or polarization-aware mode candidate selection cannot resume this objective.
+TOPOLOGY_NUMERICS_VERSION = 6
 
 
 def _cell_centers_to_yee(values, component, polarization):

@@ -111,7 +111,7 @@ large field-recorder histories still consume their configured storage.
 
 ## Recommended workflow
 
-Given an ordinary `simulation` with fixed mode sources and monitors:
+Given an ordinary `simulation` with a fixed mode or Gaussian-beam source and monitors:
 
 ```python
 import jax.numpy as jnp
@@ -147,8 +147,34 @@ result.plot_optimization()
 final_data = result.simulation_data()
 ```
 
-Parameters use `(y, x)` order. In 3D, the planar pattern is extruded through the
-region's finite z thickness. The design must align to an unsharded uniform grid,
+By default, parameters use `(y, x)` order and the pattern is extruded through
+finite z thickness. Set `parameterization="volumetric"` for independent `(z, y, x)`
+voxels. `FilterProject` and `ErosionDilationPenalty` work in both dimensions;
+the volumetric conic filter uses a spherical kernel and FFT convolution.
+
+The density grid's `pixel_size` can differ from the FDTD `resolution`. Transform
+and project on the density grid, then linearly sample physical density at FDTD
+cell centers. The derivative includes the exact interpolation transpose.
+Region bounds must align to the FDTD grid and sizes must be integer multiples
+of `pixel_size`. Fixed-density masks constrain the density grid; interpolation
+can blend their interfaces on a different FDTD grid.
+
+A simulation may use one fixed `ModeSource` or 3D `GaussianBeamSource`. Its
+source spectrum normalizes the modal amplitudes; `ModePower` divides by incident
+source power to give coupling efficiency. Keep density away from source and
+mode-monitor planes (two cells, or a larger margin for a beam's `max_shift`).
+Source and mode-monitor planes must also stay outside the absorber along their
+normal axis; measuring a mode inside PML understates its coupling efficiency.
+For independent polarization experiments, combine objective functions over shared
+parameters with `jax.value_and_grad`; see the
+[polarization-insensitive grating-coupler notebook](../../examples/notebooks/polarization_insensitive_grating_coupler.ipynb).
+
+`InverseDesign.export_design` thresholds a volumetric density into one extruded
+polygon layer per z voxel. It supports `contour` or `pixel_exact` footprints,
+including fixed density masks. Large volumes can create many polygons; re-simulate
+the export to assess thresholding and rasterization effects.
+
+The design must align to an unsharded uniform grid,
 use scalar lossless materials, and stay outside the absorber and fixed mode
 planes. The spectral adjoint additionally requires decayed fields and full-run
 rectangular DFT monitors and nonperiodic boundaries. Use autodiff for periodic
@@ -176,8 +202,11 @@ state. Set `store_full_results=True` to retain parameter/gradient snapshots.
 receive `callback(result)`. Both workflows share the same result and checkpoint
 format. The two checkpoint formats previously introduced on this branch are
 rejected explicitly; rerun the examples to generate current checkpoints.
-Numerical fingerprint 5 also rejects earlier histories, whose reference powers
-could be paired with the wrong frequencies when monitor frequency orders differ.
+Numerical fingerprint 6 also rejects earlier histories: the current 3D mode solver
+searches additional eigenmode candidates before applying TE/TM preference,
+including for a one-mode monitor request. Earlier one-candidate requests could
+select the same physical mode for both polarizations. Frequency-aligned reference
+normalization corrections are also included in this fingerprint.
 
 See the [mode-converter notebook](../../examples/notebooks/topology_mode_converter.ipynb)
 and [scheduled WDM notebook](../../examples/notebooks/topology_wdm_4channel.ipynb)

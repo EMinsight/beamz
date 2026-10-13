@@ -266,6 +266,12 @@ def solve_beamz_mode(spec: ModePlaneSpec) -> DiscreteMode:
         spec.num_modes if spec.num_modes is not None else 2 * (spec.mode_index + 1) + 5
     )
 
+    # A single eigenpair cannot be reordered by polarization. Search a shared
+    # candidate pool for all requested modes before selecting the TE/TM family.
+    if spec.polarization is not None:
+        requested = max(spec.mode_index + 1, spec.num_modes or 0)
+        mode_count = max(mode_count, 2 * requested + 5)
+
     diagonal_eps = {
         name: _transpose_between_axes(values, spec.transverse_axes, solver_axes)
         for name, values in spec.diagonal_permittivity.items()

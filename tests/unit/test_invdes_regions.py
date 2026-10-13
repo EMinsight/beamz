@@ -133,3 +133,38 @@ def test_topology_transform_fixed_mask_vjp_matches_finite_difference():
         - transform_density(params - h * direction, **options).sum()
     ) / (2 * h)
     np.testing.assert_allclose(fd, jnp.sum(grad * direction), rtol=0.002)
+
+
+def test_volumetric_filter_is_isotropic_and_has_correct_vjp():
+    values = np.random.default_rng(6).uniform(0.2, 0.8, (7, 7, 7)).astype(np.float32)
+    transform = FilterProject(230e-9, beta=3)
+
+    def fun(x):
+        return jnp.mean(transform(x, 100e-9) ** 2)
+
+    gradient = jax.grad(fun)(values)
+    direction = gradient / jnp.linalg.norm(gradient)
+    fd = (fun(values + 0.003 * direction) - fun(values - 0.003 * direction)) / 0.006
+    np.testing.assert_allclose(fd, jnp.sum(gradient * direction), rtol=0.003)
+    filtered = np.asarray(transform(values, 100e-9))
+    np.testing.assert_allclose(
+        transform(values.transpose(2, 0, 1), 100e-9),
+        filtered.transpose(2, 0, 1),
+        atol=1e-6,
+    )
+    for value in (0, 1):
+        np.testing.assert_allclose(
+            transform(jnp.full(values.shape, value, dtype=jnp.float32), 100e-9),
+            value,
+            atol=5e-7,
+        )
+    region = TopologyDesignRegion(
+        size=(1e-6, 0.8e-6, 0.6e-6),
+        center=(0, 0, 0),
+        eps_bounds=(1, 4),
+        pixel_size=100e-9,
+        parameterization="volumetric",
+    )
+    assert region.params_shape == (6, 8, 10)
+    with pytest.raises(ValueError, match="positive z"):
+        region.updated_copy(size=(1e-6, 0.8e-6, 0))
