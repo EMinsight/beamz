@@ -7,7 +7,8 @@ import jax.numpy as jnp
 import numpy as np
 from jax.scipy.signal import convolve2d
 
-from ._validation import check_density
+from ._validation import check_density, fixed_density_masks
+from .autodiff import apply_fixed_density
 from .projections import smoothed_heaviside
 
 
@@ -164,7 +165,10 @@ class TopologyDesignRegion(Specification):
 
     All lengths are metres. Parameters have BeamZ's (y, x) order and are
     uniform along z through the specified thickness in 3D simulations. Bounds
-    must align to the grid, with pixel_size == resolution.
+    must align to the grid, with pixel_size == resolution. Optional boolean
+    ``fixed_solid`` / ``fixed_void`` masks have ``params_shape`` and pin physical
+    density to 1 / 0 before and after every transform, with zero parameter
+    gradients at those cells. Export preserves their exact cell footprints.
     """
 
     size: tuple[float, float, float]
@@ -175,6 +179,8 @@ class TopologyDesignRegion(Specification):
     penalties: tuple = ()
     initialization_spec: Any = UniformInitializationSpec()
     penalty_input: str = field(default="density", metadata={"beamz_cache": False})
+    fixed_solid: Any = field(default=None, repr=False, compare=False)
+    fixed_void: Any = field(default=None, repr=False, compare=False)
 
     def __post_init__(self):
         if self.penalty_input not in ("density", "parameters"):
@@ -216,6 +222,12 @@ class TopologyDesignRegion(Specification):
         if any(not callable(t) for t in self.transformations + self.penalties):
             raise TypeError("Transformations and penalties must be callable.")
 
+        solid, void = fixed_density_masks(
+            self.fixed_solid, self.fixed_void, self.params_shape
+        )
+        object.__setattr__(self, "fixed_solid", solid)
+        object.__setattr__(self, "fixed_void", void)
+
     @property
     def params_shape(self):
         return tuple(int(round(size / self.pixel_size)) for size in self.size[1::-1])
@@ -240,12 +252,14 @@ class TopologyDesignRegion(Specification):
             isinstance(t, FilterProject) for t in self.transformations
         ):
             raise ValueError("A beta override requires a FilterProject transformation.")
+        params = apply_fixed_density(params, self.fixed_solid, self.fixed_void)
         for transform in self.transformations:
             params = (
                 transform.evaluate(params, self.pixel_size, beta=beta)
                 if isinstance(transform, FilterProject)
                 else transform(params, self.pixel_size)
             )
+            params = apply_fixed_density(params, self.fixed_solid, self.fixed_void)
         return params
 
     def eps_values(self, params, *, beta=None):

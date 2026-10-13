@@ -20,3 +20,20 @@ def check_density(values, shape, name="Density"):
         or np.any((values < 0) | (values > 1))
     ):
         raise ValueError(f"{name} must match shape {shape} and be finite in [0, 1].")
+
+
+def fixed_density_masks(solid, void, shape):
+    """Copy optional, disjoint boolean constraints on physical density cells."""
+    masks = []
+    for name, value in (("fixed_solid", solid), ("fixed_void", void)):
+        if value is None:
+            masks.append(None)
+            continue
+        mask = np.array(value, copy=True)
+        if mask.shape != shape or mask.dtype != np.bool_:
+            raise ValueError(f"{name} must be a boolean array with shape {shape}.")
+        mask.setflags(write=False)
+        masks.append(mask)
+    if all(m is not None for m in masks) and np.any(masks[0] & masks[1]):
+        raise ValueError("fixed_solid and fixed_void must not overlap.")
+    return tuple(masks)

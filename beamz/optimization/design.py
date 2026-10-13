@@ -116,10 +116,14 @@ class InverseDesign(Specification):
         """Return an ordinary BeamZ simulation for inspection or verification."""
         return self._problem.material_simulation(self._density(params, beta=beta))
 
-    def export_design(self, params, *, threshold=0.5, beta=None):
+    def export_design(
+        self, params, *, threshold=0.5, beta=None, mode="contour", sample_spacing=None
+    ):
         """Threshold the planar pattern and export ordinary extruded polygons.
 
         The returned geometry can be rasterized at a different verification mesh.
+        ``mode`` is "contour" or "pixel_exact"; ``sample_spacing`` optionally
+        refines bilinear contour sampling in metres. Fixed cells remain exact.
         """
         from beamz.design.materials import Material
         from beamz.design.structures import Polygon, Rectangle
@@ -134,6 +138,12 @@ class InverseDesign(Specification):
             self.simulation.coordinate_offset
         )
         low = center - np.asarray(region.size) / 2
+        # Use the already-validated integer grid placement. Center-size arithmetic
+        # can leave a one-ulp seam against guides on the same cell edge.
+        low[:2] = [
+            self._slices[-1].start * region.pixel_size,
+            self._slices[-2].start * region.pixel_size,
+        ]
         is_3d = self._problem.program.config.is_3d
         z, depth = (float(low[2]), region.size[2]) if is_3d else (0.0, 0.0)
         design = self.simulation.design
@@ -151,6 +161,10 @@ class InverseDesign(Specification):
             y0=low[1],
             dx=region.pixel_size,
             material=Material(region.eps_bounds[1]),
+            mode=mode,
+            sample_spacing=sample_spacing,
+            fixed_solid=region.fixed_solid,
+            fixed_void=region.fixed_void,
         ):
             design += Polygon(
                 vertices=[(x, y, z) for x, y, _ in polygon.vertices],

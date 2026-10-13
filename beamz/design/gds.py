@@ -75,7 +75,7 @@ class _VerticalProfile:
     width_to_z: float = 0.0
 
 
-def _gdsfactory():
+def _gdsfactory(*, activate_pdk=True):
     try:
         import gdsfactory as gf  # pyright: ignore[reportMissingImports]
     except ImportError as exc:
@@ -83,6 +83,8 @@ def _gdsfactory():
             "GDS support requires BeamZ's optional layout dependency. "
             "Install it with `pip install beamz[gds]`."
         ) from exc
+    if not activate_pdk:
+        return gf
     try:
         gf.get_active_pdk()
     except ValueError:
@@ -500,27 +502,23 @@ def _material_key(structure: Any) -> tuple[float, float, float] | None:
     )
 
 
-def _add_polygon(component: Any, structure: Any, layer: Layer) -> None:
-    gf = _gdsfactory()
+def _add_polygon(cell, structure, layer_index, *, kdb, precision):
     vertices = getattr(structure, "vertices", ())
     if not vertices:
         raise TypeError(f"GDS export does not support {type(structure).__name__}.")
-    exterior = [[float(x) / µm, float(y) / µm] for x, y, _ in vertices]
-    interiors = [
-        [[float(x) / µm, float(y) / µm] for x, y, _ in path]
-        for path in getattr(structure, "interiors", ())
-    ]
-    if not interiors:
-        component.add_polygon(exterior, layer=layer)
-        return
-
-    polygon = gf.Component()
-    polygon.add_polygon(exterior, layer=layer)
-    for hole_points in interiors:
-        hole = gf.Component()
-        hole.add_polygon(hole_points, layer=layer)
-        polygon = gf.boolean(polygon, hole, operation="not", layer=layer)
-    component.add_ref(polygon)
+    rings = [vertices, *getattr(structure, "interiors", ())]
+    points = []
+    for ring in rings:
+        xy = np.asarray(ring, dtype=float)[:, :2]
+        if not np.isfinite(xy).all():
+            raise ValueError("GDS coordinates must be finite.")
+        if np.any(np.abs(xy) > precision * (np.iinfo(np.int32).max - 1)):
+            raise ValueError("GDS precision is too fine for the exported coordinates.")
+        points.append([kdb.DPoint(float(x / µm), float(y / µm)) for x, y in xy])
+    polygon = kdb.DPolygon(points[0])
+    for hole in points[1:]:
+        polygon.insert_hole(hole)
+    cell.shapes(layer_index).insert(polygon)
 
 
 def export_gds(
@@ -528,28 +526,65 @@ def export_gds(
     path: str | Path,
     *,
     cell_name: str = "beamz_design",
+    precision: float = 1e-9,
+    layer_map: Mapping[Material, Layer] | None = None,
 ) -> Path:
-    """Export planar design structures to material-grouped GDS layers.
+    """Export planar structures to GDS with an explicit coordinate precision.
 
-    Structures sharing electromagnetic material properties share a GDS layer.
-    Volumetric structures without a planar projection are rejected explicitly.
+    ``precision`` is the database grid in metres (default 1 nm). A private
+    KLayout database avoids quantization through gdsfactory's global grid.
+    Coordinates remain in GDS micrometres. Interior rings remain holes.
+
+    By default, equal materials share automatically assigned layers. An explicit
+    ``layer_map={material: (layer, datatype)}`` selects only those materials,
+    e.g. the core mask without low-index region-clearing polygons. Volumetric
+    structures without a planar projection are rejected explicitly.
     """
-    gf = _gdsfactory()
-    component = gf.Component(cell_name)
+    if not np.isfinite(precision) or precision <= 0:
+        raise ValueError("precision must be finite and positive (metres).")
+    if layer_map is not None:
+        for layer in layer_map.values():
+            if len(layer) != 2 or any(
+                isinstance(v, bool)
+                or not isinstance(v, (int, np.integer))
+                or not 0 <= v <= 65535
+                for v in layer
+            ):
+                raise ValueError("GDS layer/datatype must be integers in [0, 65535].")
+    gf = _gdsfactory(activate_pdk=False)
+    layout = gf.kdb.Layout()
+    layout.dbu = precision / µm
+    cell = layout.create_cell(cell_name)
     material_layers: dict[tuple[float, float, float], Layer] = {}
+    count = 0
     for structure in design.unified_polygons().structures:
         if getattr(structure, "is_pml", False):
+            continue
+        if (
+            layer_map is not None
+            and getattr(structure, "material", None) not in layer_map
+        ):
             continue
         if isinstance(structure, Box):
             structure = structure.to_rectangle()
         material_key = _material_key(structure)
         if material_key is None:
             continue
-        layer = material_layers.setdefault(material_key, (len(material_layers), 0))
-        _add_polygon(component, structure, layer)
-    if not material_layers:
+        layer = (
+            layer_map[structure.material]
+            if layer_map is not None
+            else material_layers.setdefault(material_key, (len(material_layers), 0))
+        )
+        _add_polygon(
+            cell, structure, layout.layer(*layer), kdb=gf.kdb, precision=precision
+        )
+        count += 1
+    if not count:
         raise ValueError("The design has no planar material structures to export.")
-    return Path(component.write_gds(gdspath=path, with_metadata=False))
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    layout.write(str(destination))
+    return destination
 
 
 __all__ = ["ImportedComponent", "export_gds", "import_component", "import_gds"]
