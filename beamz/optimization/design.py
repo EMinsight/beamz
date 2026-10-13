@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.core import Tracer
@@ -30,14 +31,11 @@ class InverseDesign(Specification):
 
     def __post_init__(self):
         sim, region = self.simulation, self.design_region
-        if not np.isclose(region.pixel_size, sim.resolution, rtol=1e-10, atol=0):
-            raise ValueError(
-                "This workflow requires pixel_size == simulation.resolution."
-            )
-        # Parameters remain (y, x); finite-thickness 3D regions share them in z.
         center = np.asarray(region.center) + np.asarray(sim.coordinate_offset)
         shape = sim.compile(backend="jax").grid.material_grid.shape
         ndim = len(shape)
+        if region.parameterization == "volumetric" and ndim != 3:
+            raise ValueError("Volumetric design regions require a 3D simulation.")
         sizes = np.asarray(region.size[:ndim])
         if ndim == 3 and (not np.isfinite(sizes[2]) or sizes[2] <= 0):
             raise ValueError("A 3D design region requires finite positive thickness.")
@@ -102,6 +100,13 @@ class InverseDesign(Specification):
         if not isinstance(params, Tracer):
             self.design_region.check_params(np.asarray(params))
         physical = self.design_region.material_density(params, beta=beta)
+        target_shape = tuple(s.stop - s.start for s in self._slices)
+        if self.design_region.parameterization == "planar":
+            target_shape = target_shape[-2:]
+        if physical.shape != target_shape:
+            physical = jax.image.resize(
+                physical, target_shape, method="linear", antialias=False
+            )
         return (
             jnp.zeros(self._problem.topology.region_mask.shape, dtype=physical.dtype)
             .at[self._slices]
@@ -119,7 +124,7 @@ class InverseDesign(Specification):
     def export_design(
         self, params, *, threshold=0.5, beta=None, mode="contour", sample_spacing=None
     ):
-        """Threshold the planar pattern and export ordinary extruded polygons.
+        """Threshold density and export extruded polygons (one layer per z voxel).
 
         The returned geometry can be rasterized at a different verification mesh.
         ``mode`` is "contour" or "pixel_exact"; ``sample_spacing`` optionally
@@ -141,8 +146,8 @@ class InverseDesign(Specification):
         # Use the already-validated integer grid placement. Center-size arithmetic
         # can leave a one-ulp seam against guides on the same cell edge.
         low[:2] = [
-            self._slices[-1].start * region.pixel_size,
-            self._slices[-2].start * region.pixel_size,
+            self._slices[-1].start * self.simulation.resolution,
+            self._slices[-2].start * self.simulation.resolution,
         ]
         is_3d = self._problem.program.config.is_3d
         z, depth = (float(low[2]), region.size[2]) if is_3d else (0.0, 0.0)
@@ -154,27 +159,40 @@ class InverseDesign(Specification):
             depth=depth,
             material=Material(region.eps_bounds[0]),
         )
-        for polygon in density_to_polygons(
-            np.asarray(region.material_density(params, beta=beta)),
-            level=threshold,
-            x0=low[0],
-            y0=low[1],
-            dx=region.pixel_size,
-            material=Material(region.eps_bounds[1]),
-            mode=mode,
-            sample_spacing=sample_spacing,
-            fixed_solid=region.fixed_solid,
-            fixed_void=region.fixed_void,
-        ):
-            design += Polygon(
-                vertices=[(x, y, z) for x, y, _ in polygon.vertices],
-                interiors=[
-                    [(x, y, z) for x, y, _ in ring] for ring in polygon.interiors
-                ],
-                material=polygon.material,
-                depth=depth,
-                z=z,
-            )
+        density = np.asarray(region.material_density(params, beta=beta))
+        layers = density if region.parameterization == "volumetric" else density[None]
+        layer_depth = (
+            region.pixel_size if region.parameterization == "volumetric" else depth
+        )
+        for index, layer in enumerate(layers):
+            layer_z = z + index * layer_depth
+            solid = region.fixed_solid
+            void = region.fixed_void
+            if region.parameterization == "volumetric":
+                solid = None if solid is None else solid[index]
+                void = None if void is None else void[index]
+            for polygon in density_to_polygons(
+                layer,
+                level=threshold,
+                x0=low[0],
+                y0=low[1],
+                dx=region.pixel_size,
+                material=Material(region.eps_bounds[1]),
+                mode=mode,
+                sample_spacing=sample_spacing,
+                fixed_solid=solid,
+                fixed_void=void,
+            ):
+                design += Polygon(
+                    vertices=[(x, y, layer_z) for x, y, _ in polygon.vertices],
+                    interiors=[
+                        [(x, y, layer_z) for x, y, _ in ring]
+                        for ring in polygon.interiors
+                    ],
+                    material=polygon.material,
+                    depth=layer_depth,
+                    z=layer_z,
+                )
         return design
 
     def to_simulation_data(self, params, *, beta=None):
