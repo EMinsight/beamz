@@ -70,6 +70,6 @@ donation, coefficient layouts and source phases. Memcheck found zero errors;
 packed-core racecheck found zero hazards. Commands and logs are in the archive.
 
 Current implementation, overrides and reproduction commands live in the
-[CUDA README](../../cuda/README.md). Futhark code/tooling stays removed;
+[CUDA README](https://github.com/beamzorg/beamz/blob/feat/cuda-mstep/cuda/README.md). Futhark code/tooling stays removed;
 its ideas, credit and measurements remain. OpenCL is a future portability task
 that should share this schedule and correctness contract.

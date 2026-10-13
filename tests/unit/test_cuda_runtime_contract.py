@@ -20,10 +20,12 @@ from beamz.simulation.execute import (
 from tests.performance.h100_workloads import H100Workload
 
 
-def _program_and_state(*, cpml: bool, source: bool = False, monitor: bool = False):
+def _program_and_state(
+    *, cpml: bool, source: bool = False, monitor: bool = False, shape=(8, 10, 12)
+):
     workload = H100Workload(
         name="cuda_contract",
-        shape_zyx=(8, 10, 12),
+        shape_zyx=shape,
         timesteps=3,
         resolution=100e-9,
         pml_cells=2,

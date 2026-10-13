@@ -9,7 +9,7 @@ snapshots before this PR's history consolidation.
 The conclusion is shape-dependent: small/thin domains often favor streamed;
 large eligible columns can repay mstep preparation; narrow-x domains can favor
 a streamed storage rotation. Warm throughput alone cannot choose the fastest
-first result. The [CUDA README](../../cuda/README.md) defines the supported API,
+first result. The [CUDA README](https://github.com/beamzorg/beamz/blob/feat/cuda-mstep/cuda/README.md) defines the supported API,
 memory checks and conservative automatic-selection envelope.
 
 ## Method

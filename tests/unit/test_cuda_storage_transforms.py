@@ -9,6 +9,7 @@ import pytest
 
 from beamz.simulation.cuda.storage import (
     _permute_monitor_arena,
+    mstep_plan_inputs,
     wrap_native_calls,
     wrap_program_call,
 )
@@ -131,9 +132,39 @@ def test_rotated_native_boundary_preserves_physical_samples(axes, components, pa
     )
     lanes = (*components, *(3 + c for c in components))
     calls = []
+    plan_program = replace(
+        program,
+        config=replace(program.config, cuda_storage_axes=axes),
+        boundary=context.boundary,
+    )
+    planned_shapes, planned_cpml, planned_groups, planned_indices = mstep_plan_inputs(
+        plan_program, groups, monitors
+    )
 
     def native(rotated, ctx, material, sources, samples, nsteps):
         calls.append(nsteps)
+        assert planned_shapes == tuple(
+            getattr(rotated, name).shape
+            for name in ("hx", "hy", "hz", "ex", "ey", "ez")
+        )
+        np.testing.assert_array_equal(planned_indices, samples[0])
+        for planned, actual in zip(planned_groups, sources, strict=True):
+            if actual is None:
+                assert planned is None
+            else:
+                assert planned.coeffs.shape == actual.coeffs.shape
+                np.testing.assert_array_equal(planned.starts, actual.starts)
+        for phase in "he":
+            for planned, actual in zip(
+                getattr(planned_cpml, phase + "_terms"),
+                getattr(ctx.boundary.cpml, phase + "_terms"),
+                strict=True,
+            ):
+                assert (planned.component, planned.axis, planned.slab) == (
+                    actual.component,
+                    actual.axis,
+                    actual.slab,
+                )
         for new, old in enumerate(lanes):
             original = np.asarray(getattr(state, names[old]))
             transformed = np.asarray(getattr(rotated, names[new]))
@@ -281,3 +312,26 @@ def test_storage_rejects_reflections_and_unsupported_geometry():
     )
     with pytest.raises(ValueError, match="canonical 3D CPML"):
         call(state, context, program.coefficients, (None,) * 9, None, 3)
+
+
+@pytest.mark.parametrize("axes", [(0, 1, 2), (1, 2, 0), (2, 0, 1)])
+@pytest.mark.parametrize("monitor", [False, True])
+def test_plan_metadata_without_cpml_or_sources(axes, monitor):
+    program, state, _ = _program_and_state(cpml=False)
+    program = replace(program, config=replace(program.config, cuda_storage_axes=axes))
+    groups = (None,) * 9
+    monitors = (np.zeros((1, 6), np.int32),) if monitor else None
+    shapes, cpml, sources, indices = mstep_plan_inputs(program, groups, monitors)
+    components = tuple(2 - axes[2 - c] for c in range(3))
+    order = (*components, *(3 + c for c in components))
+    fields = (state.hx, state.hy, state.hz, state.ex, state.ey, state.ez)
+    assert shapes == tuple(tuple(fields[c].shape[a] for a in axes) for c in order)
+    assert cpml.h_terms == cpml.e_terms == ()
+    assert sources == groups
+    if monitor:
+        np.testing.assert_array_equal(indices, monitors[0])
+    else:
+        assert indices is None
+    if axes == (0, 1, 2):
+        assert cpml is program.boundary.cpml
+        assert sources is groups

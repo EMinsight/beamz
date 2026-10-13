@@ -1,6 +1,6 @@
 # CUDA optimization evidence
 
-- [CUDA component](../../cuda/README.md): API, shared architecture and selection limits.
+- [CUDA component](https://github.com/beamzorg/beamz/blob/feat/cuda-mstep/cuda/README.md): API, shared architecture and selection limits.
 - [Futhark baseline](cuda-mstep-rtx3090.md): Pepijn de Vos's algorithm ideas and the ten matched RTX3090 cases.
 - [Tile/layout/startup study](cuda-schedule-space.md): measured configurations, time-to-result ranking and main compatibility.
 - [H100 regression study](cuda-h100-regression.md): one/two/eight-GPU performance, memory, validation and remaining gaps.
