@@ -16,6 +16,9 @@ The benchmark tools remain in `scripts/`; automated contracts remain in
 - [H100 configuration search](HOPPER_SEARCH.md): launch and workload search.
 - [H100 cube sweep](HOPPER_CUBE_SWEEP.md): size and allocator measurements
   **before** the preparation memory fixes; peak setup memory is not runtime usage.
+- [Curved-interface smoothing](CURVED_INTERFACE_SMOOTHING.md): when full-tensor
+  smoothing beats the default diagonal one on four 3D structures, and a setup-only
+  CPML memory fix.
 
 Small CSV summaries are versioned beside the reports. Raw telemetry, generated
 plots, executed notebooks, and detailed comparison exports belong under the
