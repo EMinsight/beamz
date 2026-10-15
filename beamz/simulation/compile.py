@@ -17,7 +17,7 @@ import numpy as np
 
 import beamz.simulation.kernels as ops
 from beamz._cache_tokens import HashToken, cache_token
-from beamz._region_array import RegionArray, constant_array, tiles
+from beamz._region_array import RegionArray, constant_array, tiles, uniform_value
 from beamz.devices._boundary_compile import (
     CPML_3D_E_DERIVATIVES,
     CPML_3D_H_DERIVATIVES,
@@ -172,16 +172,10 @@ def _elide_zero_conductivity_grid(value):
 def _elide_uniform_grid(value):
     """Represent an exactly uniform CUDA coefficient with one scalar value."""
 
-    if isinstance(value, RegionArray):
-        first = value[(0,) * value.ndim]
-        for tile in tiles(value.shape, value.dtype):
-            if not np.all(value[tile] == first):
-                return value
-        return jnp.asarray(first, dtype=value.dtype)
-    arr_np = np.asarray(value)
-    if arr_np.size and bool(np.all(arr_np == arr_np.flat[0])):
-        return jnp.asarray(arr_np.flat[0], dtype=arr_np.dtype)
-    return value
+    first = uniform_value(value)
+    if first is None:
+        return value
+    return jnp.asarray(first, dtype=value.dtype)
 
 
 _CUDA_CODEBOOK_CHUNK_CELLS = 1 << 20

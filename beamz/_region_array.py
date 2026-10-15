@@ -34,6 +34,23 @@ def tiles(shape, dtype, budget=None):
         )
 
 
+def uniform_value(value):
+    """Return the shared element of an exactly uniform array, or ``None``.
+
+    Elements are compared with ``==`` in bounded tiles, so no full-volume boolean
+    temporary is created. Mixed signed zeros count as uniform and return the first
+    element's sign; any NaN keeps the array non-uniform. Empty arrays return ``None``.
+    """
+    source = value if isinstance(value, RegionArray) else np.asarray(value)
+    if not source.size:
+        return None
+    first = np.asarray(source[(0,) * source.ndim])
+    for tile in tiles(source.shape, source.dtype):
+        if not np.all(source[tile] == first):
+            return None
+    return first
+
+
 @dataclass(frozen=True, eq=False)
 class RegionArray:
     shape: tuple[int, ...]

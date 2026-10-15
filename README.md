@@ -54,6 +54,7 @@ Try out notebooks from our growing **[example library](https://beamz.tech/simula
 - [9) Inverse Design: 1-to-3 Splitter](examples/notebooks/topology_inverse_design_splitter.ipynb)
 - [9) 3D Topology Waveguide Bend](examples/notebooks/topology_bend_3d.ipynb)
 - [10) Scheduled Four-channel WDM](examples/notebooks/topology_wdm_4channel.ipynb)
+- [11) Choosing Interface Smoothing: Volume, Diagonal or Full Tensor (3D)](examples/notebooks/interface_smoothing_choice.ipynb)
 
 
 ## Integration 

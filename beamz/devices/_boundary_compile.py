@@ -11,7 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from beamz._region_array import SeparableMask, tiles
+from beamz._region_array import SeparableMask, tiles, uniform_value
 from beamz.const import EPS_0, LIGHT_SPEED, MU_0
 from beamz.design.discretization import MaterialGrid
 from beamz.devices.boundaries import (
@@ -85,21 +85,46 @@ class _ComponentSupport:
         self.shape = tuple(int(value) for value in shape)
 
 
+def _scalar_constants_allowed(material_grid, boundaries) -> bool:
+    """Return whether uniform loss and permeability may be stored as scalars."""
+    # Deliberately conservative scope: CPML keeps its damping in psi state and its
+    # material extrusion leaves uniform arrays unchanged, so the scalar form is
+    # safe here. Sponge layers, metallic walls and 2D programs would likely work
+    # too, but keep their established arrays until they are measured.
+    return len(material_grid.shape) == 3 and all(
+        isinstance(boundary, PML) and boundary.formulation == "cpml"
+        for boundary in boundaries
+    )
+
+
 class _BoundaryGrid:
     """Mutable material workspace without allocating solver field arrays."""
 
-    def __init__(self, material_grid, component_shapes, *, region_setup=False) -> None:
+    def __init__(
+        self,
+        material_grid,
+        component_shapes,
+        *,
+        region_setup=False,
+        scalar_constants=False,
+    ) -> None:
         self.region_setup = region_setup
 
-        def array(value):
+        def array(value, *, constant=False):
+            # A uniform array is stored as its one value; broadcasting reproduces it
+            # and avoids volume-sized copies through upload.
+            if scalar_constants and constant:
+                uniform = uniform_value(value)
+                if uniform is not None:
+                    value = uniform
             if not region_setup:
                 return jnp.asarray(value)
             source = np.asarray(value)
             return np.asarray(source, dtype=jax.dtypes.canonicalize_dtype(source.dtype))
 
         self.permittivity = array(material_grid.permittivity)
-        self.conductivity = array(material_grid.conductivity)
-        self.permeability = array(material_grid.permeability)
+        self.conductivity = array(material_grid.conductivity, constant=True)
+        self.permeability = array(material_grid.permeability, constant=True)
         self.polarization_2d = material_grid.polarization or "tm"
         # Preserve the established uniform profile algebra exactly; stretched grids
         # opt into physical-coordinate grading.
@@ -109,7 +134,8 @@ class _BoundaryGrid:
             else None
         )
         self.yee_materials = {
-            name: array(value) for name, value in material_grid.yee_materials.items()
+            name: array(value, constant=name.startswith(("sig_", "mu_")))
+            for name, value in material_grid.yee_materials.items()
         }
         for component, shape in component_shapes.items():
             setattr(self, component, _ComponentSupport(shape))
@@ -404,6 +430,8 @@ class _AbsorberCompiler:
             )
         for name, source in getattr(fields, "yee_materials", {}).items():
             source_arr = np.asarray(source)
+            if source_arr.ndim == 0:
+                continue
             if getattr(fields, "region_setup", False):
                 counts = self._pml_material_edge_counts(fields.permittivity, pml_data)
                 if not _extrusion_changes_material(source_arr, counts):
@@ -917,7 +945,10 @@ def lower_boundaries(
     """Lower the complete boundary tuple once for Simulation compilation."""
     boundaries = normalize_boundaries(boundaries)
     workspace = _BoundaryGrid(
-        material_grid, component_shapes, region_setup=region_setup
+        material_grid,
+        component_shapes,
+        region_setup=region_setup,
+        scalar_constants=_scalar_constants_allowed(material_grid, boundaries),
     )
     profiles: Mapping[str, Any] | None = None
     for boundary in boundaries:
