@@ -61,6 +61,21 @@ struct BeamzLaunch {
   BeamzBuffer shard_halos[6];
 };
 
+// The phase outputs hold incoming cotangents. Metadata is nondifferentiable;
+// all other inputs have independently owned, float32 gradient buffers.
+struct BeamzAdjointLaunch {
+  BeamzLaunch phase;
+  uint64_t gradient_mask;
+  BeamzBuffer gradients[37];
+  BeamzBuffer metric_gradients[3];
+  bool accumulate_sources = false;
+  bool accumulate_material = false;
+  BeamzBuffer source_cotangents[3]{};
+  BeamzBuffer source_decays[3]{};
+  BeamzBuffer reverse_iteration{};
+  int32_t psi_bank_stride[6]{};
+};
+
 struct BeamzSourceGroupLaunch {
   BeamzBuffer coefficients;
   BeamzBuffer waveforms;
@@ -127,5 +142,6 @@ struct BeamzProgramLaunch {
 int BeamzLaunchStreamed(void* stream, const BeamzLaunch& launch);
 int BeamzLaunchSharded(void* stream, const BeamzLaunch& launch);
 int BeamzLaunchProgram(void* stream, const BeamzProgramLaunch& program);
+int BeamzLaunchAdjoint(void* stream, const BeamzAdjointLaunch& launch);
 
 #endif  // BEAMZ_CUDA_LAUNCH_H_

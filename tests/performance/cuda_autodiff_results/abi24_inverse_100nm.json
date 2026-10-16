@@ -1,0 +1,151 @@
+{
+  "metadata": {
+    "jax_version": "0.9.0",
+    "devices": [
+      "cuda:0"
+    ],
+    "gpu": "NVIDIA GeForce RTX 3090, 610.43.03",
+    "dtype": "float32",
+    "mesh_nm": 100,
+    "shape_zyx": [
+      22,
+      50,
+      50
+    ],
+    "timesteps": 1299,
+    "run_time_s": 2e-13,
+    "checkpoint_interval": 32,
+    "warmup_calls": 3,
+    "samples": 7,
+    "notebook_sha256": "c6c1f009898de3eb134e6dfcc805bfc754183a38177feb3ec7ef5095ef15d91d",
+    "gradient_relative_difference": 2.0329666483576148e-07,
+    "objective_absolute_difference": 4.190951585769653e-09,
+    "compilation_cache_enabled": false,
+    "provenance": {
+      "python_version": "3.11.15",
+      "jaxlib_version": "0.9.0",
+      "cuda_component_version": "0.24.0",
+      "cuda_abi": 24,
+      "native_binary_sha256": "8e6e475d3513eaa0c68e891f679802545abd4d5cce4ce89a0021d6ca261f4890",
+      "source_sha256": {
+        "beamz/simulation/cuda/runtime.py": "e1b0304a3f43f563aa36fc0cbcfd2ecddc9015a7027fbf2c88ae8af148470369",
+        "beamz/simulation/cuda/differentiation.py": "1616c6c8b19f59462d3cf3bf331f257e2a7098dab5471b1fa52da4ab3eb61716",
+        "beamz/simulation/differentiation.py": "aaef6efcc87f220f80917156b30bb7dbad6e15eca52042df2689b5175eaee7a9",
+        "beamz/simulation/execute.py": "eda58a38d560d2af7a2153ee71e95f0924e0d7520de36b483691bd113ad967e5",
+        "beamz/simulation/observe.py": "72062982d24b7ca05e5ec2bbc4a02c8628e10a7354f5ea3c227e2253a95172c0",
+        "cuda/src/adjoint.cu": "1a0e37013224a1159ae9d78fd9f21f9a3f5be51ec98a72fb6fc69cf45f2ad951",
+        "cuda/src/update.cu": "ac064e8d8939156fc480f3b496b80c036cb4db0743290b673d3c05988aa90013",
+        "cuda/src/ffi_handler.cc": "5ccb783c4ad73a684e01581e6e14768c805a9bf87d30a3c069c58060bdb81ba9"
+      },
+      "xla_flags": "",
+      "cpml_precision": "fp32",
+      "preallocate": "false"
+    },
+    "objective_value": -0.006793975830078125,
+    "gradient_norm": 0.004804543685168028,
+    "beta": 2.0,
+    "parameters_npz": null,
+    "parameters_sha256": "95b532cc4381affdff0d956e12520a04129ed49d37e154228368fe5621f0b9a2"
+  },
+  "measurements": {
+    "cuda": {
+      "objective": {
+        "lower_and_compile_s": 0.5548749091103673,
+        "temporary_bytes": 2566120,
+        "samples_s": [
+          0.03902004915289581,
+          0.03877666383050382,
+          0.0397002708632499,
+          0.03926564892753959,
+          0.03892855881713331,
+          0.03939313581213355,
+          0.03908385895192623
+        ],
+        "median_s": 0.03908385895192623,
+        "minimum_s": 0.03877666383050382,
+        "maximum_s": 0.0397002708632499
+      },
+      "value_and_grad": {
+        "lower_and_compile_s": 3.4633359890431166,
+        "temporary_bytes": 113463704,
+        "samples_s": [
+          0.25551721593365073,
+          0.25541882310062647,
+          0.2552977849263698,
+          0.25557871302589774,
+          0.25598341901786625,
+          0.25559308007359505,
+          0.25602490711025894
+        ],
+        "median_s": 0.25557871302589774,
+        "minimum_s": 0.2552977849263698,
+        "maximum_s": 0.25602490711025894
+      }
+    },
+    "jax": {
+      "objective": {
+        "lower_and_compile_s": 1.617972397012636,
+        "temporary_bytes": 3836712,
+        "samples_s": [
+          0.05075933691114187,
+          0.0506549219135195,
+          0.05027398793026805,
+          0.050326187163591385,
+          0.050301530165597796,
+          0.050677392864599824,
+          0.0506679171230644
+        ],
+        "median_s": 0.0506549219135195,
+        "minimum_s": 0.05027398793026805,
+        "maximum_s": 0.05075933691114187
+      },
+      "value_and_grad": {
+        "lower_and_compile_s": 8.736298229079694,
+        "temporary_bytes": 110713032,
+        "samples_s": [
+          0.25545298494398594,
+          0.2554773900192231,
+          0.25543260714039207,
+          0.25560230505652726,
+          0.25552738597616553,
+          0.2558683939278126,
+          0.25549151794984937
+        ],
+        "median_s": 0.25549151794984937,
+        "minimum_s": 0.25543260714039207,
+        "maximum_s": 0.2558683939278126
+      }
+    }
+  },
+  "cuda_speedup_over_jax": {
+    "objective": 1.29605733087477,
+    "value_and_grad": 0.9996588327916044
+  },
+  "finite_differences": [
+    {
+      "delta": 0.2,
+      "analytic": -6.316071085166186e-05,
+      "observed": -6.315880455076694e-05
+    },
+    {
+      "delta": 0.1,
+      "analytic": -6.316071085166186e-05,
+      "observed": -6.315065547823906e-05
+    },
+    {
+      "delta": 0.05,
+      "analytic": -6.316071085166186e-05,
+      "observed": -6.310641765594482e-05
+    }
+  ],
+  "speedup_95_percent_intervals": {
+    "objective": [
+      1.2775369649067219,
+      1.3015615954620017
+    ],
+    "value_and_grad": [
+      0.9980231961875318,
+      1.000703512147217
+    ]
+  }
+}

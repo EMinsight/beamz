@@ -820,6 +820,60 @@ def test_mode_source_rejects_removed_runtime_launch_attributes():
         )
 
 
+@pytest.mark.parametrize("direction", ("+", "-"))
+def test_guided_3d_launch_is_equivalent_under_xy_reflection(direction):
+    """Y-directed modes must share x-directed Yee refinement and H handedness."""
+    dx = 100e-9
+    epsilon = np.ones((24, 20, 24), dtype=np.float32)
+    epsilon[10:14, 8:12, :] = 4.0
+    frequency = 299_792_458.0 / 1e-6
+    dt = 0.8 * dx / (299_792_458.0 * np.sqrt(3))
+    plans = []
+    for _axis, material, center, size in (
+        ("x", epsilon, (0.7e-6, 1e-6, 1.2e-6), (0.0, 1e-6, 1e-6)),
+        ("y", epsilon.swapaxes(1, 2), (1e-6, 0.7e-6, 1.2e-6), (1e-6, 0.0, 1e-6)),
+    ):
+        fields = compiled_grid(
+            permittivity=material,
+            conductivity=np.zeros_like(material),
+            permeability=np.ones_like(material),
+            resolution=dx,
+        )
+        source = ModeSource(
+            center=center,
+            size=size,
+            direction=direction,
+            mode_spec=ModeSpec(polarization="te"),
+            source_time=GaussianPulse(freq0=frequency, fwidth=frequency / 10),
+        )
+        plans.append(plan_mode_source_launch(source, fields, resolution=dx, dt=dt))
+    x_plan, y_plan = plans
+    assert isinstance(x_plan, Mode3DLaunchPlan)
+    assert isinstance(y_plan, Mode3DLaunchPlan)
+    x_profile, y_profile = x_plan.field_profile, y_plan.field_profile
+    assert x_profile is not None and y_profile is not None
+    rename = {"x": "y", "y": "x", "z": "z"}
+    for name, values in x_profile.components.items():
+        counterpart = name[0] + rename[name[1]]
+        # Reflection reverses axial H, and dominant-H-positive gauging adds
+        # one global minus sign: E changes sign while H retains its sign.
+        sign = -1 if name.startswith("E") else 1
+        np.testing.assert_allclose(
+            y_profile.components[counterpart],
+            sign * values,
+            rtol=2e-5,
+            atol=1e-5,
+        )
+        index = x_profile.indices[name]
+        assert y_profile.indices[counterpart] == (index[0], index[2], index[1])
+    np.testing.assert_allclose(x_profile.k_axis, y_profile.k_axis, rtol=1e-6)
+    np.testing.assert_allclose(
+        x_plan.launch_amplitude_scale,
+        y_plan.launch_amplitude_scale,
+        rtol=2e-5,
+    )
+
+
 @pytest.mark.parametrize("axis", ("x", "y", "z"))
 @pytest.mark.parametrize("direction", (-1, 1))
 @pytest.mark.parametrize("plane", (2, 25))

@@ -28,6 +28,7 @@ nanobind_add_module(
   src/io.cu
   src/program.cu
   src/update.cu
+  src/adjoint.cu
   src/sharded.cu
 )
 target_compile_features(_cuda PRIVATE cxx_std_17)

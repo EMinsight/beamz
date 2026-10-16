@@ -1,0 +1,36 @@
+{
+  "main_base": "6836a6fe",
+  "native_abi": 24,
+  "native_binary_sha256": "8e6e475d3513eaa0c68e891f679802545abd4d5cce4ce89a0021d6ca261f4890",
+  "cpu_selected_unique_passed": 246,
+  "cuda_autodiff_passed": 28,
+  "cuda_forward_selected_passed": 11,
+  "cuda_forward_selected_failed": 4,
+  "baseline_reproduced_failed": 4,
+  "baseline_method": "origin/main Python with ABI number adapted to 24; native forward kernels/program/graph/io sources unchanged from origin/main",
+  "standalone_initcheck_cases": 72,
+  "standalone_initcheck_errors": 0,
+  "standalone_racecheck_cases": 72,
+  "standalone_racecheck_hazards": 0,
+  "notebook": {
+    "cells": 25,
+    "updates": 160,
+    "backend": "cuda_streamed",
+    "symmetry_error": 2.159181278216238e-08,
+    "final_gradient_relative_error": 0.003940414425597486,
+    "verification": "main_notebook_verification.json",
+    "executed_notebook": "results/cuda_performance/main_executed_waveguide_bend.ipynb",
+    "figures_visually_inspected": true,
+    "html_preview": "Exported; T3 browser connection refused at localhost and 127.0.0.1"
+  },
+  "source_checksums_verified": true,
+  "contributor_checks": {
+    "format": "passed",
+    "repository_ruff": "passed",
+    "changed_module_pyright": "passed (0 errors)",
+    "dead_code": "passed",
+    "native_cmake": "passed",
+    "distribution_build_and_validation": "passed",
+    "audit": "blocked by 5 existing gdsfactory attribute errors in beamz/design/gds.py; full test/coverage stage not run"
+  }
+}

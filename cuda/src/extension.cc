@@ -18,6 +18,10 @@ NB_MODULE(_cuda, module) {
         nb::capsule(reinterpret_cast<void*>(beamz_cuda_sharded));
     registrations[kProgramTarget] =
         nb::capsule(reinterpret_cast<void*>(beamz_cuda_program));
+    registrations[kAdjointTarget] =
+        nb::capsule(reinterpret_cast<void*>(beamz_cuda_adjoint));
+    registrations[kMaterialAdjointTarget] =
+        nb::capsule(reinterpret_cast<void*>(beamz_cuda_material_adjoint));
     return registrations;
   });
 }

@@ -92,6 +92,7 @@ _.check_passivity
 # Public inverse-design and plotting entry points are exercised by notebooks
 # and downstream callers, outside Vulture's package-only scan.
 plot_simulation_permittivity
+build_mode_projector
 _.plot_eps
 _.initial_simulation
 _.make_objective_fn

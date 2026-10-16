@@ -733,11 +733,12 @@ def _plan_3d_mode_source(
         for name, value in discrete_mode.profiles.items()
     }
     profiles = _scale_profiles_for_power(profiles, source.power)
-    profiles = _orient_3d_profiles_for_launch(
-        profiles,
-        axis,
-        1.0 if source.direction == "+" else -1.0,
-    )
+    if not discrete_mode.diagnostics.get("canonical_axis_rotation", False):
+        profiles = _orient_3d_profiles_for_launch(
+            profiles,
+            axis,
+            1.0 if source.direction == "+" else -1.0,
+        )
     indices = {
         name: index
         for name, index in dict(discrete_mode.component_indices).items()

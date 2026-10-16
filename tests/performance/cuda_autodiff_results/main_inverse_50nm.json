@@ -1,0 +1,151 @@
+{
+  "metadata": {
+    "jax_version": "0.9.0",
+    "devices": [
+      "cuda:0"
+    ],
+    "gpu": "NVIDIA GeForce RTX 3090, 610.43.03",
+    "dtype": "float32",
+    "mesh_nm": 50,
+    "shape_zyx": [
+      44,
+      100,
+      100
+    ],
+    "timesteps": 2597,
+    "run_time_s": 2e-13,
+    "checkpoint_interval": 32,
+    "warmup_calls": 3,
+    "samples": 7,
+    "notebook_sha256": "97619050c2e24bebd7732c6e01efbc320efc16ec852b51baf9c8261737ca78c5",
+    "gradient_relative_difference": 5.1684327928569473e-08,
+    "objective_absolute_difference": 0.0,
+    "compilation_cache_enabled": false,
+    "provenance": {
+      "python_version": "3.11.15",
+      "jaxlib_version": "0.9.0",
+      "cuda_component_version": "0.27.0",
+      "cuda_abi": 27,
+      "native_binary_sha256": "05189f509631aff92a88cacfdee5e5e59d075102333cfaebbe2de9340b804151",
+      "source_sha256": {
+        "beamz/simulation/cuda/runtime.py": "5d27e9bcb65c8d18b93148779de80f0cc1a2f9ac68e64114505cefdd789645f2",
+        "beamz/simulation/cuda/differentiation.py": "e43749c63551dae7938b1ef2592549f86d379b4ad12884e091b75fe29af4f415",
+        "beamz/simulation/differentiation.py": "ed1dfc09a74a905d37d54ff79bf08fcc38afa00bb64f35bfac5d42352bc2f40b",
+        "beamz/simulation/execute.py": "eda58a38d560d2af7a2153ee71e95f0924e0d7520de36b483691bd113ad967e5",
+        "beamz/simulation/observe.py": "72062982d24b7ca05e5ec2bbc4a02c8628e10a7354f5ea3c227e2253a95172c0",
+        "cuda/src/adjoint.cu": "bcf15adfd1c3be292176174ecd0b228e49e4cefe39b73a04a509985150b39c61",
+        "cuda/src/update.cu": "ac064e8d8939156fc480f3b496b80c036cb4db0743290b673d3c05988aa90013",
+        "cuda/src/ffi_handler.cc": "014aeaf98c115acd3f7213ce1a6d28234dd23cd8fd0f35a090040479180620c2"
+      },
+      "xla_flags": "",
+      "cpml_precision": "fp32",
+      "preallocate": "false"
+    },
+    "objective_value": -0.005564163904637098,
+    "gradient_norm": 0.002518963534384966,
+    "beta": 2.0,
+    "parameters_npz": null,
+    "parameters_sha256": "e7e2dcff542de95352682dc186432e98f0188084896773f1973276b0577d5305"
+  },
+  "measurements": {
+    "cuda": {
+      "objective": {
+        "lower_and_compile_s": 0.4096030180808157,
+        "temporary_bytes": 48812880,
+        "samples_s": [
+          0.2170788871590048,
+          0.21731946687214077,
+          0.2183319649193436,
+          0.21736765815876424,
+          0.21781826089136302,
+          0.21747988904826343,
+          0.21871343906968832
+        ],
+        "median_s": 0.21747988904826343,
+        "minimum_s": 0.2170788871590048,
+        "maximum_s": 0.21871343906968832
+      },
+      "value_and_grad": {
+        "lower_and_compile_s": 4.822211839957163,
+        "temporary_bytes": 1481088384,
+        "samples_s": [
+          1.330943776993081,
+          1.330756664974615,
+          1.3313129770103842,
+          1.3318389810156077,
+          1.3320955419912934,
+          1.3326807750854641,
+          1.3324884159956127
+        ],
+        "median_s": 1.3318389810156077,
+        "minimum_s": 1.330756664974615,
+        "maximum_s": 1.3326807750854641
+      }
+    },
+    "jax": {
+      "objective": {
+        "lower_and_compile_s": 2.8552483890671283,
+        "temporary_bytes": 26508072,
+        "samples_s": [
+          0.4283172870054841,
+          0.4273362180683762,
+          0.42839073413051665,
+          0.42690587183460593,
+          0.42837833100929856,
+          0.4268466008361429,
+          0.42840163479559124
+        ],
+        "median_s": 0.4283172870054841,
+        "minimum_s": 0.4268466008361429,
+        "maximum_s": 0.42840163479559124
+      },
+      "value_and_grad": {
+        "lower_and_compile_s": 8.704847652930766,
+        "temporary_bytes": 1464235464,
+        "samples_s": [
+          1.768519063014537,
+          1.768226713873446,
+          1.7687562450300902,
+          1.7682854710146785,
+          1.7695457700174302,
+          1.7687738628592342,
+          1.7697349509689957
+        ],
+        "median_s": 1.7687562450300902,
+        "minimum_s": 1.768226713873446,
+        "maximum_s": 1.7697349509689957
+      }
+    }
+  },
+  "cuda_speedup_over_jax": {
+    "objective": 1.9694569869420493,
+    "value_and_grad": 1.3280556210190715
+  },
+  "finite_differences": [
+    {
+      "delta": 0.2,
+      "analytic": 8.469833119306713e-06,
+      "observed": 8.466886356472969e-06
+    },
+    {
+      "delta": 0.1,
+      "analytic": 8.469833119306713e-06,
+      "observed": 8.479692041873932e-06
+    },
+    {
+      "delta": 0.05,
+      "analytic": 8.469833119306713e-06,
+      "observed": 8.498318493366241e-06
+    }
+  ],
+  "speedup_95_percent_intervals": {
+    "objective": [
+      1.9572773882479515,
+      1.9711917076500727
+    ],
+    "value_and_grad": [
+      1.3272303472095326,
+      1.329173380395606
+    ]
+  }
+}

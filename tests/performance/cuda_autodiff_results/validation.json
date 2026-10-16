@@ -1,0 +1,33 @@
+{
+  "cpu_suite": {
+    "pytest_summary": "103 passed in 73.82s (0:01:13)",
+    "native_cases": null,
+    "sanitizer_summary": null
+  },
+  "hardware_suite": {
+    "pytest_summary": "55 passed, 2 skipped in 99.22s (0:01:39)",
+    "native_cases": null,
+    "sanitizer_summary": null
+  },
+  "additional_phase_state_tests": {
+    "pytest_summary": "2 passed, 26 deselected in 11.82s",
+    "native_cases": null,
+    "sanitizer_summary": null
+  },
+  "integration_memcheck": {
+    "pytest_summary": "11 passed, 17 deselected in 28.77s",
+    "native_cases": null,
+    "sanitizer_summary": "ERROR SUMMARY: 0 errors"
+  },
+  "standalone_initcheck": {
+    "pytest_summary": null,
+    "native_cases": 72,
+    "sanitizer_summary": "ERROR SUMMARY: 0 errors"
+  },
+  "standalone_racecheck": {
+    "pytest_summary": null,
+    "native_cases": 72,
+    "sanitizer_summary": "RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)"
+  },
+  "native_binary_sha256": "0c76cc54dfa12c2386f65e4aae872015611ecf29a147bfd5f037cd4eb6235842"
+}

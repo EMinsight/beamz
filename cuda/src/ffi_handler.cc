@@ -394,6 +394,186 @@ ffi::Error ShardedHostHandler(ffi::RemainingArgs args, ffi::RemainingRets rets,
 }
 #endif
 
+#ifndef BEAMZ_CUDA_CPU_CONTRACT
+ffi::Error AdjointHandler(void* stream, ffi::RemainingArgs args,
+                          ffi::RemainingRets rets, int32_t abi_version,
+                          int32_t cuda_flags, int32_t phase, int32_t nterms,
+                          float dt, float resolution, int32_t boundary_code,
+                          int32_t metric_kind, int64_t gradient_mask) {
+  if (abi_version != kAbiVersion || phase < 0 || phase > 1 ||
+      (nterms != 0 && nterms != 6) || metric_kind < 0 || metric_kind > 2) {
+    return ffi::Error::InvalidArgument("invalid BeamZ CUDA adjoint attributes");
+  }
+  const size_t payload = 13 + 4 * static_cast<size_t>(nterms);
+  const size_t output_count = 3 + static_cast<size_t>(nterms);
+  if (args.size() != payload + 3 + output_count ||
+      rets.size() != payload + 2) {
+    return ffi::Error::InvalidArgument("invalid BeamZ CUDA adjoint buffer count");
+  }
+  BeamzAdjointLaunch launch{};
+  launch.gradient_mask = static_cast<uint64_t>(gradient_mask);
+  launch.phase = InitializeLaunch(abi_version, cuda_flags, phase, nterms,
+                                  metric_kind, dt, resolution, boundary_code);
+  if (auto error = DecodeArgs(args, launch.phase.inputs, payload);
+      error.failure()) return error;
+  for (size_t axis = 0; axis < 3; ++axis) {
+    auto decoded = args.get<ffi::AnyBuffer>(payload + axis);
+    if (!decoded) return decoded.error();
+    if (auto error = DecodeBuffer(*decoded, &launch.phase.metrics[axis]);
+        error.failure()) return error;
+    auto gradient = rets.get<ffi::AnyBuffer>(payload - 1 + axis);
+    if (!gradient) return gradient.error();
+    if (auto error = DecodeBuffer(**gradient, &launch.metric_gradients[axis]);
+        error.failure()) return error;
+  }
+  for (size_t index = 0; index < payload; ++index) {
+    if (index == 12) continue;
+    auto decoded = rets.get<ffi::AnyBuffer>(index < 12 ? index : index - 1);
+    if (!decoded) return decoded.error();
+    if (auto error = DecodeBuffer(**decoded, &launch.gradients[index]);
+        error.failure()) return error;
+  }
+  for (size_t index = 0; index < output_count; ++index) {
+    auto decoded = args.get<ffi::AnyBuffer>(payload + 3 + index);
+    if (!decoded) return decoded.error();
+    if (auto error = DecodeBuffer(*decoded, &launch.phase.outputs[index]);
+        error.failure()) return error;
+  }
+  // Empty primal slots carry no numerical data. Their shape follows the exact
+  // Yee supports of the incoming cotangents, so no full zero-valued residual
+  // fields need to be allocated, initialized, or copied by XLA.
+  const auto restore_shape = [](BeamzBuffer* value, const BeamzBuffer& support) {
+    if (value->rank == 1 && value->dims[0] == 0) *value = support;
+  };
+  for (int component = 0; component < 3; ++component) {
+    restore_shape(&launch.phase.inputs[component], launch.phase.outputs[component]);
+    auto& source = launch.phase.inputs[3 + component];
+    if (source.rank == 1 && source.dims[0] == 0) {
+      const int target = component == 0 ? 1 : 0;
+      const int axis = component == 2 ? 1 : 0;
+      source = launch.phase.outputs[target];
+      source.dims[axis] += phase == 0 ? 1 : -1;
+      source.row_stride = static_cast<int32_t>(source.dims[2]);
+      source.plane_stride = static_cast<int32_t>(source.dims[1] * source.dims[2]);
+    }
+  }
+  for (int term = 0; term < nterms; ++term)
+    restore_shape(&launch.phase.inputs[13 + 3 * nterms + term],
+                  launch.phase.outputs[3 + term]);
+  const int error = BeamzLaunchAdjoint(stream, launch);
+  return error == 0 ? ffi::Error::Success() :
+      ffi::Error::Internal("BeamZ CUDA adjoint launch failed: " + std::to_string(error));
+}
+
+
+ffi::Error MaterialAdjointHandler(void* stream, ffi::RemainingArgs args,
+                                  ffi::RemainingRets rets, int32_t abi_version,
+                                  int32_t cuda_flags, int32_t nterms, float dt,
+                                  float resolution, int32_t boundary_code_h,
+                                  int32_t boundary_code_e, int32_t metric_kind,
+                                  int32_t e_gradient_mask) {
+  if (abi_version != kAbiVersion || (nterms != 0 && nterms != 6) ||
+      metric_kind < 0 || metric_kind > 2 || e_gradient_mask < 0 ||
+      e_gradient_mask > 7 || args.size() != 33 + 9 * nterms ||
+      rets.size() != 12 + 2 * nterms)
+    return ffi::Error::InvalidArgument("invalid material-adjoint attributes/counts");
+  BeamzBuffer in[87]{}, out[24]{};
+  if (auto error = DecodeArgs(args, in, args.size()); error.failure()) return error;
+  if (auto error = DecodeRets(rets, out, rets.size()); error.failure()) return error;
+  BeamzBuffer empty{}; empty.rank = 1;
+  BeamzAdjointLaunch h{}, e{};
+  h.phase = InitializeLaunch(abi_version, cuda_flags, 0, nterms, metric_kind,
+                            dt, resolution, boundary_code_h);
+  e.phase = InitializeLaunch(abi_version, cuda_flags, 1, nterms, metric_kind,
+                            dt, resolution, boundary_code_e);
+  for (int i = 0; i < 37; ++i) h.gradients[i] = e.gradients[i] = empty;
+  for (int i = 0; i < 3; ++i) h.metric_gradients[i] = e.metric_gradients[i] = empty;
+  const int metadata_h = 12, metadata_e = 13 + 3 * nterms;
+  const int metrics = 14 + 6 * nterms;
+  const int known_h = metrics + 6, old_psi_e = known_h + 3;
+  const int cot_fields = old_psi_e + nterms;
+  const int cot_psi_h = cot_fields + 6, cot_psi_e = cot_psi_h + nterms;
+  const int accumulated = cot_psi_e + nterms;
+  const int material_out = 6 + 2 * nterms, workspace = material_out + 3;
+  const auto logical_psi = [](const BeamzBuffer& banked) {
+    BeamzBuffer value = banked;
+    value.rank = 3;
+    for (int axis = 0; axis < 3; ++axis) value.dims[axis] = banked.dims[axis + 1];
+    value.dims[3] = 0;
+    value.row_stride = static_cast<int32_t>(value.dims[2]);
+    value.plane_stride = static_cast<int32_t>(value.dims[1] * value.dims[2]);
+    return value;
+  };
+  const auto& iteration = in[accumulated + 3];
+  if (iteration.rank != 0 || iteration.element_type != kBeamzS32 || !iteration.data)
+    return ffi::Error::InvalidArgument("reverse iteration must be an int32 scalar");
+  h.reverse_iteration = e.reverse_iteration = iteration;
+  h.phase.inputs[12] = in[metadata_h]; e.phase.inputs[12] = in[metadata_e];
+  for (int c = 0; c < 3; ++c) {
+    h.phase.inputs[c] = in[cot_fields + 3 + c];
+    h.phase.inputs[3 + c] = in[cot_fields + c];
+    e.phase.inputs[c] = in[cot_fields + c];
+    e.phase.inputs[3 + c] = (e_gradient_mask ? in[known_h + c] : in[cot_fields + 3 + c]);
+    for (int k = 0; k < 2; ++k) {
+      h.phase.inputs[6 + 3 * k + c] = in[3 * k + c];
+      e.phase.inputs[6 + 3 * k + c] = in[6 + 3 * k + c];
+    }
+    h.phase.metrics[c] = in[metrics + c]; e.phase.metrics[c] = in[metrics + 3 + c];
+    e.phase.outputs[c] = in[cot_fields + c]; h.phase.outputs[c] = out[workspace + c];
+    e.gradients[3 + c] = out[workspace + c];
+    h.gradients[c] = out[3 + c]; h.gradients[3 + c] = out[c];
+    e.gradients[9 + c] = out[material_out + c];
+    e.source_cotangents[c] = in[cot_fields + 3 + c];
+    h.source_cotangents[c] = in[cot_fields + c];
+    h.source_decays[c] = in[6 + c];
+    if (e_gradient_mask & (1 << c)) {
+      // Accumulator aliases are mandatory: every full-grid cell has one
+      // writer and broadcast gradients atomically add to the existing sum.
+      if (in[accumulated + c].data != out[material_out + c].data)
+        return ffi::Error::InvalidArgument("material accumulator must alias input");
+    }
+  }
+  for (int t = 0; t < nterms; ++t) {
+    for (int k = 0; k < 3; ++k) {
+      h.phase.inputs[13 + 3 * t + k] = in[metadata_h + 1 + 3 * t + k];
+      e.phase.inputs[13 + 3 * t + k] = in[metadata_e + 1 + 3 * t + k];
+    }
+    for (int kind = 0; kind < 2; ++kind) {
+      const auto& input = in[(kind == 0 ? cot_psi_h : cot_psi_e) + t];
+      const auto& output = out[6 + kind * nterms + t];
+      if (input.rank != 4 || input.dims[0] != 2 || output.rank != 4 ||
+          output.dims[0] != 2 || input.data != output.data)
+        return ffi::Error::InvalidArgument("CPML cotangent banks must alias two-bank inputs");
+    }
+    const auto hp = logical_psi(in[cot_psi_h + t]);
+    const auto ep = logical_psi(in[cot_psi_e + t]);
+    h.phase.inputs[13 + 3 * nterms + t] = hp;
+    e.phase.inputs[13 + 3 * nterms + t] = e_gradient_mask ? in[old_psi_e + t] : ep;
+    h.phase.outputs[3 + t] = hp; e.phase.outputs[3 + t] = ep;
+    h.gradients[13 + 3 * nterms + t] = logical_psi(out[6 + t]);
+    e.gradients[13 + 3 * nterms + t] = logical_psi(out[6 + nterms + t]);
+    const int64_t h_stride = hp.dims[0] * hp.dims[1] * hp.dims[2];
+    const int64_t e_stride = ep.dims[0] * ep.dims[1] * ep.dims[2];
+    if (h_stride > INT32_MAX || e_stride > INT32_MAX)
+      return ffi::Error::InvalidArgument("CPML bank stride exceeds int32");
+    h.psi_bank_stride[t] = static_cast<int32_t>(h_stride);
+    e.psi_bank_stride[t] = static_cast<int32_t>(e_stride);
+  }
+  const uint64_t psi_mask = nterms ? uint64_t{63} << 31 : 0;
+  h.gradient_mask = uint64_t{63} | psi_mask;
+  e.gradient_mask = uint64_t{56} | psi_mask | (static_cast<uint64_t>(e_gradient_mask) << 9);
+  h.accumulate_sources = e.accumulate_sources = true;
+  e.accumulate_material = true;
+  // E writes a separate intermediate H cotangent bank. H then consumes it,
+  // updates aliased E cotangents, and writes H's diagonal into the old H bank.
+  int error = BeamzLaunchAdjoint(stream, e);
+  if (error == 0) error = BeamzLaunchAdjoint(stream, h);
+  return error == 0 ? ffi::Error::Success() :
+      ffi::Error::Internal("material adjoint launch failed: " + std::to_string(error));
+}
+
+#endif
+
 ffi::Error StreamedStepsHandler(void* stream, ffi::RemainingArgs args,
                                 ffi::RemainingRets rets, int32_t abi_version,
                                 int32_t cuda_flags, int32_t nsteps, float dt,
@@ -934,7 +1114,8 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_streamed, StreamedHandler,
                                   .Attr<float>("dt")
                                   .Attr<float>("resolution")
                                   .Attr<int32_t>("boundary_code")
-                                  .Attr<int32_t>("metric_kind"));
+                                  .Attr<int32_t>("metric_kind"),
+                              {ffi::Traits::kCmdBufferCompatible});
 
 // This handler only validates descriptors and enqueues kernels on XLA's stream.
 // Declaring capture compatibility lets XLA include distributed phases in its
@@ -982,3 +1163,32 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_program, ProgramHandler,
                                   .Attr<int32_t>("logical_y")
                                   .Attr<int32_t>("logical_x")
                                   .Attr<int32_t>("temporal_steps"));
+
+#ifndef BEAMZ_CUDA_CPU_CONTRACT
+XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_adjoint, AdjointHandler,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<void*>>()
+                                  .RemainingArgs()
+                                  .RemainingRets()
+                                  .Attr<int32_t>("abi_version")
+                                  .Attr<int32_t>("cuda_flags")
+                                  .Attr<int32_t>("phase")
+                                  .Attr<int32_t>("nterms")
+                                  .Attr<float>("dt")
+                                  .Attr<float>("resolution")
+                                  .Attr<int32_t>("boundary_code")
+                                  .Attr<int32_t>("metric_kind")
+                                  .Attr<int64_t>("gradient_mask"),
+                              {ffi::Traits::kCmdBufferCompatible});
+
+#endif
+
+#ifndef BEAMZ_CUDA_CPU_CONTRACT
+XLA_FFI_DEFINE_HANDLER_SYMBOL(beamz_cuda_material_adjoint, MaterialAdjointHandler,
+    ffi::Ffi::Bind().Ctx<ffi::PlatformStream<void*>>().RemainingArgs().RemainingRets()
+        .Attr<int32_t>("abi_version").Attr<int32_t>("cuda_flags")
+        .Attr<int32_t>("nterms").Attr<float>("dt").Attr<float>("resolution")
+        .Attr<int32_t>("boundary_code_h").Attr<int32_t>("boundary_code_e")
+        .Attr<int32_t>("metric_kind").Attr<int32_t>("e_gradient_mask"),
+    {ffi::Traits::kCmdBufferCompatible});
+#endif

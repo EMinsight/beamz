@@ -63,6 +63,10 @@ not comparable.
 See `H100.md` for measurement protocol and the pre-harness observations that
 motivate the CUDA work.
 
+[CUDA_AUTODIFF.md](CUDA_AUTODIFF.md) records matched RTX 3090 GPU benchmarks for
+ordinary FDTD and complete checkpointed reverse-mode inverse design, including
+before/after timings, correctness checks, retained and rejected optimizations,
+raw samples, memory estimates, and reproduction commands.
 For the realistic cosine-crossing resolution sweep, see [the cosine-crossing report](../../benchmarks/reports/COSINE_H100.md).
 
 Historical GPU experiment reports and compact result tables live in
