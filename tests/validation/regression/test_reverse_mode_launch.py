@@ -130,3 +130,45 @@ def test_mode_launch_has_low_reflection_and_backward_power(
         assert np.all(
             (np.abs(transmission) ** 2 > 0.95) & (np.abs(transmission) ** 2 < 1.05)
         )
+
+
+@pytest.mark.simulation
+@pytest.mark.compiled
+@pytest.mark.parametrize("axis", ["x", "y"])
+@pytest.mark.parametrize("polarization", ["tm", "te"])
+@pytest.mark.parametrize("launch_direction", ["+", "-"], ids=["plus", "minus"])
+def test_pec_termination_returns_guided_power_in_every_direction(
+    axis,
+    polarization,
+    launch_direction,
+    validation_metrics,
+):
+    """A real reflected mode must be recovered and cross the injection plane."""
+    config = StraightWaveguideSParamConfig(
+        axis=axis,
+        polarization=polarization,
+        pml_formulation="cpml",
+        mirror_on_grid=True,
+        monitor_behind_source=True,
+        reflecting_termination=True,
+    )
+    result = run_straight_waveguide_sparam_case(
+        resolution_ppw=10,
+        cfg=config,
+        launch_direction=launch_direction,
+    )
+    reflected_power = np.abs(result.s11) ** 2
+    assert np.all((reflected_power > 0.95) & (reflected_power < 1.05)), reflected_power
+    assert result.backward_launch is not None
+    returned_power = np.abs(result.backward_launch) ** 2
+    assert np.all((returned_power > 0.95) & (returned_power < 1.05)), returned_power
+    validation_metrics.check_upper(
+        "maximum PEC reflected-power error",
+        float(np.max(np.abs(reflected_power - 1))),
+        0.05,
+        metadata={
+            "axis": axis,
+            "polarization": polarization,
+            "direction": launch_direction,
+        },
+    )

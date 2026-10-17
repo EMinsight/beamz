@@ -9,6 +9,7 @@ import numpy as np
 
 from beamz import (
     LIGHT_SPEED,
+    PEC,
     PML,
     Design,
     Material,
@@ -31,6 +32,7 @@ class StraightWaveguideSParamConfig:
     polarization: str = "tm"
     monitor_behind_source: bool = False
     mirror_on_grid: bool = False
+    reflecting_termination: bool = False
     wavelength_um: float = 1.55
     num_freqs: int = 5
     waveguide_width_um: float = 0.60
@@ -253,19 +255,32 @@ def _build_case(
         for name, x_m in monitor_x.items()
     }
 
+    exit_edge = (
+        ("right" if cfg.axis == "x" else "top")
+        if launch_direction == "+"
+        else ("left" if cfg.axis == "x" else "bottom")
+    )
+    absorber_edges = (
+        tuple(edge for edge in ("left", "right", "bottom", "top") if edge != exit_edge)
+        if cfg.reflecting_termination
+        else "all"
+    )
+    boundaries = [
+        PML(
+            edges=absorber_edges,
+            thickness=pml_m,
+            formulation=cfg.pml_formulation,
+            kappa_max=float(cfg.cpml_kappa_max),
+            alpha_max=cfg.cpml_alpha_max,
+        )
+    ]
+    if cfg.reflecting_termination:
+        boundaries.append(PEC(edges=exit_edge))
     sim = Simulation(
         design=design,
         sources=[source],
         monitors=list(monitors.values()),
-        boundaries=[
-            PML(
-                edges="all",
-                thickness=pml_m,
-                formulation=cfg.pml_formulation,
-                kappa_max=float(cfg.cpml_kappa_max),
-                alpha_max=cfg.cpml_alpha_max,
-            )
-        ],
+        boundaries=boundaries,
         time=pulse.time,
         resolution=dx,
         polarization=cfg.polarization,

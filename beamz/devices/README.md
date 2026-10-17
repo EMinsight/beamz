@@ -43,3 +43,5 @@ the mode solver's spatially varying impedance.
 The directional regression measures both reflected power on the launched side
 and unwanted outgoing power behind the source. It checks both polarizations,
 sponge and CPML boundaries, and multiple resolutions/reference-plane placements.
+A PEC-terminated guide is the positive control: it must return near-unit guided
+power in every direction and polarization, including through the source plane.
