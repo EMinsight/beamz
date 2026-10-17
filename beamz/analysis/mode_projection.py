@@ -544,12 +544,8 @@ def _build_port_projection_2d(
         ]
     )
     if np.ndim(weights) == 0:
-        # Preserve the established uniform-grid solve exactly.  Multiplying both
-        # sides by a tiny constant measure is algebraically redundant, but it can
-        # move the SVD pseudoinverse across a numerical rank threshold because E
-        # and H use very different SI scales.
         projection_weights = None
-        pinv = np.linalg.pinv(mode_matrix)
+        measure_scale = np.ones(mode_matrix.shape[0])
     else:
         projection_weights = np.concatenate(
             [
@@ -557,7 +553,16 @@ def _build_port_projection_2d(
                 np.broadcast_to(np.sqrt(weights), h_forward.shape),
             ]
         )
-        pinv = np.linalg.pinv(projection_weights[:, None] * mode_matrix)
+        measure_scale = projection_weights
+    # Lorentz overlaps pair measured E with modal H, and measured H with modal
+    # E. These reject power-orthogonal fields; a Euclidean fit dominated by E's
+    # SI scale can mix radiation into the extracted TE mode and break reciprocity.
+    overlap = np.zeros((2, mode_matrix.shape[0]), dtype=np.complex128)
+    count = e_forward.size
+    overlap[0, :count] = np.conjugate(h_forward)
+    overlap[1, count:] = np.conjugate(e_forward)
+    overlap *= measure_scale[None, :]
+    pinv = np.linalg.pinv(overlap @ (measure_scale[:, None] * mode_matrix)) @ overlap
     projection = {
         "e_component": parts["e_component"],
         "h_component": parts["h_component"],

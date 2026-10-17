@@ -12,13 +12,30 @@ from tests.modal_sparam_physical_case import (
 
 
 @pytest.fixture(
-    scope="module", params=[("sponge", 10, 1.1), ("cpml", 10, 1.1), ("cpml", 14, 1.4)]
+    scope="module",
+    params=[("x", "tm", "sponge", 10, 1.1, False)]
+    + [
+        (axis, polarization, absorber, ppw, offset, True)
+        for axis in ("x", "y")
+        for polarization in ("tm", "te")
+        for absorber, ppw, offset in [
+            ("sponge", 10, 1.1),
+            ("cpml", 10, 1.1),
+            ("cpml", 14, 1.4),
+        ]
+    ],
+    ids=lambda case: "-".join(map(str, case)),
 )
 def reciprocal_straight_waveguide_results(request):
     """Run the smallest two source excitations once for this module."""
-    absorber, ppw, monitor_offset = request.param
+    axis, polarization, absorber, ppw, monitor_offset, mirror_on_grid = request.param
     config = StraightWaveguideSParamConfig(
-        pml_formulation=absorber, input_monitor_offset_um=monitor_offset
+        axis=axis,
+        polarization=polarization,
+        monitor_behind_source=True,
+        mirror_on_grid=mirror_on_grid,
+        pml_formulation=absorber,
+        input_monitor_offset_um=monitor_offset,
     )
     forward = run_straight_waveguide_sparam_case(
         resolution_ppw=ppw,
@@ -54,6 +71,8 @@ def test_straight_waveguide_complex_transmission_is_reciprocal(
         resolution=f"{forward.resolution_ppw} ppw",
         metadata={
             "device": "symmetric straight slab waveguide",
+            "axis": config.axis,
+            "polarization": config.polarization,
             "wavelength_um": config.wavelength_um,
             "reference_plane_separation_um": abs(
                 forward.monitor_x_um["far"] - forward.monitor_x_um["o1"]
@@ -72,13 +91,42 @@ def test_straight_waveguide_complex_transmission_is_reciprocal(
 
 @pytest.mark.simulation
 @pytest.mark.compiled
-def test_reverse_mode_launch_has_low_spurious_counterpropagation(
+@pytest.mark.parametrize("launch_direction", ["+", "-"], ids=["plus", "minus"])
+def test_mode_launch_has_low_reflection_and_backward_power(
     reciprocal_straight_waveguide_results,
+    launch_direction,
+    validation_metrics,
 ):
-    """Both directions must retain transmission and have low extracted reflection."""
-    _config, forward, reverse, center = reciprocal_straight_waveguide_results
-    for result in (forward, reverse):
-        reflection_db = 20.0 * np.log10(max(float(abs(result.s11[center])), 1e-12))
-        assert reflection_db < -35.0
-        for transmission in result.s21_by_monitor.values():
-            assert 0.95 < abs(transmission[center]) ** 2 < 1.05
+    """Check the launched side and behind the source over the full sampled band."""
+    config, forward, reverse, _center = reciprocal_straight_waveguide_results
+    result = forward if launch_direction == "+" else reverse
+    metadata = {
+        "axis": config.axis,
+        "polarization": config.polarization,
+        "direction": launch_direction,
+        "absorber": config.pml_formulation,
+        "wavelengths_um": result.wavelengths_um.tolist(),
+    }
+    reflection_db = 20.0 * np.log10(np.maximum(np.abs(result.s11), 1e-12))
+    assert np.max(reflection_db) < -35.0, reflection_db
+    validation_metrics.check_upper(
+        "maximum in-band reflection",
+        float(np.max(reflection_db)),
+        -35.0,
+        unit="dB",
+        metadata=metadata,
+    )
+    assert result.backward_launch is not None
+    backward_db = 20.0 * np.log10(np.maximum(np.abs(result.backward_launch), 1e-12))
+    assert np.max(backward_db) < -35.0, backward_db
+    validation_metrics.check_upper(
+        "maximum in-band backward launch",
+        float(np.max(backward_db)),
+        -35.0,
+        unit="dB",
+        metadata=metadata,
+    )
+    for transmission in result.s21_by_monitor.values():
+        assert np.all(
+            (np.abs(transmission) ** 2 > 0.95) & (np.abs(transmission) ** 2 < 1.05)
+        )

@@ -110,3 +110,47 @@ def test_staggered_plane_wave_superposition_recovers_both_amplitudes(
         )
         np.testing.assert_allclose(recovered, [plus, minus], rtol=1e-12, atol=1e-12)
     assert projection["modal_plane_delay_s"] == 0
+
+
+@pytest.mark.parametrize("weighted", [False, True])
+def test_modal_extraction_rejects_power_orthogonal_fields(monkeypatch, weighted):
+    """Unrelated transverse fields must not pollute the guided-wave amplitudes."""
+    dx = 80e-9
+    measure = dx * np.array([1.0, 1.5, 2.0]) if weighted else dx
+    monkeypatch.setattr(
+        "beamz.analysis.mode_projection._monitor_profile_slice",
+        lambda *_: (np.full(3, 2.0), np.arange(3), measure),
+    )
+    port = Port(
+        center=(1e-6, 1e-6, 0),
+        size=(0, 1e-6, 1e-6),
+        mode_spec=ModeSpec(polarization="te"),
+        name="port",
+        direction="+",
+    )
+
+    def solve(**_):
+        e, h = np.zeros((1, 3, 3), complex), np.zeros((1, 3, 3), complex)
+        e[0, 1], h[0, 2] = [1, 2, 4], [1, 1, 1]
+        return np.array([1.7]), e, h, None
+
+    monkeypatch.setattr("beamz.analysis.mode_projection.solve_modes", solve)
+    projection = _build_port_projection_2d(
+        SimpleNamespace(resolution=dx, is_3d=False),
+        spec=port,
+        monitor=None,
+        frequency=LIGHT_SPEED / 1.55e-6,
+        parts=_mode_components_for_port(port),
+        mode_pad_cells=0,
+    )
+    weights = np.broadcast_to(measure, (3,))
+    # Zero Lorentz overlaps: sum(E_other * H_mode*) and
+    # sum(E_mode* * H_other), including the physical integration measure.
+    other_e = np.array([1, -2, 1]) / weights
+    other_h = np.array([2, -1, 0]) / weights
+    assert np.dot(weights, other_e) == pytest.approx(0)
+    assert np.dot(weights * np.array([1, 2, 4]), other_h) == pytest.approx(0)
+    expected = np.array([1 + 0.2j, 0.7 - 0.4j])
+    field = projection["mode_matrix"] @ expected + np.r_[other_e, other_h] * 0.01j
+    actual = projection["pinv"] @ (projection.get("projection_weights", 1) * field)
+    np.testing.assert_allclose(actual, expected, atol=1e-10, rtol=1e-10)
