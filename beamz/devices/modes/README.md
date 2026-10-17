@@ -44,6 +44,11 @@ Yee supports, normalizes their signed power, and applies guarded refinement
 only when field overlap, impedance, energy, power, and discrete-Maxwell
 validation all accept the candidate.
 
+On uniform grids, y-directed ports are reflected into the x-normal frame for
+the same discrete solve and refinement, then transformed back with the axial
+magnetic-field sign. Sources and modal analysis share these physical profiles;
+this prevents port orientation from changing the mode contract.
+
 `plane.py` owns the shared finite-plane extraction used by source launch and
 modal projection, so both consumers solve identical material crops and Yee
 supports.

@@ -1,0 +1,81 @@
+{
+  "description": "Diagnostic CUPTI GPU-event counts and summed durations; these are traced totals, not warm wall-clock timings. Categories are mutually exclusive. Copies include Memcpy D2D and memcpy32_post operations.",
+  "device": "NVIDIA GeForce RTX 3090, 610.43.03",
+  "duration_unit": "ms",
+  "baseline_provenance": {
+    "python_version": "3.11.15",
+    "jaxlib_version": "0.9.0",
+    "cuda_component_version": "0.24.0",
+    "cuda_abi": 24,
+    "native_binary_sha256": "8e6e475d3513eaa0c68e891f679802545abd4d5cce4ce89a0021d6ca261f4890",
+    "source_sha256": {
+      "beamz/simulation/cuda/runtime.py": "e1b0304a3f43f563aa36fc0cbcfd2ecddc9015a7027fbf2c88ae8af148470369",
+      "beamz/simulation/cuda/differentiation.py": "1616c6c8b19f59462d3cf3bf331f257e2a7098dab5471b1fa52da4ab3eb61716",
+      "beamz/simulation/differentiation.py": "aaef6efcc87f220f80917156b30bb7dbad6e15eca52042df2689b5175eaee7a9",
+      "beamz/simulation/execute.py": "eda58a38d560d2af7a2153ee71e95f0924e0d7520de36b483691bd113ad967e5",
+      "beamz/simulation/observe.py": "72062982d24b7ca05e5ec2bbc4a02c8628e10a7354f5ea3c227e2253a95172c0",
+      "cuda/src/adjoint.cu": "1a0e37013224a1159ae9d78fd9f21f9a3f5be51ec98a72fb6fc69cf45f2ad951",
+      "cuda/src/update.cu": "ac064e8d8939156fc480f3b496b80c036cb4db0743290b673d3c05988aa90013",
+      "cuda/src/ffi_handler.cc": "5ccb783c4ad73a684e01581e6e14768c805a9bf87d30a3c069c58060bdb81ba9"
+    },
+    "xla_flags": "",
+    "cpml_precision": "fp32",
+    "preallocate": "false"
+  },
+  "final_provenance": {
+    "python_version": "3.11.15",
+    "jaxlib_version": "0.9.0",
+    "cuda_component_version": "0.27.0",
+    "cuda_abi": 27,
+    "native_binary_sha256": "05189f509631aff92a88cacfdee5e5e59d075102333cfaebbe2de9340b804151",
+    "source_sha256": {
+      "beamz/simulation/cuda/runtime.py": "5d27e9bcb65c8d18b93148779de80f0cc1a2f9ac68e64114505cefdd789645f2",
+      "beamz/simulation/cuda/differentiation.py": "e43749c63551dae7938b1ef2592549f86d379b4ad12884e091b75fe29af4f415",
+      "beamz/simulation/differentiation.py": "ed1dfc09a74a905d37d54ff79bf08fcc38afa00bb64f35bfac5d42352bc2f40b",
+      "beamz/simulation/execute.py": "eda58a38d560d2af7a2153ee71e95f0924e0d7520de36b483691bd113ad967e5",
+      "beamz/simulation/observe.py": "72062982d24b7ca05e5ec2bbc4a02c8628e10a7354f5ea3c227e2253a95172c0",
+      "cuda/src/adjoint.cu": "bcf15adfd1c3be292176174ecd0b228e49e4cefe39b73a04a509985150b39c61",
+      "cuda/src/update.cu": "ac064e8d8939156fc480f3b496b80c036cb4db0743290b673d3c05988aa90013",
+      "cuda/src/ffi_handler.cc": "014aeaf98c115acd3f7213ce1a6d28234dd23cd8fd0f35a090040479180620c2"
+    },
+    "xla_flags": "",
+    "cpml_precision": "fp32",
+    "preallocate": "false"
+  },
+  "abi24": {
+    "copies": {
+      "count": 51292,
+      "summed_duration_ms": 60.86202299999679
+    },
+    "other": {
+      "count": 51686,
+      "summed_duration_ms": 69.22320799999676
+    },
+    "forward": {
+      "count": 15588,
+      "summed_duration_ms": 60.461368999997774
+    },
+    "adjoint": {
+      "count": 2598,
+      "summed_duration_ms": 44.02091700000012
+    }
+  },
+  "abi27": {
+    "copies": {
+      "count": 25409,
+      "summed_duration_ms": 34.20983900000251
+    },
+    "other": {
+      "count": 21850,
+      "summed_duration_ms": 30.626224999998882
+    },
+    "forward": {
+      "count": 12990,
+      "summed_duration_ms": 51.115496000000036
+    },
+    "adjoint": {
+      "count": 2598,
+      "summed_duration_ms": 50.83249499999997
+    }
+  }
+}

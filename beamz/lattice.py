@@ -756,7 +756,7 @@ def sample_voxel_grid_at_component_3d(
 
     z_idx, y_idx, x_idx = component_index_arrays_3d(
         component,
-        tuple(int(v) for v in np.asarray(grid).shape),
+        tuple(int(v) for v in jnp.asarray(grid).shape),
         stored_shape=stored_shape,
         region=region,
     )
@@ -784,7 +784,7 @@ def sample_voxel_grid_at_e_component_3d_centered(
         )
 
     # 2. Resolve the requested stored support, Yee offsets, and optional update region before sampling any axis.
-    grid_shape = tuple(int(v) for v in np.asarray(grid).shape)
+    grid_shape = tuple(int(v) for v in jnp.asarray(grid).shape)
     shape = (
         tuple(int(v) for v in stored_shape)
         if stored_shape is not None
@@ -1091,6 +1091,8 @@ def _magnetic_conductivity_terms_3d(
         zero = jnp.zeros((), dtype=conductivity.dtype)
         return zero, zero, zero
     sigma_base = conductivity * permeability * MU_0 / EPS_0
+    if sigma_base.ndim == 0:
+        return sigma_base, sigma_base, sigma_base
     return tuple(
         sample_voxel_grid_at_component_3d(
             sigma_base,
@@ -1172,12 +1174,15 @@ def build_material_coefficients(fields):
             / EPS_0
         )
         active_h = ("Hx", "Hy") if polarization == "tm" else ("Hz",)
-        sigma_m = tuple(
-            sample_voxel_grid_at_component_2d(base, component, "xy", polarization)
-            if component in active_h
-            else jnp.asarray(base)[:1, :1]
-            for component in ("Hx", "Hy", "Hz")
-        )
+        if base.ndim == 0:
+            sigma_m = (base,) * 3
+        else:
+            sigma_m = tuple(
+                sample_voxel_grid_at_component_2d(base, component, "xy", polarization)
+                if component in active_h
+                else jnp.asarray(base)[:1, :1]
+                for component in ("Hx", "Hy", "Hz")
+            )
     mu_terms = (
         (fields.permeability,) * 3
         if fields.permeability.ndim == 0

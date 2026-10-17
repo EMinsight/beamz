@@ -929,6 +929,8 @@ def test_raster_result_material_grid_enters_simulation_without_resampling():
     assert simulation.to_request().materials is material_grid
     compiled = simulation.compile().grid
     for name, values in material_grid.yee_materials.items():
+        # assert_array_equal broadcasts scalars, so check the stored shape too.
+        assert np.shape(getattr(compiled, name)) == np.shape(values)
         np.testing.assert_array_equal(getattr(compiled, name), values)
 
 
@@ -977,7 +979,12 @@ def test_direct_yee_conductivity_composes_with_pml(
 
     physical = np.asarray(material_grid.yee_materials[conductivity_name])
     with_pml = np.asarray(getattr(compiled, conductivity_name))
-    np.testing.assert_array_equal(with_pml.shape, physical.shape)
+    if dimensions == 3 and formulation == "cpml":
+        # 3D CPML stores a uniform conductivity as its single value.
+        assert with_pml.ndim == 0
+        with_pml = np.broadcast_to(with_pml, physical.shape)
+    else:
+        np.testing.assert_array_equal(with_pml.shape, physical.shape)
     assert np.all(with_pml >= physical)
     assert bool(np.any(with_pml > physical)) is adds_conductivity
 
@@ -1066,6 +1073,8 @@ def test_two_dimensional_raster_grid_enters_tm_simulation():
     assert simulation.coordinate_offset == (-1.0, -2.0, 0.0)
     compiled = simulation.compile().grid
     for name, values in material_grid.yee_materials.items():
+        # assert_array_equal broadcasts scalars, so check the stored shape too.
+        assert np.shape(getattr(compiled, name)) == np.shape(values)
         np.testing.assert_array_equal(getattr(compiled, name), values)
 
 
@@ -1223,6 +1232,8 @@ def test_simulation_selects_explicit_diagonal_farjadpour_policy():
     }
     assert material_grid.uses_direct_yee_materials
     for name, values in material_grid.yee_materials.items():
+        # assert_array_equal broadcasts scalars, so check the stored shape too.
+        assert np.shape(getattr(compiled, name)) == np.shape(values)
         np.testing.assert_array_equal(getattr(compiled, name), values)
 
 

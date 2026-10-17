@@ -1410,6 +1410,41 @@ class Simulation:
             compile_factory=compile_simulation,
         )
 
+    def differentiable(
+        self, *, num_steps=None, backend="jax", checkpoint_interval=None
+    ):
+        """Build a reusable solver for ``jax.grad`` and inverse design.
+
+        Construct once outside JAX transformations, then call with dynamic cell
+        permittivity or Ex/Ey/Ez arrays. The result is a ``SimulationState`` with
+        differentiable fields and raw monitor accumulators. ``backend='cuda'``
+        uses native float32 forward and reverse-mode Yee/CPML kernels on one GPU.
+        ``checkpoint_interval=None`` selects sqrt(T) chunking; zero disables it.
+        Geometry, source profiles, boundaries, and monitor definitions stay fixed.
+
+        Parameters
+        ----------
+        num_steps : int, optional
+            Number of fixed timesteps to execute; defaults to this time grid.
+        backend : str, default "jax"
+            Execution backend. "cuda" selects first-order FP32 native autodiff.
+        checkpoint_interval : int or None, optional
+            Steps per retained checkpoint. None selects sqrt(T); zero stores
+            the complete trajectory instead of rematerializing chunks.
+
+        Returns
+        -------
+        DifferentiableSimulation
+            Callable solver with dynamic material/source parameters and raw,
+            differentiable field and monitor state.
+        """
+        from beamz.simulation.differentiation import DifferentiableSimulation
+
+        program = self.compile(num_steps=num_steps, backend=backend)
+        return DifferentiableSimulation(
+            program, t0=float(self.time[0]), checkpoint_interval=checkpoint_interval
+        )
+
     def clear_compiled_cache(self) -> None:
         """Clear BeamZ's in-process simulation compilation caches.
 

@@ -5,6 +5,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
+from matplotlib.cm import ScalarMappable
 from matplotlib.colors import to_hex
 
 import beamz as bz
@@ -15,6 +16,42 @@ from beamz.analysis.plotting import (
 )
 from beamz.design import MaterialGrid
 from beamz.design.raster import Grid, Material, Scene, rasterize
+
+
+def test_dft_field_plot_keeps_compiled_uniform_monitor_region():
+    """Re-snapping decimal bounds with the grid can add a spurious edge cell."""
+    dx = 100e-9
+    shape = (4, 50, 50)
+    grid = MaterialGrid(
+        np.ones(shape, np.float32), np.float32(0.0), np.float32(1.0), dx, shape
+    )
+    monitor = bz.FieldMonitor(
+        center=(2.5e-6, 2.5e-6, 0.2e-6),
+        size=(4.4e-6, 4.4e-6, 0.0),
+        freqs=[2e14],
+        fields=("Ex", "Ey", "Ez"),
+        name="fields",
+    )
+    simulation = bz.Simulation(
+        material_grid=grid,
+        time=np.arange(3) * 1e-16,
+        monitors=[monitor],
+        normalize_source=None,
+    )
+    results = simulation.run(backend="jax", performance=False)
+    region = results.monitor("fields").sample_region
+    assert region.axis_interval("x").stop - region.axis_interval("x").start == 44
+    fig, ax = results.plot_field("fields", field_name="E", val="abs^2", colorbar=False)
+    try:
+        image = next(
+            artist
+            for artist in ax.get_children()
+            if isinstance(artist, ScalarMappable) and artist.get_array() is not None
+        )
+        assert image.get_array().shape == (44, 44)
+        np.testing.assert_allclose(image.get_extent(), (0.3, 4.7, 0.3, 4.7), atol=1e-12)
+    finally:
+        plt.close(fig)
 
 
 def test_generic_slice_and_field_primitives_preserve_axis_coordinates():

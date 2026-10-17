@@ -16,6 +16,10 @@ The benchmark tools remain in `scripts/`; automated contracts remain in
 - [H100 configuration search](HOPPER_SEARCH.md): launch and workload search.
 - [H100 cube sweep](HOPPER_CUBE_SWEEP.md): size and allocator measurements
   **before** the preparation memory fixes; peak setup memory is not runtime usage.
+- [Curved-interface smoothing](CURVED_INTERFACE_SMOOTHING.md): when full-tensor
+  smoothing helps on four 3D structures, with limitations.
+- [Uniform CPML constants on RTX 3090](CPML_CONSTANTS_RTX3090.md): 18 comparisons
+  against main; runtime, memory and exact numerical parity.
 
 Small CSV summaries are versioned beside the reports. Raw telemetry, generated
 plots, executed notebooks, and detailed comparison exports belong under the

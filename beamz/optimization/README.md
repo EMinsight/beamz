@@ -4,9 +4,114 @@ Use `beamz.optimization` for topology inverse design with BeamZ simulations,
 metre units, and JAX objectives. The same workflow supports full autodiff and
 spectral adjoint gradients.
 
+## End-to-end FDTD autodiff
+
+`Simulation.differentiable()` builds a reusable, pure solver whose fields and raw
+monitor accumulators can be differentiated with `jax.grad`. Construct it once
+outside JAX transformations; material values are runtime inputs and do not change
+the compiled-program cache key.
+
+```python
+import jax
+import jax.numpy as jnp
+
+solver = simulation.differentiable(backend="cuda", checkpoint_interval=32)
+
+
+def loss(density):
+    epsilon = 1.0 + 11.0 * jax.nn.sigmoid(density)
+    state = solver(epsilon)
+    return -jnp.sum(solver.monitor_flux(state, "output"))
+
+
+value, gradient = jax.value_and_grad(loss)(density)
+```
+
+JAX density maps and pointwise projections can replace `sigmoid` in this
+example; apply the existing 2D filters slice by slice for a 3D design. This path
+differentiates the discrete electromagnetic updates and the
+objective together; it does not need `compute_overlap_gradient` or a manually
+constructed adjoint source. A complete runnable example is
+[`autodiff_cuda.py`](../../examples/optimization/autodiff_cuda.py).
+For a step-by-step waveguide example with gradient checks and before/after field
+plots, open [`cuda_autodiff_waveguide_bend.ipynb`](../../examples/notebooks/cuda_autodiff_waveguide_bend.ipynb).
+
+- `backend="jax"` supports the portable 2D TM/TE and 3D solvers.
+- `backend="cuda"` uses native streamed forward and reverse-mode Yee/CPML
+  kernels for the existing single-GPU, float32 3D physics. Both lossy materials
+  and mixed absorbing/PEC faces are supported. The CUDA component must be
+  rebuilt for ABI 28.
+- `checkpoint_interval=None` selects approximately sqrt(T) steps per chunk;
+  a positive integer controls the memory/recomputation tradeoff. Zero retains
+  the trajectory for small reference problems. Chunk recomputation works with
+  conductive materials and CPML; no time-reversible assumption is needed.
+- `solver(epsilon, conductivity=sigma, state=initial_state,
+  source_amplitudes=amplitudes)` accepts differentiable material values, initial
+  fields/CPML memories, and one real amplitude per original source. Omitted
+  arguments preserve compiled materials and use a fresh initial state.
+- Uniform-grid cell permittivity is sampled differentiably onto the Yee
+  supports, including the transpose of averaging and clipped edge sampling.
+  Directly rasterized or nonuniform Yee materials should be supplied as an
+  `(epsilon_x, epsilon_y, epsilon_z)` tuple on the compiled Ex/Ey/Ez supports.
+  Conductivity accepts cell arrays, scalars, or corresponding Yee arrays. Cell
+  conductivity updates both electric losses and BeamZ's equivalent magnetic
+  losses; a Yee tuple updates electric losses only.
+- `solver.monitor_fields(state, name)` returns complex DFT fields on canonical
+  axes in `(Ex, Ey, Ez, Hx, Hy, Hz)` order, normalized by the actual window weight
+  with H phasors aligned to E time. `solver.monitor_flux` returns signed planar
+  flux per frequency and includes the compiled integration weights. These
+  helpers preserve the monitor's configured native/physical units; source
+  normalization belongs in the objective.
+
+For eligible slab-source/vector-DFT plans, checkpoint chunks use native forward
+graphs. Permittivity and initial-state gradients with fixed source amplitudes and
+decay coefficients use a fused native reverse step with aliased field cotangents,
+material accumulation, and two CPML cotangent banks. Conductivity, source-amplitude,
+and clock derivatives retain the general native phase VJP path. Both paths
+differentiate every discrete timestep and the monitor objective.
+
+For guided-wave devices, optimize mode power rather than total flux, which can
+include radiation. Freeze a projector from an ordinary unnormalized run with a
+3D `ModeMonitor`; it uses the same mode basis as detached result analysis:
+
+```python
+from beamz.optimization.modes import build_mode_projector
+
+initial_result = simulation.run(backend="cuda")  # normalize_source=None
+project = build_mode_projector(initial_result, "output")
+
+
+def loss(epsilon):
+    state = solver(epsilon)
+    amplitudes = project(solver.monitor_fields(state, "output"))
+    # Shape: (frequency, direction, mode). Directions 0/1 mean +axis/-axis.
+    return -(jnp.abs(amplitudes[0, 1, 0]) ** 2) / fixed_reference_mode_power
+```
+
+Keep the projector's port materials, geometry, frequencies, and mesh fixed. Its
+mode solve and normalization are setup operations; its linear field projection
+is differentiable. Gradient agreement verifies the discrete objective, while
+binary layouts, longer time windows, and finer meshes require forward checks.
+
+The differentiable path retains fixed geometry, grid/time spacing, boundaries,
+source profiles and their launch normalization, and monitor definitions. Source
+mode solving and rasterization are setup operations, and source profiles are not
+recomputed when a design changes. Keep design regions away from source supports
+when their normalization depends on local material values. `Simulation.run()`
+continues to provide ordinary decoded analysis results; use the differentiable
+state and helpers within a gradient objective.
+
+CUDA provides first-order reverse mode; forward-mode JVPs and higher derivatives
+of native FFI calls are not implemented. BF16 absorber state, sharded execution,
+and coupled full-tensor constitutive updates are outside the native autodiff
+path. For JAX tensor optimization or independent magnetic losses, use
+`solver.run_coefficients(state, coefficients, source_amplitudes=None)` with
+dynamic `UpdateCoefficients`. Checkpointing stores full chunk-boundary states, so
+large field-recorder histories still consume their configured storage.
+
 ## Recommended workflow
 
-Given an ordinary `simulation` with fixed mode sources and monitors:
+Given an ordinary `simulation` with a fixed mode or Gaussian-beam source and monitors:
 
 ```python
 import jax.numpy as jnp
@@ -42,8 +147,34 @@ result.plot_optimization()
 final_data = result.simulation_data()
 ```
 
-Parameters use `(y, x)` order. In 3D, the planar pattern is extruded through the
-region's finite z thickness. The design must align to an unsharded uniform grid,
+By default, parameters use `(y, x)` order and the pattern is extruded through
+finite z thickness. Set `parameterization="volumetric"` for independent `(z, y, x)`
+voxels. `FilterProject` and `ErosionDilationPenalty` work in both dimensions;
+the volumetric conic filter uses a spherical kernel and FFT convolution.
+
+The density grid's `pixel_size` can differ from the FDTD `resolution`. Transform
+and project on the density grid, then linearly sample physical density at FDTD
+cell centers. The derivative includes the exact interpolation transpose.
+Region bounds must align to the FDTD grid and sizes must be integer multiples
+of `pixel_size`. Fixed-density masks constrain the density grid; interpolation
+can blend their interfaces on a different FDTD grid.
+
+A simulation may use one fixed `ModeSource` or 3D `GaussianBeamSource`. Its
+source spectrum normalizes the modal amplitudes; `ModePower` divides by incident
+source power to give coupling efficiency. Keep density away from source and
+mode-monitor planes (two cells, or a larger margin for a beam's `max_shift`).
+Source and mode-monitor planes must also stay outside the absorber along their
+normal axis; measuring a mode inside PML understates its coupling efficiency.
+For independent polarization experiments, combine objective functions over shared
+parameters with `jax.value_and_grad`; see the
+[polarization-insensitive grating-coupler notebook](../../examples/notebooks/polarization_insensitive_grating_coupler.ipynb).
+
+`InverseDesign.export_design` thresholds a volumetric density into one extruded
+polygon layer per z voxel. It supports `contour` or `pixel_exact` footprints,
+including fixed density masks. Large volumes can create many polygons; re-simulate
+the export to assess thresholding and rasterization effects.
+
+The design must align to an unsharded uniform grid,
 use scalar lossless materials, and stay outside the absorber and fixed mode
 planes. The spectral adjoint additionally requires decayed fields and full-run
 rectangular DFT monitors and nonperiodic boundaries. Use autodiff for periodic
@@ -71,8 +202,11 @@ state. Set `store_full_results=True` to retain parameter/gradient snapshots.
 receive `callback(result)`. Both workflows share the same result and checkpoint
 format. The two checkpoint formats previously introduced on this branch are
 rejected explicitly; rerun the examples to generate current checkpoints.
-Numerical fingerprint 5 also rejects earlier histories, whose reference powers
-could be paired with the wrong frequencies when monitor frequency orders differ.
+Numerical fingerprint 6 also rejects earlier histories: the current 3D mode solver
+searches additional eigenmode candidates before applying TE/TM preference,
+including for a one-mode monitor request. Earlier one-candidate requests could
+select the same physical mode for both polarizations. Frequency-aligned reference
+normalization corrections are also included in this fingerprint.
 
 See the [mode-converter notebook](../../examples/notebooks/topology_mode_converter.ipynb)
 and [scheduled WDM notebook](../../examples/notebooks/topology_wdm_4channel.ipynb)

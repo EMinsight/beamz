@@ -13,7 +13,7 @@ from beamz._cache_tokens import cache_token
 from beamz.const import LIGHT_SPEED
 from beamz.design.materials import Material
 from beamz.devices.monitors import FieldMonitor, ModeMonitor
-from beamz.devices.sources import ModeSource
+from beamz.devices.sources import GaussianBeamSource, ModeSource
 from beamz.simulation.differentiable import (
     TOPOLOGY_NUMERICS_VERSION,
     topology_coefficients,
@@ -39,8 +39,8 @@ class TopologyProblem:
     """Optimize a topology region against a scalar modal objective.
 
     Both backends support uniform 2D xy or 3D grids, scalar lossless dielectrics,
-    a fixed mode source, and spectral monitors. The default uses the exact JAX
-    derivative with chunk checkpointing, including CPML and DFT recurrences. Geometry,
+    a fixed mode or Gaussian-beam source, and spectral monitors. The default uses
+    the exact JAX derivative with chunk checkpointing, including CPML and DFT recurrences. Geometry,
     port modes, boundaries, timestep, and run length stay fixed across iterations.
 
     Parameters
@@ -283,7 +283,7 @@ class TopologyProblem:
             spec.filter_radius != 0 or spec.projection_type == "ssp"
         ):
             raise ValueError(
-                "3D low-level topology requires zero filter radius and no SSP; apply planar transforms through TopologyDesignRegion."
+                "3D low-level topology requires zero filter radius and no SSP; apply density transforms through TopologyDesignRegion."
             )
         if not np.isfinite(spec.filter_radius) or spec.filter_radius < 0:
             raise ValueError("filter_radius must be finite and nonnegative.")
@@ -298,8 +298,12 @@ class TopologyProblem:
                 )
             if not np.allclose(getattr(grid, f"mu_h{axis}"), 1):
                 raise ValueError("TopologyProblem requires relative permeability one.")
-        if len(sim.sources) != 1 or not isinstance(sim.sources[0], ModeSource):
-            raise ValueError("TopologyProblem requires exactly one fixed ModeSource.")
+        if len(sim.sources) != 1 or not isinstance(
+            sim.sources[0], (ModeSource, GaussianBeamSource)
+        ):
+            raise ValueError(
+                "TopologyProblem requires exactly one fixed ModeSource or GaussianBeamSource."
+            )
         if not all(
             isinstance(monitor, (ModeMonitor, FieldMonitor)) for monitor in sim.monitors
         ):
@@ -341,16 +345,38 @@ class TopologyProblem:
             *sim.sources,
             *(m for m in sim.monitors if isinstance(m, ModeMonitor)),
         ):
-            axis = int(np.argmin(np.asarray(device.size)))
+            axis = (
+                "xyz".index(device.direction[-1])
+                if isinstance(device, GaussianBeamSource)
+                else int(np.argmin(np.asarray(device.size)))
+            )
             if axis >= len(coordinates):
                 raise ValueError(
                     "Optimization mode planes must be normal to an active grid axis."
                 )
             position = float(device.center[axis]) / sim.resolution
+            if grid.pml_data is not None:
+                sigma = grid.pml_data.get(f"sigma_{'xyz'[axis]}")
+                if sigma is not None:
+                    sigma = np.asarray(sigma)
+                    normal_axis = sigma.ndim - 1 - axis
+                    transverse = tuple(i for i in range(sigma.ndim) if i != normal_axis)
+                    profile = np.max(sigma, axis=transverse)
+                    plane_index = int(round(position))
+                    if 0 <= plane_index < profile.size and profile[plane_index] > 0:
+                        raise ValueError(
+                            "Keep source and mode-monitor planes outside the absorber along their normal axis."
+                        )
             indices = coordinates[axis]
-            if np.any(np.abs(indices - position) <= 2):
+            clearance = (
+                max(2, device.max_shift + 1)
+                if isinstance(device, GaussianBeamSource)
+                else 2
+            )
+            if np.any(np.abs(indices - position) <= clearance):
+                label = "two" if clearance == 2 else str(clearance)
                 raise ValueError(
-                    "Keep the design at least two cells away from source and mode-monitor planes."
+                    f"Keep the design at least {label} cells away from source and mode-monitor planes."
                 )
         if grid.pml_data is not None:
             pml_mask = (

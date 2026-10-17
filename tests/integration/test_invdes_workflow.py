@@ -60,7 +60,9 @@ def test_differentiable_user_objective(design, backend, post_process_fn):
     neg_value, neg_grad = jax.value_and_grad(
         design.make_objective_fn(post_process_fn, maximize=False)
     )(params)
-    np.testing.assert_allclose(neg_value, -value, rtol=1e-6)
+    # Independent JAX compilations can round differently in float32. Include
+    # an absolute floor for phase objectives whose value is close to zero.
+    np.testing.assert_allclose(neg_value, -value, rtol=1e-6, atol=1e-7)
     np.testing.assert_allclose(neg_grad, -gradient, rtol=1e-5, atol=1e-8)
 
 
@@ -200,10 +202,14 @@ def test_workflow_rejects_bad_parameters_and_objectives(design):
         design.updated_copy(
             design_region=design.design_region.updated_copy(center=(3.01e-6, 2e-6, 0))
         )
-    with pytest.raises(ValueError, match="pixel_size"):
-        design.updated_copy(
-            design_region=design.design_region.updated_copy(pixel_size=50e-9)
-        )
+    fine = design.updated_copy(
+        design_region=design.design_region.updated_copy(pixel_size=50e-9)
+    )
+    np.testing.assert_allclose(
+        fine._density(np.full(fine.design_region.params_shape, 0.5)),
+        design._density(np.full(design.design_region.params_shape, 0.5)),
+        atol=1e-6,
+    )
     with pytest.raises(ValueError, match="Parameters"):
         design.to_simulation_data(np.zeros((2, 3)))
     params = design.design_region.initial_parameters

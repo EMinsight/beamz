@@ -1,0 +1,97 @@
+{
+  "metadata": {
+    "shape_zyx": [
+      128,
+      256,
+      384
+    ],
+    "steps": 500,
+    "checkpoint_interval": 32,
+    "pml_cells": 0,
+    "bare": true,
+    "conductivity_s_per_m": 0.0,
+    "dtype": "float32",
+    "jax_version": "0.9.0",
+    "devices": [
+      "cuda:0"
+    ],
+    "gpu": "NVIDIA GeForce RTX 3090, 610.43.03",
+    "warmup_calls": 3,
+    "samples": 9,
+    "compilation_cache_enabled": false,
+    "provenance": {
+      "python_version": "3.11.15",
+      "jaxlib_version": "0.9.0",
+      "cuda_component_version": "0.14.0",
+      "cuda_abi": 14,
+      "native_binary_sha256": "0c76cc54dfa12c2386f65e4aae872015611ecf29a147bfd5f037cd4eb6235842",
+      "source_sha256": {
+        "beamz/simulation/cuda/runtime.py": "19532636fe3b9277d3efdd36a522642fc39c7135d55844b0c6b58581b6d16d8b",
+        "beamz/simulation/cuda/differentiation.py": "f8d4172b4e2019eeeea1537f238928a341804835b716fb317eff6e9edde5383d",
+        "beamz/simulation/differentiation.py": "f0efb2a729ce10a2e7c8eabd70758ae16149de2e27ab4b251cef5530cc0a59f9",
+        "beamz/simulation/execute.py": "d509acd3400b08d609f706a3a062400b9efb8448d8900634cb0f18698e47f583",
+        "beamz/simulation/observe.py": "ac268a4054e5b6742a3fa6d7b0afe0efde0e94bced2638a77f95058f82bdf7b9",
+        "cuda/src/adjoint.cu": "1a0e37013224a1159ae9d78fd9f21f9a3f5be51ec98a72fb6fc69cf45f2ad951",
+        "cuda/src/update.cu": "beed90e8ed55105dc6aef3953961ffea9f626c27fad8bd71ac57e6af9e06c432",
+        "cuda/src/ffi_handler.cc": "39745dde0c10c20eec8dd0250ab12269d35cab20093ce57336ad9db4a8622a25"
+      },
+      "xla_flags": "",
+      "cpml_precision": "fp32",
+      "preallocate": "false"
+    }
+  },
+  "measurements": {
+    "cuda": {
+      "standard": {
+        "compile_s": 0.051076674833893776,
+        "temporary_bytes": 608313600,
+        "samples_s": [
+          0.5321221018675715,
+          0.5293743989896029,
+          0.529540971852839,
+          0.5290020410902798,
+          0.5300889781210572,
+          0.5287652069237083,
+          0.5301602410618216,
+          0.528983486816287,
+          0.529660435160622
+        ],
+        "median_s": 0.529540971852839,
+        "min_s": 0.5287652069237083,
+        "max_s": 0.5321221018675715
+      }
+    },
+    "jax": {
+      "standard": {
+        "compile_s": 1.4381247130222619,
+        "temporary_bytes": 2564,
+        "samples_s": [
+          0.8982291670981795,
+          0.8989839181303978,
+          0.8987059479113668,
+          0.8983379281125963,
+          0.89816302084364,
+          0.898359150160104,
+          0.898598285857588,
+          0.8986692191101611,
+          0.8987315541598946
+        ],
+        "median_s": 0.898598285857588,
+        "min_s": 0.89816302084364,
+        "max_s": 0.8989839181303978
+      }
+    }
+  },
+  "maximum_relative_errors": {
+    "standard": 3.5862610729964217e-06
+  },
+  "cuda_speedup_over_jax": {
+    "standard": 1.6969381664905643
+  },
+  "speedup_95_percent_intervals": {
+    "standard": [
+      1.69469271233827,
+      1.6988606289372956
+    ]
+  }
+}

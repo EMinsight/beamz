@@ -17,7 +17,9 @@ class ModeSpec:
     Parameters
     ----------
     num_modes : int, default=1
-        Number of candidate eigenmodes to solve; clamped to at least one.
+        Minimum number of eigenmode candidates; clamped to at least one.
+        Monitors return this many modal amplitudes. Polarization selection may
+        search additional candidates before returning the requested modes.
     mode_index : int, default=0
         Zero-based selected mode after polarization-aware ordering.
     polarization : {"te", "tm"}, optional
@@ -33,8 +35,10 @@ class ModeSpec:
 
     Notes
     -----
-    ``num_modes`` is the number of eigensolver candidates, whereas ``mode_index``
-    selects the mode launched or projected after polarization-aware ordering.
+    ``num_modes`` sets the minimum eigensolver candidate count, whereas
+    ``mode_index`` selects the mode launched or projected after polarization-aware
+    ordering. The 3D solver oversamples candidates when polarization is specified
+    so a one-mode request can select either polarization family.
     ``num_freqs`` controls broadband mode reconstruction and is independent of the
     frequencies configured on a monitor.
     """

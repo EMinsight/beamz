@@ -9,7 +9,7 @@ layer.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal, TypedDict, cast
 
 import numpy as np
@@ -235,6 +235,16 @@ def solve_beamz_mode(spec: ModePlaneSpec) -> DiscreteMode:
     if not isinstance(spec, ModePlaneSpec):
         raise TypeError("spec must be a ModePlaneSpec")
 
+    # Use the same discrete Maxwell/refinement contract for x/y ports.
+    # The legacy y conversion skipped Yee refinement, biasing transmission
+    # when input and output ports used different axes on the same uniform grid.
+    if (
+        spec.axis == "y"
+        and spec.component_permittivity
+        and (spec.grid is None or spec.grid.metric_kind == "isotropic_uniform")
+    ):
+        return _solve_y_mode_in_x_frame(spec)
+
     solver_axes = _solver_axes_for_axis(spec.axis)
     eps_solver = _transpose_between_axes(
         spec.scalar_permittivity, spec.transverse_axes, solver_axes
@@ -255,6 +265,12 @@ def solve_beamz_mode(spec: ModePlaneSpec) -> DiscreteMode:
     mode_count = (
         spec.num_modes if spec.num_modes is not None else 2 * (spec.mode_index + 1) + 5
     )
+
+    # A single eigenpair cannot be reordered by polarization. Search a shared
+    # candidate pool for all requested modes before selecting the TE/TM family.
+    if spec.polarization is not None:
+        requested = max(spec.mode_index + 1, spec.num_modes or 0)
+        mode_count = max(mode_count, 2 * requested + 5)
 
     diagonal_eps = {
         name: _transpose_between_axes(values, spec.transverse_axes, solver_axes)
@@ -468,6 +484,104 @@ def solve_beamz_mode(spec: ModePlaneSpec) -> DiscreteMode:
         power_scale=float(power_scale),
         diagnostics=diagnostics,
         integration_weights=integration_weights,
+    )
+
+
+def _solve_y_mode_in_x_frame(spec: ModePlaneSpec) -> DiscreteMode:
+    """Solve a uniform y port in an x-normal frame, then reflect it back.
+
+    Electric fields are polar vectors; magnetic fields are axial vectors. The
+    x/y exchange is a reflection, so H also receives the determinant sign.
+    Staggered component indices and their material arrays rotate together.
+    """
+    # Each entry gives the old axis represented by a new (x, y, z) axis.
+    old_axes = ("y", "x", "z")
+    inverse: dict[str, str] = dict(zip(old_axes, ("x", "y", "z"), strict=True))
+    old_for_new: dict[str, str] = dict(zip(("x", "y", "z"), old_axes, strict=True))
+    storage_order = tuple({"z": 0, "y": 1, "x": 2}[a] for a in old_axes[::-1])
+
+    def rotate_materials(materials):
+        return {
+            prefix + new: (
+                np.asarray(materials[prefix + old]).transpose(storage_order)
+                if np.asarray(materials[prefix + old]).ndim == 3
+                else materials[prefix + old]
+            )
+            for prefix in ("E", "H")
+            for new, old in old_for_new.items()
+            if prefix + old in materials
+        }
+
+    def rotate_diagonal(materials):
+        return {
+            new * 2: materials[old * 2]
+            for new, old in old_for_new.items()
+            if old * 2 in materials
+        }
+
+    canonical_grid = None
+    if spec.grid is not None:
+        canonical_grid = RectilinearGrid(
+            *(spec.grid.axis_edges(old) for old in old_axes)
+        )
+    canonical = replace(
+        spec,
+        axis="x",
+        direction=spec.direction[0] + "x",
+        solver_direction=spec.direction[0] + "x",
+        transverse_axes=tuple(inverse[a] for a in spec.transverse_axes),
+        grid_shape=tuple(spec.grid_shape[i] for i in storage_order),
+        center=tuple(spec.center[{"x": 0, "y": 1, "z": 2}[a]] for a in old_axes),
+        component_permittivity=rotate_materials(spec.component_permittivity),
+        component_permeability=rotate_materials(spec.component_permeability),
+        diagonal_permittivity=rotate_diagonal(spec.diagonal_permittivity),
+        diagonal_permeability=rotate_diagonal(spec.diagonal_permeability),
+        grid=canonical_grid,
+    )
+    mode = solve_beamz_mode(canonical)
+    determinant = -1
+    phase_component = (
+        mode.phase_reference_component[0]
+        + old_for_new[mode.phase_reference_component[1]]
+    )
+    # Restore the documented dominant-H-positive gauge after reflection.
+    gauge = determinant
+
+    def restore_profiles(profiles):
+        return {
+            name[0] + old_for_new[name[1]]: (
+                gauge * (determinant if name.startswith("H") else 1) * values
+            )
+            for name, values in profiles.items()
+        }
+
+    inverse_storage = np.argsort(storage_order)
+    indices = {
+        name[0] + old_for_new[name[1]]: tuple(index[i] for i in inverse_storage)
+        for name, index in mode.component_indices.items()
+    }
+    diagnostics = dict(mode.diagnostics)
+    diagnostics.update(
+        normal_axis=spec.axis,
+        transverse_axes=spec.transverse_axes,
+        solver_axes=_solver_axes_for_axis(spec.axis),
+        solver_direction=spec.direction,
+        canonical_axis_rotation=True,
+    )
+    return replace(
+        mode,
+        axis=spec.axis,
+        direction=spec.direction,
+        transverse_axes=spec.transverse_axes,
+        phase_reference_component=phase_component,
+        profiles=restore_profiles(mode.profiles),
+        backward_profiles=restore_profiles(mode.backward_profiles),
+        component_indices=indices,
+        integration_weights={
+            name[0] + old_for_new[name[1]]: values
+            for name, values in mode.integration_weights.items()
+        },
+        diagnostics=diagnostics,
     )
 
 
