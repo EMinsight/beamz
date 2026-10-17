@@ -13,7 +13,8 @@ import numpy as np
 # (physical cells, streamed GCUPS, mstep GCUPS, extra startup seconds).
 # Startup includes planning, lowering, XLA compilation and first-execution
 # overhead after shared material setup. Source: cuda-schedule-space.json.gz,
-# main-anchors after restoring streamed field addressing.
+# main-anchors after restoring streamed field addressing (archive at commit
+# 5c389a04; linked from docs/reviews/pr334-post-merge-validation-2026-10-17.md).
 _COSTS = {
     "all": (
         (16777216, 8.2242, 9.0441, 0.1353),

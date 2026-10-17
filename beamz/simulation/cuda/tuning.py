@@ -40,6 +40,8 @@ _MINIMUM_WORK_REDUCTION = 0.25
 # Compact monitor-block ordering; two fresh rounds at 256 steps, checked at
 # 4096 steps. Source: docs/reviews/cuda-schedule-space.json.gz, main-anchors
 # after restoring streamed field addressing; horizons are earlier profiles.
+# Archive at commit 5c389a04, linked from
+# docs/reviews/pr334-post-merge-validation-2026-10-17.md.
 _LAYOUT_COSTS = (
     (8388608, 5.2982, 6.9365, 1.1399),
     (16777216, 5.3617, 6.8345, 1.8993),

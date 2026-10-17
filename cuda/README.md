@@ -155,8 +155,7 @@ remain available on other supported GPUs.
 
 ```console
 python -m pytest tests/hardware/test_cuda_mstep.py
-python scripts/benchmark_cuda_schedule_space.py --cases small medium large narrow_x --configs streamed mstep-16x32-whole --isolated --output-dir .cache/cuda-study
-python -m scripts.analyze_cuda_schedule_space .cache/cuda-study --fresh-only --steps 256 --output .cache/cuda-ranking.json
+python scripts/benchmark_cuda_revision.py --help
 ```
 
 The [evidence index](../docs/reviews/README.md) links the historical Futhark
@@ -182,7 +181,7 @@ result = simulation.advance(
 ```
 
 This path has native C++/CPU FFI coverage and recorded two/eight-H100 parity and
-capacity checks; remaining gaps are listed in the [H100 study](../docs/reviews/cuda-h100-regression.md).
+capacity checks; remaining gaps are listed in the [validation summary](../docs/reviews/pr334-post-merge-validation-2026-10-17.md#historical-studies-and-raw-evidence).
 `auto` continues selecting JAX for sharded requests. Rebuild the optional native
 component when updating Python across an ABI boundary; this branch uses ABI 28,
 including `beamz_cuda_sharded`. Sharded phases pass separate neighbor faces to
@@ -426,7 +425,7 @@ unchanged. Existing automatic H/E fusion still applies within each layout;
 experimental CPML temporal blocking is not selected. The estimate repairs the
 recorded narrow-x cases once longer execution repays startup. It is not a
 guarantee of the global optimum on every workload. See the
-[schedule/startup study](../docs/reviews/cuda-schedule-space.md) for current results
+[validation summary](../docs/reviews/pr334-post-merge-validation-2026-10-17.md) for results and archived studies
 and the [earlier geometry study](../docs/reviews/cuda-layout-prediction-2026-09-18.md)
 for the work estimate.
 
