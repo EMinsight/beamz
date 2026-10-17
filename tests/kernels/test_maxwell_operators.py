@@ -114,17 +114,19 @@ def test_lossy_local_updates_match_independent_scalar_derivation():
 
 
 def test_cpml_coefficients_match_independent_recurrence_derivation():
-    sigma = np.asarray([0.0, 0.2, 1.3, 2.1], dtype=np.float32)
-    kappa = np.asarray([1.0, 1.0, 2.0, 4.0], dtype=np.float32)
-    alpha = np.asarray([0.0, 0.03, 0.02, 0.0], dtype=np.float32)
+    sigma = np.asarray([0.0, 0.2, 1.3, 2.1, 1e-7, 1e-8], dtype=np.float32)
+    kappa = np.asarray([1.0, 1.0, 2.0, 4.0, 1.0, 2.0], dtype=np.float32)
+    alpha = np.asarray([0.0, 0.03, 0.02, 0.0, 0.0, 1e-8], dtype=np.float32)
     dt = np.float32(4e-13)
 
     actual_a, actual_b, actual_inv_kappa = cpml_coefficients(sigma, kappa, alpha, dt)
-    expected_b = np.exp(-(sigma / kappa + alpha) * dt / EPS_0)
-    denominator = np.maximum((sigma + kappa * alpha) * kappa, 1e-30)
-    expected_a = np.nan_to_num(((expected_b - 1.0) * sigma) / denominator)
+    sigma, kappa, alpha = (v.astype(np.float64) for v in (sigma, kappa, alpha))
+    decay = (sigma / kappa + alpha) * dt / EPS_0
+    expected_b = np.exp(-decay)
+    denominator = (sigma + kappa * alpha) * kappa
+    expected_a = np.expm1(-decay) * sigma / np.where(denominator > 0, denominator, 1)
 
-    np.testing.assert_allclose(actual_a, expected_a, rtol=2e-6, atol=1e-7)
+    np.testing.assert_allclose(actual_a, expected_a, rtol=2e-6, atol=0)
     np.testing.assert_allclose(actual_b, expected_b, rtol=2e-6, atol=1e-7)
     np.testing.assert_allclose(actual_inv_kappa, 1.0 / kappa, rtol=1e-7)
 

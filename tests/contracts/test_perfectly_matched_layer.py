@@ -14,7 +14,7 @@ from tests.utils import compiled_grid
 pytestmark = pytest.mark.unit
 
 
-def _make_fields_2d(shape=(6, 8), *, resolution=0.1):
+def _make_fields_2d(shape=(6, 8), *, resolution=0.1, polarization="tm"):
     permittivity = np.ones(shape, dtype=np.float32)
     conductivity = np.zeros(shape, dtype=np.float32)
     permeability = np.ones(shape, dtype=np.float32)
@@ -24,6 +24,7 @@ def _make_fields_2d(shape=(6, 8), *, resolution=0.1):
         permeability=permeability,
         resolution=resolution,
         plane_2d="xy",
+        polarization=polarization,
     )
 
 
@@ -63,6 +64,37 @@ def test_pml_parameter_defaults():
     assert pml.kappa_max == pytest.approx(2.0)
     assert pml.alpha_max is None
     assert pml.target_reflection == pytest.approx(1e-6)
+
+
+@pytest.mark.parametrize("boundary", [PML, Absorber])
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        (name, value)
+        for name in ("sigma_max", "m", "target_reflection")
+        for value in (-1, np.nan, np.inf)
+    ]
+    + [("m", 0), ("m", 1.5), ("target_reflection", 0), ("target_reflection", 1)],
+)
+def test_absorber_rejects_invalid_parameters(boundary, name, value):
+    with pytest.raises(ValueError, match=name):
+        boundary(**{name: value})
+    with pytest.raises(ValueError, match=name):
+        boundary().updated_copy(**{name: value})
+
+
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        (name, value)
+        for name in ("alpha_max", "kappa_max")
+        for value in (-1, np.nan, np.inf)
+    ]
+    + [("kappa_max", 0)],
+)
+def test_cpml_rejects_invalid_stretch_parameters(name, value):
+    with pytest.raises(ValueError, match=name):
+        PML(formulation="cpml", **{name: value})
 
 
 @pytest.mark.parametrize("rectilinear", (False, True))
@@ -243,8 +275,9 @@ def test_cpml_auto_parameters_do_not_leak_between_shared_pml_uses():
     np.testing.assert_allclose(shared_payload["alpha_x"], fresh_payload["alpha_x"])
 
 
-def test_profile_shapes_match_2d_field_grid():
-    fields = _make_fields_2d(shape=(7, 9))
+@pytest.mark.parametrize("polarization", ["tm", "te"])
+def test_profile_shapes_match_2d_field_grid(polarization):
+    fields = _make_fields_2d(shape=(7, 9), polarization=polarization)
     design = _make_design_2d(shape=(7, 9))
     pml = PML(
         edges=["left", "right"],
@@ -256,25 +289,15 @@ def test_profile_shapes_match_2d_field_grid():
 
     payload = compile_absorber_regions(pml, fields, design, resolution=0.1, dt=1e-15)
 
-    for key in (
-        "mask",
-        "sigma_x",
-        "sigma_y",
-        "sigma_z",
-        "kappa_x",
-        "kappa_y",
-        "kappa_z",
-        "alpha_x",
-        "alpha_y",
-        "alpha_z",
-    ):
-        assert payload[key].shape == fields.permittivity.shape
+    assert payload["mask"].shape == fields.permittivity.shape
+    for axis, shape in (("x", (1, 9)), ("y", (7, 1)), ("z", (1, 1))):
+        for family in ("sigma", "kappa", "alpha"):
+            assert payload[f"{family}_{axis}"].shape == shape
 
-    tm_xy = payload["tm_xy_cpml"]
-    assert tm_xy["Ez_x_sigma"].shape == fields.Ez.shape
-    assert tm_xy["Ez_y_sigma"].shape == fields.Ez.shape
-    assert tm_xy["Hx_y_sigma"].shape == fields.Hx.shape
-    assert tm_xy["Hy_x_sigma"].shape == fields.Hy.shape
+    for name, profile in payload[f"{polarization}_xy_cpml"].items():
+        component, axis, _ = name.split("_")
+        shape = getattr(fields, component).shape
+        assert profile.shape == ((shape[0], 1) if axis == "y" else (1, shape[1]))
 
 
 def test_pml_warns_when_material_changes_along_absorber_normal():
@@ -473,14 +496,12 @@ def test_cpml_grid_profiles_are_directional_and_identity_interior():
 
     payload = compile_absorber_regions(pml, fields, design, resolution=0.1, dt=1e-15)
 
-    center_y = fields.permittivity.shape[0] // 2
-    center_x = fields.permittivity.shape[1] // 2
-    x_sigma = np.asarray(payload["sigma_x"][center_y], dtype=np.float64)
-    x_kappa = np.asarray(payload["kappa_x"][center_y], dtype=np.float64)
-    x_alpha = np.asarray(payload["alpha_x"][center_y], dtype=np.float64)
-    y_sigma = np.asarray(payload["sigma_y"][:, center_x], dtype=np.float64)
-    y_kappa = np.asarray(payload["kappa_y"][:, center_x], dtype=np.float64)
-    y_alpha = np.asarray(payload["alpha_y"][:, center_x], dtype=np.float64)
+    x_sigma = np.asarray(payload["sigma_x"][0], dtype=np.float64)
+    x_kappa = np.asarray(payload["kappa_x"][0], dtype=np.float64)
+    x_alpha = np.asarray(payload["alpha_x"][0], dtype=np.float64)
+    y_sigma = np.asarray(payload["sigma_y"][:, 0], dtype=np.float64)
+    y_kappa = np.asarray(payload["kappa_y"][:, 0], dtype=np.float64)
+    y_alpha = np.asarray(payload["alpha_y"][:, 0], dtype=np.float64)
 
     assert x_sigma[0] > x_sigma[1] > x_sigma[2] > 0.0
     assert x_sigma[-1] > x_sigma[-2] > x_sigma[-3] > 0.0

@@ -29,6 +29,7 @@ def run_oblique_slab(
     sign=1,
     graded=False,
     axis="z",
+    pml_thickness=0.4e-6,
 ):
     frequency = 5e14
     thickness = 160e-9
@@ -92,7 +93,7 @@ def run_oblique_slab(
                     "y": ("bottom", "top"),
                     "z": ("front", "back"),
                 }[axis],
-                thickness=0.4e-6,
+                thickness=pml_thickness,
                 formulation="cpml",
             ),
         ],
