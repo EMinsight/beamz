@@ -43,3 +43,12 @@ Then:
 “energy monitor” = op = |E|^2 + |H|^2, temporal=accumulate, spatial=integrate
 
 All the same code path, just different parameters.
+
+# 2D modal phase convention
+
+Modal extraction fits forward and backward waves on the monitor's staggered
+electric and magnetic Yee supports. Each basis wave carries its own spatial
+phase sign, so a mixture of both directions does not receive a forward-only
+phase correction. Amplitudes retain the magnetic-plane reference; temporal
+leapfrog alignment is applied separately. The 3D collocated projection is
+unchanged.

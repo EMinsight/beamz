@@ -1,4 +1,4 @@
-"""Reciprocal transmission evidence and a locked reverse-launch limitation."""
+"""Reciprocal transmission and direction-correct 2D modal extraction (#348)."""
 
 from __future__ import annotations
 
@@ -11,17 +11,22 @@ from tests.modal_sparam_physical_case import (
 )
 
 
-@pytest.fixture(scope="module")
-def reciprocal_straight_waveguide_results():
+@pytest.fixture(
+    scope="module", params=[("sponge", 10, 1.1), ("cpml", 10, 1.1), ("cpml", 14, 1.4)]
+)
+def reciprocal_straight_waveguide_results(request):
     """Run the smallest two source excitations once for this module."""
-    config = StraightWaveguideSParamConfig()
+    absorber, ppw, monitor_offset = request.param
+    config = StraightWaveguideSParamConfig(
+        pml_formulation=absorber, input_monitor_offset_um=monitor_offset
+    )
     forward = run_straight_waveguide_sparam_case(
-        resolution_ppw=10,
+        resolution_ppw=ppw,
         cfg=config,
         launch_direction="+",
     )
     reverse = run_straight_waveguide_sparam_case(
-        resolution_ppw=10,
+        resolution_ppw=ppw,
         cfg=config,
         launch_direction="-",
     )
@@ -46,7 +51,7 @@ def test_straight_waveguide_complex_transmission_is_reciprocal(
         measured=reciprocity_residual,
         reference=0.0,
         tolerance="sparameter_reciprocity",
-        resolution="10 ppw",
+        resolution=f"{forward.resolution_ppw} ppw",
         metadata={
             "device": "symmetric straight slab waveguide",
             "wavelength_um": config.wavelength_um,
@@ -67,18 +72,13 @@ def test_straight_waveguide_complex_transmission_is_reciprocal(
 
 @pytest.mark.simulation
 @pytest.mark.compiled
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Reverse 2-D ModeSource currently leaks about -10.5 dB into the "
-        "counter-propagating branch; keep this locked until leapfrog phase "
-        "compensation is made direction-symmetric."
-    ),
-)
 def test_reverse_mode_launch_has_low_spurious_counterpropagation(
     reciprocal_straight_waveguide_results,
 ):
-    """Future fix target: reverse-source reflection should match the forward case."""
-    _config, _forward, reverse, center = reciprocal_straight_waveguide_results
-    reverse_reflection_db = 20.0 * np.log10(max(float(abs(reverse.s11[center])), 1e-12))
-    assert reverse_reflection_db < -35.0
+    """Both directions must retain transmission and have low extracted reflection."""
+    _config, forward, reverse, center = reciprocal_straight_waveguide_results
+    for result in (forward, reverse):
+        reflection_db = 20.0 * np.log10(max(float(abs(result.s11[center])), 1e-12))
+        assert reflection_db < -35.0
+        for transmission in result.s21_by_monitor.values():
+            assert 0.95 < abs(transmission[center]) ** 2 < 1.05

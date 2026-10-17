@@ -531,10 +531,16 @@ def _build_port_projection_2d(
     normalization = np.sqrt(max(abs(power), 1e-30))
     e_forward = e_profile / normalization
     h_forward = h_profile / normalization
+    mode_neff = float(np.real(np.asarray(neffs[mode_index])))
+    plane_delay = _modal_projection_plane_delay_s(sim, spec, frequency, mode_neff)
+    # Fit the two waves on the acquired Yee supports. Their E-to-H spatial
+    # phases have opposite signs; a single phase applied to measured E assumes
+    # a forward-only field and invents reflection for a backward wave.
+    phase = np.exp(1j * 2.0 * np.pi * float(frequency) * plane_delay)
     mode_matrix = np.column_stack(
         [
-            np.concatenate([e_forward, h_forward]),
-            np.concatenate([e_forward, -h_forward]),
+            np.concatenate([e_forward / phase, h_forward]),
+            np.concatenate([e_forward * phase, -h_forward]),
         ]
     )
     if np.ndim(weights) == 0:
@@ -559,16 +565,12 @@ def _build_port_projection_2d(
         "mode_matrix": mode_matrix,
         "condition_number": float(np.linalg.cond(mode_matrix)),
         "pinv": pinv,
-        "mode_neff": float(np.real(np.asarray(neffs[mode_index]))),
+        "mode_neff": mode_neff,
     }
     if projection_weights is not None:
         projection["projection_weights"] = projection_weights
-    projection["modal_plane_delay_s"] = _modal_projection_plane_delay_s(
-        sim,
-        spec,
-        frequency,
-        projection["mode_neff"],
-    )
+    # Spatial phase is already in each basis column, including its direction.
+    projection["modal_plane_delay_s"] = 0.0
     return projection
 
 
