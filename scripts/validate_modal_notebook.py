@@ -1,7 +1,8 @@
 """Execute the full modal or cosine-crossing tutorial and export numerical results.
 
 Run once per checkout in a fresh process with that checkout on PYTHONPATH.
-Only backend selection is changed; a final cell exports arrays for comparison.
+Only backend selection is changed; appended cells export arrays and optionally
+measure repeated full simulations with already prepared compilation caches.
 """
 
 import argparse
@@ -22,7 +23,9 @@ def main():
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
-        "--backend", choices=("jax", "cuda_streamed"), default="cuda_streamed"
+        "--backend",
+        choices=("jax", "cuda_streamed", "cuda_mstep"),
+        default="cuda_streamed",
     )
     parser.add_argument(
         "--notebook",
@@ -32,7 +35,10 @@ def main():
     parser.add_argument(
         "--expected-device", help="Require this substring in the JAX GPU name"
     )
+    parser.add_argument("--warm-runs", type=int, default=0)
     args = parser.parse_args()
+    if args.warm_runs < 0:
+        parser.error("--warm-runs must be nonnegative")
     root = args.root.resolve()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -163,6 +169,45 @@ print(metadata)
 """
             )
         )
+    if args.warm_runs:
+        simulations = (
+            '(("single", sim_single, sim_data_single), '
+            '("broadband", sim_bb, sim_data_bb), '
+            '("junction", sim_jct_bb, sim_data_jct_bb))'
+            if args.notebook == "modal_sources_monitors"
+            else '(("crossing", sim, sim_data),)'
+        )
+        notebook.cells.append(
+            nbformat.v4.new_code_cell(
+                f"""
+import time
+warm_runs = {{}}
+for label, simulation, original in {simulations}:
+    records = []
+    original_fields = original.renormalize(None)["field"].dft_fields
+    for repeat in range({args.warm_runs}):
+        started = time.perf_counter()
+        repeated = simulation.run(backend={args.backend!r}, progress=False)
+        jax.block_until_ready(tuple(repeated["field"].dft_fields.values()))
+        elapsed = time.perf_counter() - started
+        repeated_fields = repeated.renormalize(None)["field"].dft_fields
+        for name, expected in original_fields.items():
+            np.testing.assert_array_equal(repeated_fields[name], expected)
+        records.append({{
+            "elapsed_s": elapsed,
+            "runtime_s": repeated.performance.runtime_s,
+            "gcups": repeated.performance.gcups,
+        }})
+        del repeated
+    warm_runs[label] = records
+results_path = Path({str(output)!r}) / "results.json"
+metadata = json.loads(results_path.read_text())
+metadata["warm_runs"] = warm_runs
+results_path.write_text(json.dumps(metadata, indent=2))
+print(warm_runs)
+"""
+            )
+        )
     start = time.monotonic()
     client = NotebookClient(
         notebook,
@@ -181,7 +226,9 @@ print(metadata)
             json.dumps(
                 {
                     "root": str(root),
-                    "commit": subprocess.check_output(
+                    "commit": (root / ".revision").read_text().strip()
+                    if (root / ".revision").exists()
+                    else subprocess.check_output(
                         ["git", "rev-parse", "HEAD"], cwd=root, text=True
                     ).strip(),
                     "notebook_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
