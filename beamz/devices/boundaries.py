@@ -16,6 +16,20 @@ _VOLUME_EDGES = (*_PLANAR_EDGES, "front", "back")
 _AXES = ("x", "y", "z")
 
 
+def _validate_absorber_parameters(spec) -> None:
+    for name in ("sigma_max", "alpha_max"):
+        value = getattr(spec, name)
+        if value is not None and (not np.isfinite(float(value)) or float(value) < 0):
+            raise ValueError(f"{name} must be non-negative and finite.")
+    if not np.isfinite(float(spec.kappa_max)) or float(spec.kappa_max) < 1:
+        raise ValueError("kappa_max must be finite and at least 1.")
+    order = float(spec.m)
+    if not np.isfinite(order) or order < 1 or not order.is_integer():
+        raise ValueError("m must be a positive integer.")
+    if not 0 < float(spec.target_reflection) < 1:
+        raise ValueError("target_reflection must lie strictly between 0 and 1.")
+
+
 def normalize_edges(edges: BoundaryEdges) -> BoundaryEdges:
     """Validate and freeze an edge selection while retaining the ``"all"`` sentinel."""
     if isinstance(edges, str) and edges.lower() == "all":
@@ -121,7 +135,8 @@ class PML:
         ``0.1 * EPS_0 * LIGHT_SPEED / thickness`` in both 2D and 3D, independent
         of timestep. Specify a fixed physical thickness for mesh convergence.
     target_reflection : float, default=1e-6
-        Reflection target used to derive automatic conductivity.
+        Analytical amplitude-reflection target used to derive conductivity,
+        not a guarantee of the discretized absorber's measured reflection.
 
     Examples
     --------
@@ -145,6 +160,7 @@ class PML:
     target_reflection: float = 1e-6
 
     def __post_init__(self) -> None:
+        _validate_absorber_parameters(self)
         thickness = None if self.thickness is None else float(self.thickness)
         if thickness is not None and (not np.isfinite(thickness) or thickness < 0.0):
             raise ValueError("PML thickness must be a non-negative finite value.")
@@ -229,6 +245,7 @@ class Absorber:
     target_reflection: float = 1e-6
 
     def __post_init__(self) -> None:
+        _validate_absorber_parameters(self)
         thickness = float(self.thickness)
         if not np.isfinite(thickness) or thickness < 0.0:
             raise ValueError("Absorber thickness must be a non-negative finite value.")

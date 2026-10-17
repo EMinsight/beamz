@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -12,12 +14,19 @@ from tests.modal_sparam_physical_case import (
 
 @pytest.mark.simulation
 @pytest.mark.compiled
+@pytest.mark.parametrize("formulation", ["sponge", "cpml"])
 def test_straight_waveguide_modal_sparams_are_physical_across_resolution_and_distance(
     validation_metrics,
+    formulation,
 ):
-    cfg = StraightWaveguideSParamConfig()
+    cfg = StraightWaveguideSParamConfig(pml_formulation=formulation, cpml_kappa_max=2.0)
     results = [
-        run_straight_waveguide_sparam_case(resolution_ppw=ppw, cfg=cfg)
+        run_straight_waveguide_sparam_case(
+            resolution_ppw=ppw,
+            cfg=replace(cfg, pml_thickness_wl=12 / (cfg.n_core * ppw))
+            if formulation == "cpml"
+            else cfg,
+        )
         for ppw in (10, 12)
     ]
 

@@ -131,6 +131,8 @@ def test_cuda_program_boundary_code_requires_matching_h_and_e_cpml_slabs():
 
 
 def test_cuda_cpml_bf16_state_is_explicit_and_preserves_continuation(monkeypatch):
+    monkeypatch.delenv("BEAMZ_CUDA_CPML_PSI_PRECISION", raising=False)
+    assert not backend_runtime.cuda_flags_from_env() & backend_runtime.CUDA_BF16_PSI
     program, state, _context = _program_and_state(cpml=True)
     cuda_program = replace(
         program, config=replace(program.config, backend="cuda_streamed")

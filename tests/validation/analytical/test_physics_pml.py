@@ -144,8 +144,6 @@ def _homogeneous_cpml_reflection_db(
         y1=6.0 * wavelength,
         signal=signal.astype(np.float32),
     )
-    cpml_alpha_normalized = 0.2
-    cpml_alpha_max = 2.0 * EPS_0 * cpml_alpha_normalized / max(float(dt), 1e-30)
     sim = Simulation(
         design=design,
         sources=[],
@@ -153,7 +151,6 @@ def _homogeneous_cpml_reflection_db(
             PML(
                 thickness=pml_thickness,
                 formulation="cpml",
-                alpha_max=cpml_alpha_max,
             )
         ],
         time=time,
@@ -481,18 +478,18 @@ class TestPMLAbsorption:
         cy = fields.permittivity.shape[0] // 2
         cx = fields.permittivity.shape[1] // 2
         assert np.asarray(sim.pml_data["kappa_x"], dtype=np.float64)[
-            cy, cx
+            0, cx
         ] == pytest.approx(1.0)
         assert np.asarray(sim.pml_data["kappa_y"], dtype=np.float64)[
-            cy, cx
+            cy, 0
         ] == pytest.approx(1.0)
 
         tm_xy = sim.pml_data["tm_xy_cpml"]
         assert np.asarray(tm_xy["Ez_x_kappa"], dtype=np.float64)[
-            cy, cx
+            0, cx
         ] == pytest.approx(1.0)
         assert np.asarray(tm_xy["Ez_y_kappa"], dtype=np.float64)[
-            cy, cx
+            cy, 0
         ] == pytest.approx(1.0)
 
         plan = sim.compile().boundary.cpml
@@ -564,8 +561,9 @@ class TestPMLAbsorption:
         )
 
     @pytest.mark.slow
+    @pytest.mark.parametrize("default_thickness", [False, True])
     def test_cpml_absorbs_slab_waveguide_mode_after_turnoff(
-        self, waveguide_domain, validation_metrics
+        self, waveguide_domain, validation_metrics, default_thickness
     ):
         design = waveguide_domain["design"]
         wavelength = waveguide_domain["wavelength"]
@@ -594,7 +592,12 @@ class TestPMLAbsorption:
         sim = Simulation(
             design=design,
             sources=[source],
-            boundaries=[PML(thickness=wavelength, formulation="cpml")],
+            boundaries=[
+                PML(
+                    thickness=None if default_thickness else wavelength,
+                    formulation="cpml",
+                )
+            ],
             time=time,
             resolution=dx,
         )
@@ -816,7 +819,8 @@ class TestPMLAbsorption:
             f"{late_energy_fraction * 100:.1f}% late field energy, exceeds 20%"
         )
 
-    def test_pml_does_not_cause_instability(self, vacuum_domain_small):
+    @pytest.mark.parametrize("formulation", ["sponge", "cpml"])
+    def test_pml_does_not_cause_instability(self, vacuum_domain_small, formulation):
         """PML should not cause numerical instability.
 
         Some PML implementations can be unstable, especially at corners
@@ -828,7 +832,7 @@ class TestPMLAbsorption:
         dt = vacuum_domain_small["dt"]
 
         frequency = LIGHT_SPEED / wavelength
-        t_total = 30 / frequency  # Long simulation to catch late instabilities
+        t_total = 300 / frequency
         time = np.arange(0, t_total, dt)
 
         signal = ramped_cosine(
@@ -848,7 +852,7 @@ class TestPMLAbsorption:
         sim = Simulation(
             design=design,
             sources=[source],
-            boundaries=[PML(thickness=wavelength)],
+            boundaries=[PML(thickness=wavelength, formulation=formulation)],
             time=time,
             resolution=dx,
         )

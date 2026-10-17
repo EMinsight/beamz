@@ -755,34 +755,32 @@ class _AbsorberCompiler:
                 high in edges,
             )
             for family, value in zip(("sigma", "kappa", "alpha"), values, strict=True):
-                out[f"{family}_{axis}"] = jnp.broadcast_to(
-                    expand(axis, value), (ny, nx)
-                )
+                out[f"{family}_{axis}"] = expand(axis, value)
         out.update(
-            sigma_z=jnp.zeros((ny, nx)),
-            kappa_z=jnp.ones((ny, nx)),
-            alpha_z=jnp.zeros((ny, nx)),
+            sigma_z=jnp.zeros((1, 1)),
+            kappa_z=jnp.ones((1, 1)),
+            alpha_z=jnp.zeros((1, 1)),
         )
         out["mask"] = (out["sigma_x"] > 0) | (out["sigma_y"] > 0)
 
         polarization = fields.polarization_2d
         supports = (
             (
-                ("Ez", "x", nx + 1, "E", (ny + 1, nx + 1)),
-                ("Ez", "y", ny + 1, "E", (ny + 1, nx + 1)),
-                ("Hx", "y", ny, "H", (ny, nx + 1)),
-                ("Hy", "x", nx, "H", (ny + 1, nx)),
+                ("Ez", "x", nx + 1, "E"),
+                ("Ez", "y", ny + 1, "E"),
+                ("Hx", "y", ny, "H"),
+                ("Hy", "x", nx, "H"),
             )
             if polarization == "tm"
             else (
-                ("Hz", "x", nx, "H", (ny, nx)),
-                ("Hz", "y", ny, "H", (ny, nx)),
-                ("Ex", "y", ny + 1, "E", (ny + 1, nx)),
-                ("Ey", "x", nx + 1, "E", (ny, nx + 1)),
+                ("Hz", "x", nx, "H"),
+                ("Hz", "y", ny, "H"),
+                ("Ex", "y", ny + 1, "E"),
+                ("Ey", "x", nx + 1, "E"),
             )
         )
         staggered = {}
-        for component, axis, samples, kind, target_shape in supports:
+        for component, axis, samples, kind in supports:
             cells, length, low, high = axes[axis]
             values = self._compute_fdtdx_staggered_profile_1d(
                 samples,
@@ -803,9 +801,7 @@ class _AbsorberCompiler:
                 ),
             )
             for family, value in zip(("sigma", "kappa", "alpha"), values, strict=True):
-                staggered[f"{component}_{axis}_{family}"] = jnp.broadcast_to(
-                    expand(axis, value), target_shape
-                )
+                staggered[f"{component}_{axis}_{family}"] = expand(axis, value)
         out[f"{polarization}_xy_cpml"] = staggered
         return out
 

@@ -139,9 +139,9 @@ def cpml_coefficients(sigma, kappa, alpha, dt):
         jnp.asarray(dt, dtype=dtype) / jnp.asarray(EPS_0, dtype=dtype)
     )
     b = jnp.exp(-decay)
-    a = jnp.nan_to_num(
-        ((b - one) * sigma) / jnp.maximum((sigma + kappa * alpha) * kappa, 1e-30)
-    )
+    denominator = (sigma + kappa * alpha) * kappa
+    # Preserve weak damping when exp(-decay) rounds to one; vacuum has a=0.
+    a = jnp.expm1(-decay) * (sigma / jnp.where(denominator > 0, denominator, one))
     return a, b, one / kappa
 
 
