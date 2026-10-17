@@ -17,7 +17,10 @@ from beamz.devices._placement import (
     snap_axis_aligned_line_region_grid,
     snap_plane_region_grid,
 )
-from beamz.devices.modes.discrete import DISCRETE_MODE_CONTRACT, solve_beamz_mode
+from beamz.devices.modes.discrete import DISCRETE_MODE_CONTRACT
+from beamz.devices.modes.discrete import (
+    _solve_cached_beamz_mode as solve_beamz_mode,
+)
 from beamz.devices.modes.fields import _modal_overlap, _normalize_profiles
 from beamz.devices.modes.plane import solve_mode_plane_3d, solve_modes
 from beamz.devices.monitors.monitors import ModeMonitor

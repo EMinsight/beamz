@@ -14,9 +14,11 @@ from typing import Any, Literal, TypedDict, cast
 
 import numpy as np
 
+from beamz._cache_tokens import cache_token
 from beamz.design.grid import RectilinearGrid
 from beamz.devices._immutable import immutable_snapshot, readonly_array
 
+from ._cache import _SolveCache
 from ._yee import refine_x_mode_at_fixed_beta, validate_x_mode_refinement
 from .fields import (
     _axis_coordinate,
@@ -26,6 +28,7 @@ from .fields import (
     _numeric_wave_number,
     _phase_delay,
 )
+from .result import Result
 from .solver import solve_grid
 
 AxisName = Literal["x", "y", "z"]
@@ -231,6 +234,39 @@ class DiscreteMode:
 
 def solve_beamz_mode(spec: ModePlaneSpec) -> DiscreteMode:
     """Solve and return a BEAMZ-shaped discrete mode."""
+    return _solve_beamz_mode(spec)
+
+
+# Only analysis opts into reuse; keys retain content tokens, not simulations.
+_CANDIDATE_CACHE: _SolveCache[Result] = _SolveCache(
+    max_entries=32, max_bytes=64 * 1024 * 1024
+)
+_MODE_CACHE: _SolveCache[DiscreteMode] = _SolveCache(
+    max_entries=128, max_bytes=64 * 1024 * 1024
+)
+
+
+def _solve_cached_beamz_mode(spec: ModePlaneSpec) -> DiscreteMode:
+    """Cache by all spec inputs, including materials, grid and solver settings."""
+    if not isinstance(spec, ModePlaneSpec):
+        raise TypeError("spec must be a ModePlaneSpec")
+    return _MODE_CACHE.get_or_compute(
+        (solve_grid, cache_token(spec)),
+        lambda: _solve_beamz_mode(spec, candidate_cache=_CANDIDATE_CACHE),
+    )
+
+
+def _solve_candidate_pool(cache: _SolveCache[Result] | None, **kwargs) -> Result:
+    if cache is None:
+        return solve_grid(**kwargs)
+    return cache.get_or_compute(
+        (solve_grid, cache_token(kwargs)), lambda: solve_grid(**kwargs)
+    )
+
+
+def _solve_beamz_mode(
+    spec: ModePlaneSpec, *, candidate_cache: _SolveCache[Result] | None = None
+) -> DiscreteMode:
 
     if not isinstance(spec, ModePlaneSpec):
         raise TypeError("spec must be a ModePlaneSpec")
@@ -243,7 +279,7 @@ def solve_beamz_mode(spec: ModePlaneSpec) -> DiscreteMode:
         and spec.component_permittivity
         and (spec.grid is None or spec.grid.metric_kind == "isotropic_uniform")
     ):
-        return _solve_y_mode_in_x_frame(spec)
+        return _solve_y_mode_in_x_frame(spec, candidate_cache=candidate_cache)
 
     solver_axes = _solver_axes_for_axis(spec.axis)
     eps_solver = _transpose_between_axes(
@@ -280,7 +316,8 @@ def solve_beamz_mode(spec: ModePlaneSpec) -> DiscreteMode:
         name: _transpose_between_axes(values, spec.transverse_axes, solver_axes)
         for name, values in spec.diagonal_permeability.items()
     }
-    result = solve_grid(
+    result = _solve_candidate_pool(
+        candidate_cache,
         eps_xx=diagonal_eps.get("xx", eps_solver),
         eps_yy=diagonal_eps.get("yy"),
         eps_zz=diagonal_eps.get("zz"),
@@ -487,7 +524,9 @@ def solve_beamz_mode(spec: ModePlaneSpec) -> DiscreteMode:
     )
 
 
-def _solve_y_mode_in_x_frame(spec: ModePlaneSpec) -> DiscreteMode:
+def _solve_y_mode_in_x_frame(
+    spec: ModePlaneSpec, *, candidate_cache: _SolveCache[Result] | None = None
+) -> DiscreteMode:
     """Solve a uniform y port in an x-normal frame, then reflect it back.
 
     Electric fields are polar vectors; magnetic fields are axial vectors. The
@@ -538,7 +577,7 @@ def _solve_y_mode_in_x_frame(spec: ModePlaneSpec) -> DiscreteMode:
         diagonal_permeability=rotate_diagonal(spec.diagonal_permeability),
         grid=canonical_grid,
     )
-    mode = solve_beamz_mode(canonical)
+    mode = _solve_beamz_mode(canonical, candidate_cache=candidate_cache)
     determinant = -1
     phase_component = (
         mode.phase_reference_component[0]
