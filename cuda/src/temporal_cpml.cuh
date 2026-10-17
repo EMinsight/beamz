@@ -177,11 +177,11 @@ __device__ __forceinline__ void CpmlPairStages(
           if (owned) {
             if constexpr (K >= 2*(Steps-1)) {
               const auto &dest = final.fields[phase*3+c];
-              static_cast<float *>(dest.data)[BeamzOffset3D(dest,z,y,x)] = next;
+              static_cast<float *>(dest.data)[BeamzOffset3D<false>(dest,z,y,x)] = next;
             } else if (publication.data &&
                        static_cast<const int *>(publication.data)[
-                           BeamzOffset3D(publication,z,y/8,x/16)]) {
-              static_cast<float *>(out.data)[BeamzOffset3D(out,z,y,x)] = next;
+                           BeamzOffset3D<false>(publication,z,y/8,x/16)]) {
+              static_cast<float *>(out.data)[BeamzOffset3D<false>(out,z,y,x)] = next;
             }
           }
         }

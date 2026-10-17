@@ -115,3 +115,46 @@ def test_scan_remains_composable_under_jit_and_grad():
     np.testing.assert_allclose(jax.jit(energy)(1.0), expected, rtol=1e-5)
     np.testing.assert_allclose(jax.grad(energy)(1.0), 2 * expected, rtol=1e-5)
     np.testing.assert_allclose(jax.jit(jax.grad(energy))(1.0), 2 * expected, rtol=1e-5)
+
+
+def test_mstep_estimate_counts_compact_fields_and_plan():
+    import math
+
+    program, _, context = _program_and_state(cpml=True)
+    program = replace(program, config=context.config)
+    plan = SimpleNamespace(summary=lambda: {"scratch_bytes": 8192, "plan_bytes": 1024})
+    fields = sum(
+        math.prod(shape) * 4 for shape in program.sharding.layout.padded_shapes.values()
+    )
+    psi = sum(
+        math.prod(t.slab.shape) * 4
+        for t in (*program.boundary.cpml.h_terms, *program.boundary.cpml.e_terms)
+    )
+    donated = memory.cuda_workspace_estimate(
+        program, donate_state=True, mstep_plan=plan
+    )
+    retained = memory.cuda_workspace_estimate(
+        program, donate_state=False, mstep_plan=plan
+    )
+    assert donated == 2 * fields + psi + 8192 + 1024
+    assert retained - donated == fields + psi
+    for donate, full in ((True, donated), (False, retained)):
+        minimum = memory.cuda_workspace_estimate(
+            program, donate_state=donate, mstep=True
+        )
+        assert full - minimum == 8192 + 1024
+
+
+@pytest.mark.parametrize("policy,available", [("auto", 1), ("capacity", 1 << 30)])
+def test_forced_mstep_reports_memory_limits(monkeypatch, policy, available):
+    from beamz.simulation.backend import CudaBackendUnavailable
+
+    program, _, context = _program_and_state(cpml=True)
+    program = replace(
+        program,
+        config=replace(context.config, backend="cuda_mstep", cuda_memory_policy=policy),
+    )
+    plan = SimpleNamespace(summary=lambda: {"scratch_bytes": 8192, "plan_bytes": 1024})
+    monkeypatch.setattr(memory, "cuda_available_bytes", lambda p: available)
+    with pytest.raises(CudaBackendUnavailable, match="schedule='mstep'"):
+        memory.check_mstep_workspace(program, plan, donate_state=False)

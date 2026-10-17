@@ -40,7 +40,7 @@ plots, open [`cuda_autodiff_waveguide_bend.ipynb`](../../examples/notebooks/cuda
 - `backend="cuda"` uses native streamed forward and reverse-mode Yee/CPML
   kernels for the existing single-GPU, float32 3D physics. Both lossy materials
   and mixed absorbing/PEC faces are supported. The CUDA component must be
-  rebuilt for ABI 27.
+  rebuilt for ABI 28.
 - `checkpoint_interval=None` selects approximately sqrt(T) steps per chunk;
   a positive integer controls the memory/recomputation tradeoff. Zero retains
   the trajectory for small reference problems. Chunk recomputation works with

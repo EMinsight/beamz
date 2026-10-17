@@ -13,8 +13,9 @@ monitor schedules. JAX still owns tracing, buffers, and orchestration around tha
 small native interface, preserving BeamZ's public numerical semantics and JAX
 fallback without duplicating configuration-specific FFI targets.
 
-The native boundary has five typed FFI targets: a phase update, a sharded phase,
-a complete multi-step program, a phase VJP, and a complete material/state reverse step. The implementation is
+The native boundary has six typed FFI targets: a phase update, a sharded phase,
+a complete multi-step program, an explicit column multistep schedule, a phase VJP,
+and a complete material/state reverse step. The implementation is
 split by responsibility:
 
 - `ffi_handler.cc` decodes JAX buffers into a validated `BeamzProgramLaunch`;
@@ -55,8 +56,8 @@ Backward linearization reuses the native step's post-source fields with the
 verified phase VJPs and JAX source/monitor transposes. Unused forward phase
 launches disappear from the backward executable. Trainable material codebooks
 and BF16 recurrence buffers are bypassed. See [the optimization guide](../beamz/optimization/README.md) for
-the API, supported parameter layouts, and first-order limitations. ABI 27 is
-required by the sparse residual and material/state reverse interfaces. See the [performance audit](../tests/performance/CUDA_AUTODIFF.md)
+the API, supported parameter layouts, and first-order limitations. ABI 28 includes
+the sparse residual, material/state reverse, and multistep interfaces. See the [performance audit](../tests/performance/CUDA_AUTODIFF.md)
 for matched GPU benchmarks and reproducible commands.
 
 Eligible checkpoint chunks run through a native forward graph. The
@@ -90,6 +91,79 @@ registers it lazily; `backend="cuda_streamed"` requests it explicitly. The first
 release supports float32 3D grids. `auto` retains JAX for multi-GPU and 2D
 simulations; only the explicitly selected CPML recurrence state may use BF16.
 
+## Streamed and multistep schedules
+
+`backend="cuda"` uses one CUDA component (**0.28.0 / ABI 28**) with two schedules.
+Omitting `schedule` preserves main's streamed and geometry-based layout policy.
+The aliases `cuda_streamed` and `cuda_mstep` force their respective schedules.
+Explicit `schedule="auto"` enables the time-to-result selector:
+
+```python
+program = simulation.compile(num_steps=1024, backend="cuda", schedule="auto")
+print(program.cuda_schedule_report())
+result = simulation.advance(num_steps=256, backend="cuda", schedule="mstep")
+```
+
+Mstep ports [Pepijn de Vos's PR #308](https://github.com/beamzorg/beamz/pull/308).
+It advances eligible columns by two timesteps using shared plane rings. The
+16×32 default tile owns 8×16 quadrants, excluding CPML, PEC and source halos.
+Compact first-step scratch holds boundary dependencies and DFT samples; a second
+field bank holds pair outputs. Edges, sources and monitors use the shared CUDA
+operations. Odd tails and domains without eligible columns use ordinary updates.
+Returned logical state, absolute clocks and continuation semantics are preserved.
+
+Packed-E/scalar-H specialization hoists metadata, advances linear addresses and
+prefetches two E planes using 61,392 shared bytes per block. Other coefficients
+use the general core. Both share Yee/material arithmetic; streamed kernels keep
+their original addressing. Plan arrays are runtime inputs, with a bounded host
+cache of two plans / 256 MiB, rather than embedded compiled constants.
+
+Mstep supports unsharded isotropic uniform float32 3D grids, diagonal materials,
+batched slab sources and vector DFT monitors, including asymmetric CPML,
+conductive materials and optional BF16 recurrence. Recorders, flux/power,
+nonuniform grids and tensor materials require streamed/JAX. Explicit unsupported
+requests raise a diagnostic. Additional field/scratch memory is checked against
+allocator headroom; a capacity-only memory policy requires in-place execution.
+
+Experimental settings retain the same two-step ownership/dependency plan:
+
+| Setting | Values (default first) |
+|---|---|
+| `BEAMZ_CUDA_MSTEP_TILE` | `16x32`, `8x32`, `8x16`, `16x16` |
+| `BEAMZ_CUDA_MSTEP_SEGMENT` | `whole`, `32`, `64`, `128`, `256` z planes |
+| `BEAMZ_CUDA_STORAGE_AXES` | `012`, `120`, `201` right-handed cyclic orders |
+
+Segments overlap frozen inputs and publish only owned results. Storage transforms
+are shared with streamed execution. Automatic selection changes tile/segment only
+inside its measured envelope: 8×16/32 for PEC and one-wall CPML, original tile for
+ordinary CPML.
+
+`expected_runs` is an executable-reuse hint, defaulting to one; it does not run
+extra simulations. Progress chunks contribute known reuse automatically. The
+selector considers preparation/first-execution costs, geometry/core coverage,
+material and monitor load, hardware and memory. It runs no calibration trials.
+Decisions are frozen per executable and ownership policy and reported by
+`cuda_schedule_report()`.
+
+The current model covers RTX3090 packed-E/scalar-H workloads, CPML12/all-PEC
+families, 16–67 million cells, calls of at least 16 steps and known total work of
+at least 256 steps. Graph caching must be enabled, and predicted savings must
+repay extra startup with a 25% margin. Unsupported/unmeasured cases retain
+streamed execution. Unknown headroom or an impossible minimum workspace prevents
+planning; complete workspace is checked again after planning. Explicit overrides
+remain available on other supported GPUs.
+
+```console
+python -m pytest tests/hardware/test_cuda_mstep.py
+python scripts/benchmark_cuda_revision.py --help
+```
+
+The [evidence index](../docs/reviews/README.md) links the historical Futhark
+comparison, RTX3090 tile/startup study and H100 performance/capacity checks.
+Small/narrow shapes can favor streamed, and mstep uses extra memory. These
+measurements do not establish a universal optimum or expand the automatic model
+to H100. OpenCL remains a separate portability task sharing the schedule contract.
+
 ## Experimental sharded streamed execution
 
 Explicit CUDA requests use the existing sharding API for 3D simulations, including
@@ -106,13 +180,12 @@ result = simulation.advance(
 )
 ```
 
-This path has native C++ arithmetic and CPU FFI coverage, but has **not yet been
-validated on multiple CUDA GPUs**. `auto` continues selecting JAX for sharded
-requests. Rebuild the optional CUDA extension: this path requires component
-**0.21.0 / ABI 21**, including `beamz_cuda_sharded`. ABI 20 passes separate neighbor faces to sharded
-phases, avoiding full-field halo concatenations. ABI 21 adds an integer DFT
-chunk offset so every graph uses the same invocation time origin. Rebuild the native wheel when
-updating Python code across this ABI boundary.
+This path has native C++/CPU FFI coverage and recorded two/eight-H100 parity and
+capacity checks; remaining gaps are listed in the [validation summary](../docs/reviews/pr334-post-merge-validation-2026-10-17.md#historical-studies-and-raw-evidence).
+`auto` continues selecting JAX for sharded requests. Rebuild the optional native
+component when updating Python across an ABI boundary; this branch uses ABI 28,
+including `beamz_cuda_sharded`. Sharded phases pass separate neighbor faces to
+avoid full-field halo concatenations and retain integer DFT chunk offsets.
 
 All six components share partition interfaces along the selected x, y, or z
 axis. `shard_map` exchanges one-cell neighbor halos before each H/E phase and
@@ -333,31 +406,41 @@ clang++ -std=c++17 \
 
 ### Automatic RTX3090 storage and shell selection
 
-With no manual `BEAMZ_CUDA_*` overrides, `Simulation.compile()` estimates storage
-for eligible RTX3090 programs from geometry. **The default performs no calibration
-runs**, reads no tuning profiles and does not launch candidate executables.
+With no manual `BEAMZ_CUDA_*` overrides, existing CUDA calls retain main's
+geometry-based layout predictor and 32-step minimum. Explicit `schedule="auto"`
+adds a startup cost gate. Neither policy runs calibration trials, reads tuning
+profiles or launches candidate executables.
 It counts thread slots in the existing 64x4 CPML queue for the three cyclic
 orders (`012`, `120`, `201`), including Yee staggering and partially filled
-tiles. It changes layout only for an estimated work reduction of at least 25%.
-This conservative margin describes geometric work, not predicted runtime gain.
+tiles. A work reduction of at least 25% generates a candidate. Selection also
+requires execution savings to repay additional preparation with a 25% margin.
+The startup model covers packed-E, lossless, CPML12 narrow-x shapes with
+z=512–1024, y=256 and x=63–65, small slab sources and at most two three-frequency
+DFT monitors. Short calls, unknown shapes and other workloads retain canonical
+storage. Known executable reuse contributes to the cost check.
 The shell tile remains 64x4, and padding stays off.
 
 The physical grid, CPML12, source/monitor sampling and FP32 precision remain
 unchanged. Existing automatic H/E fusion still applies within each layout;
 experimental CPML temporal blocking is not selected. The estimate repairs the
-recorded narrow-x cases while retaining canonical storage on the wide/irregular
-controls. It is not a guarantee of the global optimum or of beating another
-revision on every workload. See the [analysis and offline replay](../docs/reviews/cuda-layout-prediction-2026-09-18.md).
+recorded narrow-x cases once longer execution repays startup. It is not a
+guarantee of the global optimum on every workload. See the
+[validation summary](../docs/reviews/pr334-post-merge-validation-2026-10-17.md) for results and archived studies
+and the [earlier geometry study](../docs/reviews/cuda-layout-prediction-2026-09-18.md)
+for the work estimate.
 
 ```python
-program = sim.compile(num_steps=256, backend="cuda_streamed")
+program = sim.compile(num_steps=4096, backend="cuda_streamed")
 from beamz.simulation.cuda.tuning import tuning_report
 print(program.config.cuda_storage_axes)
-print(tuning_report(program))  # choice, geometric costs, reason, calibration_s=0
+print(tuning_report(program))  # choice, startup/savings, reason, calibration_s=0
 
 # Inspect a shape without compiling or accessing the GPU:
 from beamz.simulation.cuda.tuning import predict_layout
 print(predict_layout((1024, 256, 64))["choice"])  # 120 / 64x4
+from beamz.simulation.cuda.tuning import predict_layout_time_to_result
+print(predict_layout_time_to_result((1024, 256, 64), 256)["choice"])  # 012
+print(predict_layout_time_to_result((1024, 256, 64), 4096)["choice"])  # 120
 ```
 
 `BEAMZ_CUDA_AUTOTUNE=auto` is the predictive default; `off` disables selection.
@@ -366,12 +449,14 @@ manual experiments. Configuration is frozen into the immutable program and
 isolated in the compiled-program cache. Prediction reports have `validated=False`
 because no numerical validation trial was performed for the current request.
 
-The initial automatic scope is one RTX3090, at least 8,388,608 logical cells,
-at least 32 steps, uniform 3D lossless diagonal materials, CPML12, and native-compatible
-slab sources / DFT monitors. Other workloads retain existing dispatch. The cost
-proxy omits cache effects, fused-core timing, transpose overhead and source/monitor
-cost. In particular, it cannot resolve all y-versus-z orientation effects. Short
-runs or heavy monitors may have a different optimum. The previously recorded
+The layout cost model is limited to the narrow-x family above on one RTX3090,
+at least 16 steps per call and 32 known total steps across expected reuse,
+uniform 3D lossless packed diagonal materials, CPML12, positive graph-cache
+capacity and native-compatible small slab sources / DFT monitors. Other workloads
+retain existing dispatch. Geometry supplies a candidate; measured timing anchors
+account for startup and steady execution in that family. They cannot resolve all
+y-versus-z orientation effects or arbitrary source/monitor costs. Short runs or
+heavy monitors may have a different optimum. The previously recorded
 branch-versus-main CPML numerical differences remain unresolved.
 
 Explicit `BEAMZ_CUDA_AUTOTUNE=calibrate` enables the measured selector and its

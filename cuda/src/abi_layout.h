@@ -7,13 +7,14 @@
 
 namespace beamz::cuda::abi {
 
-inline constexpr int32_t kAbiVersion = 27;
-inline constexpr char kComponentVersion[] = "0.27.0";
+inline constexpr int32_t kAbiVersion = 28;
+inline constexpr char kComponentVersion[] = "0.28.0";
 inline constexpr char kStreamedTarget[] = "beamz_cuda_streamed";
 inline constexpr char kShardedTarget[] = "beamz_cuda_sharded";
 inline constexpr char kProgramTarget[] = "beamz_cuda_program";
 inline constexpr char kAdjointTarget[] = "beamz_cuda_adjoint";
 inline constexpr char kMaterialAdjointTarget[] = "beamz_cuda_material_adjoint";
+inline constexpr char kMstepTarget[] = "beamz_cuda_mstep";
 
 inline constexpr int32_t kBeamzGraphCache = 1 << 7;
 inline constexpr int32_t kBeamzBf16Psi = 1 << 12;
@@ -24,6 +25,13 @@ inline constexpr int32_t kBeamzTemporalPair = 1 << 16;
 inline constexpr int32_t kBeamzShell32x8 = 1 << 17;
 inline constexpr int32_t kBeamzShell32x4 = 1 << 18;
 inline constexpr int32_t kBeamzCpmlPair = 1 << 19;
+inline constexpr int32_t kBeamzMstepTile8x32 = 1 << 20;
+inline constexpr int32_t kBeamzMstepTile8x16 = 1 << 21;
+inline constexpr int32_t kBeamzMstepTile16x16 = 1 << 22;
+inline constexpr int32_t kBeamzMstepSegment32 = 1 << 23;
+inline constexpr int32_t kBeamzMstepSegment64 = 1 << 24;
+inline constexpr int32_t kBeamzMstepSegment128 = 1 << 25;
+inline constexpr int32_t kBeamzMstepSegment256 = 1 << 26;
 inline constexpr int32_t kBeamzDefaultFlags = kBeamzGraphCache;
 
 inline constexpr int32_t kNativeScheduleCpml = 1 << 0;
@@ -83,6 +91,7 @@ inline constexpr size_t kTemporalEPsiWorkspaceOffset = 30;
 inline constexpr size_t kTemporalFieldWorkspaceInput = 74;
 inline constexpr size_t kTemporalPsiWorkspaceInput = 80;
 inline constexpr size_t kMonitorElapsedStepsInput = 15;
+inline constexpr size_t kMstepPlanBufferCount = 5;
 
 }  // namespace beamz::cuda::abi
 

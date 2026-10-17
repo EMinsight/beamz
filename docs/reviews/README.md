@@ -1,18 +1,15 @@
 # CUDA optimization evidence
 
-Start with the [main-merge validation and notebook comparison](cuda-merge-validation-2026-09-24.md),
-the [original random-domain comparison](cuda-random-final-comparison-2026-09-18.md),
-and [automatic layout prediction](cuda-layout-prediction-2026-09-18.md).
-The dated studies retain the earlier experiments, including unsuccessful ones;
-their settings and measurements should not be confused with the final defaults.
+[PR #334 validation summary](pr334-post-merge-validation-2026-10-17.md) covers
+notebook accuracy, RTX 3090 performance, known failures and the modal-projection
+follow-up. It links immutable historical reports and raw data for the Futhark,
+schedule/startup and H100 studies. The [CUDA component](https://github.com/beamzorg/beamz/blob/feat/cuda-mstep/cuda/README.md)
+documents the supported API and selection limits.
 
-Raw timing/validation JSON, CSV summaries, logs and experimental source patches
-are included alongside the reports. Binary profiler captures and compressed
-source snapshots remain local and are excluded from Git. References to captured
-source archives in historical reports describe those local artifacts. Current
-solver and benchmark sources are versioned in the repository.
+Keep new generated measurements under `.cache/` or as CI artifacts rather than
+adding raw datasets, logs and derived copies here.
 
-FP32 remains the default. Consistent 9 GCUPS and complete CPML numerical parity
-with origin/main have not been established. H100 numbers discussed so far are
-estimates; the [RunPod setup](https://github.com/beamzorg/beamz/blob/fa151d28/docker/runpod/H100.md) has not yet been tested
-end to end on H100.
+Earlier studies remain historical: [main-merge validation](cuda-merge-validation-2026-09-24.md),
+[random domains](cuda-random-final-comparison-2026-09-18.md), and
+[layout prediction](cuda-layout-prediction-2026-09-18.md). Their experimental
+settings are not current defaults.

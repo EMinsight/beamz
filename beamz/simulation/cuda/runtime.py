@@ -875,6 +875,29 @@ def _temporal_yee_supported(ctx, coeffs, nsteps: int) -> bool:
     return all(value.ndim in (0, 3) for value in values)
 
 
+def _native_schedule_flags(
+    ctx, coeffs, *, sources=False, monitors=0, temporal=False, combined=False
+):
+    flags = 0
+    if ctx.boundary.cpml.enabled:
+        flags |= abi.NATIVE_SCHEDULE_CPML
+    if temporal:
+        flags |= abi.NATIVE_SCHEDULE_TEMPORAL
+    if _uniform_cpml_thickness(ctx) > 0:
+        flags |= abi.NATIVE_SCHEDULE_UNIFORM_CPML
+    if _packed_e_material(coeffs):
+        flags |= abi.NATIVE_SCHEDULE_PACKED_MATERIAL
+    if combined:
+        flags |= abi.NATIVE_SCHEDULE_COMBINED_CPML_CORE
+    if sources:
+        flags |= abi.NATIVE_SCHEDULE_SOURCES
+    if monitors:
+        flags |= abi.NATIVE_SCHEDULE_MONITORS
+    if ctx.config.cuda_flags & abi.CUDA_GRAPH_CACHE:
+        flags |= abi.NATIVE_SCHEDULE_GRAPH_CACHE
+    return flags
+
+
 def _native_schedule_plan(
     state,
     ctx,
@@ -913,30 +936,22 @@ def _native_schedule_plan(
     else:
         raise ValueError(f"unknown native schedule family: {kind!r}")
 
-    flags = 0
-    if cpml:
-        flags |= abi.NATIVE_SCHEDULE_CPML
-    if layout in {
-        abi.PROGRAM_LAYOUT_YEE_TEMPORAL,
-        abi.PROGRAM_LAYOUT_SOURCE_TEMPORAL_CPML,
-        abi.PROGRAM_LAYOUT_MONITOR_TEMPORAL_CPML,
-    }:
-        flags |= abi.NATIVE_SCHEDULE_TEMPORAL
-    if cpml and _uniform_cpml_thickness(ctx) > 0:
-        flags |= abi.NATIVE_SCHEDULE_UNIFORM_CPML
-    if _packed_e_material(coeffs):
-        flags |= abi.NATIVE_SCHEDULE_PACKED_MATERIAL
-    if combined_cpml_core:
-        flags |= abi.NATIVE_SCHEDULE_COMBINED_CPML_CORE
-    if (
-        kind in {"source", "monitor"}
-        or layout == abi.PROGRAM_LAYOUT_SOURCE_TEMPORAL_CPML
-    ):
-        flags |= abi.NATIVE_SCHEDULE_SOURCES
-    if monitor_count:
-        flags |= abi.NATIVE_SCHEDULE_MONITORS
-    if ctx.config.cuda_flags & abi.CUDA_GRAPH_CACHE:
-        flags |= abi.NATIVE_SCHEDULE_GRAPH_CACHE
+    flags = _native_schedule_flags(
+        ctx,
+        coeffs,
+        sources=(
+            kind in {"source", "monitor"}
+            or layout == abi.PROGRAM_LAYOUT_SOURCE_TEMPORAL_CPML
+        ),
+        monitors=monitor_count,
+        temporal=layout
+        in {
+            abi.PROGRAM_LAYOUT_YEE_TEMPORAL,
+            abi.PROGRAM_LAYOUT_SOURCE_TEMPORAL_CPML,
+            abi.PROGRAM_LAYOUT_MONITOR_TEMPORAL_CPML,
+        },
+        combined=combined_cpml_core,
+    )
     return NativeSchedulePlan(
         layout=layout,
         flags=flags,
@@ -1111,6 +1126,105 @@ def _pair_publication_mask(state, packed_monitors):
     return mask
 
 
+def _monitor_io(
+    state,
+    packed,
+    arguments,
+    values,
+    aliases,
+    *,
+    observation_origin,
+    observation_step_offset,
+    phase_steps=1,
+):
+    """Lower the common DFT arena, phase workspace and absolute clocks."""
+    if packed is None:
+        packed = (
+            jnp.zeros((0, 6, 1, 1), jnp.int32),
+            jnp.zeros((0, 6, 1, 1), jnp.float32),
+            jnp.zeros((0, 1), jnp.float32),
+            jnp.zeros((0, 6), jnp.float32),
+            jnp.zeros((0, 5), jnp.int32),
+            jnp.zeros((0, 2), jnp.int32),
+            jnp.zeros((0, 3), jnp.float32),
+        )
+        dft = (jnp.zeros((0,), jnp.float32),) * 3
+    else:
+        dft = (state.dft_vec_re, state.dft_vec_im, state.dft_weight_sum)
+        if any(value.dtype != jnp.float32 for value in dft):
+            raise ValueError("CUDA program graph requires float32 DFT accumulators")
+    count, frequencies = packed[2].shape
+    phase = tuple(
+        jnp.empty((max(1, count) * phase_steps, frequencies), jnp.float32)
+        for _ in range(3)
+    )
+    arguments = (*arguments, *packed)
+    monitor_start = len(values)
+    aliases = dict(aliases)
+    for value in (*dft, *phase):
+        aliases[len(arguments)] = len(values)
+        arguments = (*arguments, value)
+        values = (*values, value)
+    return (
+        (
+            *arguments,
+            observation_origin,
+            state.current_step,
+            jnp.asarray(observation_step_offset, jnp.int32),
+        ),
+        values,
+        aliases,
+        monitor_start,
+        count,
+    )
+
+
+def _replace_dft(state, outputs, start):
+    return state._replace(
+        dft_vec_re=outputs[start],
+        dft_vec_im=outputs[start + 1],
+        dft_weight_sum=outputs[start + 2],
+    )
+
+
+def run_native_steps(
+    state,
+    ctx,
+    coeffs,
+    groups,
+    packed_monitors,
+    nsteps,
+    *,
+    observation_origin,
+    observation_step_offset,
+    native_calls=None,
+):
+    """Dispatch shared CUDA execution, including wrapped storage layouts."""
+    if native_calls is None:
+        from beamz.simulation import cuda
+
+        native_calls = (
+            cuda.run_steps,
+            cuda.run_program_steps,
+            cuda.run_source_group_steps,
+        )
+    ordinary, observed, sourced = native_calls
+    if packed_monitors is not None:
+        return observed(
+            state,
+            ctx,
+            coeffs,
+            groups,
+            packed_monitors,
+            nsteps,
+            observation_origin=observation_origin,
+            observation_step_offset=observation_step_offset,
+        )
+    if any(group is not None for group in groups):
+        return sourced(state, ctx, coeffs, groups, nsteps)
+    return ordinary(state, ctx, coeffs, nsteps)
+
+
 def run_program_steps(
     state,
     ctx,
@@ -1143,21 +1257,19 @@ def run_program_steps(
         if use_temporal_cpml
         else _graph_io(state, ctx, coeffs)
     )
-    state_output_count = len(result_values)
-    result_values = (
-        *result_values,
-        state.dft_vec_re,
-        state.dft_vec_im,
-        state.dft_weight_sum,
+    arguments = (*arguments, *source_arguments)
+    arguments, result_values, aliases, state_output_count, _ = _monitor_io(
+        state,
+        packed_monitors,
+        arguments,
+        result_values,
+        aliases,
+        observation_origin=state.t
+        if observation_origin is None
+        else observation_origin,
+        observation_step_offset=observation_step_offset,
+        phase_steps=plan.temporal_steps,
     )
-    phase_shape = (
-        int(packed_monitors[0].shape[0]) * plan.temporal_steps,
-        int(packed_monitors[2].shape[1]),
-    )
-    phase_sin = jnp.empty(phase_shape, dtype=jnp.float32)
-    phase_cos = jnp.empty(phase_shape, dtype=jnp.float32)
-    phase_window = jnp.empty(phase_shape, dtype=jnp.float32)
-    result_values = (*result_values, phase_sin, phase_cos, phase_window)
     if plan.temporal_steps == 2:
         result_values = (
             *result_values,
@@ -1171,35 +1283,9 @@ def run_program_steps(
                 dtype=jnp.float32,
             ),
         )
-    monitor_output_start = len(arguments) + len(source_arguments) + len(packed_monitors)
-    aliases = {
-        **aliases,
-        monitor_output_start: state_output_count,
-        monitor_output_start + 1: state_output_count + 1,
-        monitor_output_start + 2: state_output_count + 2,
-        monitor_output_start + 3: state_output_count + 3,
-        monitor_output_start + 4: state_output_count + 4,
-        monitor_output_start + 5: state_output_count + 5,
-    }
-    call = _ffi_call(abi.CUDA_PROGRAM_TARGET, result_values, aliases)
-    outputs = call(
+        arguments = (*arguments, _pair_publication_mask(state, packed_monitors))
+    outputs = _ffi_call(abi.CUDA_PROGRAM_TARGET, result_values, aliases)(
         *arguments,
-        *source_arguments,
-        *packed_monitors,
-        state.dft_vec_re,
-        state.dft_vec_im,
-        state.dft_weight_sum,
-        phase_sin,
-        phase_cos,
-        phase_window,
-        state.t if observation_origin is None else observation_origin,
-        state.current_step,
-        jnp.asarray(observation_step_offset, dtype=jnp.int32),
-        *(
-            (_pair_publication_mask(state, packed_monitors),)
-            if plan.temporal_steps == 2
-            else ()
-        ),
         **_program_attributes(ctx, nsteps, plan),
     )
     if use_temporal_cpml:
@@ -1214,11 +1300,7 @@ def run_program_steps(
         next_state = _replace_graph_outputs(state, outputs)
     else:
         next_state = _replace_fields(state, outputs)
-    return next_state._replace(
-        dft_vec_re=outputs[state_output_count],
-        dft_vec_im=outputs[state_output_count + 1],
-        dft_weight_sum=outputs[state_output_count + 2],
-    )
+    return _replace_dft(next_state, outputs, state_output_count)
 
 
 def run_steps(state, ctx, coeffs, nsteps: int) -> SimulationState:

@@ -7,7 +7,12 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from beamz.simulation.cuda.storage import wrap_native_calls, wrap_program_call
+from beamz.simulation.cuda.storage import (
+    _permute_monitor_arena,
+    mstep_plan_inputs,
+    wrap_native_calls,
+    wrap_program_call,
+)
 from tests.unit.test_cuda_runtime_contract import _program_and_state
 
 
@@ -17,6 +22,49 @@ class SourceGroup:
     starts: object
     starts_tuple: tuple
     max_sizes: tuple
+
+
+@pytest.mark.parametrize("order", [(2, 0, 1, 5, 3, 4), (1, 2, 0, 4, 5, 3)])
+def test_monitor_block_permutation_matches_index_reference_with_ragged_gaps(order):
+    values = jnp.arange(81, dtype=jnp.float32)
+    counts = np.array([[1, 5, 0, 43, 0], [2, 3, 0, 2, 0]], dtype=np.int32)
+    indices = np.arange(values.size)
+    for frequencies, points, _, offset, _ in counts:
+        end = offset + 6 * frequencies * points
+        indices[offset:end] = indices[offset:end].reshape(6, -1)[list(order)].ravel()
+    transformed = jax.jit(lambda v: _permute_monitor_arena(v, counts, order))(values)
+    np.testing.assert_array_equal(transformed, np.asarray(values)[indices])
+    inverse = tuple(order.index(i) for i in range(6))
+    np.testing.assert_array_equal(
+        _permute_monitor_arena(transformed, counts, inverse), values
+    )
+
+
+def test_empty_monitor_metadata_preserves_arena():
+    values = jnp.arange(7, dtype=jnp.float32)
+    assert (
+        _permute_monitor_arena(values, np.empty((0, 5)), (2, 0, 1, 5, 3, 4)) is values
+    )
+
+
+def test_canonical_wrapper_preserves_clock_arguments():
+    def native(state, ctx, coeffs, groups, monitors, nsteps, **clock):
+        assert nsteps == 7
+        assert clock == {"observation_origin": 0.5, "observation_step_offset": 19}
+        return state
+
+    state = object()
+    result = wrap_program_call(native, (0, 1, 2))(
+        state,
+        None,
+        None,
+        None,
+        None,
+        7,
+        observation_origin=0.5,
+        observation_step_offset=19,
+    )
+    assert result is state
 
 
 @pytest.mark.parametrize(
@@ -84,9 +132,39 @@ def test_rotated_native_boundary_preserves_physical_samples(axes, components, pa
     )
     lanes = (*components, *(3 + c for c in components))
     calls = []
+    plan_program = replace(
+        program,
+        config=replace(program.config, cuda_storage_axes=axes),
+        boundary=context.boundary,
+    )
+    planned_shapes, planned_cpml, planned_groups, planned_indices = mstep_plan_inputs(
+        plan_program, groups, monitors
+    )
 
     def native(rotated, ctx, material, sources, samples, nsteps):
         calls.append(nsteps)
+        assert planned_shapes == tuple(
+            getattr(rotated, name).shape
+            for name in ("hx", "hy", "hz", "ex", "ey", "ez")
+        )
+        np.testing.assert_array_equal(planned_indices, samples[0])
+        for planned, actual in zip(planned_groups, sources, strict=True):
+            if actual is None:
+                assert planned is None
+            else:
+                assert planned.coeffs.shape == actual.coeffs.shape
+                np.testing.assert_array_equal(planned.starts, actual.starts)
+        for phase in "he":
+            for planned, actual in zip(
+                getattr(planned_cpml, phase + "_terms"),
+                getattr(ctx.boundary.cpml, phase + "_terms"),
+                strict=True,
+            ):
+                assert (planned.component, planned.axis, planned.slab) == (
+                    actual.component,
+                    actual.axis,
+                    actual.slab,
+                )
         for new, old in enumerate(lanes):
             original = np.asarray(getattr(state, names[old]))
             transformed = np.asarray(getattr(rotated, names[new]))
@@ -215,7 +293,7 @@ def test_storage_rejects_reflections_and_unsupported_geometry():
     call = wrap_program_call(
         lambda *args: pytest.fail("Native call reached"), (1, 2, 0)
     )
-    with pytest.raises(ValueError, match="uniform 3D CPML"):
+    with pytest.raises(ValueError, match="uniform 3D and diagonal"):
         call(
             state,
             replace(context, is_3d=False),
@@ -234,3 +312,26 @@ def test_storage_rejects_reflections_and_unsupported_geometry():
     )
     with pytest.raises(ValueError, match="canonical 3D CPML"):
         call(state, context, program.coefficients, (None,) * 9, None, 3)
+
+
+@pytest.mark.parametrize("axes", [(0, 1, 2), (1, 2, 0), (2, 0, 1)])
+@pytest.mark.parametrize("monitor", [False, True])
+def test_plan_metadata_without_cpml_or_sources(axes, monitor):
+    program, state, _ = _program_and_state(cpml=False)
+    program = replace(program, config=replace(program.config, cuda_storage_axes=axes))
+    groups = (None,) * 9
+    monitors = (np.zeros((1, 6), np.int32),) if monitor else None
+    shapes, cpml, sources, indices = mstep_plan_inputs(program, groups, monitors)
+    components = tuple(2 - axes[2 - c] for c in range(3))
+    order = (*components, *(3 + c for c in components))
+    fields = (state.hx, state.hy, state.hz, state.ex, state.ey, state.ez)
+    assert shapes == tuple(tuple(fields[c].shape[a] for a in axes) for c in order)
+    assert cpml.h_terms == cpml.e_terms == ()
+    assert sources == groups
+    if monitor:
+        np.testing.assert_array_equal(indices, monitors[0])
+    else:
+        assert indices is None
+    if axes == (0, 1, 2):
+        assert cpml is program.boundary.cpml
+        assert sources is groups

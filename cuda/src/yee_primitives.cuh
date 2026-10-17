@@ -84,15 +84,22 @@ __device__ __forceinline__ float CorrectCpmlDerivative(float sign,
   return __fmul_rn(sign, __fmaf_rn(derivative, inv_kappa, next_psi));
 }
 
+template <typename Index>
+__device__ __forceinline__ float PackedMaterialSource(
+    const float* codebook, int64_t codebook_size, const uint32_t* packed,
+    Index linear) {
+  const uint32_t word = packed[linear >> 2];
+  const uint32_t code = (word >> (8 * (linear & 3))) & 0xffu;
+  return code < codebook_size ? codebook[code] : 0.0f;
+}
+
 __device__ __forceinline__ float PackedMaterialSource(
     const BeamzBuffer& codebook, const BeamzBuffer& packed_codes,
     int64_t linear) {
-  const auto* packed = static_cast<const uint32_t*>(packed_codes.data);
-  const uint32_t word = packed[linear >> 2];
-  const uint32_t code = (word >> (8 * (linear & 3))) & 0xffu;
-  return code < codebook.dims[0]
-             ? static_cast<const float*>(codebook.data)[code]
-             : 0.0f;
+  return PackedMaterialSource(static_cast<const float*>(codebook.data),
+                              codebook.dims[0],
+                              static_cast<const uint32_t*>(packed_codes.data),
+                              linear);
 }
 
 __host__ __device__ __forceinline__ bool PecConstrained(

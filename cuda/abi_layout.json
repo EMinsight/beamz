@@ -1,12 +1,13 @@
 {
-  "abi_version": 27,
-  "component_version": "0.27.0",
+  "abi_version": 28,
+  "component_version": "0.28.0",
   "targets": {
     "streamed": "beamz_cuda_streamed",
     "sharded": "beamz_cuda_sharded",
     "program": "beamz_cuda_program",
     "adjoint": "beamz_cuda_adjoint",
-    "material_adjoint": "beamz_cuda_material_adjoint"
+    "material_adjoint": "beamz_cuda_material_adjoint",
+    "mstep": "beamz_cuda_mstep"
   },
   "streamed_targets": [
     "streamed",
@@ -24,7 +25,14 @@
     "temporal_pair": 16,
     "shell32x8": 17,
     "shell32x4": 18,
-    "cpml_pair": 19
+    "cpml_pair": 19,
+    "mstep_tile8x32": 20,
+    "mstep_tile8x16": 21,
+    "mstep_tile16x16": 22,
+    "mstep_segment32": 23,
+    "mstep_segment64": 24,
+    "mstep_segment128": 25,
+    "mstep_segment256": 26
   },
   "default_flags": [
     "graph_cache"
@@ -88,6 +96,7 @@
     "temporal_e_psi_workspace_offset": 30,
     "temporal_field_workspace_input": 74,
     "temporal_psi_workspace_input": 80,
-    "monitor_elapsed_steps_input": 15
+    "monitor_elapsed_steps_input": 15,
+    "mstep_plan_buffer_count": 5
   }
 }

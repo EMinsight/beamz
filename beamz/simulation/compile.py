@@ -92,6 +92,8 @@ class CompiledProgramKey:
     boundaries: tuple[HashToken, ...]
     cuda_tuning_policy: tuple = ()
     cuda_memory_policy: str = "auto"
+    cuda_schedule: str = "streamed"
+    cuda_expected_runs: int = 1
 
     @classmethod
     def from_request(cls, request: SimulationRequest) -> CompiledProgramKey:
@@ -116,12 +118,24 @@ class CompiledProgramKey:
             tuple(cache_token(monitor) for monitor in request.monitors),
             tuple(cache_token(boundary) for boundary in request.boundaries),
             cuda_memory_policy=request.run.cuda_memory_policy,
+            cuda_schedule=request.run.cuda_schedule,
+            cuda_expected_runs=request.run.cuda_expected_runs,
         )
 
 
 def _preparation_key(key: CompiledProgramKey):
     # Horizon and observation/source plans do not change constitutive arrays.
-    # Keep dt, materials, boundaries, layout, backend and numerical flags intact.
+    # CUDA schedules share constitutive arrays. Kernel/workspace choices must
+    # not create extra material banks when trying several launch configurations.
+    from ._cuda_abi import (
+        CUDA_BF16_PSI,
+        CUDA_FIELD_PAD32,
+        CUDA_FIELD_PAD64,
+        CUDA_FIELD_PAD_Y8,
+    )
+
+    cuda_backend = key.backend in {"cuda_streamed", "cuda_mstep"}
+
     return replace(
         key,
         num_steps=0,
@@ -130,6 +144,17 @@ def _preparation_key(key: CompiledProgramKey):
         sources=(),
         monitors=(),
         cuda_tuning_policy=(),
+        cuda_schedule="streamed",
+        cuda_expected_runs=1,
+        backend="cuda_streamed" if cuda_backend else key.backend,
+        cuda_flags=key.cuda_flags
+        & (CUDA_BF16_PSI | CUDA_FIELD_PAD32 | CUDA_FIELD_PAD64 | CUDA_FIELD_PAD_Y8)
+        if cuda_backend
+        else key.cuda_flags,
+        cuda_memory_policy="auto",
+        cuda_graph_cache_capacity=0,
+        # Storage permutations are applied by the runtime to these canonical arrays.
+        cuda_storage_axes=(0, 1, 2) if cuda_backend else key.cuda_storage_axes,
     )
 
 
@@ -474,6 +499,8 @@ def _prepare_compilation(
         cuda_graph_cache_capacity=int(request.run.cuda_graph_cache_capacity),
         cuda_storage_axes=request.run.cuda_storage_axes,
         cuda_memory_policy=request.run.cuda_memory_policy,
+        cuda_schedule=request.run.cuda_schedule,
+        cuda_expected_runs=request.run.cuda_expected_runs,
     )
     return _CompileSetup(
         dt,
@@ -770,7 +797,7 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
 
     empty3 = jnp.zeros((0, 0, 0), dtype=jnp.float32)
     if use_3d_material_coefficients:
-        if request.run.backend == "cuda_streamed":
+        if request.run.backend in {"cuda_streamed", "cuda_mstep"}:
             (
                 (h_decay_x, h_source_x),
                 (h_decay_y, h_source_y),
@@ -810,7 +837,7 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
         h_sigma_m_x = h_sigma_m_y = h_sigma_m_z = empty3
 
     if use_3d_material_coefficients:
-        if request.run.backend == "cuda_streamed":
+        if request.run.backend in {"cuda_streamed", "cuda_mstep"}:
             (
                 (e_decay_x, e_source_x),
                 (e_decay_y, e_source_y),
@@ -952,7 +979,7 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
     # original constitutive grids used by JAX. Do not transfer a second material
     # representation with every runtime invocation. The grid still owns setup
     # materials, and coupled CUDA updates retain their explicit inverse tensors.
-    if request.run.backend == "cuda_streamed":
+    if request.run.backend in {"cuda_streamed", "cuda_mstep"}:
         h_sigma_m_x = h_sigma_m_y = h_sigma_m_z = empty3
         e_conductivity_x = e_conductivity_y = e_conductivity_z = empty3
         e_permittivity_x = e_permittivity_y = e_permittivity_z = empty3
@@ -1041,6 +1068,8 @@ def compile_program(
     sharding=None,
     backend: str | None = "auto",
     progress: bool = False,
+    schedule: str | None = None,
+    expected_runs: int = 1,
     setup_context_factory=None,
     compile_factory=None,
 ) -> CompiledProgram:
@@ -1075,6 +1104,13 @@ def compile_program(
     from .sharding import _jax_devices_for_config
 
     requested_backend = normalize_backend(backend)
+    from .cuda.schedule import normalize_schedule_request
+
+    requested_schedule, expected_runs = normalize_schedule_request(
+        requested_backend,
+        schedule,
+        expected_runs,
+    )
     sharding_token = sharding_cache_token(sharding)
     metric_kind = simulation.grid.metric_kind_for(
         ("x", "y", "z") if simulation.is_3d else ("x", "y")
@@ -1133,9 +1169,21 @@ def compile_program(
     resolved_backend = (
         "jax"
         if requested_backend == "auto" and not cuda_problem_supported
-        else resolve_backend(requested_backend)
+        else resolve_backend(
+            "cuda_mstep" if requested_schedule == "mstep" else requested_backend
+        )
     )
+    if requested_schedule == "mstep" and (
+        not cuda_problem_supported or multi_device or metric_kind != "isotropic_uniform"
+    ):
+        raise CudaBackendUnavailable(
+            "cuda_mstep requires an unsharded isotropic uniform 3D grid"
+        )
     cuda_flags = cuda_flags_from_env() if resolved_backend != "jax" else 0
+    if requested_schedule == "mstep":
+        from .cuda.mstep_config import ALLOWED_FLAGS
+
+        cuda_flags &= ALLOWED_FLAGS
     cuda_storage_axes = (
         cuda_storage_axes_from_env(
             # Automatic sharding can resolve to a single-device execution plan.
@@ -1144,8 +1192,11 @@ def compile_program(
         if resolved_backend != "jax"
         else (0, 1, 2)
     )
-    if cuda_storage_axes != (0, 1, 2) and resolved_backend != "cuda_streamed":
-        raise ValueError("CUDA storage-axis permutations require cuda_streamed")
+    if cuda_storage_axes != (0, 1, 2) and resolved_backend not in {
+        "cuda_streamed",
+        "cuda_mstep",
+    }:
+        raise ValueError("CUDA storage-axis permutations require a CUDA schedule")
     cuda_graph_cache_capacity = (
         cuda_graph_cache_capacity_from_env() if resolved_backend != "jax" else 0
     )
@@ -1162,25 +1213,26 @@ def compile_program(
         request,
         run=replace(
             request.run,
+            cuda_schedule=requested_schedule,
+            cuda_expected_runs=expected_runs,
             cuda_flags=cuda_flags,
             cuda_graph_cache_capacity=cuda_graph_cache_capacity,
             cuda_storage_axes=cuda_storage_axes,
             cuda_memory_policy=(
-                cuda_memory_policy_from_env()
-                if resolved_backend == "cuda_streamed"
-                else "auto"
+                cuda_memory_policy_from_env() if resolved_backend != "jax" else "auto"
             ),
         ),
     )
     signature = CompiledProgramKey.from_request(request)
     tuning_policy = None
-    if resolved_backend == "cuda_streamed":
+    if resolved_backend == "cuda_streamed" and requested_schedule != "mstep":
         from .cuda.tuning import tuning_policy_from_env
 
         tuning_policy = tuning_policy_from_env()
         if (
             metric_kind == "isotropic_uniform"
-            and steps >= 32
+            and steps >= 16
+            and steps * expected_runs >= 32
             and np.prod(material_grid.shape) >= 8 * 1024 * 1024
         ):
             signature = replace(signature, cuda_tuning_policy=tuning_policy)

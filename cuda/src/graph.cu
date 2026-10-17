@@ -135,6 +135,9 @@ void AppendBuffer(std::string* key, const BeamzBuffer& value) {
   Append(key, value.element_type);
   Append(key, value.row_stride);
   Append(key, value.plane_stride);
+  Append(key, value.compact_slots);
+  Append(key, value.compact_ny);
+  Append(key, value.compact_nx);
   for (int axis = 0; axis < 4; ++axis) Append(key, value.dims[axis]);
 }
 
@@ -190,6 +193,10 @@ void AppendMonitors(std::string* key, const BeamzDftGroupLaunch& value) {
 }
 
 }  // namespace
+
+void BeamzAppendBufferKey(std::string* key, const BeamzBuffer& buffer) {
+  AppendBuffer(key, buffer);
+}
 
 std::string BeamzGraphKey(const char* schedule, void* stream,
                           const BeamzProgramLaunch& program) {

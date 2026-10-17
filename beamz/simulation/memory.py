@@ -21,12 +21,16 @@ def cuda_memory_policy_from_env() -> str:
     return policy
 
 
-def cuda_workspace_estimate(program, *, donate_state: bool) -> int:
+def cuda_workspace_estimate(
+    program, *, donate_state: bool, mstep_plan=None, mstep=False, low_memory=False
+) -> int:
     """Estimate optional fast-schedule workspace on the busiest device.
 
     Include both field banks for pair kernels, rotated materials for layout
     transforms, replicated normal CPML slabs, and retained input ownership.
     This intentionally overestimates rather than promising an exact peak.
+    With mstep=True and no plan, count only unavoidable mstep allocations. This
+    is a lower bound for early rejection, not permission to skip the full check.
     """
     layout = program.sharding.layout
     count = layout.num_devices if layout.enabled else 1
@@ -40,8 +44,29 @@ def cuda_workspace_estimate(program, *, donate_state: bool) -> int:
         for term in (*program.boundary.cpml.h_terms, *program.boundary.cpml.e_terms)
     )
     state = fields + psi
-    bank_count = 2 if program.config.cuda_flags & abi.CUDA_TEMPORAL_PAIR else 1
-    workspace = bank_count * state
+    # Frozen-input streamed graphs may use an alternate bank even without the
+    # temporal-pair flag. Pair graphs can use a third bank. Count those possible
+    # banks conservatively; capacity mode uses only the in-place output state.
+    bank_count = (
+        1
+        if low_memory
+        else 3
+        if program.config.cuda_flags & abi.CUDA_TEMPORAL_PAIR
+        else 2
+    )
+    if mstep or mstep_plan is not None:
+        # Output state, alternate bank, compact intermediate fields and static
+        # dependency arrays. Retained caller state is accounted for below.
+        workspace = state + fields
+        if mstep_plan is not None:
+            summary = mstep_plan.summary()
+            workspace += summary["scratch_bytes"] + summary["plan_bytes"]
+        workspace += sum(
+            int(m.freq_count) * int(m.dft_point_count) * 6 * 2 * 4
+            for m in program.monitors
+        )
+    else:
+        workspace = bank_count * state
     if (layout.enabled and layout.axis == 2) or program.config.cuda_storage_axes != (
         0,
         1,
@@ -64,6 +89,19 @@ def cuda_capacity_schedule(program, *, donate_state: bool) -> bool:
     policy = program.config.cuda_memory_policy
     if policy != "auto":
         return policy == "capacity"
+    available = cuda_available_bytes(program)
+    # CPU contract tests and older backends may not expose allocator statistics.
+    # Explicit capacity mode is available without querying or initializing a GPU.
+    if available is None:
+        return False
+    return (
+        cuda_workspace_estimate(program, donate_state=donate_state) + (64 << 20)
+        > available
+    )
+
+
+def cuda_available_bytes(program) -> int | None:
+    """Return the smallest remaining CUDA allocator budget, when available."""
     mesh = program.sharding.mesh
     devices = tuple(mesh.devices.flat) if mesh is not None else tuple(jax.devices())
     budgets = []
@@ -73,10 +111,26 @@ def cuda_capacity_schedule(program, *, donate_state: bool) -> bool:
         stats = device.memory_stats()
         if stats and "bytes_limit" in stats and "bytes_in_use" in stats:
             budgets.append(int(stats["bytes_limit"]) - int(stats["bytes_in_use"]))
-    # CPU contract tests and older backends may not expose allocator statistics.
-    # Explicit capacity mode is available without querying or initializing a GPU.
-    if not budgets:
-        return False
-    return cuda_workspace_estimate(program, donate_state=donate_state) + (
-        64 << 20
-    ) > min(budgets)
+    return min(budgets) if budgets else None
+
+
+def check_mstep_workspace(program, plan, *, donate_state):
+    """Check a forced temporal workspace before lowering its allocations."""
+    from beamz.simulation.backend import CudaBackendUnavailable
+
+    required = cuda_workspace_estimate(
+        program, donate_state=donate_state, mstep_plan=plan
+    )
+    available = cuda_available_bytes(program)
+    if program.config.cuda_memory_policy == "capacity":
+        raise CudaBackendUnavailable(
+            "schedule='mstep' requires additional field workspace; "
+            "memory policy 'capacity' requires schedule='streamed' or 'auto'"
+        )
+    if available is not None and required + (64 << 20) > available:
+        raise CudaBackendUnavailable(
+            f"schedule='mstep' estimates {required / 2**20:.0f} MiB of workspace "
+            f"plus 64 MiB headroom, but only {available / 2**20:.0f} MiB remains; "
+            "use schedule='streamed' or 'auto', or reduce the simulation size"
+        )
+    return required, available

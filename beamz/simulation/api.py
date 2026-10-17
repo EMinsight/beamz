@@ -1184,7 +1184,13 @@ class Simulation:
         return state._replace(polarization=initial_polarization(program.dispersion))
 
     def step(
-        self, state=None, *, donate_state=False, backend="auto"
+        self,
+        state=None,
+        *,
+        donate_state=False,
+        backend="auto",
+        schedule=None,
+        expected_runs=1,
     ) -> SimulationState:
         """Advance runtime state by exactly one timestep.
 
@@ -1196,9 +1202,18 @@ class Simulation:
             Allow JAX to recycle buffers owned by ``state``. After a donating call,
             the input state must not be read or reused.
             CUDA selects its execution schedule separately from buffer ownership.
-        backend : {"auto", "jax", "cuda", "cuda_streamed"}, default="auto"
+        backend : {"auto", "jax", "cuda", "cuda_streamed", "cuda_mstep"}, default="auto"
             Execution policy. ``auto`` uses the optional CUDA extension when it is
-            compatible and otherwise retains the JAX implementation.
+            compatible and otherwise retains the JAX implementation. ``cuda_mstep``
+            explicitly selects the experimental two-step CUDA scheduler.
+        schedule : {"auto", "streamed", "mstep"}, optional
+            CUDA execution schedule. Omitting it preserves established streamed
+            selection. ``schedule="auto"`` opts into selection by time to result;
+            unmeasured cases retain streamed. CUDA backend names remain explicit
+            schedule overrides.
+        expected_runs : int, default=1
+            Expected executions reusing this program. Automatic CUDA selection
+            uses this hint to amortize compilation; it does not execute extra runs.
 
         Returns
         -------
@@ -1224,7 +1239,9 @@ class Simulation:
         if current_step >= self.num_steps:
             assert state is not None
             return state
-        program = self.compile(num_steps=1, backend=backend)
+        program = self.compile(
+            num_steps=1, backend=backend, schedule=schedule, expected_runs=expected_runs
+        )
         if state is None:
             state = SimulationState.initial(program.grid, t=float(self.time[0]))
         return execute_step(
@@ -1244,6 +1261,8 @@ class Simulation:
         sharding=(False, "auto", None, None),
         compiler_sharding=None,
         progress: bool = False,
+        schedule: str | None = None,
+        expected_runs: int = 1,
     ) -> SimulationRequest:
         """Build the immutable compiler request for this simulation.
 
@@ -1265,6 +1284,14 @@ class Simulation:
             Runtime sharding configuration consumed by the compiler.
         progress : bool, default=False
             Display setup progress while rasterizing the material grid.
+        schedule : {"auto", "streamed", "mstep"}, optional
+            CUDA execution schedule. Omitting it preserves established streamed
+            selection. ``schedule="auto"`` opts into selection by time to result;
+            unmeasured cases retain streamed. CUDA backend names remain explicit
+            schedule overrides.
+        expected_runs : int, default=1
+            Expected executions reusing this program. Automatic CUDA selection
+            uses this hint to amortize compilation; it does not execute extra runs.
 
         Returns
         -------
@@ -1278,6 +1305,11 @@ class Simulation:
         compiler development, and reproducibility tooling.
         """
         # 1. Resolve Design's material raster; numerical boundary lowering belongs to compile.py.
+        from beamz.simulation.cuda.schedule import normalize_schedule_request
+
+        cuda_schedule, expected_runs = normalize_schedule_request(
+            backend, schedule, expected_runs
+        )
         material_grid = self._material_grid(progress=progress)
         requested_steps = int(self.num_steps if num_steps is None else num_steps)
         # 2. Snapshot grid, run, and domain controls into immutable value objects, then
@@ -1291,6 +1323,8 @@ class Simulation:
                 loop_kind=str(loop_kind),
                 source_single_slab_dense=bool(source_single_slab_dense),
                 backend=str(backend),
+                cuda_schedule=cuda_schedule,
+                cuda_expected_runs=expected_runs,
                 sharding=sharding,
             ),
             DomainSpec(
@@ -1313,6 +1347,8 @@ class Simulation:
         sharding=None,
         backend="auto",
         progress: bool = False,
+        schedule: str | None = None,
+        expected_runs: int = 1,
     ) -> CompiledProgram:
         """Prepare or retrieve a reusable compiled execution plan.
 
@@ -1323,11 +1359,19 @@ class Simulation:
             length is used when omitted.
         sharding : ShardingConfig or compatible value, optional
             Runtime device-sharding policy. ``None`` selects the default placement.
-        backend : {"auto", "jax", "cuda", "cuda_streamed"}, default="auto"
+        backend : {"auto", "jax", "cuda", "cuda_streamed", "cuda_mstep"}, default="auto"
             Execution policy. Explicit CUDA variants fail if their required typed
             FFI target or GPU architecture is unavailable.
         progress : bool, default=False
             Display setup progress while rasterizing and lowering the simulation.
+        schedule : {"auto", "streamed", "mstep"}, optional
+            CUDA execution schedule. Omitting it preserves established streamed
+            selection. ``schedule="auto"`` opts into selection by time to result;
+            unmeasured cases retain streamed. CUDA backend names remain explicit
+            schedule overrides.
+        expected_runs : int, default=1
+            Expected executions reusing this program. Automatic CUDA selection
+            uses this hint to amortize compilation; it does not execute extra runs.
 
         Returns
         -------
@@ -1360,6 +1404,8 @@ class Simulation:
             sharding=sharding,
             backend=backend,
             progress=progress,
+            schedule=schedule,
+            expected_runs=expected_runs,
             setup_context_factory=_resolved_setup_device_context,
             compile_factory=compile_simulation,
         )
@@ -1504,6 +1550,8 @@ class Simulation:
         sharding=None,
         donate_state=False,
         backend="auto",
+        schedule=None,
+        expected_runs=1,
         performance=True,
     ) -> SimulationRun:
         """Execute a fresh or continued segment and return results plus next state.
@@ -1529,11 +1577,19 @@ class Simulation:
             CUDA keeps its fast schedule when estimated workspace fits; otherwise
             it selects in-place execution. Set BEAMZ_CUDA_MEMORY_POLICY to
             ``speed`` or ``capacity`` to override the default ``auto`` policy.
-        backend : {"auto", "jax", "cuda", "cuda_streamed"}, default="auto"
+        backend : {"auto", "jax", "cuda", "cuda_streamed", "cuda_mstep"}, default="auto"
             Execution policy. ``auto`` preserves JAX as the fallback when the
             optional CUDA runtime is not installed.
         performance : bool, default=True
             Print JIT- and setup-free runtime and GCUPS after this segment finishes.
+        schedule : {"auto", "streamed", "mstep"}, optional
+            CUDA execution schedule. Omitting it preserves established streamed
+            selection. ``schedule="auto"`` opts into selection by time to result;
+            unmeasured cases retain streamed. CUDA backend names remain explicit
+            schedule overrides.
+        expected_runs : int, default=1
+            Expected executions reusing this program. Automatic CUDA selection
+            uses this hint to amortize compilation; it does not execute extra runs.
 
         Returns
         -------
@@ -1591,6 +1647,8 @@ class Simulation:
                 num_steps=steps,
                 sharding=sharding,
                 backend=backend,
+                schedule=schedule,
+                expected_runs=expected_runs,
                 store_full_materials=bool(store_full_materials),
                 monitor_steps=remaining,
                 donate_state=bool(donate_state),
@@ -1602,6 +1660,8 @@ class Simulation:
             num_steps=steps,
             sharding=sharding,
             backend=backend,
+            schedule=schedule,
+            expected_runs=expected_runs,
             progress=False,
         )
         if state is None:
@@ -1625,6 +1685,8 @@ class Simulation:
         store_full_materials=False,
         sharding=None,
         backend="auto",
+        schedule=None,
+        expected_runs=1,
         termination: AutoTermination | None = None,
         performance: bool = True,
     ) -> SimulationResults:
@@ -1639,7 +1701,7 @@ class Simulation:
             material regions needed by configured analysis monitors.
         sharding : ShardingConfig or compatible value, optional
             Runtime device-sharding policy.
-        backend : {"auto", "jax", "cuda", "cuda_streamed"}, default="auto"
+        backend : {"auto", "jax", "cuda", "cuda_streamed", "cuda_mstep"}, default="auto"
             Execution policy. ``cuda`` chooses the best compatible CUDA target.
         termination : AutoTermination, optional
             Bounded convergence policy. When supplied, BeamZ executes reusable
@@ -1648,6 +1710,14 @@ class Simulation:
         performance : bool, default=True
             Print JIT- and setup-free runtime and GCUPS after completion. Set to
             ``False`` to suppress reporting and timing instrumentation.
+        schedule : {"auto", "streamed", "mstep"}, optional
+            CUDA execution schedule. Omitting it preserves established streamed
+            selection. ``schedule="auto"`` opts into selection by time to result;
+            unmeasured cases retain streamed. CUDA backend names remain explicit
+            schedule overrides.
+        expected_runs : int, default=1
+            Expected executions reusing this program. Automatic CUDA selection
+            uses this hint to amortize compilation; it does not execute extra runs.
 
         Returns
         -------
@@ -1684,6 +1754,8 @@ class Simulation:
                 store_full_materials=bool(store_full_materials),
                 sharding=sharding,
                 backend=backend,
+                schedule=schedule,
+                expected_runs=expected_runs,
                 performance=bool(performance),
             )
         # The initial state is private to this call, so donating it is always safe and
@@ -1693,6 +1765,8 @@ class Simulation:
             store_full_materials=bool(store_full_materials),
             sharding=sharding,
             backend=backend,
+            schedule=schedule,
+            expected_runs=expected_runs,
             donate_state=True,
             performance=bool(performance),
         ).results

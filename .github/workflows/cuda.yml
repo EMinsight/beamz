@@ -15,7 +15,10 @@ on:
       - "cuda/**"
       - "scripts/generate_cuda_abi.py"
       - "scripts/benchmark_h100.py"
+      - "scripts/benchmark_cuda_revision.py"
+      - "scripts/benchmark_cuda_realistic.py"
       - "tests/hardware/test_cuda_backends.py"
+      - "tests/hardware/test_cuda_mstep.py"
       - "tests/performance/**"
   pull_request:
     paths:
@@ -30,7 +33,10 @@ on:
       - "cuda/**"
       - "scripts/generate_cuda_abi.py"
       - "scripts/benchmark_h100.py"
+      - "scripts/benchmark_cuda_revision.py"
+      - "scripts/benchmark_cuda_realistic.py"
       - "tests/hardware/test_cuda_backends.py"
+      - "tests/hardware/test_cuda_mstep.py"
       - "tests/performance/**"
   workflow_dispatch:
 
@@ -118,7 +124,7 @@ jobs:
       - name: Run complete-state numerical parity
         run: >-
           uv run --no-sync --no-active --python 3.11 python -m pytest
-          tests/hardware/test_cuda_backends.py
+          tests/hardware/test_cuda_backends.py tests/hardware/test_cuda_mstep.py
           -v --tb=short --durations=20
       - name: Capture canonical H100 records
         run: |
@@ -128,6 +134,22 @@ jobs:
               uv run --no-sync --no-active --python 3.11 python scripts/benchmark_h100.py \
                 --workload "$workload" --backend "$backend" --samples 5 \
                 --output "${RUNNER_TEMP}/benchmark-results/${workload}-${backend}.json"
+            done
+          done
+      - name: Capture CUDA schedule comparisons
+        env:
+          CUDA_VISIBLE_DEVICES: "0"
+        run: |
+          for shape in '64 96 128' '128 256 512' '256 512 512' '512 256 64'; do
+            read -r z y x <<< "$shape"
+            reference="${RUNNER_TEMP}/reference-${z}-${y}-${x}"
+            for backend in cuda_streamed cuda_mstep; do
+              options=()
+              if [ "$backend" = cuda_streamed ]; then options+=(--save-reference); fi
+              uv run --no-sync --no-active --python 3.11 python scripts/benchmark_cuda_revision.py \
+                --root "$GITHUB_WORKSPACE" --backend "$backend" --shape "$z" "$y" "$x" \
+                --material binary --steps 256 --samples 5 --reference "$reference" "${options[@]}" \
+                --output "${RUNNER_TEMP}/benchmark-results/${z}-${y}-${x}-${backend}.json"
             done
           done
       - name: Enforce provisional CUDA promotion thresholds

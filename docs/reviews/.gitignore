@@ -1,3 +1,3 @@
-# Retain local captures and source bundles outside Git; summaries are versioned.
+# Keep profiler captures and compressed evidence outside the source tree.
 *.pb
 *.gz

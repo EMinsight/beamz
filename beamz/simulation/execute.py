@@ -7,11 +7,11 @@ import os
 import pathlib
 import platform
 import sys
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from time import perf_counter
-from typing import cast
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -602,7 +602,7 @@ def forward_step(
         local_single_owner=cfg.backend == "cuda_streamed",
     )
     kernel_owns_pec = (
-        cfg.backend == "cuda_streamed"
+        cfg.backend in {"cuda_streamed", "cuda_mstep"}
         and not cfg.sharding.enabled
         and not program.sources
     )
@@ -760,7 +760,7 @@ def build_step_context(program, *, donate_state: bool = False):
     )
 
 
-def build_scan(program, *, donate_state: bool = False, checkpoint_interval=None):
+def build_scan(program, *, donate_state: bool = False, checkpoint_interval=None) -> Any:
     """Build the compiled scan, optionally rematerializing chunks for reverse AD.
 
     Checkpointed JAX execution uses the ordinary timestep, source, boundary,
@@ -812,7 +812,7 @@ def build_scan(program, *, donate_state: bool = False, checkpoint_interval=None)
     )
     packed_graph_monitors = None
     if (
-        cfg.backend == "cuda_streamed"
+        cfg.backend in {"cuda_streamed", "cuda_mstep"}
         and not cfg.sharding.enabled
         and graph_monitors_supported
         and not bool(jax.config.read("jax_enable_x64"))
@@ -821,11 +821,43 @@ def build_scan(program, *, donate_state: bool = False, checkpoint_interval=None)
 
         packed_graph_monitors = pack_dft_monitors(program.monitors)
     cuda_multi_step = (
-        cfg.backend == "cuda_streamed"
+        cfg.backend in {"cuda_streamed", "cuda_mstep"}
         and not cfg.sharding.enabled
         and (not program.monitors or packed_graph_monitors is not None)
         and (not program.sources or source_groups_supported)
     )
+    from beamz.simulation.cuda.schedule import choose_execution_schedule
+
+    mstep_plan, schedule_decision = choose_execution_schedule(
+        program,
+        graph_source_groups,
+        packed_graph_monitors,
+        native_supported=cuda_multi_step,
+        donate_state=donate_state,
+    )
+    if mstep_plan is not None:
+        from beamz.simulation.cuda.mstep_config import ALLOWED_FLAGS, variant_summary
+
+        step_context = replace(
+            step_context,
+            config=replace(
+                cfg,
+                cuda_flags=schedule_decision.get("mstep_cuda_flags", cfg.cuda_flags)
+                & ALLOWED_FLAGS,
+            ),
+        )
+        schedule_decision.update(variant_summary(step_context.config.cuda_flags))
+    elif cfg.backend == "cuda_mstep" or cfg.cuda_schedule == "mstep":
+        step_context = replace(step_context, low_memory=True)
+    if cfg.backend in {"cuda_streamed", "cuda_mstep"} and mstep_plan is None:
+        from beamz.simulation.memory import cuda_workspace_estimate
+
+        schedule_decision["workspace_bytes"] = cuda_workspace_estimate(
+            program,
+            donate_state=donate_state,
+            low_memory=step_context.low_memory,
+        )
+        schedule_decision["capacity_schedule"] = step_context.low_memory
     native_graph_calls = None
     if (
         cfg.cuda_storage_axes != (0, 1, 2)
@@ -833,13 +865,10 @@ def build_scan(program, *, donate_state: bool = False, checkpoint_interval=None)
         and not step_context.low_memory
     ):
         if not (
-            cuda_multi_step
-            and cfg.is_3d
-            and cfg.metric_kind == "isotropic_uniform"
-            and boundary.cpml.enabled
+            cuda_multi_step and cfg.is_3d and cfg.metric_kind == "isotropic_uniform"
         ):
             raise ValueError(
-                "CUDA storage-axis permutations require a 3D uniform-grid CPML "
+                "CUDA storage-axis permutations require a 3D uniform-grid "
                 "native graph with supported slab sources and DFT monitors"
             )
         from beamz.simulation.cuda import (
@@ -857,6 +886,7 @@ def build_scan(program, *, donate_state: bool = False, checkpoint_interval=None)
         state: SimulationState,
         coeffs: UpdateCoefficients,
         dispersion_coefficients=None,
+        mstep_buffers=None,
     ):
         runtime_program = program
         if dispersion_coefficients is not None:
@@ -917,16 +947,29 @@ def build_scan(program, *, donate_state: bool = False, checkpoint_interval=None)
         # 4. Run the same transition through scan or fori_loop. The choice changes the
         # lowering strategy, not timestep semantics.
         if cuda_multi_step:
-            from beamz.simulation.cuda import (
-                run_program_steps,
-                run_source_group_steps,
-                run_steps,
-            )
+            from beamz.simulation.cuda.mstep import run_mstep
+            from beamz.simulation.cuda.runtime import run_native_steps
 
-            if native_graph_calls is not None:
-                run_steps, run_program_steps, run_source_group_steps = (
-                    native_graph_calls
+            def invoke_mstep(
+                chunk_state, ctx, coefficients, groups, monitors, steps, **clock
+            ):
+                return run_mstep(
+                    chunk_state,
+                    ctx,
+                    coefficients,
+                    groups,
+                    monitors,
+                    mstep_plan,
+                    steps,
+                    plan_buffers=mstep_buffers,
+                    **clock,
                 )
+
+            mstep_call: Callable = invoke_mstep
+            if mstep_plan is not None and cfg.cuda_storage_axes != (0, 1, 2):
+                from beamz.simulation.cuda.storage import wrap_program_call
+
+                mstep_call = wrap_program_call(mstep_call, cfg.cuda_storage_axes)
 
             def advance_native_chunk(chunk_state, chunk_steps: int, elapsed_steps):
                 elapsed_steps = jnp.asarray(elapsed_steps, dtype=jnp.int32)
@@ -939,9 +982,7 @@ def build_scan(program, *, donate_state: bool = False, checkpoint_interval=None)
                     current_step=state.current_step + elapsed_steps,
                 )
                 chunk_out = (
-                    run_steps(chunk_state, step_context, coeffs, chunk_steps)
-                    if not program.sources and not program.monitors
-                    else run_program_steps(
+                    mstep_call(
                         chunk_state,
                         step_context,
                         coeffs,
@@ -951,13 +992,17 @@ def build_scan(program, *, donate_state: bool = False, checkpoint_interval=None)
                         observation_origin=observation_origin,
                         observation_step_offset=observation_offset + elapsed_steps,
                     )
-                    if program.monitors
-                    else run_source_group_steps(
+                    if mstep_plan is not None
+                    else run_native_steps(
                         chunk_state,
                         step_context,
                         coeffs,
                         graph_source_groups,
+                        packed_graph_monitors,
                         chunk_steps,
+                        observation_origin=observation_origin,
+                        observation_step_offset=observation_offset + elapsed_steps,
+                        native_calls=native_graph_calls,
                     )
                 )
                 completed_steps = elapsed_steps + jnp.asarray(
@@ -1080,8 +1125,10 @@ def build_scan(program, *, donate_state: bool = False, checkpoint_interval=None)
     # Empirical fusion autotuning allocates full-sized trial inputs/outputs during
     # compilation, outside executable.memory_analysis(). Use default emitters for
     # both FDTD backends so an otherwise fitting run can compile near capacity.
+    # JAX and the plan adapters expose a dynamic callable/lowering interface.
+    scan: Any
     if "compiler_options" in inspect.signature(jax.jit).parameters:
-        return _BoundedCompileScan(
+        scan = _BoundedCompileScan(
             run_scan,
             jax.jit(
                 run_scan,
@@ -1091,7 +1138,14 @@ def build_scan(program, *, donate_state: bool = False, checkpoint_interval=None)
         )
     # Older supported JAX releases lack per-executable options. Preserve their
     # existing behavior without changing process-wide XLA_FLAGS after startup.
-    return jax.jit(run_scan, donate_argnums=donate_argnums)
+    else:
+        scan = jax.jit(run_scan, donate_argnums=donate_argnums)
+    if mstep_plan is not None:
+        from beamz.simulation.cuda.mstep import bind_plan_buffers
+
+        scan = bind_plan_buffers(scan, mstep_plan)
+    scan.cuda_schedule_decision = schedule_decision
+    return scan
 
 
 # Runtime owns executable caching and device placement; immutable plans own numerical
@@ -1155,6 +1209,8 @@ class _ExecutionCache:
     compiled_scan_donating: Callable[..., ScanResult] | None = None
     executable_ready: bool = False
     executable_donating_ready: bool = False
+    cuda_schedule_decision: dict | None = None
+    cuda_schedule_decision_donating: dict | None = None
 
 
 _MAX_EXECUTION_CACHES = 8
@@ -1196,7 +1252,7 @@ def initial_program_state(
     cpml, layout = program.boundary.cpml, program.sharding.layout
     psi_dtype = None
     if (
-        program.config.backend == "cuda_streamed"
+        program.config.backend in {"cuda_streamed", "cuda_mstep"}
         and cpml.enabled
         and program.config.cuda_flags & CUDA_BF16_PSI
     ):
@@ -1335,9 +1391,11 @@ def build_program_scan(program: CompiledProgram, *, donate_state: bool = False):
     scan = build_scan(program, donate_state=bool(donate_state))
     if donate_state:
         cache.compiled_scan_donating = scan
+        cache.cuda_schedule_decision_donating = scan.cuda_schedule_decision
         cache.executable_donating_ready = False
     else:
         cache.compiled_scan = scan
+        cache.cuda_schedule_decision = scan.cuda_schedule_decision
         cache.executable_ready = False
     return scan
 
@@ -1381,6 +1439,22 @@ def _execution_arguments(program, state, coeffs):
             tuple(record[1:] for record in program.dispersion.coefficients),
         )
     return state, coeffs
+
+
+def cuda_schedule_report(program, *, donate_state=False):
+    """Return the frozen schedule decision without executing a timing trial."""
+    from copy import deepcopy
+
+    cache = execution_cache(program)
+    decision = (
+        cache.cuda_schedule_decision_donating
+        if donate_state
+        else cache.cuda_schedule_decision
+    )
+    if decision is None:
+        scan = build_program_scan(program, donate_state=donate_state)
+        decision = scan.cuda_schedule_decision
+    return deepcopy(decision)
 
 
 def compile_program_execution(
@@ -1675,9 +1749,17 @@ def run_simulation_with_progress(
     backend: str,
     performance: bool,
     report_performance: bool,
+    schedule: str | None = None,
+    expected_runs: int = 1,
 ) -> SimulationRun:
     """Run a segment in compiled chunks and report actual completed timesteps."""
+    from beamz.simulation.cuda.schedule import normalize_expected_runs
+
+    expected_runs = normalize_expected_runs(expected_runs)
     chunk_lengths = _progress_chunk_lengths(num_steps)
+    # This API already knows how often each executable will run. Account for
+    # that work even when visible progress divides a long run into short calls.
+    chunk_reuse = Counter(chunk_lengths)
     _print_inline_status("Compiling simulation...")
     try:
         programs = {
@@ -1685,6 +1767,8 @@ def run_simulation_with_progress(
                 num_steps=length,
                 sharding=sharding,
                 backend=backend,
+                schedule=schedule,
+                expected_runs=expected_runs * chunk_reuse[length],
                 progress=False,
             )
             for length in set(chunk_lengths)
@@ -1759,6 +1843,8 @@ def run_until_terminated(
     sharding,
     backend: str,
     performance: bool,
+    schedule: str | None = None,
+    expected_runs: int = 1,
 ) -> SimulationResults:
     """Run reusable chunks until convergence, failure, or the configured time limit."""
     if not isinstance(policy, AutoTermination):
@@ -1768,6 +1854,8 @@ def run_until_terminated(
         num_steps=chunk_steps,
         sharding=sharding,
         backend=backend,
+        schedule=schedule,
+        expected_runs=expected_runs,
         progress=progress,
     )
     if first_program.grid.material_grid.dispersion:
@@ -1815,6 +1903,8 @@ def run_until_terminated(
                     num_steps=steps,
                     sharding=sharding,
                     backend=backend,
+                    schedule=schedule,
+                    expected_runs=expected_runs,
                     progress=False,
                 )
             )

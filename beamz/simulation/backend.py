@@ -33,8 +33,9 @@ ExecutionBackend = Literal[
     "jax",
     "cuda",
     "cuda_streamed",
+    "cuda_mstep",
 ]
-ResolvedBackend = Literal["jax", "cuda_streamed"]
+ResolvedBackend = Literal["jax", "cuda_streamed", "cuda_mstep"]
 
 _EXTENSION_MODULE = "beamz._cuda"
 _REGISTERED_MODULE: ModuleType | None = None
@@ -86,6 +87,9 @@ def cuda_flags_from_env() -> int:
     if shell_tile not in shell_tiles:
         raise ValueError("BEAMZ_CUDA_CPML_SHELL_TILE must be 64x4, 32x8, or 32x4")
     flags |= shell_tiles[shell_tile]
+    from .cuda.mstep_config import variant_flags_from_env
+
+    flags |= variant_flags_from_env()
     return flags
 
 
@@ -164,11 +168,13 @@ def normalize_backend(backend: str | None) -> ExecutionBackend:
         "streamed": "cuda_streamed",
         "cuda_streamed": "cuda_streamed",
         "cuda-streamed": "cuda_streamed",
+        "cuda_mstep": "cuda_mstep",
+        "cuda-mstep": "cuda_mstep",
     }
     try:
         return aliases[value.strip().lower()]  # type: ignore[return-value]
     except KeyError as exc:
-        choices = "auto, jax, cuda, cuda_streamed"
+        choices = "auto, jax, cuda, cuda_streamed, cuda_mstep"
         raise ValueError(
             f"Unknown execution backend {value!r}; use one of: {choices}."
         ) from exc
@@ -220,7 +226,10 @@ def _validated_registrations(extension: ModuleType) -> dict[str, object]:
             "beamz._cuda is missing required streamed FFI targets: "
             + ", ".join(missing)
         )
-    return {name: registrations[name] for name in sorted(CUDA_STREAMED_TARGETS)}
+    from ._cuda_abi import CUDA_MSTEP_TARGET
+
+    known = CUDA_STREAMED_TARGETS | ({CUDA_MSTEP_TARGET} & targets)
+    return {name: registrations[name] for name in sorted(known)}
 
 
 def register_cuda_ffi_targets(module: ModuleType | None = None) -> tuple[str, ...]:
@@ -324,6 +333,14 @@ def resolve_backend(backend: str | None) -> ResolvedBackend:
             "Build BeamZ's optional CUDA component, or use backend='jax'."
         )
     has_streamed = CUDA_STREAMED_TARGETS.issubset(status.targets)
+    if requested == "cuda_mstep":
+        from ._cuda_abi import CUDA_MSTEP_TARGET
+
+        if not has_streamed or CUDA_MSTEP_TARGET not in status.targets:
+            raise CudaBackendUnavailable(
+                "cuda_mstep target is missing from the CUDA component"
+            )
+        return "cuda_mstep"
     if requested == "cuda_streamed":
         if not has_streamed:
             raise CudaBackendUnavailable(
