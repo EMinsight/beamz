@@ -27,6 +27,9 @@ _.apply_gradient
 compute_overlap_gradient
 create_optimization_mask
 _.clear_compiled_cache
+# Modal cache diagnostics are read by regression tests and profiling tools.
+_.hits
+_.misses
 _.memory_estimate
 _.show3d
 total_conductivity
