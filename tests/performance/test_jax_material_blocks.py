@@ -13,6 +13,7 @@ from beamz.simulation.material_blocks import MaterialBlocks, material_values
 from beamz.simulation.sharding import place_tree
 from benchmarks.cuda_material_blocks import simulation
 from benchmarks.jax_material_blocks import dense_coefficients, executable_memory
+from tests.jax_compat import enable_x64
 from tests.performance.test_cuda_tensor import compare_states, seeded_state
 
 
@@ -20,7 +21,7 @@ from tests.performance.test_cuda_tensor import compare_states, seeded_state
 def require_gpu():
     if jax.devices()[0].platform != "gpu":
         pytest.skip("GPU compiler/allocator validation requires a GPU")
-    with jax.enable_x64(False):
+    with enable_x64(False):
         yield
 
 

@@ -1,6 +1,5 @@
 """Independent matrix algebra and Fourier checks of the coupled Yee operator."""
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -13,6 +12,7 @@ from beamz.constitutive import (
 from beamz.devices.modes._tensor_yee import inverse_operator
 from beamz.lattice import component_shape_3d
 from beamz.simulation.kernels import advance_e_centered_tensor
+from tests.jax_compat import enable_x64
 
 
 def packed(matrix):
@@ -68,7 +68,7 @@ def test_fourier_constitutive_matrix_matches_production_timestep(beta_dx):
     }
     curls = tuple(jnp.asarray(profiles[k][..., None] * phases[k]) for k in names)
     diagonal, cross = electric_tensor_coefficients(tensors)
-    with jax.enable_x64(True):
+    with enable_x64(True):
         curls = tuple(jnp.asarray(profiles[k][..., None] * phases[k]) for k in names)
         actual = advance_e_centered_tensor(
             tuple(jnp.zeros_like(v) for v in curls),
@@ -165,7 +165,7 @@ def test_analytic_fresnel_plane_wave_is_a_discrete_timestep_eigenfield(axis, ban
             state[component] = np.broadcast_to(
                 vector[i] * phase * time_phase, size
             ).copy()
-    with jax.enable_x64(True):
+    with enable_x64(True):
         h = advance_incident_h_3d(fields, state, dt, resolution=spacing)
         e = advance_incident_e_3d(fields, state, h, dt, resolution=spacing)
     selection = (slice(2, -2),) * 3

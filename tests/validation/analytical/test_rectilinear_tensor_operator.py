@@ -1,6 +1,5 @@
 """Independent volume identities and Fourier checks on genuinely graded grids."""
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -11,6 +10,7 @@ from beamz.design.grid import RectilinearGrid
 from beamz.devices.modes._tensor_yee import inverse_operator
 from beamz.lattice import component_axis_offsets_3d, component_shape_3d
 from beamz.simulation.kernels import advance_e_centered_tensor, collocate_yee_component
+from tests.jax_compat import enable_x64
 from tests.validation.analytical.test_tensor_constitutive_operator import (
     packed,
     supports,
@@ -51,7 +51,7 @@ def test_rectilinear_constitutive_averages_are_volume_adjoint(component):
     node_shape = tuple(n + 1 for n in shape)
     electric = rng.normal(size=electric_shape)
     node = rng.normal(size=node_shape)
-    with jax.enable_x64(True):
+    with enable_x64(True):
         to_node = np.asarray(
             collocate_yee_component(
                 electric, component, "Node", node_shape, cell_widths=widths
@@ -66,7 +66,7 @@ def test_rectilinear_constitutive_averages_are_volume_adjoint(component):
     left = np.sum(volume_weights(node_shape, "Node", widths) * to_node * node)
     right = np.sum(volume_weights(electric_shape, component, widths) * electric * to_e)
     np.testing.assert_allclose(left, right, rtol=2e-14, atol=2e-14)
-    with jax.enable_x64(True):
+    with enable_x64(True):
         constant = collocate_yee_component(
             np.ones(electric_shape), component, "Node", node_shape, cell_widths=widths
         )
@@ -101,7 +101,7 @@ def test_rectilinear_fourier_tensor_matrix_matches_full_volume_kernel(beta_dx):
         @ vector
     )
     diagonal, cross = electric_tensor_coefficients(tensors)
-    with jax.enable_x64(True):
+    with enable_x64(True):
         curls = tuple(
             jnp.asarray(
                 profiles[k][..., None]
@@ -153,7 +153,7 @@ def test_rectilinear_full_volume_tensor_update_is_reciprocal():
         tuple(rng.normal(size=component_shape_3d(k, shape)) for k in names)
         for _ in range(2)
     )
-    with jax.enable_x64(True):
+    with enable_x64(True):
 
         def apply(values):
             return advance_e_centered_tensor(

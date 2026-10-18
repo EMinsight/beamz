@@ -10,6 +10,7 @@ from beamz.lattice import component_shape_3d
 from beamz.simulation.kernels import advance_e_centered_tensor
 from beamz.simulation.tensor_regions import TensorRegion, compact_tensor_region
 from benchmarks.tensor_jax import reference_dense_tensor
+from tests.jax_compat import enable_x64
 
 
 @pytest.mark.parametrize("ndim", [2, 3])
@@ -54,7 +55,7 @@ def test_compact_tensor_matches_dense_update_on_graded_mesh(
     widths = tuple(rng.uniform(0.2, 2, n) for n in shape[::-1]) + (
         () if ndim == 3 else (np.ones(1),)
     )
-    with jax.enable_x64(True):
+    with enable_x64(True):
 
         def apply(update, coefficients):
             return update(
@@ -107,7 +108,7 @@ def test_compact_tensor_gradients_match_dense_fixed_support():
     cross[3:5, 4:6, 5:7] = (0.1, 0.2, 0.3)
     region = compact_tensor_region(cross)
     assert isinstance(region, TensorRegion)
-    with jax.enable_x64(True):
+    with enable_x64(True):
         curls = tuple(
             jnp.asarray(rng.normal(size=component_shape_3d(k, shape))) for k in names
         )

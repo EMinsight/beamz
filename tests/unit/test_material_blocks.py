@@ -14,6 +14,7 @@ from beamz.simulation.material_blocks import (
     material_values,
     reciprocal_material,
 )
+from tests.jax_compat import enable_x64
 
 
 def sample(dtype, encoding):
@@ -33,7 +34,7 @@ def test_exact_values_and_actual_storage(dtype, encoding):
     compressed = compact_material(value)
     assert isinstance(compressed, MaterialBlocks)
     assert compressed.headers.dtype == (np.uint8 if encoding == "bytes" else np.int32)
-    with jax.enable_x64(True):
+    with enable_x64(True):
         actual = np.asarray(jax.jit(material_values)(compressed))
     bits = np.uint32 if dtype == np.float32 else np.uint64
     np.testing.assert_array_equal(actual.view(bits), value.view(bits))
@@ -70,7 +71,7 @@ def test_pool_gradient_and_reciprocal_match_independent_index_sum(encoding):
     weights = np.random.default_rng(42).normal(size=value.shape)
     expected = np.zeros_like(c.values)
     np.add.at(expected, index, -weights.ravel() / value.ravel() ** 2)
-    with jax.enable_x64(True):
+    with enable_x64(True):
 
         def loss(pool):
             inverse = reciprocal_material(replace(c, values=pool))

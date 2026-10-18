@@ -15,6 +15,7 @@ from beamz.simulation.execute import (
 from beamz.simulation.kernels import select_update_kernel
 from beamz.simulation.sharding import place_tree
 from benchmarks.cuda_material_blocks import restore_previous_layout, simulation
+from tests.jax_compat import enable_x64
 from tests.performance.test_cuda_tensor import compare_states, seeded_state
 
 
@@ -23,7 +24,7 @@ def require_cuda():
     status = cuda_backend_status()
     if not status.available:
         pytest.skip(status.reason)
-    with jax.enable_x64(False):
+    with enable_x64(False):
         yield
 
 
