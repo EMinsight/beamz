@@ -60,9 +60,10 @@ def test_differentiable_user_objective(design, backend, post_process_fn):
     neg_value, neg_grad = jax.value_and_grad(
         design.make_objective_fn(post_process_fn, maximize=False)
     )(params)
-    # Independent JAX compilations can round differently in float32. Include
-    # an absolute floor for phase objectives whose value is close to zero.
-    np.testing.assert_allclose(neg_value, -value, rtol=1e-6, atol=1e-7)
+    # Independent float32 JAX solves can accumulate rounding differences in
+    # modal amplitudes. Use the gradient's relative tolerance for the value
+    # too, with an absolute floor for phase objectives close to zero.
+    np.testing.assert_allclose(neg_value, -value, rtol=1e-5, atol=1e-7)
     np.testing.assert_allclose(neg_grad, -gradient, rtol=1e-5, atol=1e-8)
 
 
