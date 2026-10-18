@@ -18,7 +18,7 @@ from tests.unit.test_cuda_sharded_features import assert_state_close, mode_simul
 from tests.unit.test_cuda_sharding import seed_state
 
 
-def check(case):
+def check(case, conductivity=0.0):
     from tests.hardware.test_cuda_backends import _feature_simulation
     from tests.performance.h100_workloads import H100Workload
 
@@ -119,76 +119,78 @@ def check(case):
                     ).state
                     assert_state_close(actual, continued)
             return
-        for conductivity in (0.0, 1e3, 1e6):
-            results = []
-            for cfg in (None, dict(axis="x", num_devices=4, backend="cpu")):
-                program = sim.compile(num_steps=steps, backend="jax", sharding=cfg)
-                prepared = sharding.prepare_state(
-                    program,
-                    runtime_inputs(program, state, monitor_steps=steps),
-                    replicated_fields=(),
-                )
-                coeffs = program.coefficients._replace(
+        results = []
+        for cfg in (None, dict(axis="x", num_devices=4, backend="cpu")):
+            program = sim.compile(num_steps=steps, backend="jax", sharding=cfg)
+            prepared = sharding.prepare_state(
+                program,
+                runtime_inputs(program, state, monitor_steps=steps),
+                replicated_fields=(),
+            )
+            coeffs = program.coefficients._replace(
+                **{
                     **{
-                        **{
-                            f"e_conductivity_{c}": jnp.asarray(
-                                conductivity, dtype=jnp.float32
-                            )
-                            for c in "xyz"
-                        },
-                        **{
-                            f"h_sigma_m_{c}": jnp.asarray(
-                                conductivity * 1e3, dtype=jnp.float32
-                            )
-                            for c in "xyz"
-                        },
+                        f"e_conductivity_{c}": jnp.asarray(
+                            conductivity, dtype=jnp.float32
+                        )
+                        for c in "xyz"
+                    },
+                    **{
+                        f"h_sigma_m_{c}": jnp.asarray(
+                            conductivity * 1e3, dtype=jnp.float32
+                        )
+                        for c in "xyz"
+                    },
+                }
+            )
+            coeffs = sharding.place_tree(program, coeffs)
+            scan = build_scan(program)
+
+            def loss(
+                factor, scan=scan, coeffs=coeffs, prepared=prepared, program=program
+            ):
+                varied = coeffs._replace(
+                    **{
+                        f"e_permittivity_{c}": getattr(coeffs, f"e_permittivity_{c}")
+                        * factor
+                        for c in "xyz"
                     }
                 )
-                coeffs = sharding.place_tree(program, coeffs)
-                scan = build_scan(program)
+                result = sharding.crop_state(program, scan(prepared, varied))
+                if case == "dft_gradient":
+                    return jnp.sum(result.dft_vec_re**2 + result.dft_vec_im**2)
+                return sum(jnp.sum(getattr(result, c) ** 2) for c in ("ex", "ey", "ez"))
 
-                def loss(
-                    factor, scan=scan, coeffs=coeffs, prepared=prepared, program=program
-                ):
-                    varied = coeffs._replace(
-                        **{
-                            f"e_permittivity_{c}": getattr(
-                                coeffs, f"e_permittivity_{c}"
-                            )
-                            * factor
-                            for c in "xyz"
-                        }
-                    )
-                    result = sharding.crop_state(program, scan(prepared, varied))
-                    if case == "dft_gradient":
-                        return jnp.sum(result.dft_vec_re**2 + result.dft_vec_im**2)
-                    return sum(
-                        jnp.sum(getattr(result, c) ** 2) for c in ("ex", "ey", "ez")
-                    )
-
-                results.append(jax.value_and_grad(loss)(jnp.float32(1.0)))
-            np.testing.assert_allclose(results[1], results[0], rtol=1e-4, atol=1e-10)
+            results.append(jax.value_and_grad(loss)(jnp.float32(1.0)))
+        np.testing.assert_allclose(results[1], results[0], rtol=1e-4, atol=1e-10)
 
 
 @pytest.mark.parametrize(
-    "case",
+    ("case", "conductivity"),
     [
-        "asymmetric_cpml",
-        "mixed_faces",
-        "mode",
-        "gradient",
-        "local_dft",
-        "dft_gradient",
-        "device_continuation",
+        ("asymmetric_cpml", 0.0),
+        ("mixed_faces", 0.0),
+        ("mode", 0.0),
+        ("local_dft", 0.0),
+        ("device_continuation", 0.0),
+        # Each gradient comparison compiles both unsharded and sharded scans.
+        # Give each conductivity its own subprocess and timeout under coverage.
+        *[
+            (case, conductivity)
+            for case in ("gradient", "dft_gradient")
+            for conductivity in (0.0, 1e3, 1e6)
+        ],
     ],
 )
-def test_local_jax_contract(case):
+def test_local_jax_contract(case, conductivity):
     subprocess.run(
         [
             sys.executable,
             "-c",
-            "import sys; from tests.unit.test_jax_local_sharding import check; check(sys.argv[1])",
+            "import sys; from tests.unit.test_jax_local_sharding import check; "
+            "check(sys.argv[1], float(sys.argv[2]))",
             case,
+            str(conductivity),
         ],
         env=dict(
             os.environ,
