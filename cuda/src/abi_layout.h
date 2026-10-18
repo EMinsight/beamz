@@ -7,8 +7,8 @@
 
 namespace beamz::cuda::abi {
 
-inline constexpr int32_t kAbiVersion = 28;
-inline constexpr char kComponentVersion[] = "0.28.0";
+inline constexpr int32_t kAbiVersion = 30;
+inline constexpr char kComponentVersion[] = "0.30.0";
 inline constexpr char kStreamedTarget[] = "beamz_cuda_streamed";
 inline constexpr char kShardedTarget[] = "beamz_cuda_sharded";
 inline constexpr char kProgramTarget[] = "beamz_cuda_program";
@@ -51,6 +51,7 @@ inline constexpr int32_t kProgramLayoutSourceTemporalCpml = 4;
 inline constexpr int32_t kProgramLayoutMonitorInPlace = 5;
 inline constexpr int32_t kProgramLayoutMonitorTemporalCpml = 6;
 
+inline constexpr size_t kTensorInputCount = 8;
 inline constexpr size_t kFieldCount = 6;
 inline constexpr size_t kCpmlTermCount = 6;
 inline constexpr size_t kSourceGroupCount = 9;

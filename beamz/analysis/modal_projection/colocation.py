@@ -9,10 +9,11 @@ import numpy as np
 
 from beamz.analysis.data import AnalysisData, static_fields
 from beamz.const import µm
+from beamz.devices.modes.fields import _normalize_profiles
 from beamz.lattice import (
     component_coordinates_3d_um,
     component_coordinates_rectilinear,
-    linear_interpolation_plan,
+    normal_plane_wave_transfer,
 )
 
 from .geometry import _monitor_component_plane_coords_3d, _plane_axes_for_port_axis
@@ -209,31 +210,29 @@ def _sample_modal_basis_normal_3d(
     grid_shape,
     resolution,
     grid=None,
+    measure,
+    direction_sign=1.0,
 ):
-    """Apply the monitor's normal gather to a unit-power modal basis.
+    """Measure a directional mode, then normalize to one discrete flux watt.
 
-    Profiles are referenced to the analysis plane. Reconstruct each traveling
-    wave on the native normal lattice before interpolating: opposite directions
-    have conjugate transfer factors, which need not be real off a lattice node.
-    Do not renormalize afterwards: monitor averaging does not change the power
-    carried by the underlying mode.
+    Opposite directions retain their distinct complex Yee interpolation factors.
+    Scaling the entire measured E/H basis by a real scalar preserves that phase
+    relationship and hence forward/backward discrimination. Its self-overlap
+    then matches the Poynting quadrature used by flux monitors and sources.
     """
     sampled = {}
     for name, values in profiles.items():
-        coordinates = (
-            component_coordinates_rectilinear(name, grid)
-            if grid is not None
-            else {
-                key: value * float(µm)
-                for key, value in component_coordinates_3d_um(
-                    name, grid_shape, float(resolution / µm)
-                ).items()
-            }
-        )[axis]
-        low, high, wlow, whigh = linear_interpolation_plan(
-            coordinates, [plane_position]
+        transfer = normal_plane_wave_transfer(
+            name,
+            axis=axis,
+            plane_position=plane_position,
+            wave_number=direction * wave_number,
+            grid_shape=grid_shape,
+            resolution=resolution,
+            grid=grid,
         )
-        phase = np.exp(1j * direction * wave_number * (coordinates - plane_position))
-        transfer = (wlow * phase[low] + whigh * phase[high])[0]
         sampled[name] = np.asarray(values, dtype=np.complex128) * transfer
+    _normalize_profiles(
+        sampled, axis=axis, measure=measure, direction_sign=direction_sign
+    )
     return sampled

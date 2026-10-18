@@ -1,6 +1,6 @@
 {
-  "abi_version": 28,
-  "component_version": "0.28.0",
+  "abi_version": 30,
+  "component_version": "0.30.0",
   "targets": {
     "streamed": "beamz_cuda_streamed",
     "sharded": "beamz_cuda_sharded",
@@ -57,6 +57,7 @@
     "monitor_temporal_cpml": 6
   },
   "layout": {
+    "tensor_input_count": 8,
     "field_count": 6,
     "cpml_term_count": 6,
     "source_group_count": 9,

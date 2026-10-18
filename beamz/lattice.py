@@ -272,6 +272,37 @@ def linear_interpolation_plan(source, target):
     return low.astype(np.int32), high.astype(np.int32), weight_low, weight_high
 
 
+def normal_plane_wave_transfer(
+    component,
+    *,
+    axis,
+    plane_position,
+    wave_number,
+    grid_shape,
+    resolution,
+    grid=None,
+):
+    """Normal gather response to exp(+i k (x - plane)) on a Yee component.
+
+    ``wave_number`` is signed. Modal projection applies this measurement factor
+    before normalizing the measured basis to unit discrete Poynting flux.
+    Transverse quadrature and temporal leapfrog phases are separate operations.
+    """
+    coordinates = (
+        component_coordinates_rectilinear(component, grid)
+        if grid is not None
+        else {
+            key: value * float(µm)
+            for key, value in component_coordinates_3d_um(
+                component, grid_shape, float(resolution / µm)
+            ).items()
+        }
+    )[axis]
+    low, high, wlow, whigh = linear_interpolation_plan(coordinates, [plane_position])
+    phase = np.exp(1j * wave_number * (coordinates - plane_position))
+    return complex((wlow * phase[low] + whigh * phase[high])[0])
+
+
 def sampling_coordinates(indices, shape):
     """Decode static global indices before JAX can narrow them to 32 bits.
 
@@ -397,6 +428,27 @@ class YeePlaneQuadrature:
         )
 
 
+def yee_plane_area_weights(*, center, size, normal_axis, region, grid):
+    """Physical cell areas clipped to the requested rectilinear aperture."""
+    axis0, axis1 = plane_axes_3d(normal_axis)
+    interval0 = region.axis_interval(axis0)
+    interval1 = region.axis_interval(axis1)
+
+    def clipped_widths(axis, interval):
+        edges = np.asarray(grid.axis_edges(axis))
+        i = {"x": 0, "y": 1, "z": 2}[axis]
+        lower = float(center[i]) - float(size[i]) / 2
+        upper = float(center[i]) + float(size[i]) / 2
+        widths = np.maximum(
+            0.0, np.minimum(edges[1:], upper) - np.maximum(edges[:-1], lower)
+        )
+        return widths[int(interval.start) : int(interval.stop)]
+
+    widths0 = clipped_widths(axis0, interval0)
+    widths1 = clipped_widths(axis1, interval1)
+    return (widths0[:, None] * widths1[None, :]).reshape(-1)
+
+
 def compile_yee_plane_quadrature_3d(
     *,
     center,
@@ -436,23 +488,9 @@ def compile_yee_plane_quadrature_3d(
         )
         integration_weights = np.empty((0,), dtype=np.float64)
     else:
-        axis0, axis1 = plane_axes_3d(normal_axis)
-        interval0 = region.axis_interval(axis0)
-        interval1 = region.axis_interval(axis1)
-
-        def clipped_widths(axis, interval):
-            edges = np.asarray(grid.axis_edges(axis))
-            i = {"x": 0, "y": 1, "z": 2}[axis]
-            lower = float(center[i]) - float(size[i]) / 2
-            upper = float(center[i]) + float(size[i]) / 2
-            widths = np.maximum(
-                0.0, np.minimum(edges[1:], upper) - np.maximum(edges[:-1], lower)
-            )
-            return widths[int(interval.start) : int(interval.stop)]
-
-        widths0 = clipped_widths(axis0, interval0)
-        widths1 = clipped_widths(axis1, interval1)
-        integration_weights = (widths0[:, None] * widths1[None, :]).reshape(-1)
+        integration_weights = yee_plane_area_weights(
+            center=center, size=size, normal_axis=normal_axis, region=region, grid=grid
+        )
         sample_area = float(np.mean(integration_weights))
     return YeePlaneQuadrature(
         normal_axis={"x": 0, "y": 1, "z": 2}[normal_axis],

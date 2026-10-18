@@ -240,8 +240,12 @@ class ModePower(ModalObjective):
             mode_spec=replace(
                 monitor.mode_spec,
                 mode_index=self.mode_index,
-                polarization=monitor.mode_spec.polarization
-                or ("te" if program.config.is_3d else program.config.polarization_2d),
+                polarization=(
+                    monitor.mode_spec.polarization
+                    if program.config.is_3d
+                    else monitor.mode_spec.polarization
+                    or program.config.polarization_2d
+                ),
             ),
             direction="+",
         )

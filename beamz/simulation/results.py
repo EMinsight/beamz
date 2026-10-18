@@ -189,6 +189,7 @@ class MaterialRegion:
     full_shape: tuple[int, ...]
     material_tensors: Mapping[str, np.ndarray] = field(default_factory=dict)
     yee_materials: Mapping[str, np.ndarray] = field(default_factory=dict)
+    yee_tensors: Mapping[str, np.ndarray] = field(default_factory=dict)
 
     def __post_init__(self):
         object.__setattr__(self, "permittivity", readonly_array(self.permittivity))
@@ -197,7 +198,7 @@ class MaterialRegion:
         object.__setattr__(
             self, "full_shape", tuple(int(value) for value in self.full_shape)
         )
-        for name in ("material_tensors", "yee_materials"):
+        for name in ("material_tensors", "yee_materials", "yee_tensors"):
             object.__setattr__(self, name, immutable_snapshot(getattr(self, name)))
 
 
@@ -208,7 +209,7 @@ def _snapshot_material_region(runtime_fields, crop, origin):
     material_grid = runtime_fields.material_grid
     tensors = {}
     yee = {}
-    if permittivity.ndim == 3:
+    if permittivity.ndim in (2, 3):
         tensors = {
             name: np.asarray(values)[(slice(None), *crop)]
             for name, values in material_grid.tensors.items()
@@ -226,6 +227,14 @@ def _snapshot_material_region(runtime_fields, crop, origin):
                 for name, values in material_grid.yee_materials.items()
                 if name in {"eps_x", "eps_y", "eps_z", "mu_hx", "mu_hy", "mu_hz"}
             }
+    component_crop = tuple(
+        slice(index.start, None if index.stop is None else index.stop + 1)
+        for index in crop
+    )
+    support_tensors = {
+        name: np.asarray(values)[(slice(None), *component_crop)]
+        for name, values in material_grid.yee_tensors.items()
+    }
     return MaterialRegion(
         permittivity[crop],
         permeability if permeability.ndim == 0 else permeability[crop],
@@ -233,6 +242,7 @@ def _snapshot_material_region(runtime_fields, crop, origin):
         permittivity.shape,
         material_tensors=tensors,
         yee_materials=yee,
+        yee_tensors=support_tensors,
     )
 
 
@@ -302,7 +312,10 @@ def material_region_for_monitor(simulation, monitor: _Monitor, *, runtime_fields
         return None
 
     plane = int(np.clip(plane, 0, full_shape[dim] - 1))
-    start, stop = max(0, plane - 2), min(full_shape[dim], plane + 3)
+    from beamz.devices.modes.plane import TENSOR_MODE_NORMAL_HALO
+
+    halo = TENSOR_MODE_NORMAL_HALO if runtime_fields.material_grid.yee_tensors else 0
+    start, stop = max(0, plane - 2 - halo), min(full_shape[dim], plane + 3 + halo)
     crop = [slice(None)] * permittivity.ndim
     crop[dim] = slice(start, stop)
     origin = [0] * permittivity.ndim
@@ -1109,11 +1122,63 @@ class SimulationResults:
         """
         return self.monitors[str(name)]
 
+    def save(self, path):
+        """Save detached results, DFTs, and full port material context to NPZ.
+
+        The versioned format does not use pickle. Standard frequency monitors
+        and source specifications are supported; unsupported custom values
+        raise TypeError instead of being silently omitted.
+
+        Parameters
+        ----------
+        path : str or os.PathLike
+            Destination archive path, written without adding a suffix.
+
+        Returns
+        -------
+        None
+            Writes the archive to ``path``.
+
+        Raises
+        ------
+        TypeError
+            If a result contains an unsupported custom value or object array.
+        """
+        from .result_io import save_results
+
+        save_results(self, path)
+
+    @classmethod
+    def load(cls, path):
+        """Load a versioned result archive without requiring a live simulation.
+
+        Parameters
+        ----------
+        path : str or os.PathLike
+            Path to an archive written by :meth:`save`.
+
+        Returns
+        -------
+        SimulationResults
+            Detached results with their monitor and port material context.
+
+        Raises
+        ------
+        ValueError
+            If the archive version or result representation is unsupported.
+        """
+        from .result_io import load_results
+
+        return load_results(path)
+
     def launched_power(self, source: int = 0) -> float:
         """Return the internally calibrated net power leaving a source.
 
-        Mode sources use the mode solver's component-staggered transverse
-        metric and launch-amplitude correction. Analytic Gaussian-beam sources
+        Mode sources use the discrete source-plane Poynting quadrature,
+        including normal Yee interpolation and the launch-amplitude correction.
+        Modal analysis uses the same measured-flux convention. Different plane
+        offsets, finite apertures and discretization can affect downstream flux.
+        Analytic Gaussian-beam sources
         report their requested power after discrete source-plane normalization.
         Neither path requires an additional runtime monitor or reference
         simulation.

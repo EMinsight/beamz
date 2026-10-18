@@ -223,6 +223,7 @@ def test_auto_uses_geometry_and_startup_without_trials_or_persistent_cache(
     class Program:
         config: RunConfig
         boundary: object
+        coefficients: object = None
 
     program = Program(
         RunConfig(

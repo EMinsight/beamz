@@ -330,10 +330,32 @@ def validate_x_mode_refinement(
 
 
 def _yee_curl_operators(
-    sparse, profiles, *, resolution, delta, transverse_cell_widths=None
+    sparse,
+    profiles,
+    *,
+    resolution,
+    delta,
+    transverse_cell_widths=None,
+    transverse_metrics=None,
 ):
     nz, ny = profiles["Ex"].shape
-    if transverse_cell_widths is None:
+    if transverse_metrics is not None:
+        operators = []
+        for count, (primal, dual) in zip((nz, ny), transverse_metrics, strict=True):
+            primal, dual = np.asarray(primal), np.asarray(dual)
+            if primal.shape != (count - 1,) or dual.shape != (count,):
+                raise ValueError(
+                    "Tensor curl metrics must match the native Yee supports"
+                )
+            incidence = _forward_difference(sparse, count, 1.0)
+            operators.append(
+                (
+                    sparse.diags(1.0 / primal) @ incidence,
+                    -sparse.diags(1.0 / dual) @ incidence.T,
+                )
+            )
+        (dz, bz), (dy, by) = operators
+    elif transverse_cell_widths is None:
         dz = _forward_difference(sparse, nz, resolution)
         dy = _forward_difference(sparse, ny, resolution)
         bz, by = -dz.T, -dy.T

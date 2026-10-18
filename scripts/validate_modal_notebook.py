@@ -1,8 +1,9 @@
 """Execute the full modal or cosine-crossing tutorial and export numerical results.
 
 Run once per checkout in a fresh process with that checkout on PYTHONPATH.
-Only backend selection is changed; appended cells export arrays and optionally
-measure repeated full simulations with already prepared compilation caches.
+By default only backend selection is changed; appended cells export arrays and
+optionally measure repeated full simulations with prepared compilation caches.
+An explicit monitor-polarization override supports diagnostic basis comparisons.
 """
 
 import argparse
@@ -36,9 +37,16 @@ def main():
         "--expected-device", help="Require this substring in the JAX GPU name"
     )
     parser.add_argument("--warm-runs", type=int, default=0)
+    parser.add_argument(
+        "--monitor-polarization",
+        choices=("te", "tm"),
+        help="Diagnostic override for the modal tutorial's monitor only",
+    )
     args = parser.parse_args()
     if args.warm_runs < 0:
         parser.error("--warm-runs must be nonnegative")
+    if args.monitor_polarization and args.notebook != "modal_sources_monitors":
+        parser.error("--monitor-polarization requires the modal tutorial")
     root = args.root.resolve()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -52,6 +60,24 @@ def main():
     )
     path = root / "examples/notebooks" / (args.notebook + ".ipynb")
     notebook = nbformat.read(path, as_version=4)
+    if args.monitor_polarization:
+        monitor_cells = [
+            cell
+            for cell in notebook.cells
+            if cell.cell_type == "code" and "mode_mnt = bz.ModeMonitor(" in cell.source
+        ]
+        if len(monitor_cells) != 1:
+            raise ValueError("Expected one modal-monitor construction cell")
+        cell = monitor_cells[0]
+        original = '    mode_spec=mode_spec,\n    name="mode",'
+        if cell.source.count(original) != 1:
+            raise ValueError("Cannot identify the monitor's mode specification")
+        cell.source = "from dataclasses import replace\n" + cell.source.replace(
+            original,
+            "    mode_spec=replace(mode_spec, "
+            f"polarization={args.monitor_polarization!r}),\n"
+            '    name="mode",',
+        )
     if args.notebook == "modal_sources_monitors":
         for cell in notebook.cells:
             if cell.cell_type == "code":
@@ -232,6 +258,7 @@ print(warm_runs)
                         ["git", "rev-parse", "HEAD"], cwd=root, text=True
                     ).strip(),
                     "notebook_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    "monitor_polarization_override": args.monitor_polarization,
                     "elapsed_s": time.monotonic() - start,
                 },
                 indent=2,

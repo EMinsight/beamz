@@ -63,7 +63,7 @@ class Port:
     size: tuple[float, float, float]
     name: str
     direction: PortDirection
-    mode_spec: ModeSpec = field(default_factory=ModeSpec)
+    mode_spec: ModeSpec = field(default_factory=lambda: ModeSpec(polarization="te"))
     monitor_name: str | None = None
 
     def __post_init__(self) -> None:
@@ -71,8 +71,8 @@ class Port:
         size = nonnegative_finite_extents(self.size, name="Port size")
         if len(center) != 3 or len(size) != 3:
             raise ValueError("Port center and size must contain three values.")
-        zero_axes = np.flatnonzero(np.isclose(size, 0.0, rtol=0.0, atol=1e-15))
-        if zero_axes.size != 1:
+        zero_axes = [index for index, value in enumerate(size) if abs(value) <= 1e-15]
+        if len(zero_axes) != 1:
             raise ValueError("Port size must contain exactly one zero extent.")
         name = str(self.name)
         if not name:
@@ -91,8 +91,6 @@ class Port:
         mode_spec = immutable_snapshot(self.mode_spec)
         if not isinstance(mode_spec, ModeSpec):
             raise TypeError("Port mode_spec must be a ModeSpec.")
-        if mode_spec.polarization is None:
-            mode_spec = replace(mode_spec, polarization="te")
         object.__setattr__(self, "mode_spec", mode_spec)
 
     @property
@@ -104,7 +102,7 @@ class Port:
         {"x", "y", "z"}
             Axis selected by the zero extent in :attr:`size`.
         """
-        index = int(np.argmin(np.abs(np.asarray(self.size, dtype=float))))
+        index = min(range(3), key=lambda index: abs(self.size[index]))
         return ("x", "y", "z")[index]
 
     @property
@@ -141,15 +139,16 @@ class Port:
         return int(self.mode_spec.mode_index)
 
     @property
-    def polarization(self) -> str:
+    def polarization(self) -> str | None:
         """Return the modal polarization used by analysis.
 
         Returns
         -------
         {"te", "tm"}
-            Configured polarization, defaulting to ``"te"`` when unspecified.
+            Configured polarization. Explicit ``ModeSpec(polarization=None)``
+            preserves mixed-polarization ordering; the default port selects TE.
         """
-        return str(self.mode_spec.polarization or "te").lower()
+        return self.mode_spec.polarization
 
     @property
     def projection_direction(self) -> str:

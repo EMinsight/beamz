@@ -26,6 +26,39 @@ split by responsibility:
 - `sharded.cu` launches the global-coordinate-aware cells in `sharded_cell.h`;
 - `io.cu` owns source injection and DFT monitor accumulation.
 
+ABI 29 adds optional full-tensor payloads to the existing streamed phase and
+in-place program handlers, without adding another FFI target. The electric
+kernel retains CPML-corrected curls over the coupling region and
+`tensor.cuh` adds the shared-node cross correction. The payload contains cross
+coefficients, a device origin, three primal-width arrays, and three XLA-owned
+curl workspaces. Graph identity includes those descriptors; coefficient values
+remain dynamic. Both localized coupling and dense bulk anisotropy are supported
+on uniform and rectilinear grids, with the existing source and DFT schedules.
+Full-tensor execution currently requires canonical, unpadded float32 storage
+and the streamed schedule. Full-tensor gradients remain on JAX.
+See the [tensor workflow](../docs/tensor-modal-workflows.md#native-streamed-cuda)
+and [hardware validation report](../benchmarks/reports/issue361/cuda-performance/README.md).
+
+ABI 30 adds lossless constant-block material storage to the same input slots.
+For canonical single-device `cuda_streamed`, the compiler can replace 32
+consecutive samples on each electric Yee support with one constant. Mixed
+blocks keep all 32 original values. Rank-two int32 source buffers `(1, nblocks)`
+hold signed headers: negative means `~header` is the constant's pool index;
+nonnegative means `header + (logical_index & 31)` addresses a literal value.
+The rank-one float pool occupies the decay slot (decay is exactly one).
+All three components share the pool, including identical isotropic constants.
+The compiler selects this layout only when it saves at least 25% over the
+previous dense/byte-ID storage. Existing scalar, byte-ID, conductive, rotated,
+sharded and `mstep` paths remain available.
+Differentiable diagonal runs expand packed coefficients with a JAX gather before
+the existing native adjoint, which also propagates gradients into shared pools.
+
+Full-tensor inverse diagonals use the same storage and are scaled by `dt/eps0`
+at invocation time; globally uniform diagonals become scalars. Cross terms are
+unchanged. The existing kernels read this format without extra launches,
+per-cell geometry tests, or matrix solves. See the
+[constant-block benchmark](../benchmarks/reports/issue361/cuda-material-blocks/README.md).
+
 For monitor-heavy graphs, `io.cu` first prepares one window and complex phase per
 monitor/frequency into small XLA-owned scratch buffers, then reuses those values
 across every gathered point and field component. Short plans retain the original
@@ -93,7 +126,7 @@ simulations; only the explicitly selected CPML recurrence state may use BF16.
 
 ## Streamed and multistep schedules
 
-`backend="cuda"` uses one CUDA component (**0.28.0 / ABI 28**) with two schedules.
+`backend="cuda"` uses one CUDA component (**0.30.0 / ABI 30**) with two schedules.
 Omitting `schedule` preserves main's streamed and geometry-based layout policy.
 The aliases `cuda_streamed` and `cuda_mstep` force their respective schedules.
 Explicit `schedule="auto"` enables the time-to-result selector:
@@ -183,7 +216,7 @@ result = simulation.advance(
 This path has native C++/CPU FFI coverage and recorded two/eight-H100 parity and
 capacity checks; remaining gaps are listed in the [validation summary](../docs/reviews/pr334-post-merge-validation-2026-10-17.md#historical-studies-and-raw-evidence).
 `auto` continues selecting JAX for sharded requests. Rebuild the optional native
-component when updating Python across an ABI boundary; this branch uses ABI 28,
+component when updating Python across an ABI boundary; this branch uses ABI 30,
 including `beamz_cuda_sharded`. Sharded phases pass separate neighbor faces to
 avoid full-field halo concatenations and retain integer DFT chunk offsets.
 

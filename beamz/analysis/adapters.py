@@ -286,11 +286,14 @@ class ModeMonitorData:
     monitor : object
         Detached mode-monitor configuration.
     amps : array-like or xarray.DataArray
-        Complex forward/backward modal amplitudes.
+        Complex forward/backward modal amplitudes in sqrt(W). In 3D, power is
+        defined by the measured basis's discrete Poynting flux, matching the
+        source calibration and flux monitor at equivalent sampling planes.
     flux : array-like or xarray.DataArray, optional
         Total measured flux in watts.
     modal_flux : array-like or xarray.DataArray, optional
-        Flux reconstructed from projected modes.
+        Sampled flux reconstructed from projected modes, including overlap cross
+        terms. Compare this to ``flux``, not a sum of squared modal amplitudes.
     projection_residual : array-like or xarray.DataArray, optional
         Relative field reconstruction residual.
     condition_number : array-like or xarray.DataArray, optional
@@ -329,6 +332,65 @@ class ModeMonitorData:
                 for name, value in vars(self).items()
                 if name != "monitor" and value is not None
             }
+        )
+
+    @property
+    def power(self):
+        """Directional modal contributions in discrete Poynting-flux watts.
+
+        These are individual mode contributions. In a coherent, nonorthogonal
+        basis their sum is not the reconstructed flux; use ``modal_flux`` for
+        measured-field power accounting.
+        """
+        value = np.abs(self.amps) ** 2
+        if hasattr(value, "rename"):
+            value = value.rename("power")
+            value.attrs = {"units": "W", "power_convention": "modal"}
+        return value
+
+    @property
+    def unresolved_flux(self):
+        """Measured flux minus its sampled modal reconstruction, in W."""
+        if self.flux is None or self.modal_flux is None:
+            raise ValueError("Flux accounting requires flux and modal_flux.")
+        value = self.flux - self.modal_flux
+        if hasattr(value, "rename"):
+            value = value.rename("unresolved_flux")
+            value.attrs = {"units": "W", "power_convention": "sampled"}
+        return value
+
+    def normalized_to(self, reference, *, mode_index=0, direction="+", power=1.0):
+        """Return a view referenced to one incident mode's power spectrum.
+
+        ``reference`` is modal data from a matched incident monitor or reference
+        simulation, in the same raw/source-normalized convention as this data.
+        Frequency coordinates must match exactly. Both flux quantities use the
+        same scale as the amplitudes; their sampled-power convention is retained.
+        Residuals and condition numbers are dimensionless and remain unchanged.
+        """
+        if not isinstance(reference, ModeMonitorData):
+            raise TypeError("A modal power reference must be ModeMonitorData.")
+        if direction not in ("+", "-"):
+            raise ValueError("Reference direction must be '+' or '-'.")
+        if not np.isfinite(power) or power <= 0:
+            raise ValueError("Reference power must be finite and positive.")
+        if not hasattr(self.amps, "coords") or not hasattr(reference.amps, "coords"):
+            raise TypeError(
+                "Modal reference normalization requires labeled amplitudes."
+            )
+        if not np.array_equal(self.amps.coords["f"], reference.amps.coords["f"]):
+            raise ValueError("Modal reference frequencies must match exactly.")
+        incident = reference.power.sel(
+            direction=direction, mode_index=mode_index, drop=True
+        )
+        if np.any(~np.isfinite(incident)) or np.any(incident <= 0):
+            raise ValueError("Incident modal power must be finite and positive.")
+        scale = power / incident
+        return replace(
+            self,
+            amps=self.amps * np.sqrt(scale),
+            flux=None if self.flux is None else self.flux * scale,
+            modal_flux=None if self.modal_flux is None else self.modal_flux * scale,
         )
 
 
@@ -382,8 +444,12 @@ def mode_data(results, name):
             mode_spec=replace(
                 monitor.mode_spec,
                 mode_index=idx,
-                polarization=monitor.mode_spec.polarization
-                or (data.coordinates.polarization_2d if not data.is_3d else "te"),
+                polarization=(
+                    monitor.mode_spec.polarization
+                    if data.is_3d
+                    else monitor.mode_spec.polarization
+                    or data.coordinates.polarization_2d
+                ),
             ),
         )
         for idx in range(num_modes)

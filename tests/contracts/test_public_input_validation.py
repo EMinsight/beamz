@@ -74,7 +74,7 @@ def test_port_rejects_invalid_configuration(changes, match):
 
 
 def test_port_derivations_translation_and_device_factories_are_consistent():
-    port = _port(mode_spec=bz.ModeSpec(num_modes=3, mode_index=1))
+    port = _port(mode_spec=bz.ModeSpec(num_modes=3, mode_index=1, polarization="te"))
 
     assert port.axis == "x"
     assert port.signed_direction == "+x"

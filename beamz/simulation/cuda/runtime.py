@@ -395,6 +395,7 @@ def _ffi_phase(
     differentiable=False,
     shard_geometry=None,
     shard_halos=(),
+    tensor_payload=None,
 ):
     if len(terms) != len(psi_terms):
         raise ValueError(
@@ -432,9 +433,16 @@ def _ffi_phase(
     )
     if differentiable:
         return _phase_with_vjp(arguments, (*targets, *psi_terms), attributes)
-    call = _ffi_call(target, (*targets, *psi_terms), aliases)
+    results = (*targets, *psi_terms)
+    if tensor_payload is not None:
+        from .tensor import append_io
+
+        arguments, results, aliases = append_io(
+            arguments, results, aliases, tensor_payload
+        )
+    call = _ffi_call(target, results, aliases)
     outputs = call(*arguments, **attributes)
-    return tuple(outputs)
+    return tuple(outputs[: 3 + len(terms)])
 
 
 def update_h(state, ctx, coeffs) -> SimulationState:
@@ -477,6 +485,12 @@ def update_e(state, ctx, coeffs) -> SimulationState:
     """Advance the three electric fields and optional CPML memory on CUDA."""
     target = abi.CUDA_STREAMED_TARGET
     terms = ctx.boundary.cpml.e_terms
+    tensor_payload = None
+    if coeffs.e_inverse_offdiagonal.size:
+        from .tensor import coefficients, payload
+
+        tensor_payload = payload(ctx, coeffs)
+        coeffs = coefficients(ctx, coeffs)
     materials = (
         coeffs.e_decay_x,
         coeffs.e_decay_y,
@@ -500,6 +514,7 @@ def update_e(state, ctx, coeffs) -> SimulationState:
         cuda_flags=ctx.config.cuda_flags,
         metallic_edges=ctx.boundary.cpml.metallic_edges,
         differentiable=ctx.differentiable,
+        tensor_payload=tensor_payload,
     )
     return state._replace(
         ex=outputs[0],
@@ -790,8 +805,8 @@ def _packed_e_material(coeffs) -> bool:
         coeffs.e_source_y,
         coeffs.e_source_z,
     )
-    return all(value.ndim == 1 for value in values) and all(
-        value.dtype == jnp.int32
+    return all(value.ndim == 1 for value in values[:3]) and all(
+        value.ndim in (1, 2) and value.dtype == jnp.int32
         for value in (coeffs.e_source_x, coeffs.e_source_y, coeffs.e_source_z)
     )
 
@@ -845,7 +860,9 @@ def _temporal_cpml_fields_supported(ctx, coeffs, nsteps: int) -> bool:
     e_sources = (coeffs.e_source_x, coeffs.e_source_y, coeffs.e_source_z)
     return all(value.ndim == 0 for value in h_values) and all(
         value.size > 0
-        and (value.ndim in (0, 3) or (value.ndim == 1 and value.dtype == jnp.int32))
+        and (
+            value.ndim in (0, 3) or (value.ndim in (1, 2) and value.dtype == jnp.int32)
+        )
         for value in e_sources
     )
 
@@ -1200,6 +1217,19 @@ def run_native_steps(
     native_calls=None,
 ):
     """Dispatch shared CUDA execution, including wrapped storage layouts."""
+    if coeffs.e_inverse_offdiagonal.size:
+        from .tensor import run_steps as run_tensor_steps
+
+        return run_tensor_steps(
+            state,
+            ctx,
+            coeffs,
+            groups,
+            packed_monitors,
+            nsteps,
+            observation_origin=observation_origin,
+            observation_step_offset=observation_step_offset,
+        )
     if native_calls is None:
         from beamz.simulation import cuda
 

@@ -308,6 +308,16 @@ ffi::Error DecodeRets(const ffi::RemainingRets& rets,
 
 using Launcher = int (*)(void*, const BeamzLaunch&);
 
+void InitializeTensor(BeamzTensorLaunch* tensor, const BeamzBuffer* inputs,
+                      const BeamzBuffer* scratch) {
+  tensor->cross = inputs[0];
+  tensor->origin = inputs[1];
+  for (int c = 0; c < 3; ++c) {
+    tensor->widths[c] = inputs[2 + c];
+    tensor->curls[c] = scratch[c];
+  }
+}
+
 ffi::Error Dispatch(Launcher launcher, void* stream, ffi::RemainingArgs args,
                     ffi::RemainingRets rets, int32_t abi_version,
                     int32_t cuda_flags, int32_t phase, int32_t nterms,
@@ -324,8 +334,11 @@ ffi::Error Dispatch(Launcher launcher, void* stream, ffi::RemainingArgs args,
   const size_t payload_count = 13 + 4 * static_cast<size_t>(nterms);
   const size_t output_count = 3 + static_cast<size_t>(nterms);
   const bool sharded = launcher == BeamzLaunchSharded;
-  if (args.size() != payload_count + 3 + (sharded ? 7 : 0) ||
-      rets.size() != output_count) {
+  const bool tensor = !sharded && phase == 1 &&
+                      args.size() == payload_count + 3 + kTensorInputCount;
+  if (args.size() != payload_count + 3 + (sharded ? 7 : 0) +
+                         (tensor ? kTensorInputCount : 0) ||
+      rets.size() != output_count + (tensor ? 3 : 0)) {
     return ffi::Error::InvalidArgument("invalid BeamZ CUDA phase buffer count");
   }
   BeamzLaunch launch = InitializeLaunch(abi_version, cuda_flags, phase, nterms,
@@ -341,8 +354,21 @@ ffi::Error Dispatch(Launcher launcher, void* stream, ffi::RemainingArgs args,
       return error;
     }
   }
-  if (auto error = DecodeRets(rets, launch.outputs, output_count);
+  BeamzBuffer results[12]{};
+  if (auto error = DecodeRets(rets, results, output_count + (tensor ? 3 : 0));
       error.failure()) return error;
+  for (size_t i = 0; i < output_count; ++i) launch.outputs[i] = results[i];
+  BeamzTensorLaunch tensor_launch{};
+  if (tensor) {
+    BeamzBuffer buffers[kTensorInputCount]{};
+    for (size_t i = 0; i < kTensorInputCount; ++i) {
+      auto value = args.get<ffi::AnyBuffer>(payload_count + 3 + i);
+      if (!value) return value.error();
+      if (auto error = DecodeBuffer(*value, &buffers[i]); error.failure()) return error;
+    }
+    InitializeTensor(&tensor_launch, buffers, results + output_count);
+    launch.tensor = &tensor_launch;
+  }
   if (sharded) {
     auto decoded = args.get<ffi::AnyBuffer>(payload_count + 3);
     if (!decoded) return decoded.error();
@@ -980,7 +1006,7 @@ ffi::Error StreamedProgramCpmlStepsHandler(
     int32_t graph_cache_capacity, int32_t schedule_flags) {
   if (abi_version != kAbiVersion || nsteps < 1 || metric_kind < 0 ||
       metric_kind > 2 || cpml_enabled < 0 || cpml_enabled > 1 ||
-      monitor_count < 1 || coincident_source_group_mask < 0 ||
+      monitor_count < 0 || coincident_source_group_mask < 0 ||
       coincident_source_group_mask >= (1 << kSourceGroupCount) ||
       disjoint_source_group_mask < 0 ||
       disjoint_source_group_mask >= (1 << kSourceGroupCount) ||
@@ -991,19 +1017,23 @@ ffi::Error StreamedProgramCpmlStepsHandler(
   constexpr size_t kSourceInputCount =
       kSourceGroupBufferCount * kSourceGroupCount;
   constexpr size_t kInputCapacity =
-      kCpmlGraphInputCount + kSourceInputCount + kMonitorInputCount;
-  constexpr size_t kOutputCapacity = kCpmlGraphOutputCount + 6;
+      kCpmlGraphInputCount + kSourceInputCount + kMonitorInputCount + kTensorInputCount;
+  constexpr size_t kOutputCapacity = kCpmlGraphOutputCount + 6 + 3;
   BeamzBuffer inputs[kInputCapacity]{};
   BeamzBuffer outputs[kOutputCapacity]{};
   const size_t graph_input_count =
       cpml_enabled ? kCpmlGraphInputCount : kYeeGraphInputCount;
   const size_t graph_output_count =
       cpml_enabled ? kCpmlGraphOutputCount : kYeeGraphOutputCount;
+  const size_t tensor_start = graph_input_count + kSourceInputCount + kMonitorInputCount;
+  const bool tensor = args.size() == tensor_start + kTensorInputCount;
+  if (!tensor && monitor_count == 0)
+    return ffi::Error::InvalidArgument("empty monitor program requires tensor payload");
   if (auto error = DecodeArgs(args, inputs,
                               graph_input_count + kSourceInputCount +
-                                  kMonitorInputCount);
+                                  kMonitorInputCount + (tensor ? kTensorInputCount : 0));
       error.failure()) return error;
-  if (auto error = DecodeRets(rets, outputs, graph_output_count + 6);
+  if (auto error = DecodeRets(rets, outputs, graph_output_count + 6 + (tensor ? 3 : 0));
       error.failure()) return error;
 
   GraphLaunches launches = InitializeGraphLaunches(
@@ -1023,10 +1053,16 @@ ffi::Error StreamedProgramCpmlStepsHandler(
       inputs[monitor_start + kMonitorPhaseSinInput],
       inputs[monitor_start + kMonitorPhaseCosInput],
       inputs[monitor_start + kMonitorPhaseWindowInput], monitor_count);
+  BeamzTensorLaunch tensor_launch{};
+  if (tensor) {
+    InitializeTensor(&tensor_launch, inputs + tensor_start, outputs + graph_output_count + 6);
+    launches.e.tensor = &tensor_launch;
+  }
 
   const int error = BeamzLaunchProgram(
       stream, InPlaceProgram(launches, nsteps, groups, kSourceGroupCount,
-                             &monitors, graph_cache_capacity, schedule_flags));
+                             monitor_count ? &monitors : nullptr,
+                             graph_cache_capacity, schedule_flags));
   return error == 0
              ? ffi::Error::Success()
              : ffi::Error::Internal(

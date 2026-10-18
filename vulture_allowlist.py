@@ -125,3 +125,11 @@ MaterialVariant.license
 MaterialVariant.nk_data
 MaterialVariant.fit
 MaterialVariant.conditions
+
+# Public modal diagnostics/reference API, exercised by notebooks and tests.
+unresolved_flux
+normalized_to
+
+# JAX calls registered pytree protocols dynamically.
+tree_flatten
+tree_unflatten

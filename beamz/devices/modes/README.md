@@ -81,8 +81,8 @@ Discrete solves also check the constitutive arrays on their individual Yee
 supports, using edge or center coordinates according to each component's
 stagger. A symmetric graded mesh is supported; an asymmetric graded mesh,
 clipped/off-center crop, asymmetric tensor, or unavailable/non-closed component
-support is skipped. There is no approximate mirror interpolation. Off-diagonal
-material tensors remain unsupported by the existing high-level mode path.
+support is skipped. There is no approximate mirror interpolation. Full-tensor
+ports use the separate coupled path described below and reject forced symmetry.
 
 `ModeSource.solve_modes()` previews the solver representation, with optional
 validated symmetry, before Yee interpolation, launch aperture processing,
@@ -95,3 +95,18 @@ and final power normalization remain independent of this option; an accepted
 refinement need not retain exact seed parity. Raw `solve_grid` results remain
 unprojected. One-dimensional line profiles used for 2D launches also remain
 unprojected, with an explicit skip diagnostic when symmetry is requested.
+
+## Full-tensor dielectric ports
+
+Confined lossless, nonmagnetic 3D tensor ports on uniform or rectilinear grids use a coupled
+discrete eigenproblem shared with the propagation constitutive operator. Use
+`ModeSpec(polarization=None, force_symmetry=False)` explicitly on the port.
+Source injection and monitor projection retain cross terms, normal Yee
+averaging, time staggering, and reciprocal complex eigenfields. Tensor material
+elsewhere in the device is allowed when the port's required support is locally
+diagonal. Tensor ports require locally uniform normal spacing and longitudinally
+invariant material; transverse cells may vary. Unsupported combinations fail explicitly.
+
+See [tensor modal workflows](../../../docs/tensor-modal-workflows.md) for the
+support matrix, mode ordering, power convention, result archives, and measured
+validation against the actual time step and independent Meep/MPB modes.

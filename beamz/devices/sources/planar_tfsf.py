@@ -508,6 +508,25 @@ def local_3d_phasor_context(
             local_material_attr(attr, component_slices[component]),
         )
 
+    material_grid = getattr(fields, "material_grid", None)
+    tensors = getattr(fields, "yee_tensors", None)
+    if tensors is None:
+        tensors = getattr(material_grid, "yee_tensors", {})
+    tensor_crop = tuple(slice(int(lo), int(hi) + 1) for lo, hi in cell_bounds)
+    local_fields.yee_tensors = {
+        name: np.asarray(values)[
+            (
+                slice(None),
+                *(
+                    tensor_crop
+                    if name == "eps_node"
+                    else component_slices["E" + name[-1]]
+                ),
+            )
+        ]
+        for name, values in tensors.items()
+    }
+
     offset = float(cell_bounds[axis_pos][0]) * float(resolution)
     local_indices = {
         component: shift_3d_component_index_to_local(
@@ -585,7 +604,9 @@ def advance_incident_h_3d(fields, state, dt, *, resolution: float):
     }
 
 
-def advance_incident_e_3d(fields, state, h_next, dt, *, resolution: float):
+def advance_incident_e_3d(
+    fields, state, h_next, dt, *, resolution: float
+) -> dict[str, np.ndarray]:
     """Advance an incident 3D state through the source-free E half-step."""
     from beamz.devices._boundary_compile import resolve_metallic_edges
 
@@ -611,6 +632,35 @@ def advance_incident_e_3d(fields, state, h_next, dt, *, resolution: float):
         if grid is None or grid.metric_kind == "isotropic_uniform"
         else curl_h_to_e_3d_metric(hx, hy, hz, grid, **curl_kwargs)
     )
+    material_grid = getattr(fields, "material_grid", None)
+    tensors = getattr(fields, "yee_tensors", None)
+    if tensors is None:
+        tensors = getattr(material_grid, "yee_tensors", {})
+    from beamz.devices.modes.constitutive import has_cross_terms
+
+    if has_cross_terms(tensors):
+        from beamz.constitutive import (
+            advance_e_tensor_dense,
+            electric_tensor_coefficients,
+        )
+
+        if any(np.any(np.asarray(getattr(fields, "sig_" + a)) != 0) for a in "xyz"):
+            raise ValueError("Tensor incident fields require lossless electric updates")
+        diagonal, cross = electric_tensor_coefficients(tensors)
+        updated = advance_e_tensor_dense(
+            (ex, ey, ez),
+            (curl_hx, curl_hy, curl_hz),
+            tuple(jnp.asarray(v) for v in diagonal),
+            jnp.asarray(cross),
+            ("Ex", "Ey", "Ez"),
+            dt,
+            cell_widths=(
+                tuple(np.asarray(grid.cell_widths(a)) for a in "xyz")
+                if grid is not None and grid.metric_kind != "isotropic_uniform"
+                else None
+            ),
+        )
+        return dict(zip(("Ex", "Ey", "Ez"), map(np.asarray, updated), strict=True))
     return {
         "Ex": np.asarray(
             advance_e_field(

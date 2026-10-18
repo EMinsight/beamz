@@ -492,6 +492,7 @@ def _plan_3d_mode_source(
         permittivity,
         np.asarray(fields.permeability),
         material_tensors=getattr(fields.material_grid, "tensors", None),
+        yee_tensors=getattr(fields.material_grid, "yee_tensors", None),
         yee_materials=(
             getattr(fields.material_grid, "yee_materials", None)
             if fields.material_grid.uses_direct_yee_materials
@@ -777,7 +778,11 @@ def _yee_plane_power_3d(
     *,
     resolution: float,
 ) -> float:
-    """Measure the incident mode with the flux monitor's Yee-plane quadrature."""
+    """Calibrate launch power with the production monitor's Yee quadrature.
+
+    The source and measured modal basis use the same discrete Poynting flux,
+    including normal interpolation. Keep the measured-flux source contract.
+    """
     component_shapes = {
         component: tuple(getattr(fields, component).shape)
         for component in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz")

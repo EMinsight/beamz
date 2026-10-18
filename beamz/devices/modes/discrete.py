@@ -21,6 +21,7 @@ from beamz.devices._immutable import immutable_snapshot, readonly_array
 from ._cache import _SolveCache
 from ._symmetry import material_symmetric, mirror_closed, project_mode_symmetry
 from ._yee import refine_x_mode_at_fixed_beta, validate_x_mode_refinement
+from .constitutive import require_uniform_normal_spacing
 from .fields import (
     _axis_coordinate,
     _axis_index,
@@ -89,6 +90,8 @@ class ModePlaneSpec:
     component_permeability: Mapping[str, np.ndarray] = field(default_factory=dict)
     diagonal_permittivity: Mapping[str, np.ndarray] = field(default_factory=dict)
     diagonal_permeability: Mapping[str, np.ndarray] = field(default_factory=dict)
+    yee_tensors: Mapping[str, np.ndarray] = field(default_factory=dict)
+    offdiagonal_permittivity: Mapping[str, np.ndarray] = field(default_factory=dict)
     # Guarded by joint field, power, energy, and discrete-Maxwell validation.
     yee_refinement: bool = True
     grid: RectilinearGrid | None = None
@@ -162,6 +165,8 @@ class ModePlaneSpec:
             ("component_permeability", self.component_permeability),
             ("diagonal_permittivity", self.diagonal_permittivity),
             ("diagonal_permeability", self.diagonal_permeability),
+            ("yee_tensors", self.yee_tensors),
+            ("offdiagonal_permittivity", self.offdiagonal_permittivity),
         ):
             if name.startswith("diagonal_"):
                 unknown = set(value) - {"xx", "yy", "zz"}
@@ -175,6 +180,69 @@ class ModePlaneSpec:
                             f"{name}[{component!r}] must have shape {eps.shape}"
                         )
             object.__setattr__(self, name, immutable_snapshot(value))
+
+        if self.yee_tensors:
+            from beamz.lattice import component_shape_3d
+
+            required = {"eps_x", "eps_y", "eps_z", "eps_node"}
+            if set(self.yee_tensors) != required:
+                raise ValueError(
+                    "Full-tensor modes require all electric-support and shared-node tensors"
+                )
+            if self.dt is None or not np.isfinite(self.dt) or self.dt <= 0:
+                raise ValueError(
+                    "Full-tensor modes require a positive propagation timestep"
+                )
+            require_uniform_normal_spacing(self.grid, axis)
+            if self.polarization is not None or self.force_symmetry:
+                raise ValueError(
+                    "Full-tensor modes require polarization=None and force_symmetry=False"
+                )
+            if not self.component_permeability or any(
+                not np.all(np.asarray(v) == 1)
+                for v in self.component_permeability.values()
+            ):
+                raise ValueError(
+                    "Full-tensor modes currently require nonmagnetic materials (mu=1)"
+                )
+            for name, values in self.yee_tensors.items():
+                expected = (
+                    tuple(n + 1 for n in self.grid_shape)
+                    if name == "eps_node"
+                    else component_shape_3d("E" + name[-1], self.grid_shape)
+                )
+                if np.asarray(values).shape != (6, *expected):
+                    raise ValueError(
+                        f"{name} must cover the complete packed Yee support {(6, *expected)}"
+                    )
+
+                if not np.isfinite(values).all() or np.any(np.imag(values)):
+                    raise ValueError(
+                        "Full-tensor modes require finite real dielectric tensors"
+                    )
+                normal = {"z": 1, "y": 2, "x": 3}[self.axis]
+                if not np.allclose(
+                    values, np.take(values, [0], axis=normal), rtol=1e-6, atol=1e-12
+                ):
+                    raise ValueError(
+                        "Full-tensor modes require longitudinally invariant constitutive support"
+                    )
+                xx, yy, zz, xy, xz, yz = np.real(values)
+                determinant = (
+                    xx * yy * zz
+                    + 2 * xy * xz * yz
+                    - xx * yz**2
+                    - yy * xz**2
+                    - zz * xy**2
+                )
+                if (
+                    np.any(xx <= 0)
+                    or np.any(xx * yy - xy**2 <= 0)
+                    or np.any(determinant <= 0)
+                ):
+                    raise ValueError(
+                        "Full-tensor modes require positive-definite dielectric tensors"
+                    )
 
         if float(self.frequency) <= 0.0 or not np.isfinite(float(self.frequency)):
             raise ValueError("frequency must be finite and positive")
@@ -279,11 +347,15 @@ def _solve_beamz_mode(
     # The legacy y conversion skipped Yee refinement, biasing transmission
     # when input and output ports used different axes on the same uniform grid.
     if (
-        spec.axis == "y"
+        (spec.axis == "y" or (spec.axis == "z" and spec.yee_tensors))
         and spec.component_permittivity
-        and (spec.grid is None or spec.grid.metric_kind == "isotropic_uniform")
+        and (
+            spec.yee_tensors
+            or spec.grid is None
+            or spec.grid.metric_kind == "isotropic_uniform"
+        )
     ):
-        return _solve_y_mode_in_x_frame(spec, candidate_cache=candidate_cache)
+        return _solve_mode_in_x_frame(spec, candidate_cache=candidate_cache)
 
     solver_axes = _solver_axes_for_axis(spec.axis)
     eps_solver = _transpose_between_axes(
@@ -316,6 +388,10 @@ def _solve_beamz_mode(
         name: _transpose_between_axes(values, spec.transverse_axes, solver_axes)
         for name, values in spec.diagonal_permittivity.items()
     }
+    cross_eps = {
+        name: _transpose_between_axes(values, spec.transverse_axes, solver_axes)
+        for name, values in spec.offdiagonal_permittivity.items()
+    }
     diagonal_mu = {
         name: _transpose_between_axes(values, spec.transverse_axes, solver_axes)
         for name, values in spec.diagonal_permeability.items()
@@ -325,6 +401,9 @@ def _solve_beamz_mode(
         eps_xx=diagonal_eps.get("xx", eps_solver),
         eps_yy=diagonal_eps.get("yy"),
         eps_zz=diagonal_eps.get("zz"),
+        eps_xy=cross_eps.get("xy"),
+        eps_xz=cross_eps.get("xz"),
+        eps_yz=cross_eps.get("yz"),
         mu_xx=diagonal_mu.get("xx"),
         mu_yy=diagonal_mu.get("yy"),
         mu_zz=diagonal_mu.get("zz"),
@@ -441,6 +520,31 @@ def _solve_beamz_mode(
         yee_refinement_rejection_reason = (
             "mode is not eligible for x-normal guided-mode refinement"
         )
+    tensor_diagnostics = {}
+    if spec.yee_tensors:
+        if float(np.real(selected["neff"])) <= boundary_neff:
+            raise ValueError(
+                "Full-tensor ports currently require a confined guided mode; homogeneous/radiation ports are unsupported"
+            )
+        from ._tensor_yee import refine_tensor_mode
+
+        profiles, k_num, tensor_diagnostics = refine_tensor_mode(
+            profiles,
+            indices,
+            spec.yee_tensors,
+            omega=omega,
+            dt=spec.dt,
+            spacing=normal_spacing,
+            beta=k_num,
+            direction_sign=_direction_sign(spec.direction),
+            grid=spec.grid
+            if spec.grid is not None and spec.grid.metric_kind != "isotropic_uniform"
+            else None,
+        )
+        selected = _ModeCandidate(
+            neff=complex(k_num * 299792458.0 / omega), fields=selected["fields"]
+        )
+        yee_refinement_attempted = False
     if yee_refinement_attempted:
         seed_profiles = {
             name: np.asarray(value, dtype=np.complex128).copy()
@@ -514,10 +618,20 @@ def _solve_beamz_mode(
     if signed_power < 0.0:
         profiles = _backward_mode_from_forward(profiles)
         signed_power = -signed_power
-    backward_profiles = _backward_mode_from_forward(profiles)
+    backward_profiles = (
+        {
+            name: (1 if name.startswith("E") else -1) * np.conjugate(value)
+            for name, value in profiles.items()
+        }
+        if spec.yee_tensors
+        else _backward_mode_from_forward(profiles)
+    )
 
     diagnostics = {
         **symmetry_diagnostics,
+        **tensor_diagnostics,
+        "full_tensor_operator": bool(spec.yee_tensors),
+        "canonical_axis_rotation": bool(spec.yee_tensors),
         "contract": DISCRETE_MODE_CONTRACT,
         "normal_axis": spec.axis,
         "transverse_axes": spec.transverse_axes,
@@ -526,7 +640,11 @@ def _solve_beamz_mode(
         "mode_index": spec.mode_index,
         "selected_neff": complex(selected["neff"]),
         "phase_reference": "dominant_h_real_positive",
-        "time_convention": "exp(-i omega t); E at integer steps, H at half steps",
+        "time_convention": (
+            "exp(+i omega t); E at integer steps, H at half steps"
+            if spec.yee_tensors
+            else "exp(-i omega t); E at integer steps, H at half steps"
+        ),
         "aperture_window_alpha": spec.aperture_window_alpha,
         "yee_refinement": yee_refinement_accepted,
         "yee_refinement_requested": yee_refinement_requested,
@@ -569,17 +687,17 @@ def _solve_beamz_mode(
     )
 
 
-def _solve_y_mode_in_x_frame(
+def _solve_mode_in_x_frame(
     spec: ModePlaneSpec, *, candidate_cache: _SolveCache[Result] | None = None
 ) -> DiscreteMode:
-    """Solve a uniform y port in an x-normal frame, then reflect it back.
+    """Solve a y/z port in an x-normal frame, then transform it back.
 
     Electric fields are polar vectors; magnetic fields are axial vectors. The
-    x/y exchange is a reflection, so H also receives the determinant sign.
+    x/y exchange is a reflection; the z/x/y cycle is a proper rotation.
     Staggered component indices and their material arrays rotate together.
     """
     # Each entry gives the old axis represented by a new (x, y, z) axis.
-    old_axes = ("y", "x", "z")
+    old_axes = ("y", "x", "z") if spec.axis == "y" else ("z", "x", "y")
     inverse: dict[str, str] = dict(zip(old_axes, ("x", "y", "z"), strict=True))
     old_for_new: dict[str, str] = dict(zip(("x", "y", "z"), old_axes, strict=True))
     storage_order = tuple({"z": 0, "y": 1, "x": 2}[a] for a in old_axes[::-1])
@@ -603,6 +721,22 @@ def _solve_y_mode_in_x_frame(
             if old * 2 in materials
         }
 
+    tensor_components = ("xx", "yy", "zz", "xy", "xz", "yz")
+    old_components = [
+        "".join(sorted(old_for_new[a] for a in pair)) for pair in tensor_components
+    ]
+    component_order = [tensor_components.index(pair) for pair in old_components]
+    rotated_tensors = {
+        ("eps_node" if name == "eps_node" else "eps_" + inverse[name[-1]]): np.asarray(
+            values
+        )[component_order].transpose((0, *(i + 1 for i in storage_order)))
+        for name, values in spec.yee_tensors.items()
+    }
+    rotated_cross = {
+        new: spec.offdiagonal_permittivity[old]
+        for new, old in zip(tensor_components[3:], old_components[3:], strict=True)
+        if old in spec.offdiagonal_permittivity
+    }
     canonical_grid = None
     if spec.grid is not None:
         canonical_grid = RectilinearGrid(
@@ -620,10 +754,12 @@ def _solve_y_mode_in_x_frame(
         component_permeability=rotate_materials(spec.component_permeability),
         diagonal_permittivity=rotate_diagonal(spec.diagonal_permittivity),
         diagonal_permeability=rotate_diagonal(spec.diagonal_permeability),
+        yee_tensors=rotated_tensors,
+        offdiagonal_permittivity=rotated_cross,
         grid=canonical_grid,
     )
     mode = _solve_beamz_mode(canonical, candidate_cache=candidate_cache)
-    determinant = -1
+    determinant = -1 if spec.axis == "y" else 1
     phase_component = (
         mode.phase_reference_component[0]
         + old_for_new[mode.phase_reference_component[1]]

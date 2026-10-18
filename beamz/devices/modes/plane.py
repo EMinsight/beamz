@@ -17,6 +17,7 @@ from beamz.lattice import (
 )
 
 from ._symmetry import project_mode_symmetry
+from .constitutive import crop_tensor_support, has_cross_terms, require_diagonal_support
 from .discrete import (
     AxisName,
     DiscreteMode,
@@ -32,6 +33,7 @@ _TRANSVERSE_AXES_3D: dict[str, tuple[AxisName, AxisName]] = {
     "z": ("y", "x"),
 }
 MODE_PLANE_APERTURE_PAD_CELLS = 2
+TENSOR_MODE_NORMAL_HALO = 2
 MODE_PLANE_APERTURE_WINDOW_ALPHA = 0.2
 SignedAxis = Literal["+x", "-x", "+y", "-y", "+z", "-z"]
 _SIGNED_AXES = frozenset({"+x", "-x", "+y", "-y", "+z", "-z"})
@@ -360,6 +362,7 @@ def _local_mode_plane_spec(
     resolution,
     snapped_region=None,
     aperture_pad_cells=2,
+    normal_halo_cells=0,
     material_origin_zyx=(0, 0, 0),
     grid=None,
 ):
@@ -408,8 +411,8 @@ def _local_mode_plane_spec(
             )
         )
 
-    normal_origin = min(int(plane_index), int(offset_index))
-    normal_stop = max(int(plane_index), int(offset_index)) + 2
+    normal_origin = min(int(plane_index), int(offset_index)) - normal_halo_cells
+    normal_stop = max(int(plane_index), int(offset_index)) + 2 + normal_halo_cells
     normal_origin, normal_stop = _ensure_min_interval(
         normal_origin,
         normal_stop,
@@ -474,6 +477,7 @@ def solve_mode_plane_3d(
     *,
     material_tensors=None,
     yee_materials=None,
+    yee_tensors=None,
     frequency,
     resolution,
     dt,
@@ -512,6 +516,7 @@ def solve_mode_plane_3d(
         resolution=resolution,
         snapped_region=snapped_region,
         aperture_pad_cells=mode_plane_outer_pad_cells(width, height, resolution),
+        normal_halo_cells=TENSOR_MODE_NORMAL_HALO if yee_tensors else 0,
         material_origin_zyx=material_origin_zyx,
         grid=grid,
     )
@@ -527,6 +532,41 @@ def solve_mode_plane_3d(
             local_plane["origin_zyx"], material_origin_zyx, strict=True
         )
     )
+    local_tensors = crop_tensor_support(
+        yee_tensors or material_tensors,
+        origin=sampling_plane["origin_zyx"],
+        shape=local_plane["grid_shape"],
+    )
+    coupled = has_cross_terms(local_tensors)
+    if coupled:
+        if not yee_tensors:
+            require_diagonal_support(
+                local_tensors, operation="3D modal solve/projection"
+            )
+        if dt is None or dt <= 0:
+            raise ValueError("Full-tensor ports require the propagation timestep")
+        if polarization is not None or force_symmetry:
+            raise ValueError(
+                "Full-tensor mixed-polarization ports require polarization=None and force_symmetry=False"
+            )
+        if not np.all(np.asarray(permeability) == 1):
+            raise ValueError(
+                "Full-tensor ports currently require nonmagnetic materials (mu=1)"
+            )
+        for values in local_tensors.values():
+            if np.iscomplexobj(values) and np.any(np.imag(values)):
+                raise ValueError(
+                    "Full-tensor ports require real lossless dielectric tensors"
+                )
+            if not np.allclose(
+                values, np.take(values, [0], axis=axis_index + 1), rtol=1e-6, atol=1e-12
+            ):
+                raise ValueError(
+                    "Full-tensor ports require longitudinally invariant constitutive support"
+                )
+    else:
+        local_tensors = {}
+
     component_permittivity, component_permeability = _local_component_materials(
         permittivity,
         permeability,
@@ -540,6 +580,22 @@ def solve_mode_plane_3d(
         plane_index=plane_index,
         material_origin_zyx=material_origin_zyx,
     )
+    cross_profiles = {}
+    if coupled and material_tensors and "epsilon" in material_tensors:
+        values = np.asarray(material_tensors["epsilon"])
+        if values.shape[0] == 6:
+            for i, name in enumerate(("xy", "xz", "yz"), start=3):
+                local_values = crop_tensor_support(
+                    {"epsilon": values},
+                    origin=sampling_plane["origin_zyx"],
+                    shape=local_plane["grid_shape"],
+                )["epsilon"][i]
+                profile = np.take(
+                    local_values, local_plane["plane_index"], axis=axis_index
+                )
+                cross_profiles[name] = profile[
+                    tuple(slice(0, n) for n in local_plane["scalar_permittivity"].shape)
+                ]
     mode = solver(
         ModePlaneSpec(
             scalar_permittivity=np.asarray(
@@ -556,6 +612,8 @@ def solve_mode_plane_3d(
             component_permittivity=component_permittivity,
             component_permeability=component_permeability,
             diagonal_permittivity=diagonal_permittivity,
+            yee_tensors=local_tensors,
+            offdiagonal_permittivity=cross_profiles,
             diagonal_permeability=diagonal_permeability,
             center=local_plane["center"],
             width=float(width),

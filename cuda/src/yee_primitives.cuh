@@ -96,6 +96,13 @@ __device__ __forceinline__ float PackedMaterialSource(
 __device__ __forceinline__ float PackedMaterialSource(
     const BeamzBuffer& codebook, const BeamzBuffer& packed_codes,
     int64_t linear) {
+  if (packed_codes.rank == 2) {
+    // One cached header/constant per 32 Yee samples in homogeneous interiors.
+    // Mixed blocks retain every original coefficient without quantization.
+    const int header = static_cast<const int32_t*>(packed_codes.data)[linear >> 5];
+    const int index = header < 0 ? ~header : header + (linear & 31);
+    return static_cast<const float*>(codebook.data)[index];
+  }
   return PackedMaterialSource(static_cast<const float*>(codebook.data),
                               codebook.dims[0],
                               static_cast<const uint32_t*>(packed_codes.data),
