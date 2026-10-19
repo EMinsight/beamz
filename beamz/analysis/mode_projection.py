@@ -463,7 +463,7 @@ def _build_port_projection_2d(
     parts,
     mode_pad_cells,
 ):
-    mode_spec = spec.mode_spec if monitor is None else monitor.mode_spec
+    mode_spec = getattr(monitor, "mode_spec", spec.mode_spec)
     profile_slice = _monitor_profile_slice(sim, monitor, parts["axis"], mode_pad_cells)
     if len(profile_slice) == 3:
         eps_profile, local_idx, dl = profile_slice
@@ -591,7 +591,12 @@ def _build_port_projection(
     cache,
     mode_pad_cells=6,
 ):
-    key = (spec.name, monitor.name, float(frequency), monitor.mode_spec)
+    key = (
+        spec.name,
+        monitor.name,
+        float(frequency),
+        getattr(monitor, "mode_spec", spec.mode_spec),
+    )
     cached = cache.get(key)
     if cached is not None:
         return cached

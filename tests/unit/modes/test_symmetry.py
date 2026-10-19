@@ -345,7 +345,7 @@ def test_projection_cache_distinguishes_public_symmetry_option(monkeypatch):
     )
     cache = {}
     sim = SimpleNamespace(is_3d=False)
-    port = SimpleNamespace(name="port")
+    port = SimpleNamespace(name="port", mode_spec=ModeSpec())
     for flag in (False, True, False):
         monitor = SimpleNamespace(
             name="monitor", mode_spec=ModeSpec(force_symmetry=flag)
