@@ -3,6 +3,7 @@ import numpy as np
 from beamz.analysis.data import AnalysisData
 from beamz.analysis.modal_projection.colocation import (
     _discrete_mode_projection_grids_3d,
+    _sample_modal_basis_normal_3d,
 )
 from beamz.analysis.modal_projection.diagnostics import (
     _modal_projection_reconstruction_diagnostics_from_matrix,
@@ -379,6 +380,23 @@ def _build_discrete_port_projection_3d(
         measure=integration_weights,
         direction_sign=float(direction_sign),
         max_scale=1e6,
+    )
+    # Normalize the physical modes first, then measure them using the same
+    # normal interpolation as the recorded fields. Normalizing the measured
+    # basis would incorrectly turn interpolation loss into a power change.
+    sampling = dict(
+        axis=axis,
+        plane_position=center[{"x": 0, "y": 1, "z": 2}[axis]],
+        wave_number=discrete_mode.k_num_axis,
+        grid_shape=full_shape,
+        resolution=sim.resolution,
+        grid=grid,
+    )
+    plus_components = _sample_modal_basis_normal_3d(
+        plus_components, direction=-1, **sampling
+    )
+    minus_components = _sample_modal_basis_normal_3d(
+        minus_components, direction=1, **sampling
     )
     overlap_matrix = np.asarray(
         [
