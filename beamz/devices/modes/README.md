@@ -54,3 +54,44 @@ modal projection, so both consumers solve identical material crops and Yee
 supports.
 
 See `UPSTREAM.md` for the imported MicroMode revision and source mapping.
+
+## Optional mode symmetry
+
+`ModeSpec(force_symmetry=False)` is the default for previews, sources, mode
+monitors, and port projections. No mirror-parity projection is performed: a
+solved off-center field is preserved, independent of approximate material
+correlation or sampling thresholds. To request projection explicitly, use
+`ModeSpec(force_symmetry=True)` on the source or monitor (or the port used to
+create it).
+
+Projection acts on the solver's collocated cell-center fields **before** Yee
+interpolation, aperture windowing, guarded Maxwell refinement, and discrete
+unit-power normalization. It uses a common vector mirror parity, with electric
+fields treated as polar vectors and magnetic fields as axial vectors. It never
+reverses a compact staggered field array or modifies an accepted refinement.
+The previous approximate correlation detector and source-only post-refinement
+projection have been removed.
+
+Each transverse axis is checked independently. The physical mirror center is
+the requested plane center; direct internal `solve_modes` calls use the aperture
+midpoint unless `mirror_center` is provided in metres and profile storage order.
+All grid edges, all component coordinates, and the complex diagonal epsilon/mu
+profiles must be mirror symmetric about that center, to numerical tolerance.
+Discrete solves also check the constitutive arrays on their individual Yee
+supports, using edge or center coordinates according to each component's
+stagger. A symmetric graded mesh is supported; an asymmetric graded mesh,
+clipped/off-center crop, asymmetric tensor, or unavailable/non-closed component
+support is skipped. There is no approximate mirror interpolation. Off-diagonal
+material tensors remain unsupported by the existing high-level mode path.
+
+`ModeSource.solve_modes()` previews the solver representation, with optional
+validated symmetry, before Yee interpolation, launch aperture processing,
+Maxwell refinement, and launch power scaling. It retains the eigensolver's own
+normalization. `ModeData.diagnostics` contains one immutable mapping per
+frequency; `DiscreteMode.diagnostics` records the discrete processing result.
+Both report `force_symmetry_requested`, `force_symmetry_applied`,
+`force_symmetry_axes`, `force_symmetry_skipped`, and `symmetry_stage`. Refinement
+and final power normalization remain independent of this option; an accepted
+refinement need not retain exact seed parity. Raw `solve_grid` results remain
+unprojected. One-dimensional line profiles used for 2D launches also remain
+unprojected, with an explicit skip diagnostic when symmetry is requested.

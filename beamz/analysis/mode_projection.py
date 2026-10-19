@@ -287,6 +287,7 @@ def _build_discrete_port_projection_3d(
         mode_index=spec.mode_index,
         polarization=str(spec.polarization).lower(),
         target_neff=mode_spec.target_neff,
+        force_symmetry=mode_spec.force_symmetry,
         num_modes=num_modes,
         snapped_region=snapped_region,
         material_origin_zyx=origin,
@@ -462,6 +463,7 @@ def _build_port_projection_2d(
     parts,
     mode_pad_cells,
 ):
+    mode_spec = spec.mode_spec if monitor is None else monitor.mode_spec
     profile_slice = _monitor_profile_slice(sim, monitor, parts["axis"], mode_pad_cells)
     if len(profile_slice) == 3:
         eps_profile, local_idx, dl = profile_slice
@@ -480,6 +482,7 @@ def _build_port_projection_2d(
             direction=spec.projection_direction,
             filter_pol=spec.polarization,
             target_neff=target_neff,
+            force_symmetry=mode_spec.force_symmetry,
             return_fields=True,
         )
     else:
@@ -491,6 +494,7 @@ def _build_port_projection_2d(
             direction=spec.projection_direction,
             filter_pol=spec.polarization,
             target_neff=target_neff,
+            force_symmetry=mode_spec.force_symmetry,
             return_fields=True,
             grid_edges=(np.asarray(grid_edges, dtype=np.float64),),
         )
@@ -587,7 +591,7 @@ def _build_port_projection(
     cache,
     mode_pad_cells=6,
 ):
-    key = (spec.name, monitor.name, float(frequency))
+    key = (spec.name, monitor.name, float(frequency), monitor.mode_spec)
     cached = cache.get(key)
     if cached is not None:
         return cached

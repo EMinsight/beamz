@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 
-from beamz.devices._immutable import readonly_array
+from beamz.devices._immutable import immutable_snapshot, readonly_array
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,11 @@ class ModeSpec:
     num_freqs : int, optional
         Number of frequency samples used for a broadband mode representation.
 
+    force_symmetry : bool, default=False
+        Project 2D transverse solver planes about validated physical material/grid
+        mirrors. One-dimensional line profiles remain unprojected.
+        Applied before Yee interpolation and independent Maxwell refinement.
+
     Examples
     --------
     >>> spec = ModeSpec(num_modes=4, mode_index=1, polarization="te")
@@ -48,8 +54,11 @@ class ModeSpec:
     polarization: str | None = None
     target_neff: float | None = None
     num_freqs: int | None = None
+    force_symmetry: bool = False
 
     def __post_init__(self) -> None:
+        if not isinstance(self.force_symmetry, bool):
+            raise TypeError("force_symmetry must be a bool")
         object.__setattr__(self, "num_modes", max(1, int(self.num_modes)))
         object.__setattr__(self, "mode_index", max(0, int(self.mode_index)))
         if self.num_freqs is not None:
@@ -97,6 +106,10 @@ class ModeData:
     transverse_axes : tuple of str, optional
         Physical axis names corresponding to ``grid_edges``.
 
+    diagnostics : tuple of mappings, optional
+        Per-frequency processing diagnostics, including requested/applied symmetry.
+        Entries and nested mappings are immutable snapshots.
+
     Notes
     -----
     Array inputs are copied and made read-only.
@@ -123,6 +136,10 @@ class ModeData:
     )
     transverse_axes: tuple[str, ...] | None = field(
         default=None, compare=False, hash=False
+    )
+
+    diagnostics: tuple[Mapping[str, Any], ...] = field(
+        default_factory=tuple, compare=False, hash=False
     )
 
     def __post_init__(self) -> None:
@@ -172,6 +189,7 @@ class ModeData:
                     "transverse_axes must provide one name per grid edge array."
                 )
             object.__setattr__(self, "transverse_axes", axes)
+        object.__setattr__(self, "diagnostics", immutable_snapshot(self.diagnostics))
         if self.center is not None:
             object.__setattr__(self, "center", tuple(float(v) for v in self.center[:3]))
 
