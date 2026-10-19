@@ -156,7 +156,13 @@ def test_3d_mode_source_suppresses_counterpropagating_power_on_both_grids(
         near_modal_power = float(np.asarray(waves[near_port.name]["P_minus"])[0])
         far_modal_power = float(np.asarray(waves[far_port.name]["P_minus"])[0])
         assert far_modal_power == pytest.approx(near_modal_power, rel=0.02)
-        assert near_modal_power == pytest.approx(
+        # Modal amplitudes retain physical mode-power normalization. Compare
+        # finite-aperture flux to the reconstructed *sampled* field power:
+        # normal Yee interpolation attenuates that measurement on coarse grids.
+        near_sampled_power = abs(
+            float(np.asarray(waves[near_port.name]["projected_signed_power"])[0])
+        )
+        assert near_sampled_power == pytest.approx(
             abs(float(result[near_port.name].flux[0])), rel=0.02
         )
 

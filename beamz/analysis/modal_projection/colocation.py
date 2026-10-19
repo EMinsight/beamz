@@ -9,7 +9,11 @@ import numpy as np
 
 from beamz.analysis.data import AnalysisData, static_fields
 from beamz.const import µm
-from beamz.lattice import component_coordinates_3d_um, component_coordinates_rectilinear
+from beamz.lattice import (
+    component_coordinates_3d_um,
+    component_coordinates_rectilinear,
+    linear_interpolation_plan,
+)
 
 from .geometry import _monitor_component_plane_coords_3d, _plane_axes_for_port_axis
 
@@ -193,3 +197,43 @@ def _discrete_mode_projection_grids_3d(
         grids[name] = grid
         samples[name] = grid.reshape(-1)
     return grids, samples
+
+
+def _sample_modal_basis_normal_3d(
+    profiles,
+    *,
+    axis,
+    plane_position,
+    wave_number,
+    direction,
+    grid_shape,
+    resolution,
+    grid=None,
+):
+    """Apply the monitor's normal gather to a unit-power modal basis.
+
+    Profiles are referenced to the analysis plane. Reconstruct each traveling
+    wave on the native normal lattice before interpolating: opposite directions
+    have conjugate transfer factors, which need not be real off a lattice node.
+    Do not renormalize afterwards: monitor averaging does not change the power
+    carried by the underlying mode.
+    """
+    sampled = {}
+    for name, values in profiles.items():
+        coordinates = (
+            component_coordinates_rectilinear(name, grid)
+            if grid is not None
+            else {
+                key: value * float(µm)
+                for key, value in component_coordinates_3d_um(
+                    name, grid_shape, float(resolution / µm)
+                ).items()
+            }
+        )[axis]
+        low, high, wlow, whigh = linear_interpolation_plan(
+            coordinates, [plane_position]
+        )
+        phase = np.exp(1j * direction * wave_number * (coordinates - plane_position))
+        transfer = (wlow * phase[low] + whigh * phase[high])[0]
+        sampled[name] = np.asarray(values, dtype=np.complex128) * transfer
+    return sampled
