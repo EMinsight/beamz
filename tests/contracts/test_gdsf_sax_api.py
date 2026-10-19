@@ -87,6 +87,7 @@ def _port(
     direction="+x",
     polarization="tm",
     mode_index=0,
+    force_symmetry=False,
 ):
     axis = str(direction)[-1]
     size = tuple(0.0 if value == axis else 1.0 for value in "xyz")
@@ -96,7 +97,11 @@ def _port(
         name=name,
         monitor_name=monitor_name,
         direction=str(direction)[0],
-        mode_spec=ModeSpec(mode_index=mode_index, polarization=polarization),
+        mode_spec=ModeSpec(
+            mode_index=mode_index,
+            polarization=polarization,
+            force_symmetry=force_symmetry,
+        ),
     )
 
 
@@ -476,8 +481,10 @@ def test_project_modal_coefficients_3d_group_recovers_multiple_modes():
         np.testing.assert_allclose(actual[1], expected[1], rtol=1e-10, atol=1e-10)
 
 
+@pytest.mark.parametrize("force_symmetry", [False, True])
 def test_build_port_projection_2d_preserves_requested_mode_index_without_seed(
     monkeypatch,
+    force_symmetry,
 ):
     sim = SimpleNamespace()
     sim.is_3d = False
@@ -504,6 +511,8 @@ def test_build_port_projection_2d_preserves_requested_mode_index_without_seed(
     h0[2, 0] = 1.0
     h1[2, 1] = 3.0
 
+    requested = []
+
     def fake_solve_modes(
         eps,
         omega,
@@ -513,7 +522,9 @@ def test_build_port_projection_2d_preserves_requested_mode_index_without_seed(
         filter_pol,
         target_neff,
         return_fields,
+        force_symmetry=False,
     ):
+        requested.append(force_symmetry)
         del eps, omega, dL, m, direction, filter_pol, target_neff, return_fields
         return (
             np.array([2.3, 1.8], dtype=float),
@@ -538,12 +549,14 @@ def test_build_port_projection_2d_preserves_requested_mode_index_without_seed(
             direction="+y",
             polarization="te",
             mode_index=1,
+            force_symmetry=force_symmetry,
         ),
         monitor=monitor,
         frequency=1.0,
         cache={},
     )
 
+    assert requested == [force_symmetry]
     assert projection["mode_neff"] == pytest.approx(1.8)
     assert int(np.argmax(np.abs(projection["mode_matrix"][:5, 0]))) == 1
     assert np.count_nonzero(np.abs(projection["mode_matrix"][:5, 0]) > 1e-12) == 1

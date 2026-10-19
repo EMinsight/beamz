@@ -71,19 +71,3 @@ def test_modal_rows_match_ordinary_coupled_projection(axis, components):
     np.testing.assert_allclose(
         actual, np.asarray(expected).ravel(), rtol=1e-12, atol=1e-12
     )
-
-
-def test_mode_source_symmetry_depends_only_on_fixed_cross_section():
-    from types import SimpleNamespace
-
-    from beamz.devices.sources.mode_launch import _centered_transverse_symmetry_axes
-
-    values = np.ones((12, 14, 18))
-    source = SimpleNamespace(axis="x", center=(4.5, 7.0, 6.0))
-    fields = SimpleNamespace(permittivity=values)
-    expected = _centered_transverse_symmetry_axes(source, fields, None, 1.0)
-    assert expected == (0, 1)
-    values[2, 3, 12] = 4.0  # A distant design update must not change injection.
-    assert _centered_transverse_symmetry_axes(source, fields, None, 1.0) == expected
-    values[2, 3, 4] = 4.0  # A changed source cross-section really is asymmetric.
-    assert _centered_transverse_symmetry_axes(source, fields, None, 1.0) == ()

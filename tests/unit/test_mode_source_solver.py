@@ -88,7 +88,14 @@ def test_solve_modes_projects_fields_to_symmetric_material_parity(monkeypatch):
     result = SimpleNamespace(
         n_complex=xr.DataArray([[2.0]], dims=("f", "mode_index")),
         field_components={
-            name: xr.DataArray(skewed * (index + 1), dims=dims)
+            name: xr.DataArray(
+                skewed * (index + 1),
+                dims=dims,
+                coords={
+                    "y": (np.arange(5) + 0.5) * 0.1,
+                    "z": (np.arange(4) + 0.5) * 0.1,
+                },
+            )
             for index, name in enumerate(("Ex", "Ey", "Ez", "Hx", "Hy", "Hz"))
         },
     )
@@ -100,6 +107,7 @@ def test_solve_modes_projects_fields_to_symmetric_material_parity(monkeypatch):
         dL=1e-7,
         m=1,
         return_fields=True,
+        force_symmetry=True,
     )
 
     for component in (*electric[0], *magnetic[0]):
@@ -112,7 +120,10 @@ def test_solve_modes_projects_fields_to_symmetric_material_parity(monkeypatch):
             )
 
 
-def test_solve_modes_leaves_2d_launch_line_profiles_unprojected(monkeypatch):
+@pytest.mark.parametrize("force_symmetry", [False, True])
+def test_solve_modes_leaves_2d_launch_line_profiles_unprojected(
+    monkeypatch, force_symmetry
+):
     dims = ("y", "z", "x", "f", "mode_index")
     profile = (1.0 + np.arange(5.0))[:, None, None, None, None]
     result = SimpleNamespace(
@@ -130,6 +141,7 @@ def test_solve_modes_leaves_2d_launch_line_profiles_unprojected(monkeypatch):
         dL=1e-7,
         m=1,
         return_fields=True,
+        force_symmetry=force_symmetry,
     )
 
     for index, component in enumerate((*electric[0], *magnetic[0])):

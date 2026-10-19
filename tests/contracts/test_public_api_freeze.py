@@ -214,3 +214,11 @@ def test_supported_module_exports_are_frozen():
         expected = EXPECTED_EXPORTS[module.__name__]
         assert tuple(module.__all__) == expected
         assert all(hasattr(module, name) for name in expected)
+
+
+def test_mode_symmetry_is_explicit_public_opt_in():
+    default = beamz.ModeSpec()
+    requested = modes.ModeSpec(force_symmetry=True)
+    assert default.force_symmetry is False
+    assert requested.force_symmetry is True
+    assert default != requested

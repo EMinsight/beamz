@@ -19,6 +19,7 @@ from beamz.design.grid import RectilinearGrid
 from beamz.devices._immutable import immutable_snapshot, readonly_array
 
 from ._cache import _SolveCache
+from ._symmetry import material_symmetric, mirror_closed, project_mode_symmetry
 from ._yee import refine_x_mode_at_fixed_beta, validate_x_mode_refinement
 from .fields import (
     _axis_coordinate,
@@ -91,8 +92,11 @@ class ModePlaneSpec:
     # Guarded by joint field, power, energy, and discrete-Maxwell validation.
     yee_refinement: bool = True
     grid: RectilinearGrid | None = None
+    force_symmetry: bool = False
 
     def __post_init__(self) -> None:
+        if not isinstance(self.force_symmetry, bool):
+            raise TypeError("force_symmetry must be a bool")
         eps = readonly_array(self.scalar_permittivity, dtype=np.complex128)
         if eps.ndim != 2:
             raise ValueError("scalar_permittivity must be a 2D transverse plane")
@@ -349,10 +353,50 @@ def _solve_beamz_mode(
         for name, value in selected["fields"].items()
     }
 
+    symmetry_edges = tuple(_axis_edges(spec, a) for a in spec.transverse_axes)
+    symmetry_supports = {
+        name: tuple(np.asarray(data.coords[a]) * 1e-6 for a in spec.transverse_axes)
+        for name, data in getattr(result, "field_components", {}).items()
+        if all(a in data.coords for a in spec.transverse_axes)
+    }
+    rejected_axes = []
+    if spec.force_symmetry:
+        for a in spec.transverse_axes:
+            midpoint = spec.center[_AXIS_INDEX[a]]
+            for name, values in {
+                **spec.component_permittivity,
+                **spec.component_permeability,
+            }.items():
+                edges_a = _axis_edges(spec, a)
+                coords = (
+                    (edges_a[:-1] + edges_a[1:]) / 2
+                    if _YEE_OFFSETS_3D[name][a] == 0.5
+                    else edges_a
+                )
+                storage_axis = {"z": 0, "y": 1, "x": 2}[a]
+                if (
+                    values.ndim != 3
+                    or values.shape[storage_axis] != len(coords)
+                    or not mirror_closed(coords, midpoint)
+                    or not material_symmetric(values, storage_axis)
+                ):
+                    rejected_axes.append(a)
+                    break
+    aligned, symmetry_diagnostics = project_mode_symmetry(
+        aligned,
+        requested=spec.force_symmetry,
+        edges=symmetry_edges,
+        axes=spec.transverse_axes,
+        center=tuple(spec.center[_AXIS_INDEX[a]] for a in spec.transverse_axes),
+        materials=[
+            spec.scalar_permittivity,
+            *spec.diagonal_permittivity.values(),
+            *spec.diagonal_permeability.values(),
+        ],
+        supports=symmetry_supports,
+        rejected_axes=rejected_axes,
+    )
     profiles, indices, extra = _build_profiles(aligned, spec)
-    symmetric_axes = _detect_transverse_symmetry_axes(spec.scalar_permittivity)
-    if symmetric_axes:
-        profiles = _enforce_componentwise_parity(profiles, symmetric_axes)
 
     phase_ref_coord = _axis_coordinate(
         phase_component,
@@ -473,6 +517,7 @@ def _solve_beamz_mode(
     backward_profiles = _backward_mode_from_forward(profiles)
 
     diagnostics = {
+        **symmetry_diagnostics,
         "contract": DISCRETE_MODE_CONTRACT,
         "normal_axis": spec.axis,
         "transverse_axes": spec.transverse_axes,
@@ -606,6 +651,16 @@ def _solve_y_mode_in_x_frame(
         solver_axes=_solver_axes_for_axis(spec.axis),
         solver_direction=spec.direction,
         canonical_axis_rotation=True,
+        force_symmetry_axes=tuple(
+            old_for_new[a]
+            for a in cast(tuple[str, ...], diagnostics["force_symmetry_axes"])
+        ),
+        force_symmetry_skipped={
+            old_for_new[a]: reason
+            for a, reason in cast(
+                Mapping[str, str], diagnostics["force_symmetry_skipped"]
+            ).items()
+        },
     )
     return replace(
         mode,
@@ -1231,42 +1286,6 @@ def _phase_reference_profiles(
         out[component] = np.asarray(value, dtype=np.complex128) * np.exp(
             -1j * omega * delay
         )
-    return out
-
-
-def _detect_transverse_symmetry_axes(
-    eps_profile: np.ndarray,
-    threshold: float = 0.995,
-) -> tuple[int, ...]:
-    eps = np.asarray(np.real(eps_profile), dtype=float)
-    symmetric = []
-    for axis in range(eps.ndim):
-        denom = float(np.sum(np.abs(eps) ** 2))
-        corr = (
-            0.0
-            if denom <= 1e-18
-            else float(np.real(np.sum(eps * np.flip(eps, axis=axis))) / denom)
-        )
-        if corr >= threshold:
-            symmetric.append(axis)
-    return tuple(symmetric)
-
-
-def _enforce_componentwise_parity(
-    component_map: dict[str, np.ndarray],
-    symmetric_axes: tuple[int, ...],
-) -> dict[str, np.ndarray]:
-    out = {}
-    for name, value in component_map.items():
-        arr = np.asarray(value, dtype=np.complex128)
-        for axis in symmetric_axes:
-            if arr.ndim <= axis:
-                continue
-            flipped = np.flip(arr, axis=axis)
-            overlap = float(np.real(np.sum(arr * np.conjugate(flipped))))
-            parity = 1.0 if overlap >= 0.0 else -1.0
-            arr = 0.5 * (arr + parity * flipped)
-        out[name] = arr
     return out
 
 

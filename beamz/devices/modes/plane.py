@@ -16,12 +16,11 @@ from beamz.lattice import (
     sample_voxel_grid_at_e_component_3d_centered,
 )
 
+from ._symmetry import project_mode_symmetry
 from .discrete import (
     AxisName,
     DiscreteMode,
     ModePlaneSpec,
-    _detect_transverse_symmetry_axes,
-    _enforce_componentwise_parity,
     solve_beamz_mode,
 )
 from .solver import solve_grid
@@ -56,6 +55,9 @@ def solve_modes(
     mu_yy: np.ndarray | None = None,
     mu_zz: np.ndarray | None = None,
     grid_edges: tuple[np.ndarray, ...] | None = None,
+    force_symmetry: bool = False,
+    mirror_center: tuple[float, ...] | None = None,
+    diagnostics: dict | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]: ...
 
 
@@ -77,6 +79,9 @@ def solve_modes(
     mu_yy: np.ndarray | None = None,
     mu_zz: np.ndarray | None = None,
     grid_edges: tuple[np.ndarray, ...] | None = None,
+    force_symmetry: bool = False,
+    mirror_center: tuple[float, ...] | None = None,
+    diagnostics: dict | None = None,
 ) -> tuple[np.ndarray, np.ndarray]: ...
 
 
@@ -97,8 +102,19 @@ def solve_modes(
     mu_yy: np.ndarray | None = None,
     mu_zz: np.ndarray | None = None,
     grid_edges: tuple[np.ndarray, ...] | None = None,
+    force_symmetry: bool = False,
+    mirror_center: tuple[float, ...] | None = None,
+    diagnostics: dict | None = None,
 ) -> tuple[np.ndarray, np.ndarray] | tuple[np.ndarray, np.ndarray, np.ndarray, int]:
-    """Solve a one- or two-dimensional BeamZ material profile."""
+    """Solve a one- or two-dimensional BeamZ material profile.
+
+    ``force_symmetry`` opts 2D transverse planes into validated physical mirrors
+    before Yee interpolation/refinement. Line profiles remain unprojected.
+    ``mirror_center`` follows profile storage axes, in metres; the default is
+    the aperture midpoint. ``diagnostics`` receives request/application details.
+    """
+    if not isinstance(force_symmetry, bool):
+        raise TypeError("force_symmetry must be a bool")
     eps_array = np.asarray(eps, dtype=np.complex128)
     if eps_array.ndim not in {1, 2}:
         raise ValueError("solve_modes expects a 1D or 2D permittivity array")
@@ -175,28 +191,67 @@ def solve_modes(
     neffs = np.asarray(result.n_complex.values[0, order], dtype=np.complex128)
     electric = np.stack([fields[name][order] for name in ("Ex", "Ey", "Ez")], axis=1)
     magnetic = np.stack([fields[name][order] for name in ("Hx", "Hy", "Hz")], axis=1)
-    # Mirror-closing is required for the two-dimensional transverse planes
-    # used by 3D launches.  Applying it to a one-dimensional profile changes
-    # the staggered 2D ModeSource normalization, even when the material itself
-    # is symmetric.
-    symmetric_axes = _detect_transverse_symmetry_axes(eps_array) if is_plane else ()
-    if symmetric_axes:
-        for mode_index in range(electric.shape[0]):
+    profile_edges = tuple(np.asarray(edge) * 1e-6 for edge in edges)
+    profile_edges = profile_edges[::-1] if is_plane else profile_edges[:1]
+    profile_axes = tuple(name for name in ("z", "y", "x") if name != axis)
+    if not is_plane:
+        profile_axes = (profile_axes[-1] if axis != "z" else "x",)
+    centers = mirror_center or tuple(
+        0.5 * (edge[0] + edge[-1]) for edge in profile_edges
+    )
+    supports = {
+        name: tuple(np.asarray(data.coords[a]) * 1e-6 for a in profile_axes)
+        for name, data in result.field_components.items()
+        if all(a in data.coords for a in profile_axes)
+    }
+    symmetry_diagnostics = {}
+    for mode_index in range(electric.shape[0]):
+        component_map = dict(
+            zip(
+                ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz"),
+                (*electric[mode_index], *magnetic[mode_index]),
+                strict=True,
+            )
+        )
+        if not is_plane:
             component_map = {
-                name: values
-                for name, values in zip(
-                    ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz"),
-                    (*electric[mode_index], *magnetic[mode_index]),
-                    strict=True,
-                )
+                name: value[..., 0] for name, value in component_map.items()
             }
-            component_map = _enforce_componentwise_parity(component_map, symmetric_axes)
-            electric[mode_index] = np.stack(
-                [component_map[name] for name in ("Ex", "Ey", "Ez")]
-            )
-            magnetic[mode_index] = np.stack(
-                [component_map[name] for name in ("Hx", "Hy", "Hz")]
-            )
+        component_map, symmetry_diagnostics = project_mode_symmetry(
+            component_map,
+            requested=force_symmetry and is_plane,
+            edges=profile_edges,
+            axes=profile_axes,
+            center=centers,
+            materials=[
+                eps_array,
+                *(v for v in (eps_yy, eps_zz, mu_xx, mu_yy, mu_zz) if v is not None),
+            ],
+            supports=supports,
+        )
+        if not is_plane:
+            component_map = {
+                name: value[..., None] for name, value in component_map.items()
+            }
+        electric[mode_index] = np.stack(
+            [component_map[name] for name in ("Ex", "Ey", "Ez")]
+        )
+        magnetic[mode_index] = np.stack(
+            [component_map[name] for name in ("Hx", "Hy", "Hz")]
+        )
+    if force_symmetry and not is_plane:
+        symmetry_diagnostics.update(
+            force_symmetry_requested=True,
+            force_symmetry_skipped={
+                a: "line-profile symmetry projection is unsupported"
+                for a in profile_axes
+            },
+        )
+    if diagnostics is not None:
+        diagnostics.update(symmetry_diagnostics)
+        diagnostics["processing_stage"] = (
+            "solver_fields_before_yee_interpolation_and_refinement"
+        )
     if axis_index == 1:
         magnetic = -magnetic
     if eps_array.ndim == 1:
@@ -439,6 +494,7 @@ def solve_mode_plane_3d(
     material_origin_zyx=(0, 0, 0),
     solver=solve_beamz_mode,
     grid=None,
+    force_symmetry=False,
 ) -> DiscreteMode:
     """Solve one finite 3D mode plane and return globally indexed fields."""
     axis_index = _AXIS_POS_3D[axis]
@@ -510,6 +566,7 @@ def solve_mode_plane_3d(
             polarization=polarization,
             target_neff=target,
             num_modes=int(num_modes),
+            force_symmetry=force_symmetry,
             aperture_pad_cells=MODE_PLANE_APERTURE_PAD_CELLS,
             aperture_window_alpha=MODE_PLANE_APERTURE_WINDOW_ALPHA,
             grid=local_plane["grid"],

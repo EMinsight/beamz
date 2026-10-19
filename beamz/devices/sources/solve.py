@@ -239,6 +239,7 @@ def solve_mode_plane(
         values = mapping.get(component)
         return None if values is None else values[context.crop_slices]
 
+    solve_diagnostics = [{} for _ in frequencies]
     solved = [
         solve_modes(
             eps=eps_profile,
@@ -255,10 +256,17 @@ def solve_mode_plane(
             mu_yy=cropped(context.diagonal_permeability, "yy"),
             mu_zz=cropped(context.diagonal_permeability, "zz"),
             grid_edges=context.profile_edges,
+            force_symmetry=spec.force_symmetry,
+            mirror_center=tuple(
+                context.center[{"x": 0, "y": 1, "z": 2}[a]]
+                for a in context.transverse_axes
+            ),
+            diagnostics=solve_diagnostics[index],
         )
-        for frequency in frequencies
+        for index, frequency in enumerate(frequencies)
     ]
     return ModeData(
+        diagnostics=tuple(solve_diagnostics),
         frequencies=frequencies,
         neffs=np.asarray([item[0] for item in solved]),
         e_fields=np.asarray([item[1] for item in solved]),

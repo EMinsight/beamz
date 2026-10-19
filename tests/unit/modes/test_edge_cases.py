@@ -260,10 +260,6 @@ def test_discrete_helpers_cover_degenerate_and_reverse_paths():
     assert scale == 1.0
     assert flux == 0.0
 
-    parity = discrete_module._enforce_componentwise_parity(
-        {"Ey": np.ones(2)}, symmetric_axes=(1,)
-    )
-    np.testing.assert_array_equal(parity["Ey"], 1.0)
     oriented = discrete_module._runtime_oriented_profiles(
         {"Ez": np.ones(1), "Hx": np.ones(1)}, "y", -1.0
     )
