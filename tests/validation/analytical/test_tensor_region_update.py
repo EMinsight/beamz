@@ -7,10 +7,49 @@ import pytest
 
 from beamz.const import EPS_0
 from beamz.lattice import component_shape_3d
-from beamz.simulation.kernels import advance_e_centered_tensor
+from beamz.simulation.kernels import advance_e_centered_tensor, collocate_yee_component
 from beamz.simulation.tensor_regions import TensorRegion, compact_tensor_region
-from benchmarks.tensor_jax import reference_dense_tensor
 from tests.jax_compat import enable_x64
+
+
+def reference_dense_tensor(
+    fields,
+    curls,
+    inverse_diagonals,
+    inverse_offdiagonal,
+    components,
+    dt,
+    *,
+    cell_widths=None,
+):
+    """Advance E with diagonal terms on E sites and cross terms on dual centers."""
+
+    scale = jnp.asarray(dt, dtype=fields[0].dtype) / jnp.asarray(
+        EPS_0, dtype=fields[0].dtype
+    )
+    node_shape = inverse_offdiagonal.shape[:-1]
+    centered_curls = tuple(
+        collocate_yee_component(
+            curl, source, "Node", node_shape, cell_widths=cell_widths
+        )
+        for curl, source in zip(curls, components, strict=True)
+    )
+    cross_component = {(0, 1): 0, (0, 2): 1, (1, 2): 2}
+    updated = []
+    for row, (field, diagonal, target) in enumerate(
+        zip(fields, inverse_diagonals, components, strict=True)
+    ):
+        coupled = diagonal * curls[row]
+        for column, centered_curl in enumerate(centered_curls):
+            if row == column:
+                continue
+            pair = (min(row, column), max(row, column))
+            centered = inverse_offdiagonal[..., cross_component[pair]] * centered_curl
+            coupled = coupled + collocate_yee_component(
+                centered, "Node", target, field.shape, cell_widths=cell_widths
+            )
+        updated.append(field + scale * coupled)
+    return tuple(updated)
 
 
 @pytest.mark.parametrize("ndim", [2, 3])

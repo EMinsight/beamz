@@ -66,49 +66,21 @@ to each directional basis wave, using its own propagation phase. This matters
 at both node-aligned and off-grid planes: interpolating staggered E and H can
 attenuate them differently and otherwise create a spurious backward amplitude.
 
-Each directional mode is normalized **after** applying this measurement, using
-its discrete Poynting self-overlap on the monitor aperture. Thus squared modal
-amplitudes and flux monitors use the same watts. This is a real scalar applied
-to the complete E/H basis; the direction-dependent interpolation phases remain
-intact, preserving rejection of false backward waves.
+Each directional mode is normalized after monitor interpolation, so squared
+modal amplitudes, `ModeSource.power`, and flux monitors share the same watts.
+Source compilation calibrates against source-plane Poynting quadrature.
+`modes.modal_flux` includes sampled-basis overlap cross terms;
+`modes.unresolved_flux` is `modes.flux - modes.modal_flux`.
 
-`ModeSource.power`, `SimulationResults.launched_power()` for a mode source,
-`ModeMonitorData.power` (`abs(amps)**2`), and `ModePower` objectives use this
-discrete flux convention. Source compilation calibrates against the production
-source-plane Poynting quadrature. This is shared setup and analysis code for
-JAX and CUDA, uniform and rectilinear grids, and diagonal and full-tensor
-materials. It does not change the FDTD update kernels.
+For matched-reference transmission, use
+`output.normalized_to(incident, mode_index=0, direction="+")`, where both values
+are `ModeMonitorData` with matching frequencies and source normalization.
+The default reference is 1 W; pass `power=...` to report another incident power.
+Amplitudes and flux diagnostics receive the same scale without clipping.
 
-For measured-field accounting, compare `modes.modal_flux` with `modes.flux`.
-`modes.unresolved_flux` is their difference. The modal reconstruction includes
-sampled-basis overlap cross terms; summing squared amplitudes and subtracting
-that from sampled flux can omit interference terms in a nonorthogonal basis.
-
-Matched-reference transmission is also shared API:
-
-```python
-incident = reference_results.mode("input")
-output = device_results.mode("output")
-transmission = output.normalized_to(incident, mode_index=0, direction="+")
-fundamental_transmission = transmission.power.sel(direction="+", mode_index=0)
-```
-
-Both results must use the same raw/source-normalization convention, and their
-frequency coordinates must match exactly. The default reference is 1 W, so the
-numerical modal powers equal power-transmission ratios. To report watts for a
-different incident power, pass `power=...`. All amplitudes and flux diagnostics
-receive the same reference scale, preserving measured-field power accounting.
-No clipping or per-output peak calibration is applied. A zero/nonfinite incident
-mode or a flux array supplied in place of modal reference data is rejected.
-
-At finite mesh spacing, moving a plane to a different fraction of a Yee cell
-can change the interpolated flux. Modal watts track the flux at that same
-plane, rather than claiming position-independent pre-interpolation power.
-Use equivalent sampling positions or matched references for transmission and
-converge the mesh, aperture, runtime and physical CPML thickness independently.
-A finite mode set can leave unresolved radiation; coherent nonorthogonal modes
-can have cross terms. Neither residual is removed by renormalization or clipping.
-See the [joint flux/modal validation](../../../benchmarks/reports/issue361/README.md#source-flux-and-modal-power).
+Finite mesh spacing and aperture can leave interpolation error and unresolved
+radiation. Use equivalent sampling positions or matched references and converge
+the mesh, aperture, runtime, and physical CPML thickness independently.
 
 Issue #356 validation (JAX CPU): a 0.6 × 0.4 µm, index-2 guide in index-1
 cladding at wavelength 1.5 µm, run for 160 fs. Straight-guide measurements use

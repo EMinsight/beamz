@@ -246,7 +246,7 @@ def test_tensor_cuda_coefficients_remain_dynamic(factor):
 @pytest.mark.parametrize("axis", ["x", "y", "z"])
 @pytest.mark.parametrize("direction", ["+", "-"])
 def test_tensor_cuda_modal_launch_and_projection(axis, direction):
-    from benchmarks.reports.issue361.validate_ports import run
+    from tests.validation.regression.test_tensor_port_workflow import run
 
     reference, *_ = run(axis, direction, rectilinear=True)
     actual, *_ = run(axis, direction, rectilinear=True, backend="cuda_streamed")
@@ -272,7 +272,7 @@ def test_tensor_cuda_modal_launch_and_projection(axis, direction):
 
 def test_tensor_cuda_smoothed_interface_and_archive(tmp_path):
     from beamz.simulation.results import SimulationResults
-    from benchmarks.reports.issue361.validate_ports import run
+    from tests.validation.regression.test_tensor_port_workflow import run
 
     report, result, *_ = run(
         axis="z", rectilinear=True, smoothed=True, backend="cuda_streamed"

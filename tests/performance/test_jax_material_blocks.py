@@ -11,10 +11,32 @@ from beamz.simulation.differentiation import build_differentiable_scan
 from beamz.simulation.execute import build_program_scan
 from beamz.simulation.material_blocks import MaterialBlocks, material_values
 from beamz.simulation.sharding import place_tree
-from benchmarks.cuda_material_blocks import simulation
-from benchmarks.jax_material_blocks import dense_coefficients, executable_memory
 from tests.jax_compat import enable_x64
+from tests.performance.test_cuda_material_blocks import simulation
 from tests.performance.test_cuda_tensor import compare_states, seeded_state
+
+
+def dense_coefficients(coeffs, state):
+    """Reconstruct the preceding layout on the host, including uniform grids."""
+    changes = {}
+    for prefix in ("e_permittivity_", "e_inverse_diagonal_"):
+        for c in "xyz":
+            value = getattr(coeffs, prefix + c)
+            if not value.size:
+                continue
+            shape = getattr(state, "e" + c).shape
+            if isinstance(value, MaterialBlocks):
+                pool, headers = np.asarray(value.values), np.asarray(value.headers)
+                if headers.dtype == np.uint8:
+                    value = pool[headers].reshape(shape)
+                else:
+                    linear = np.arange(np.prod(shape), dtype=np.int32)
+                    h = headers[linear >> 5]
+                    value = pool[np.where(h < 0, ~h, h + (linear & 31))].reshape(shape)
+            else:
+                value = np.broadcast_to(np.asarray(value), shape).copy()
+            changes[prefix + c] = value
+    return coeffs._replace(**changes)
 
 
 @pytest.fixture(autouse=True)
@@ -81,7 +103,13 @@ def test_compiled_memory_really_decreases(full):
     memories = []
     for coeffs in (p.coefficients, dense_coefficients(p.coefficients, state)):
         executable = build_program_scan(p).lower(state, place_tree(p, coeffs)).compile()
-        memories.append(executable_memory(executable)["total"])
+        stats = executable.memory_analysis()
+        memories.append(
+            stats.argument_size_in_bytes
+            + stats.output_size_in_bytes
+            + stats.temp_size_in_bytes
+            - stats.alias_size_in_bytes
+        )
     assert memories[0] < 0.95 * memories[1], memories
 
 

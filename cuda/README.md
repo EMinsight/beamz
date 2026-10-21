@@ -26,38 +26,12 @@ split by responsibility:
 - `sharded.cu` launches the global-coordinate-aware cells in `sharded_cell.h`;
 - `io.cu` owns source injection and DFT monitor accumulation.
 
-ABI 29 adds optional full-tensor payloads to the existing streamed phase and
-in-place program handlers, without adding another FFI target. The electric
-kernel retains CPML-corrected curls over the coupling region and
-`tensor.cuh` adds the shared-node cross correction. The payload contains cross
-coefficients, a device origin, three primal-width arrays, and three XLA-owned
-curl workspaces. Graph identity includes those descriptors; coefficient values
-remain dynamic. Both localized coupling and dense bulk anisotropy are supported
-on uniform and rectilinear grids, with the existing source and DFT schedules.
-Full-tensor execution currently requires canonical, unpadded float32 storage
-and the streamed schedule. Full-tensor gradients remain on JAX.
-See the [tensor workflow](../docs/tensor-modal-workflows.md#native-streamed-cuda)
-and [hardware validation report](../benchmarks/reports/issue361/cuda-performance/README.md).
-
-ABI 30 adds lossless constant-block material storage to the same input slots.
-For canonical single-device `cuda_streamed`, the compiler can replace 32
-consecutive samples on each electric Yee support with one constant. Mixed
-blocks keep all 32 original values. Rank-two int32 source buffers `(1, nblocks)`
-hold signed headers: negative means `~header` is the constant's pool index;
-nonnegative means `header + (logical_index & 31)` addresses a literal value.
-The rank-one float pool occupies the decay slot (decay is exactly one).
-All three components share the pool, including identical isotropic constants.
-The compiler selects this layout only when it saves at least 25% over the
-previous dense/byte-ID storage. Existing scalar, byte-ID, conductive, rotated,
-sharded and `mstep` paths remain available.
-Differentiable diagonal runs expand packed coefficients with a JAX gather before
-the existing native adjoint, which also propagates gradients into shared pools.
-
-Full-tensor inverse diagonals use the same storage and are scaled by `dt/eps0`
-at invocation time; globally uniform diagonals become scalars. Cross terms are
-unchanged. The existing kernels read this format without extra launches,
-per-cell geometry tests, or matrix solves. See the
-[constant-block benchmark](../benchmarks/reports/issue361/cuda-material-blocks/README.md).
+ABI 30 supports full-tensor updates and exact constant-block material storage.
+Tensor updates require canonical, unpadded float32 `cuda_streamed` storage on
+uniform or rectilinear grids; full-tensor gradients require JAX.
+Lossless materials use shared constant pools with 32-sample blocks when this
+saves at least 25% over dense/byte-ID storage. Mixed blocks retain exact values.
+Diagonal gradients expand packed coefficients before the native adjoint.
 
 For monitor-heavy graphs, `io.cu` first prepares one window and complex phase per
 monitor/frequency into small XLA-owned scratch buffers, then reuses those values

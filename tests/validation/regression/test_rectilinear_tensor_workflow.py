@@ -1,12 +1,10 @@
 """Public tensor launch/monitor workflows with unequal physical cell sizes."""
 
-import json
-
 import numpy as np
 import pytest
 
 from beamz.simulation.results import SimulationResults
-from benchmarks.reports.issue361.validate_ports import run
+from tests.validation.regression.test_tensor_port_workflow import run
 
 
 @pytest.mark.parametrize("axis", ["x", "y", "z"])
@@ -63,9 +61,6 @@ def test_rectilinear_tensor_launch_monitors_and_archive(axis, direction, tmp_pat
     np.testing.assert_array_equal(
         restored.metadata.grid.x_edges, result.metadata.grid.x_edges
     )
-    (
-        tmp_path / f"ports-{axis}-{'plus' if direction == '+' else 'minus'}.json"
-    ).write_text(json.dumps(report, indent=2))
 
 
 def test_rectilinear_tensor_source_reciprocity():
@@ -80,11 +75,10 @@ def test_rectilinear_tensor_source_reciprocity():
     np.testing.assert_allclose(*transmissions, atol=5e-5, rtol=0)
 
 
-def test_tensor_propagates_through_longitudinal_grid_grading(tmp_path):
+def test_tensor_propagates_through_longitudinal_grid_grading():
     report, *_ = run(rectilinear=True, graded_normal=True)
     near, far = (report["ports"][n] for n in ("near", "far"))
-    # A changing numerical lattice has finite-resolution reflection. This
-    # benchmark gives R=7.62e-4 at 100 nm and 5.03e-5 at 50 nm (see report).
+    # Longitudinal grid grading produces finite-resolution reflection.
     assert near["backward_power"] / near["forward_power"] < 1e-3
     np.testing.assert_allclose(
         far["independent_flux"], near["independent_flux"], rtol=1e-5
@@ -93,10 +87,9 @@ def test_tensor_propagates_through_longitudinal_grid_grading(tmp_path):
         assert row["sampled_modal_flux"] == pytest.approx(
             row["independent_flux"], rel=1e-4
         )
-    (tmp_path / "ports-graded-normal.json").write_text(json.dumps(report, indent=2))
 
 
-def test_rectilinear_oblique_smoothed_isotropic_core(tmp_path):
+def test_rectilinear_oblique_smoothed_isotropic_core():
     report, result, *_ = run(axis="z", rectilinear=True, smoothed=True)
     assert np.any(result["near"].material_region.yee_tensors["eps_node"][3:] != 0)
     for name in ("near", "far"):
@@ -105,7 +98,6 @@ def test_rectilinear_oblique_smoothed_isotropic_core(tmp_path):
         assert row["sampled_modal_flux"] == pytest.approx(
             row["independent_flux"], rel=1e-4
         )
-    (tmp_path / "ports-smoothed-z.json").write_text(json.dumps(report, indent=2))
 
 
 def test_zero_cross_terms_recover_rectilinear_diagonal_workflow():

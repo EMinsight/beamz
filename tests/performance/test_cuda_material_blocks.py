@@ -5,7 +5,20 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import beamz as bz
+from beamz.design.discretization import MaterialGrid
+from beamz.design.raster import (
+    ExtrudedPolygon,
+    Grid,
+    Material,
+    Object,
+    Polygon,
+    RasterOptions,
+    Scene,
+    rasterize,
+)
 from beamz.simulation.backend import cuda_backend_status
+from beamz.simulation.compile import _pack_cuda_lossless_e_coefficients
 from beamz.simulation.cuda.material_blocks import pack_material_blocks
 from beamz.simulation.execute import (
     build_program_scan,
@@ -14,9 +27,107 @@ from beamz.simulation.execute import (
 )
 from beamz.simulation.kernels import select_update_kernel
 from beamz.simulation.sharding import place_tree
-from benchmarks.cuda_material_blocks import restore_previous_layout, simulation
 from tests.jax_compat import enable_x64
 from tests.performance.test_cuda_tensor import compare_states, seeded_state
+
+
+def simulation(size, steps, *, full=False, graded=False, bulk=False, pec=False):
+    length = size * 100e-9
+    u = np.linspace(0, 1, size + 1)
+    edges = length * (u + 0.08 * np.sin(2 * np.pi * u)) if graded else length * u
+    angle = np.pi / 6
+    rotation = np.array(
+        [[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]]
+    )
+    vertices = (
+        np.array([[-0.5, -1 / 3], [0.5, -1 / 3], [0.5, 1 / 3], [-0.5, 1 / 3]])
+        * 0.25
+        @ rotation.T
+        + 0.5
+    ) * length
+    scene = (
+        Scene((Material(((6, 0.2, 0.1), (0.2, 5, 0.3), (0.1, 0.3, 4))),), ())
+        if bulk
+        else Scene(
+            (Material(), Material(6)),
+            (
+                Object(
+                    ExtrudedPolygon(Polygon(tuple(map(tuple, vertices))), 0, length),
+                    1,
+                ),
+            ),
+        )
+    )
+    material = MaterialGrid.from_raster_result(
+        rasterize(
+            scene,
+            Grid(edges, edges, length * u),
+            options=RasterOptions(
+                smoothing="farjadpour_full" if full or bulk else "farjadpour_diagonal"
+            ),
+        )
+    )
+    return bz.Simulation(
+        material_grid=material,
+        time=np.arange(steps + 1) * material.grid.cfl_time_step(0.6),
+        boundaries=(
+            [bz.PEC(edges="all")]
+            if pec
+            else [bz.PML(thickness=300e-9 if size < 64 else 800e-9, formulation="cpml")]
+        ),
+        monitors=[
+            bz.FluxMonitor(
+                center=(0.5 * length, 0.5 * length, z * length),
+                size=(0.7 * length, 0.7 * length, 0),
+                freqs=[bz.LIGHT_SPEED / 1.55e-6],
+                name=f"flux{i}",
+            )
+            for i, z in enumerate((0.35, 0.65))
+        ],
+        setup_device="cpu",
+    )
+
+
+def restore_previous_layout(coeffs, state):
+    """Independent host reconstruction, also used for native equality checks."""
+    changes = {}
+    full = bool(coeffs.e_inverse_offdiagonal.size)
+    dense = []
+    for c in "xyz":
+        shape = getattr(state, "e" + c).shape
+        source = getattr(coeffs, "e_source_" + c)
+        value = getattr(coeffs, ("e_inverse_diagonal_" if full else "e_decay_") + c)
+        if source.ndim == 2 and source.dtype == jnp.int32:
+            headers = np.asarray(source).ravel()
+            linear = np.arange(np.prod(shape))
+            header = headers[linear // 32]
+            offsets = np.where(header < 0, ~header, header + linear % 32)
+            value = np.asarray(value)[offsets].reshape(shape)
+        elif full:
+            value = np.broadcast_to(np.asarray(value), shape).copy()
+        elif source.ndim == 1 and source.dtype == jnp.int32:
+            words = np.asarray(source).view(np.uint32)
+            linear = np.arange(np.prod(shape))
+            ids = (words[linear // 4] >> (8 * (linear % 4))) & 255
+            value = np.asarray(value)[ids].reshape(shape)
+        else:
+            value = source
+        if full:
+            changes["e_inverse_diagonal_" + c] = jnp.asarray(value)
+            changes["e_source_" + c] = jnp.float32(1)
+        else:
+            dense.append(jnp.asarray(value))
+    if not full:
+        packed = _pack_cuda_lossless_e_coefficients(
+            (jnp.float32(1),) * 3, dense, blocks=False
+        )
+        decays, sources = (
+            packed if packed is not None else ((jnp.float32(1),) * 3, dense)
+        )
+        for c, decay, source in zip("xyz", decays, sources, strict=True):
+            changes["e_decay_" + c] = decay
+            changes["e_source_" + c] = source
+    return coeffs._replace(**changes)
 
 
 @pytest.fixture(autouse=True)

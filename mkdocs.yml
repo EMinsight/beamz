@@ -15,7 +15,6 @@ nav:
   - Migrating to v0.5: migrating-to-v0.5.md
   - Automatic Graded Meshing: graded-meshing.md
   - Circular-Bend Modes: bent-waveguide-modes.md
-  - Full-Tensor Dielectric Ports: tensor-modal-workflows.md
 
 markdown_extensions:
   - admonition
