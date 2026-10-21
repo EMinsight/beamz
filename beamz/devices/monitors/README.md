@@ -66,13 +66,21 @@ to each directional basis wave, using its own propagation phase. This matters
 at both node-aligned and off-grid planes: interpolating staggered E and H can
 attenuate them differently and otherwise create a spurious backward amplitude.
 
-Modes are normalized before this measurement is applied. Consequently squared
-modal amplitudes describe the underlying mode power, while `flux` describes the
-Poynting product of the interpolated fields over the finite monitor aperture.
-These quantities can differ on a coarse grid; their difference alone is not
-physical reflection or loss. For weak-reflection studies, compare complex modal
-amplitudes with a matched straight-guide reference and converge physical CPML
-thickness, mesh spacing, aperture, and runtime independently.
+Each directional mode is normalized after monitor interpolation, so squared
+modal amplitudes, `ModeSource.power`, and flux monitors share the same watts.
+Source compilation calibrates against source-plane Poynting quadrature.
+`modes.modal_flux` includes sampled-basis overlap cross terms;
+`modes.unresolved_flux` is `modes.flux - modes.modal_flux`.
+
+For matched-reference transmission, use
+`output.normalized_to(incident, mode_index=0, direction="+")`, where both values
+are `ModeMonitorData` with matching frequencies and source normalization.
+The default reference is 1 W; pass `power=...` to report another incident power.
+Amplitudes and flux diagnostics receive the same scale without clipping.
+
+Finite mesh spacing and aperture can leave interpolation error and unresolved
+radiation. Use equivalent sampling positions or matched references and converge
+the mesh, aperture, runtime, and physical CPML thickness independently.
 
 Issue #356 validation (JAX CPU): a 0.6 × 0.4 µm, index-2 guide in index-1
 cladding at wavelength 1.5 µm, run for 160 fs. Straight-guide measurements use

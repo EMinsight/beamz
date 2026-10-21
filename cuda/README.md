@@ -26,6 +26,13 @@ split by responsibility:
 - `sharded.cu` launches the global-coordinate-aware cells in `sharded_cell.h`;
 - `io.cu` owns source injection and DFT monitor accumulation.
 
+ABI 30 supports full-tensor updates and exact constant-block material storage.
+Tensor updates require canonical, unpadded float32 `cuda_streamed` storage on
+uniform or rectilinear grids; full-tensor gradients require JAX.
+Lossless materials use shared constant pools with 32-sample blocks when this
+saves at least 25% over dense/byte-ID storage. Mixed blocks retain exact values.
+Diagonal gradients expand packed coefficients before the native adjoint.
+
 For monitor-heavy graphs, `io.cu` first prepares one window and complex phase per
 monitor/frequency into small XLA-owned scratch buffers, then reuses those values
 across every gathered point and field component. Short plans retain the original
@@ -93,7 +100,7 @@ simulations; only the explicitly selected CPML recurrence state may use BF16.
 
 ## Streamed and multistep schedules
 
-`backend="cuda"` uses one CUDA component (**0.28.0 / ABI 28**) with two schedules.
+`backend="cuda"` uses one CUDA component (**0.30.0 / ABI 30**) with two schedules.
 Omitting `schedule` preserves main's streamed and geometry-based layout policy.
 The aliases `cuda_streamed` and `cuda_mstep` force their respective schedules.
 Explicit `schedule="auto"` enables the time-to-result selector:
@@ -183,7 +190,7 @@ result = simulation.advance(
 This path has native C++/CPU FFI coverage and recorded two/eight-H100 parity and
 capacity checks; remaining gaps are listed in the [validation summary](../docs/reviews/pr334-post-merge-validation-2026-10-17.md#historical-studies-and-raw-evidence).
 `auto` continues selecting JAX for sharded requests. Rebuild the optional native
-component when updating Python across an ABI boundary; this branch uses ABI 28,
+component when updating Python across an ABI boundary; this branch uses ABI 30,
 including `beamz_cuda_sharded`. Sharded phases pass separate neighbor faces to
 avoid full-field halo concatenations and retain integer DFT chunk offsets.
 

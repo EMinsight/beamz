@@ -84,7 +84,8 @@ bool HasPackedLosslessMaterial(const BeamzLaunch& launch) {
   if (launch.phase != 1) return false;
   for (int component = 0; component < 3; ++component) {
     if (launch.inputs[6 + component].rank != 1 ||
-        launch.inputs[9 + component].rank != 1 ||
+        (launch.inputs[9 + component].rank != 1 &&
+         launch.inputs[9 + component].rank != 2) ||
         launch.inputs[9 + component].element_type != kBeamzS32) {
       return false;
     }
@@ -142,6 +143,10 @@ bool CombinedCpmlCoreSupported(const BeamzProgramLaunch& program) {
 }
 
 cudaError_t ValidateSchedulePlan(const BeamzProgramLaunch& program) {
+  if (program.e_ab.tensor &&
+      (program.field_bank_count != 1 ||
+       ScheduleFlagEnabled(program, kNativeScheduleCombinedCpmlCore)))
+    return cudaErrorInvalidValue;
   constexpr int32_t kKnownFlags =
       kNativeScheduleCpml | kNativeScheduleTemporal |
       kNativeScheduleUniformCpml | kNativeSchedulePackedMaterial |

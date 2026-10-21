@@ -67,6 +67,31 @@ def cuda_workspace_estimate(
         )
     else:
         workspace = bank_count * state
+    cross = program.coefficients.e_inverse_offdiagonal
+    if cross.size and not layout.enabled and program.config.backend == "cuda_streamed":
+        from beamz.simulation.tensor_regions import TensorRegion
+
+        shape = (
+            tuple(
+                min(n, hi + 1) - max(0, lo - 1)
+                for (lo, hi), n in zip(cross.bounds, cross.node_shape, strict=True)
+            )
+            if isinstance(cross, TensorRegion)
+            else cross.shape[:3]
+        )
+        # The tensor graph is in-place. Include its local corrected curls,
+        # padded cross coefficients, and pre-scaled inverse diagonal arrays.
+        workspace = state + 4 * (
+            sum(
+                math.prod(n - int(a == c) for a, n in enumerate(shape))
+                for c in range(3)
+            )
+            + 3 * math.prod(shape)
+            + sum(
+                getattr(program.coefficients, f"e_inverse_diagonal_{c}").size
+                for c in "xyz"
+            )
+        )
     if (layout.enabled and layout.axis == 2) or program.config.cuda_storage_axes != (
         0,
         1,

@@ -242,7 +242,7 @@ def _pack_cuda_coefficient_ids(value, *, max_values: int = 256):
     return jnp.asarray(table, dtype=jnp.float32), jnp.asarray(packed.view(np.int32))
 
 
-def _pack_cuda_lossless_e_coefficients(decays, sources):
+def _pack_cuda_lossless_e_coefficients(decays, sources, *, blocks=False):
     """Return table/ID material buffers for a lossless low-cardinality E update."""
 
     decay_arrays = tuple(np.asarray(value) for value in decays)
@@ -252,29 +252,29 @@ def _pack_cuda_lossless_e_coefficients(decays, sources):
     ):
         return None
     packed = tuple(_pack_cuda_coefficient_ids(value) for value in sources)
+    values = tuple(value for value in packed if value is not None)
+    if blocks:
+        from .cuda.material_blocks import pack_material_blocks
+
+        baseline_bytes = (
+            sum(a.nbytes + b.nbytes for a, b in values)
+            if len(values) == len(packed)
+            else sum(value.nbytes for value in sources)
+        )
+        tiled = pack_material_blocks(sources, max_bytes=0.75 * baseline_bytes)
+        if tiled is not None:
+            return tiled
     if any(value is None for value in packed):
         return None
-    values = tuple(value for value in packed if value is not None)
     return tuple(value[0] for value in values), tuple(value[1] for value in values)
 
 
 def _inverse_permittivity_components(values):
     """Invert a packed symmetric tensor field into six trailing components."""
 
-    packed = np.asarray(values)
-    xx, yy, zz, xy, xz, yz = packed
-    determinant = (
-        xx * yy * zz + 2.0 * xy * xz * yz - xx * yz * yz - yy * xz * xz - zz * xy * xy
-    )
-    cofactors = (
-        yy * zz - yz * yz,
-        xx * zz - xz * xz,
-        xx * yy - xy * xy,
-        xz * yz - xy * zz,
-        xy * yz - xz * yy,
-        xy * xz - xx * yz,
-    )
-    return jnp.asarray(np.stack(cofactors, axis=-1) / determinant[..., None])
+    from beamz.constitutive import inverse_permittivity_components
+
+    return jnp.asarray(inverse_permittivity_components(values))
 
 
 def _compile_derivative_metrics(
@@ -700,6 +700,20 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
             raise ValueError(
                 "Bloch mode sources/monitors are not supported; use field monitors."
             )
+    if request.materials.uses_full_permittivity:
+        from beamz.devices.monitors.monitors import ModeMonitor
+        from beamz.devices.sources.specs import ModeSource
+
+        if (
+            any(isinstance(s, ModeSource) for s in request.sources)
+            or any(isinstance(m, ModeMonitor) for m in request.monitors)
+        ) and (
+            request.run.backend not in {"jax", "cuda_streamed"}
+            or request.run.sharding[0]
+        ):
+            raise ValueError(
+                "Tensor modal workflows require single-device JAX or streamed CUDA execution"
+            )
     if request.materials.dispersion:
         from beamz.devices.monitors.monitors import ModeMonitor
         from beamz.devices.sources.specs import ModeSource
@@ -768,18 +782,6 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
         setup.monitor_specs,
         setup.config,
     )
-    if (
-        request.materials.uses_full_permittivity
-        and config.backend != "jax"
-        and not sharding_layout.enabled
-    ):
-        from .backend import CudaBackendUnavailable
-
-        raise CudaBackendUnavailable(
-            "Full-tensor CUDA execution requires an active multi-device sharding "
-            "plan for its coupled constitutive update; use backend='jax'."
-        )
-
     # 4. Precompute ordinary Yee update coefficients. Native 3D material kernels keep
     # material arrays instead because they form coefficients at their exact stagger.
     use_3d_material_coefficients = bool(request.domain.is_3d)
@@ -878,10 +880,14 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
             )
             packed_e = (
                 None
-                if sharding_layout.enabled
+                if sharding_layout.enabled or request.materials.uses_full_permittivity
                 else _pack_cuda_lossless_e_coefficients(
                     (e_decay_x, e_decay_y, e_decay_z),
                     (e_source_x, e_source_y, e_source_z),
+                    blocks=(
+                        request.run.backend == "cuda_streamed"
+                        and request.run.cuda_storage_axes == (0, 1, 2)
+                    ),
                 )
             )
             if packed_e is not None:
@@ -1023,6 +1029,60 @@ def compile_simulation(request: SimulationRequest) -> CompiledProgram:
     update_coefficients, boundary = lower_compiled_arrays(
         update_coefficients, boundary, sharding_layout
     )
+    if (
+        config.backend in {"jax", "cuda_streamed"}
+        and not sharding_layout.enabled
+        and e_inverse_offdiagonal.size
+    ):
+        from .tensor_regions import compact_tensor_region
+
+        update_coefficients = update_coefficients._replace(
+            e_inverse_offdiagonal=compact_tensor_region(e_inverse_offdiagonal)
+        )
+        if config.backend == "cuda_streamed":
+            from .cuda.material_blocks import pack_material_blocks
+
+            inverse = tuple(
+                _elide_uniform_grid(
+                    getattr(update_coefficients, f"e_inverse_diagonal_{c}")
+                )
+                for c in "xyz"
+            )
+            packed_inverse = pack_material_blocks(
+                inverse, max_bytes=0.75 * sum(v.nbytes for v in inverse)
+            )
+            changes = {
+                f"e_inverse_diagonal_{c}": value
+                for c, value in zip(
+                    "xyz",
+                    inverse if packed_inverse is None else packed_inverse[0],
+                    strict=True,
+                )
+            }
+            if packed_inverse is not None:
+                changes.update(
+                    {
+                        f"e_source_{c}": value
+                        for c, value in zip("xyz", packed_inverse[1], strict=True)
+                    }
+                )
+            update_coefficients = update_coefficients._replace(**changes)
+    if (
+        config.backend == "jax"
+        and request.domain.is_3d
+        and not sharding_layout.enabled
+        and not request.materials.dispersion
+        and not request.materials.dispersion_interfaces
+    ):
+        from .material_blocks import compact_material
+
+        update_coefficients = update_coefficients._replace(
+            **{
+                prefix + c: compact_material(getattr(update_coefficients, prefix + c))
+                for prefix in ("e_permittivity_", "e_inverse_diagonal_")
+                for c in "xyz"
+            }
+        )
     metrics = lower_derivative_metrics(
         _compile_derivative_metrics(request.materials, boundary_data.periodic_axes),
         sharding_layout,
@@ -1116,6 +1176,21 @@ def compile_program(
         ("x", "y", "z") if simulation.is_3d else ("x", "y")
     )
     material_grid = simulation._material_grid(progress=progress)
+    if material_grid.uses_full_permittivity and metric_kind != "isotropic_uniform":
+        if sharding_token[0] or requested_backend not in {
+            "auto",
+            "jax",
+            "cuda",
+            "cuda_streamed",
+        }:
+            raise ValueError(
+                "Rectilinear full-tensor updates require single-device JAX or streamed CUDA."
+            )
+        if any(isinstance(boundary, Periodic) for boundary in simulation.boundaries):
+            raise ValueError(
+                "Rectilinear full-tensor updates do not yet support periodic/Bloch "
+                "constitutive averaging; use open or CPML boundaries."
+            )
     has_dispersion = bool(material_grid.dispersion)
     if has_dispersion and sharding_token[0]:
         raise ValueError(
@@ -1128,7 +1203,7 @@ def compile_program(
     cuda_grid_supported = simulation.is_3d
     multi_device = sharding_token[0] and sharding_token[2] != 1
     cuda_material_supported = not material_grid.uses_full_permittivity or (
-        multi_device and requested_backend in {"cuda", "cuda_streamed"}
+        requested_backend in {"cuda", "cuda_streamed"}
     )
     # Explicit streamed requests opt into the phase-by-phase sharded path.
     # Auto remains on the established JAX path pending CUDA hardware validation.
@@ -1146,8 +1221,8 @@ def compile_program(
         )
     if requested_backend not in {"auto", "jax"} and not cuda_material_supported:
         raise CudaBackendUnavailable(
-            "CUDA execution does not yet support full-tensor permittivity; "
-            "use backend='jax' for coupled constitutive updates."
+            "Full-tensor permittivity requires backend='jax' or "
+            "backend='cuda_streamed'; the CUDA mstep schedule is not supported."
         )
     if requested_backend not in {"auto", "jax"} and not cuda_sharding_supported:
         raise CudaBackendUnavailable(
@@ -1200,6 +1275,19 @@ def compile_program(
     cuda_graph_cache_capacity = (
         cuda_graph_cache_capacity_from_env() if resolved_backend != "jax" else 0
     )
+    if (
+        material_grid.uses_full_permittivity
+        and resolved_backend == "cuda_streamed"
+        and not multi_device
+    ):
+        from . import _cuda_abi as abi
+
+        if cuda_storage_axes != (0, 1, 2) or cuda_flags & (
+            abi.CUDA_FIELD_PAD32 | abi.CUDA_FIELD_PAD64 | abi.CUDA_FIELD_PAD_Y8
+        ):
+            raise ValueError(
+                "Full-tensor streamed CUDA requires canonical, unpadded field storage."
+            )
     request = simulation.to_request(
         num_steps=steps,
         loop_kind=loop_kind,
@@ -1329,6 +1417,18 @@ _REFERENCED_COEFFICIENTS = {
 
 def _add_memory_arrays(entries, name, value, category, residency="persistent"):
     """Flatten array tuples into stable allocation-report entries."""
+    from .material_blocks import MaterialBlocks
+    from .tensor_regions import TensorRegion
+
+    if isinstance(value, MaterialBlocks):
+        for part in ("values", "headers"):
+            _add_memory_arrays(
+                entries, name + "." + part, getattr(value, part), category, residency
+            )
+        return
+    if isinstance(value, TensorRegion):
+        _add_memory_arrays(entries, name + ".values", value.values, category, residency)
+        return
     try:
         shape, dtype = tuple(int(v) for v in value.shape), np.dtype(value.dtype)
     except Exception:
@@ -1368,9 +1468,16 @@ def _memory_summary(entries):
 
 
 def _compiled_memory_entries(program):
+    from .material_blocks import MaterialBlocks
+
     owned, referenced = [], []
     for name, value in program.coefficients._asdict().items():
-        target = referenced if name in _REFERENCED_COEFFICIENTS else owned
+        target = (
+            referenced
+            if name in _REFERENCED_COEFFICIENTS
+            and not isinstance(value, MaterialBlocks)
+            else owned
+        )
         _add_memory_arrays(
             target,
             name,

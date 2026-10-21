@@ -18,6 +18,8 @@ from beamz.devices._immutable import immutable_snapshot
 from beamz.devices.monitors.compiler import CompiledMonitorSpec
 from beamz.devices.monitors.monitors import _Monitor
 from beamz.devices.sources.compiler import CompiledSourceSpec
+from beamz.simulation.material_blocks import MaterialBlocks
+from beamz.simulation.tensor_regions import TensorRegion
 
 # Requests are detached, hashable compiler inputs. They prevent later mutation of a
 # public Simulation or device object from changing a cached program's meaning.
@@ -281,6 +283,16 @@ class SimulationState(NamedTuple):
 # The compiler plans below are values in the same lifecycle as SimulationRequest and
 # SimulationState. Keeping them here removes the former second, compiled-only type model.
 class UpdateCoefficients(NamedTuple):
+    """Material data for the selected backend.
+
+    Native lossless E can encode source coefficients as a float pool in
+    ``e_decay_*`` plus integer IDs in ``e_source_*``: rank one means byte IDs,
+    rank two means constant-block headers. For full tensors, a packed inverse
+    diagonal pool lives in ``e_inverse_diagonal_*`` and is scaled into the native
+    pool at execution time. Single-device JAX can use MaterialBlocks in electric
+    permittivities, inverse diagonals and invocation-time source scales.
+    """
+
     h_decay_x: jax.Array | np.ndarray | RegionArray
     h_source_x: jax.Array | np.ndarray | RegionArray
     h_sigma_m_x: jax.Array | np.ndarray | RegionArray
@@ -291,21 +303,21 @@ class UpdateCoefficients(NamedTuple):
     h_source_z: jax.Array | np.ndarray | RegionArray
     h_sigma_m_z: jax.Array | np.ndarray | RegionArray
     e_decay_x: jax.Array | np.ndarray | RegionArray
-    e_source_x: jax.Array | np.ndarray | RegionArray
+    e_source_x: jax.Array | np.ndarray | RegionArray | MaterialBlocks
     e_conductivity_x: jax.Array | np.ndarray | RegionArray
-    e_permittivity_x: jax.Array | np.ndarray | RegionArray
-    e_inverse_diagonal_x: jax.Array | np.ndarray | RegionArray
+    e_permittivity_x: jax.Array | np.ndarray | RegionArray | MaterialBlocks
+    e_inverse_diagonal_x: jax.Array | np.ndarray | RegionArray | MaterialBlocks
     e_decay_y: jax.Array | np.ndarray | RegionArray
-    e_source_y: jax.Array | np.ndarray | RegionArray
+    e_source_y: jax.Array | np.ndarray | RegionArray | MaterialBlocks
     e_conductivity_y: jax.Array | np.ndarray | RegionArray
-    e_permittivity_y: jax.Array | np.ndarray | RegionArray
-    e_inverse_diagonal_y: jax.Array | np.ndarray | RegionArray
+    e_permittivity_y: jax.Array | np.ndarray | RegionArray | MaterialBlocks
+    e_inverse_diagonal_y: jax.Array | np.ndarray | RegionArray | MaterialBlocks
     e_decay_z: jax.Array | np.ndarray | RegionArray
-    e_source_z: jax.Array | np.ndarray | RegionArray
+    e_source_z: jax.Array | np.ndarray | RegionArray | MaterialBlocks
     e_conductivity_z: jax.Array | np.ndarray | RegionArray
-    e_permittivity_z: jax.Array | np.ndarray | RegionArray
-    e_inverse_diagonal_z: jax.Array | np.ndarray | RegionArray
-    e_inverse_offdiagonal: jax.Array | np.ndarray | RegionArray
+    e_permittivity_z: jax.Array | np.ndarray | RegionArray | MaterialBlocks
+    e_inverse_diagonal_z: jax.Array | np.ndarray | RegionArray | MaterialBlocks
+    e_inverse_offdiagonal: jax.Array | np.ndarray | RegionArray | TensorRegion
 
 
 class DerivativeMetricPlan(NamedTuple):

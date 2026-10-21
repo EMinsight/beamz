@@ -28,5 +28,20 @@ int main() {
     if (changed != BeamzGraphKey("test", nullptr, program)) return 2;
     buffers[i]->data = nullptr;
   }
+  BeamzTensorLaunch tensor{};
+  program.e_ab.tensor = &tensor;
+  const auto tensor_baseline = BeamzGraphKey("test", nullptr, program);
+  if (tensor_baseline == baseline) return 3;
+  BeamzBuffer* tensor_buffers[] = {
+      &tensor.cross, &tensor.origin, &tensor.widths[0], &tensor.widths[1],
+      &tensor.widths[2], &tensor.curls[0], &tensor.curls[1], &tensor.curls[2]};
+  for (auto* buffer : tensor_buffers) {
+    buffer->data = &storage;
+    if (tensor_baseline == BeamzGraphKey("test", nullptr, program)) return 4;
+    buffer->data = nullptr;
+    buffer->dims[0] = 1;
+    if (tensor_baseline == BeamzGraphKey("test", nullptr, program)) return 5;
+    buffer->dims[0] = 0;
+  }
   return 0;
 }

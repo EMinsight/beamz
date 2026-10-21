@@ -157,6 +157,13 @@ void AppendLaunch(std::string* key, const BeamzLaunch& value) {
   for (const BeamzBuffer& buffer : value.inputs) AppendBuffer(key, buffer);
   for (const BeamzBuffer& buffer : value.metrics) AppendBuffer(key, buffer);
   for (const BeamzBuffer& buffer : value.outputs) AppendBuffer(key, buffer);
+  Append(key, value.tensor != nullptr);
+  if (value.tensor) {
+    AppendBuffer(key, value.tensor->cross);
+    AppendBuffer(key, value.tensor->origin);
+    for (const auto& buffer : value.tensor->widths) AppendBuffer(key, buffer);
+    for (const auto& buffer : value.tensor->curls) AppendBuffer(key, buffer);
+  }
 }
 
 void AppendSourceGroup(std::string* key,

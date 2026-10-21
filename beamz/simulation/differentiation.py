@@ -63,6 +63,8 @@ def build_differentiable_scan(program: CompiledProgram, *, checkpoint_interval=N
     Material-codebook compression is bypassed for trainable coefficients.
     """
     cfg = program.config
+    if cfg.backend != "jax" and program.coefficients.e_inverse_offdiagonal.size:
+        raise ValueError("Full-tensor CUDA autodiff requires backend='jax'.")
     if cfg.sharding.enabled:
         raise ValueError(
             "Differentiable execution currently requires an unsharded grid"
@@ -143,6 +145,12 @@ def build_differentiable_scan(program: CompiledProgram, *, checkpoint_interval=N
         )
 
     def run(state, coefficients, source_amplitudes=None):
+        if cfg.backend != "jax":
+            from beamz.simulation.cuda.material_blocks import (
+                differentiable_coefficients,
+            )
+
+            coefficients = differentiable_coefficients(coefficients, state)
         state = split_dft(state)
         if source_amplitudes is None:
             sources = program.sources

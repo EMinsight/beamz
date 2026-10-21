@@ -83,6 +83,12 @@ class ModeSource:
     ``"+"`` or ``"-"`` along that axis.
     Temporal behavior belongs exclusively to ``source_time``; sampled drives
     use :class:`~beamz.SampledSignal`.
+
+    ``power`` sets watts in the source plane's discrete Poynting quadrature.
+    In 3D, source calibration and ``ModeMonitorData.power`` both include normal
+    Yee interpolation. Equivalent source and monitor sampling planes therefore
+    use the same power convention; finite aperture and discretization errors
+    can still affect a downstream measurement.
     """
 
     center: tuple[float, float, float]

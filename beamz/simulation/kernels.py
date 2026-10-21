@@ -9,11 +9,15 @@ import jax.numpy as jnp
 import numpy as np
 
 from beamz.const import EPS_0, MU_0
+from beamz.constitutive import advance_e_tensor_dense
+from beamz.constitutive import collocate_yee_component as collocate_yee_component
+from beamz.constitutive import fit_array_to_shape as fit_array_to_shape
 from beamz.lattice import (
     adjacent_difference as _adjacent_difference,
 )
 from beamz.lattice import build_h_boundary_views_for_e_3d, component_axis_offsets_3d
 from beamz.simulation.boundary_masks import AxisMask
+from beamz.simulation.material_blocks import material_values, reciprocal_material
 from beamz.simulation.model import (
     BoundaryPlan,
     CpmlPackedSlabSpec,
@@ -22,74 +26,10 @@ from beamz.simulation.model import (
     SimulationState,
     UpdateCoefficients,
 )
+from beamz.simulation.tensor_regions import TensorRegion
 
 # Logical shapes describe physics while storage shapes may contain device padding. Every
 # phase must preserve this distinction so padded cells never reach results or monitors.
-
-
-def fit_array_to_shape(arr, target_shape, *, pad_value=0.0):
-    """Crop or high-pad a JAX array to one static component shape."""
-    arr = jnp.asarray(arr)
-    target_shape = tuple(int(value) for value in target_shape)
-    if arr.ndim != len(target_shape):
-        raise ValueError(
-            f"Cannot fit rank-{arr.ndim} array to rank-{len(target_shape)} shape"
-        )
-    out = arr[
-        tuple(
-            slice(0, min(int(size), target))
-            for size, target in zip(arr.shape, target_shape, strict=True)
-        )
-    ]
-    padding = tuple(
-        (0, max(0, target - int(size)))
-        for size, target in zip(out.shape, target_shape, strict=True)
-    )
-    return (
-        jnp.pad(out, padding, constant_values=jnp.asarray(pad_value, dtype=arr.dtype))
-        if any(high for _, high in padding)
-        else out
-    )
-
-
-def collocate_yee_component(value, source: str, target: str, target_shape):
-    """Linearly collocate an electric or node-support array onto another support."""
-
-    out = jnp.asarray(value)
-    axes = ("z", "y", "x")[-out.ndim :]
-    source_offsets = (
-        {"z": 0.0, "y": 0.0, "x": 0.0}
-        if source == "Node"
-        else component_axis_offsets_3d(source)
-    )
-    target_offsets = (
-        {"z": 0.0, "y": 0.0, "x": 0.0}
-        if target == "Node"
-        else component_axis_offsets_3d(target)
-    )
-    for axis_index, axis in enumerate(axes):
-        source_offset = source_offsets[axis]
-        target_offset = target_offsets[axis]
-        if source_offset == target_offset:
-            continue
-        if source_offset == 0.0 and target_offset == 0.5:
-            low = [slice(None)] * out.ndim
-            high = [slice(None)] * out.ndim
-            low[axis_index] = slice(0, -1)
-            high[axis_index] = slice(1, None)
-            out = 0.5 * (out[tuple(low)] + out[tuple(high)])
-        elif source_offset == 0.5 and target_offset == 0.0:
-            first = jnp.take(out, jnp.asarray([0]), axis=axis_index)
-            last = jnp.take(out, jnp.asarray([-1]), axis=axis_index)
-            low = [slice(None)] * out.ndim
-            high = [slice(None)] * out.ndim
-            low[axis_index] = slice(0, -1)
-            high[axis_index] = slice(1, None)
-            middle = 0.5 * (out[tuple(low)] + out[tuple(high)])
-            out = jnp.concatenate((first, middle, last), axis=axis_index)
-        else:  # pragma: no cover - canonical Yee offsets are binary
-            raise ValueError("Unsupported Yee colocation offset.")
-    return fit_array_to_shape(out, target_shape)
 
 
 def advance_e_centered_tensor(
@@ -99,33 +39,112 @@ def advance_e_centered_tensor(
     inverse_offdiagonal,
     components,
     dt,
+    *,
+    cell_widths=None,
 ):
     """Advance E with diagonal terms on E sites and cross terms on dual centers."""
 
+    inverse_diagonals = tuple(material_values(v) for v in inverse_diagonals)
     scale = jnp.asarray(dt, dtype=fields[0].dtype) / jnp.asarray(
         EPS_0, dtype=fields[0].dtype
     )
+    if isinstance(inverse_offdiagonal, TensorRegion):
+        region = inverse_offdiagonal
+        axes = ("z", "y", "x")[-fields[0].ndim :]
+        bounds = tuple(
+            (max(0, start - 1), min(count, stop + 1))
+            for (start, stop), count in zip(
+                region.bounds, region.node_shape, strict=True
+            )
+        )
+        values = jnp.pad(
+            region.values,
+            tuple(
+                (start - outer_start, outer_stop - stop)
+                for (start, stop), (outer_start, outer_stop) in zip(
+                    region.bounds, bounds, strict=True
+                )
+            )
+            + ((0, 0),),
+        )
+        slices = tuple(
+            tuple(
+                slice(
+                    start, stop - int(component_axis_offsets_3d(component)[axis] == 0.5)
+                )
+                for axis, (start, stop) in zip(axes, bounds, strict=True)
+            )
+            for component in components
+        )
+        widths = cell_widths
+        if widths is not None:
+            widths = list(widths)
+            for axis, (start, stop) in zip(axes, bounds, strict=True):
+                index = "xyz".index(axis)
+                if jnp.ndim(widths[index]) and jnp.size(widths[index]):
+                    widths[index] = widths[index][start : stop - 1]
+            widths = tuple(widths)
+        local_curls = tuple(
+            curl[part] for curl, part in zip(curls, slices, strict=True)
+        )
+        local = _tensor_cross_curls(local_curls, values, components, widths)
+        return tuple(
+            field
+            + scale
+            * (
+                diagonal * curl
+                + jnp.pad(
+                    value,
+                    tuple(
+                        (part.start, size - part.stop)
+                        for part, size in zip(parts, field.shape, strict=True)
+                    ),
+                )
+            )
+            for field, diagonal, curl, parts, value in zip(
+                fields, inverse_diagonals, curls, slices, local, strict=True
+            )
+        )
+    return advance_e_tensor_dense(
+        fields,
+        curls,
+        inverse_diagonals,
+        inverse_offdiagonal,
+        components,
+        dt,
+        cell_widths=cell_widths,
+    )
+
+
+def _tensor_cross_curls(curls, inverse_offdiagonal, components, cell_widths):
+    """Sum cross terms at their shared support before interpolating once per E."""
     node_shape = inverse_offdiagonal.shape[:-1]
     centered_curls = tuple(
-        collocate_yee_component(curl, source, "Node", node_shape)
+        collocate_yee_component(
+            curl, source, "Node", node_shape, cell_widths=cell_widths
+        )
         for curl, source in zip(curls, components, strict=True)
     )
     cross_component = {(0, 1): 0, (0, 2): 1, (1, 2): 2}
     updated = []
-    for row, (field, diagonal, target) in enumerate(
-        zip(fields, inverse_diagonals, components, strict=True)
-    ):
-        coupled = diagonal * curls[row]
-        for column, centered_curl in enumerate(centered_curls):
-            if row == column:
-                continue
-            pair = (min(row, column), max(row, column))
-            centered = inverse_offdiagonal[..., cross_component[pair]] * centered_curl
-            coupled = coupled + collocate_yee_component(
-                centered, "Node", target, field.shape
+    for row, (curl, target) in enumerate(zip(curls, components, strict=True)):
+        centered = sum(
+            inverse_offdiagonal[..., cross_component[(min(row, col), max(row, col))]]
+            * value
+            for col, value in enumerate(centered_curls)
+            if col != row
+        )
+        updated.append(
+            collocate_yee_component(
+                centered, "Node", target, curl.shape, cell_widths=cell_widths
             )
-        updated.append(field + scale * coupled)
+        )
     return tuple(updated)
+
+
+def constitutive_cell_widths(metrics):
+    """Recover separable primal widths from the compiled curl metrics."""
+    return tuple(jnp.reciprocal(getattr(metrics, "e_to_h_" + axis)) for axis in "xyz")
 
 
 def cpml_coefficients(sigma, kappa, alpha, dt):
@@ -392,6 +411,7 @@ def fused_update_e_lossy_3d_material(
         curls,
         strict=True,
     ):
+        inv_permittivity = material_values(inv_permittivity)
         beta = conductivity * (0.5 * dt_over_eps) * inv_permittivity
         denom = one + beta
         out.append(
@@ -450,6 +470,7 @@ def fused_update_e_lossy_3d_material_metric(
             inverse_offdiagonal,
             ("Ex", "Ey", "Ez"),
             dt,
+            cell_widths=constitutive_cell_widths(metrics),
         )
     out = []
     for field, conductivity, inv_permittivity, curl in zip(
@@ -459,6 +480,7 @@ def fused_update_e_lossy_3d_material_metric(
         curls,
         strict=True,
     ):
+        inv_permittivity = material_values(inv_permittivity)
         beta = conductivity * (0.5 * dt_over_eps) * inv_permittivity
         denom = one + beta
         out.append(
@@ -641,7 +663,7 @@ def cpml_update_e_from_h_3d(
         return *updated, tuple(next_psi)
     if source_scales is not None:
         updated = tuple(
-            field + scale * (curl - sigma * field)
+            field + material_values(scale) * (curl - sigma * field)
             for field, curl, sigma, scale in zip(
                 (ex, ey, ez), curls, conductivities, source_scales, strict=True
             )
@@ -657,6 +679,7 @@ def cpml_update_e_from_h_3d(
         inverse_permittivities,
         strict=True,
     ):
+        inv_permittivity = material_values(inv_permittivity)
         beta = conductivity * (0.5 * dt_over_eps) * inv_permittivity
         updated.append(
             ((one - beta) * field + dt_over_eps * inv_permittivity * curl)
@@ -728,6 +751,7 @@ def cpml_update_e_from_h_3d_metric(
             inverse_offdiagonal,
             ("Ex", "Ey", "Ez"),
             dt,
+            cell_widths=constitutive_cell_widths(metrics),
         )
         return *updated, tuple(next_psi)
     one = jnp.asarray(1.0, dtype=ex.dtype)
@@ -740,6 +764,7 @@ def cpml_update_e_from_h_3d_metric(
         inverse_permittivities,
         strict=True,
     ):
+        inv_permittivity = material_values(inv_permittivity)
         beta = conductivity * (0.5 * dt_over_eps) * inv_permittivity
         updated.append(
             ((one - beta) * field + dt_over_eps * inv_permittivity * curl)
@@ -1329,9 +1354,9 @@ def update_e_3d_cpml(eng, ctx, coeffs):
     # 1. Derive inverse permittivity at execution time so the compiled plan stores only
     # the authoritative material grids.
     cpml = ctx.boundary.cpml
-    inv_x = jnp.reciprocal(coeffs.e_permittivity_x)
-    inv_y = jnp.reciprocal(coeffs.e_permittivity_y)
-    inv_z = jnp.reciprocal(coeffs.e_permittivity_z)
+    inv_x = reciprocal_material(coeffs.e_permittivity_x)
+    inv_y = reciprocal_material(coeffs.e_permittivity_y)
+    inv_z = reciprocal_material(coeffs.e_permittivity_z)
     inverse_diagonals = (
         (
             coeffs.e_inverse_diagonal_x,
@@ -1421,11 +1446,11 @@ def update_e_3d_yee(eng, ctx, coeffs):
         eng.ey,
         eng.ez,
         coeffs.e_conductivity_x,
-        jnp.reciprocal(coeffs.e_permittivity_x),
+        reciprocal_material(coeffs.e_permittivity_x),
         coeffs.e_conductivity_y,
-        jnp.reciprocal(coeffs.e_permittivity_y),
+        reciprocal_material(coeffs.e_permittivity_y),
         coeffs.e_conductivity_z,
-        jnp.reciprocal(coeffs.e_permittivity_z),
+        reciprocal_material(coeffs.e_permittivity_z),
         ctx.dt_scalar,
         ctx.resolution,
         boundary_views=boundary_views,
@@ -1557,6 +1582,7 @@ def _update_e_te_from_curls(eng, ctx, coeffs, curls, psi_e=None):
             coeffs.e_inverse_offdiagonal,
             ("Ex", "Ey"),
             ctx.dt_scalar,
+            cell_widths=constitutive_cell_widths(ctx.metrics),
         )
     else:
         ex = advance_e_from_coefficients(
@@ -1636,9 +1662,9 @@ def update_e_3d_cpml_metric(eng, ctx, coeffs):
             coeffs.e_conductivity_z,
         ),
         inverse_permittivities=(
-            jnp.reciprocal(coeffs.e_permittivity_x),
-            jnp.reciprocal(coeffs.e_permittivity_y),
-            jnp.reciprocal(coeffs.e_permittivity_z),
+            reciprocal_material(coeffs.e_permittivity_x),
+            reciprocal_material(coeffs.e_permittivity_y),
+            reciprocal_material(coeffs.e_permittivity_z),
         ),
         inverse_diagonals=(
             (
@@ -1694,11 +1720,11 @@ def update_e_3d_yee_metric(eng, ctx, coeffs):
         eng.ey,
         eng.ez,
         coeffs.e_conductivity_x,
-        jnp.reciprocal(coeffs.e_permittivity_x),
+        reciprocal_material(coeffs.e_permittivity_x),
         coeffs.e_conductivity_y,
-        jnp.reciprocal(coeffs.e_permittivity_y),
+        reciprocal_material(coeffs.e_permittivity_y),
         coeffs.e_conductivity_z,
-        jnp.reciprocal(coeffs.e_permittivity_z),
+        reciprocal_material(coeffs.e_permittivity_z),
         ctx.dt_scalar,
         ctx.metrics,
         boundary_views=boundary_views,

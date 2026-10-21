@@ -95,8 +95,41 @@ def _apply(program, choice):
     flags = program.config.cuda_flags & ~(abi.CUDA_SHELL32X8 | abi.CUDA_SHELL32X4)
     if tile == "32x8":
         flags |= abi.CUDA_SHELL32X8
+    coefficients = program.coefficients
+    source = getattr(coefficients, "e_source_x", None)
+    if axes != (0, 1, 2) and getattr(source, "ndim", None) == 2:
+        # Selection runs after coefficient compilation. Preserve the existing
+        # rotated-layout fast path by restoring its byte-ID/dense encoding once,
+        # at setup; no block expansion occurs inside a timed invocation.
+        from beamz.simulation.compile import _pack_cuda_lossless_e_coefficients
+
+        from .material_blocks import unpack_material_blocks
+
+        shapes = program.boundary.logical_component_shapes
+        sources = tuple(
+            jax.numpy.asarray(
+                unpack_material_blocks(
+                    getattr(coefficients, "e_decay_" + c),
+                    getattr(coefficients, "e_source_" + c),
+                    shapes["E" + c],
+                )
+            )
+            for c in "xyz"
+        )
+        decays = (jax.numpy.float32(1),) * 3
+        packed = _pack_cuda_lossless_e_coefficients(decays, sources)
+        if packed is not None:
+            decays, sources = packed
+        coefficients = coefficients._replace(
+            **{
+                f"e_{kind}_{c}": value
+                for kind, values in (("decay", decays), ("source", sources))
+                for c, value in zip("xyz", values, strict=True)
+            }
+        )
     return replace(
         program,
+        coefficients=coefficients,
         config=replace(program.config, cuda_storage_axes=axes, cuda_flags=flags),
     )
 

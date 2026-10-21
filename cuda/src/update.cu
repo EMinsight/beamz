@@ -202,6 +202,28 @@ cudaError_t ValidatePhase(const BeamzLaunch& launch) {
       return cudaErrorInvalidValue;
     }
   }
+  if (launch.tensor) {
+    const auto& t = *launch.tensor;
+    if (launch.phase != 1 || t.cross.rank != 4 || t.cross.dims[3] != 3 ||
+        !HasType(t.cross, kBeamzF32) || !t.cross.data || !FitsIntOffsets(t.cross) ||
+        t.origin.rank != 1 || t.origin.dims[0] != 3 ||
+        !HasType(t.origin, kBeamzS32) || !t.origin.data)
+      return cudaErrorInvalidValue;
+    for (int axis = 0; axis < 3; ++axis) {
+      const auto& width = t.widths[axis];
+      if (t.cross.dims[axis] < 2 || !HasType(width, kBeamzF32) || !width.data ||
+          !(width.rank == 0 || (width.rank == 1 &&
+            width.dims[0] == launch.outputs[2 - axis].dims[axis])))
+        return cudaErrorInvalidValue;
+    }
+    for (int c = 0; c < 3; ++c) {
+      if (!HasType(t.curls[c], kBeamzF32) || !IsPositive3D(t.curls[c]) ||
+          !FitsIntOffsets(t.curls[c])) return cudaErrorInvalidValue;
+      for (int axis = 0; axis < 3; ++axis)
+        if (t.curls[c].dims[axis] != t.cross.dims[axis] - (axis == 2 - c))
+          return cudaErrorInvalidValue;
+    }
+  }
   for (int component = 0; component < 3; ++component) {
     const BeamzBuffer& output = launch.outputs[component];
     const auto first = beamz::cuda::yee::FirstCurlTerm(component);
@@ -229,9 +251,11 @@ cudaError_t ValidatePhase(const BeamzLaunch& launch) {
         BroadcastsTo(source, launch.outputs[component]);
     const bool packed_component =
         packed_material && HasType(decay, kBeamzF32) && decay.rank == 1 &&
-        source.rank == 1 && decay.data != nullptr && source.data != nullptr &&
-        decay.dims[0] > 0 && source.dims[0] >= 0 &&
-        Elements(source) >= (Elements(launch.outputs[component]) + 3) / 4;
+        decay.data != nullptr && source.data != nullptr && decay.dims[0] > 0 &&
+        ((source.rank == 1 &&
+          Elements(source) >= (Elements(launch.outputs[component]) + 3) / 4) ||
+         (source.rank == 2 && source.dims[0] == 1 &&
+          source.dims[1] == (Elements(launch.outputs[component]) + 31) / 32));
     if (!ordinary_material && !packed_component) return cudaErrorInvalidValue;
   }
   if (launch.nterms != 0) {
@@ -465,9 +489,11 @@ __device__ __forceinline__ float CorrectCpml(float derivative, int z, int y,
 // Only mstep edge kernels opt into compact field addressing.
 template <int Phase, int Component, bool Cpml, int MetricKind,
           bool HasMetallicEdges = true, bool UniformCpml = false,
-          int PsiType = -1, bool PackedLosslessMaterial = false, bool Compact = false>
+          int PsiType = -1, bool PackedLosslessMaterial = false, bool Compact = false,
+          bool Tensor = false>
 __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
-                                                int z, int y, int x) {
+                                                int z, int y, int x,
+                                                const BeamzTensorLaunch* tensor = nullptr) {
   const BeamzBuffer& input = launch.inputs[Component];
   const BeamzBuffer& output = launch.outputs[Component];
   if (z >= output.dims[0] || y >= output.dims[1] || x >= output.dims[2]) return;
@@ -479,7 +505,7 @@ __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
     zero_on_wall = beamz::cuda::yee::PecConstrained(
         output, Phase, Component, launch.metallic_edges, z, y, x);
   }
-  if constexpr (!Cpml) {
+  if constexpr (!Cpml && !Tensor) {
     if (zero_on_wall) {
       static_cast<float*>(output.data)[BeamzOffset3D<Compact>(output, z, y, x)] = 0.0f;
       return;
@@ -513,6 +539,14 @@ __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
   } else {
     curl = derivative0 - derivative1;
   }
+  if constexpr (Tensor) {
+    const auto* origin = static_cast<const int32_t*>(tensor->origin.data);
+    const int tz = z - origin[0], ty = y - origin[1], tx = x - origin[2];
+    const auto& scratch = tensor->curls[Component];
+    if (tz >= 0 && ty >= 0 && tx >= 0 && tz < scratch.dims[0] &&
+        ty < scratch.dims[1] && tx < scratch.dims[2])
+      static_cast<float*>(scratch.data)[BeamzOffset3D(scratch, tz, ty, tx)] = curl;
+  }
   if (zero_on_wall) {
     // CPML memory still evolves where an absorbing face intersects a PEC face;
     // only the constrained field value is masked after the recurrence update.
@@ -535,6 +569,8 @@ __device__ __forceinline__ void UpdateComponent(const BeamzLaunch& launch,
   static_cast<float*>(output.data)[BeamzOffset3D<Compact>(output, z, y, x)] =
       beamz::cuda::yee::AdvanceYeeField(Phase, old_field, decay, source, curl);
 }
+
+#include "tensor.cuh"
 
 template <int Phase, bool Cpml, int MetricKind, bool HasMetallicEdges = true,
           bool UniformCpml = false, int PsiType = -1,
@@ -1103,8 +1139,9 @@ void LaunchFusedUpdate(cudaStream_t stream, const BeamzLaunch& launch,
   const bool packed_lossless_material =
       launch.phase == 1 && launch.inputs[6].rank == 1 &&
       launch.inputs[7].rank == 1 && launch.inputs[8].rank == 1 &&
-      launch.inputs[9].rank == 1 && launch.inputs[10].rank == 1 &&
-      launch.inputs[11].rank == 1 &&
+      (launch.inputs[9].rank == 1 || launch.inputs[9].rank == 2) &&
+      (launch.inputs[10].rank == 1 || launch.inputs[10].rank == 2) &&
+      (launch.inputs[11].rank == 1 || launch.inputs[11].rank == 2) &&
       launch.inputs[9].element_type == kBeamzS32 &&
       launch.inputs[10].element_type == kBeamzS32 &&
       launch.inputs[11].element_type == kBeamzS32;
@@ -1191,6 +1228,15 @@ int BeamzLaunchStreamed(void* raw_stream, const BeamzLaunch& launch) {
   const dim3 threads(kTileX, kTileY, tile_z);
   const dim3 fused_blocks((geometry.max_x + kTileX - 1) / kTileX, y_blocks,
                           (geometry.max_z + tile_z - 1) / tile_z);
+  if (launch.tensor) {
+    if (launch.metric_kind == 0)
+      EnqueueTensorElectric<0>(stream, launch, fused_blocks, threads);
+    else if (launch.metric_kind == 1)
+      EnqueueTensorElectric<1>(stream, launch, fused_blocks, threads);
+    else
+      EnqueueTensorElectric<2>(stream, launch, fused_blocks, threads);
+    return static_cast<int>(cudaPeekAtLastError());
+  }
   const bool scalar_coefficients =
       launch.nterms == 0 && launch.inputs[6].rank == 0 &&
       launch.inputs[7].rank == 0 && launch.inputs[8].rank == 0 &&
@@ -1239,8 +1285,10 @@ cudaError_t BeamzEnqueuePhase(void* raw_stream, const BeamzLaunch& launch) {
 
 bool HasPackedLosslessMaterial(const BeamzLaunch& launch) {
   return launch.inputs[6].rank == 1 && launch.inputs[7].rank == 1 &&
-         launch.inputs[8].rank == 1 && launch.inputs[9].rank == 1 &&
-         launch.inputs[10].rank == 1 && launch.inputs[11].rank == 1 &&
+         launch.inputs[8].rank == 1 &&
+         (launch.inputs[9].rank == 1 || launch.inputs[9].rank == 2) &&
+         (launch.inputs[10].rank == 1 || launch.inputs[10].rank == 2) &&
+         (launch.inputs[11].rank == 1 || launch.inputs[11].rank == 2) &&
          launch.inputs[9].element_type == kBeamzS32 &&
          launch.inputs[10].element_type == kBeamzS32 &&
          launch.inputs[11].element_type == kBeamzS32;

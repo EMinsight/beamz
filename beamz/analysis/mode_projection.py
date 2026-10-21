@@ -25,6 +25,7 @@ from beamz.devices.modes.discrete import (
 from beamz.devices.modes.fields import _modal_overlap, _normalize_profiles
 from beamz.devices.modes.plane import solve_mode_plane_3d, solve_modes
 from beamz.devices.monitors.monitors import ModeMonitor
+from beamz.lattice import yee_plane_area_weights
 
 
 def _material_arrays(sim):
@@ -274,6 +275,7 @@ def _build_discrete_port_projection_3d(
         permeability,
         material_tensors=sim.materials.material_tensors,
         yee_materials=sim.materials.yee_materials,
+        yee_tensors=sim.materials.yee_tensors,
         frequency=frequency,
         resolution=sim.resolution,
         dt=sim.dt,
@@ -286,7 +288,9 @@ def _build_discrete_port_projection_3d(
         offset_index=offset_index,
         direction=spec.projection_direction,
         mode_index=spec.mode_index,
-        polarization=str(spec.polarization).lower(),
+        polarization=None
+        if spec.polarization is None
+        else str(spec.polarization).lower(),
         target_neff=mode_spec.target_neff,
         force_symmetry=mode_spec.force_symmetry,
         num_modes=num_modes,
@@ -305,24 +309,9 @@ def _build_discrete_port_projection_3d(
     if grid is not None and grid.metric_kind != "isotropic_uniform":
         if snapped_region is None:
             raise RuntimeError("Rectilinear mode projection requires a snapped region.")
-        transverse_axes = {
-            "x": ("z", "y"),
-            "y": ("z", "x"),
-            "z": ("y", "x"),
-        }[axis]
-        interval0 = snapped_region.axis_interval(transverse_axes[0])
-        interval1 = snapped_region.axis_interval(transverse_axes[1])
-        if interval0 is None or interval1 is None:
-            raise RuntimeError(
-                "Rectilinear mode projection is missing a transverse interval."
-            )
-        weights0 = np.asarray(grid.cell_widths(transverse_axes[0]))[
-            int(interval0.start) : int(interval0.stop)
-        ]
-        weights1 = np.asarray(grid.cell_widths(transverse_axes[1]))[
-            int(interval1.start) : int(interval1.stop)
-        ]
-        integration_weights = (weights0[:, None] * weights1[None, :]).reshape(-1)
+        integration_weights = yee_plane_area_weights(
+            center=center, size=size, normal_axis=axis, region=snapped_region, grid=grid
+        )
     else:
         integration_weights = float(d_area)
     _, plus_components = _discrete_mode_projection_grids_3d(
@@ -367,6 +356,15 @@ def _build_discrete_port_projection_3d(
         name: np.asarray(minus_components[name], dtype=np.complex128)
         for name in proj_components
     }
+    if discrete_mode.diagnostics.get("full_tensor_operator", False):
+        # Launch phasors use exp(+i omega t); recorded DFTs use exp(+i omega t)
+        # in the integral, and therefore store their complex conjugates.
+        plus_components = {
+            name: np.conjugate(value) for name, value in plus_components.items()
+        }
+        minus_components = {
+            name: np.conjugate(value) for name, value in minus_components.items()
+        }
     _normalize_profiles(
         plus_components,
         axis=axis,
@@ -381,23 +379,27 @@ def _build_discrete_port_projection_3d(
         direction_sign=float(direction_sign),
         max_scale=1e6,
     )
-    # Normalize the physical modes first, then measure them using the same
-    # normal interpolation as the recorded fields. Normalizing the measured
-    # basis would incorrectly turn interpolation loss into a power change.
+    # Preserve the directional measurement response, then normalize each
+    # measured basis to the same discrete flux watt as the source and monitor.
     sampling = dict(
         axis=axis,
         plane_position=center[{"x": 0, "y": 1, "z": 2}[axis]],
         wave_number=discrete_mode.k_num_axis,
+        measure=integration_weights,
         grid_shape=full_shape,
         resolution=sim.resolution,
         grid=grid,
     )
     plus_components = _sample_modal_basis_normal_3d(
-        plus_components, direction=-1, **sampling
+        plus_components, direction=-1, direction_sign=float(direction_sign), **sampling
     )
     minus_components = _sample_modal_basis_normal_3d(
-        minus_components, direction=1, **sampling
+        minus_components, direction=1, direction_sign=float(direction_sign), **sampling
     )
+    if axis == "z" and discrete_mode.diagnostics.get("canonical_axis_rotation", False):
+        # The canonical x-frame solver carries +z in its forward profiles.
+        # Keep the established z-port convention: a_plus is the +z branch.
+        plus_components, minus_components = minus_components, plus_components
     overlap_matrix = np.asarray(
         [
             [
@@ -481,6 +483,13 @@ def _build_port_projection_2d(
     parts,
     mode_pad_cells,
 ):
+    from beamz.devices.modes.constitutive import require_diagonal_support
+
+    if getattr(sim, "materials", None) is not None:
+        require_diagonal_support(
+            sim.materials.yee_tensors or sim.materials.material_tensors,
+            operation="2D modal extraction",
+        )
     mode_spec = getattr(monitor, "mode_spec", spec.mode_spec)
     profile_slice = _monitor_profile_slice(sim, monitor, parts["axis"], mode_pad_cells)
     if len(profile_slice) == 3:

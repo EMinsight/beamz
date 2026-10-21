@@ -204,20 +204,21 @@ def test_auto_preserves_jax_for_full_tensor_permittivity(monkeypatch):
     assert program.config.backend == "jax"
 
 
-def test_explicit_cuda_rejects_full_tensor_permittivity():
-    with pytest.raises(
-        backend_runtime.CudaBackendUnavailable, match="full-tensor permittivity"
-    ):
-        _full_tensor_3d_simulation().compile(backend="cuda_streamed")
+def test_explicit_streamed_cuda_compiles_full_tensor_permittivity(monkeypatch):
+    monkeypatch.setattr(backend_runtime, "resolve_backend", lambda _: "cuda_streamed")
+    program = _full_tensor_3d_simulation().compile(backend="cuda_streamed")
+    assert program.config.backend == "cuda_streamed"
+    assert program.coefficients.e_inverse_offdiagonal.size > 0
 
 
-def test_tensor_cuda_requires_an_effective_multi_device_plan(monkeypatch):
+def test_tensor_cuda_accepts_sharding_that_resolves_to_one_device(monkeypatch):
     monkeypatch.setattr(backend_runtime, "resolve_backend", lambda _: "cuda_streamed")
     monkeypatch.setattr(sharding_runtime, "_jax_devices_for_config", lambda _: ())
-    with pytest.raises(
-        backend_runtime.CudaBackendUnavailable, match="active multi-device"
-    ):
-        _full_tensor_3d_simulation().compile(backend="cuda_streamed", sharding=True)
+    program = _full_tensor_3d_simulation().compile(
+        backend="cuda_streamed", sharding=True
+    )
+    assert not program.sharding.layout.enabled
+    assert program.coefficients.e_inverse_offdiagonal.size > 0
 
 
 def test_cuda_status_exposes_complete_diagnostics():

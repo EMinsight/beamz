@@ -43,6 +43,7 @@ from beamz.simulation.execute import (
     initial_program_state,
     run_program,
 )
+from beamz.simulation.material_blocks import material_values
 from beamz.simulation.model import (
     RunConfig,
     SimulationState,
@@ -420,15 +421,15 @@ def test_compiled_3d_cpml_uses_material_coefficients():
     assert float(coefficients.e_conductivity_y) == 0.0
     assert float(coefficients.e_conductivity_z) == 0.0
     np.testing.assert_array_equal(
-        np.asarray(coefficients.e_permittivity_x),
+        np.asarray(material_values(coefficients.e_permittivity_x)),
         np.asarray(_fields_for_sim(sim).eps_x),
     )
     np.testing.assert_array_equal(
-        np.asarray(coefficients.e_permittivity_y),
+        np.asarray(material_values(coefficients.e_permittivity_y)),
         np.asarray(_fields_for_sim(sim).eps_y),
     )
     np.testing.assert_array_equal(
-        np.asarray(coefficients.e_permittivity_z),
+        np.asarray(material_values(coefficients.e_permittivity_z)),
         np.asarray(_fields_for_sim(sim).eps_z),
     )
     assert program.boundary.metallic.ex_mask.shape == tuple(
@@ -542,7 +543,7 @@ def test_compiled_3d_sponge_pml_uses_material_coefficients():
         np.asarray(_fields_for_sim(sim).sig_x),
     )
     np.testing.assert_array_equal(
-        np.asarray(coefficients.e_permittivity_x),
+        np.asarray(material_values(coefficients.e_permittivity_x)),
         np.asarray(_fields_for_sim(sim).eps_x),
     )
     np.testing.assert_array_equal(
@@ -632,7 +633,7 @@ def test_compiled_uses_material_coefficients_for_3d_loss():
         np.asarray(_fields_for_sim(sim).sig_x),
     )
     np.testing.assert_array_equal(
-        np.asarray(coefficients.e_permittivity_x),
+        np.asarray(material_values(coefficients.e_permittivity_x)),
         np.asarray(_fields_for_sim(sim).eps_x),
     )
     np.testing.assert_array_equal(

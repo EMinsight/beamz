@@ -151,8 +151,14 @@ def check(case, conductivity=0.0):
             ):
                 varied = coeffs._replace(
                     **{
-                        f"e_permittivity_{c}": getattr(coeffs, f"e_permittivity_{c}")
-                        * factor
+                        f"e_permittivity_{c}": jax.tree.map(
+                            lambda value: (
+                                value * factor
+                                if jnp.issubdtype(value.dtype, jnp.inexact)
+                                else value
+                            ),
+                            getattr(coeffs, f"e_permittivity_{c}"),
+                        )
                         for c in "xyz"
                     }
                 )

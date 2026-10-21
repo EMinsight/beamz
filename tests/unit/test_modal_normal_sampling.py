@@ -60,6 +60,7 @@ def test_sampled_modes_recover_directional_mixtures(
         wave_number=beta,
         grid_shape=shape,
         resolution=0.1,
+        measure=0.25,
         grid=None if grid_kind == "uniform" else grid,
     )
     forward_measured = _sample_modal_basis_normal_3d(basis, direction=1, **sampling)
@@ -98,5 +99,18 @@ def test_sampled_modes_recover_directional_mixtures(
     coefficients, residual, _, _ = _project_modal_coefficients_3d_group(
         measured, [projection]
     )
-    np.testing.assert_allclose(coefficients[0], amplitudes, atol=2e-7, rtol=2e-7)
+    # Independent normal interpolation of an analytic unit-power wave gives
+    # its discrete flux. The recovered amplitudes must carry those watts.
+    transfer = {}
+    for name in (e, h):
+        x = component_coordinates_rectilinear(name, grid)[axis]
+        transfer[name] = np.interp(position, x, np.exp(1j * beta * (x - position)))
+    unit_flux = np.real(transfer[e] * np.conj(transfer[h]))
+    expected = np.asarray(amplitudes) * np.sqrt(unit_flux)
+    np.testing.assert_allclose(coefficients[0], expected, atol=2e-7, rtol=2e-7)
+    measured_flux = 0.5 * np.real(np.sum(measured[e] * np.conj(measured[h]))) * 0.25
+    a_plus, a_minus = coefficients[0]
+    np.testing.assert_allclose(
+        abs(a_plus) ** 2 - abs(a_minus) ** 2, measured_flux, atol=2e-7, rtol=2e-7
+    )
     assert residual < 2e-7

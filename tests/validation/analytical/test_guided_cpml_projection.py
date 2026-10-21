@@ -20,7 +20,10 @@ from beamz.analysis.sparameters import _extract_port_waves_dft
 
 
 @pytest.mark.parametrize("direction", ["+", "-"])
-def test_straight_guide_reflection_is_independent_of_monitor_stagger(direction):
+@pytest.mark.parametrize("aperture_um", [1.8, 2.2])
+def test_straight_guide_reflection_is_independent_of_monitor_stagger(
+    direction, aperture_um
+):
     wavelength = 1.5e-6
     frequency = LIGHT_SPEED / wavelength
     sign = 1 if direction == "+" else -1
@@ -33,7 +36,7 @@ def test_straight_guide_reflection_is_independent_of_monitor_stagger(direction):
     mode = ModeSpec(num_modes=1, target_neff=1.8, polarization="te")
     source = ModeSource(
         center=(-sign * 1.025e-6, 0, 0),
-        size=(0, 1.8e-6, 1.8e-6),
+        size=(0, aperture_um * 1e-6, aperture_um * 1e-6),
         direction=direction,
         mode_spec=mode,
         source_time=GaussianPulse(
@@ -43,12 +46,12 @@ def test_straight_guide_reflection_is_independent_of_monitor_stagger(direction):
     ports = [
         Port(
             center=(sign * (0.8 + offset) * 1e-6, 0, 0),
-            size=(0, 1.8e-6, 1.8e-6),
+            size=(0, aperture_um * 1e-6, aperture_um * 1e-6),
             name=f"plane{i}",
             direction="+",
             mode_spec=mode,
         )
-        for i, offset in enumerate((0, 0.05, 0.023))
+        for i, offset in enumerate((0, 0.05, 0.023, 0.175))
     ]
     sim = Simulation(
         domain=(6.4e-6, 3.6e-6, 3.6e-6),
@@ -78,5 +81,12 @@ def test_straight_guide_reflection_is_independent_of_monitor_stagger(direction):
         # Uncorrected monitor averaging gives |r|~0.02 at nodes/half-cells.
         assert abs(ratio[0]) < 2e-3
         powers.append(abs(wave[forward][0]) ** 2)
-    # Physical modal power must not inherit the monitor's normal averaging loss.
-    np.testing.assert_allclose(powers, powers[0], rtol=2e-3)
+    fluxes = [abs(result[port.name].flux[0]) for port in ports]
+    np.testing.assert_allclose(powers, fluxes, rtol=5e-4)
+    # Equal Yee offsets give equal flux; an arbitrary subcell shift need not.
+    np.testing.assert_allclose(powers[:2], powers[0], rtol=2e-3)
+    if aperture_um == 2.2:
+        # The last plane is exactly 2 um from the source: same Yee offset.
+        # Check absolute flux as well as modal watts, without fitting a scale.
+        np.testing.assert_allclose(powers[-1], source.power, rtol=5e-4)
+        np.testing.assert_allclose(fluxes[-1], source.power, rtol=5e-4)

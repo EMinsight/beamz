@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from beamz import GaussianPulse, ModeSource, ModeSpec, SampledSignal
+from beamz import GaussianPulse, ModeSource, ModeSpec, RectilinearGrid, SampledSignal
 from beamz.devices.modes.discrete import DiscreteMode
 from beamz.devices.sources import compiler as source_compiler
 from beamz.devices.sources import mode_launch as mode_launch_module
@@ -28,11 +28,96 @@ from beamz.devices.sources.time import (
     chebyshev_frequency_nodes,
     sample_source_waveforms,
 )
-from beamz.lattice import component_shapes
+from beamz.lattice import component_coordinates_rectilinear, component_shapes
 from beamz.simulation.observe import source_normalization as _source_normalization
 from tests.utils import compiled_grid
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.mark.parametrize("axis", ("x", "y", "z"))
+@pytest.mark.parametrize("direction", (-1, 1))
+@pytest.mark.parametrize("position", (0.4, 0.45, 0.427))
+@pytest.mark.parametrize("stretched", (False, True))
+def test_launch_power_matches_independently_interpolated_flux(
+    monkeypatch, axis, direction, position, stretched
+):
+    """Launch calibration must match direct E/H interpolation and integration.
+
+    The independent oracle uses NumPy interpolation of analytic native waves,
+    rather than the source diagnostic or modal transfer helper.
+    """
+    edges = np.linspace(0, 1, 11)
+    normal = (
+        np.array([0, 0.08, 0.19, 0.31, 0.44, 0.59, 0.72, 0.84, 0.93, 1])
+        if stretched
+        else edges
+    )
+    grid = RectilinearGrid(*(normal if a == axis else edges for a in "xyz"))
+    shape = tuple(len(grid.axis_edges(a)) - 1 for a in ("z", "y", "x"))
+    shapes = component_shapes(shape)
+    fields = SimpleNamespace(
+        permittivity=np.ones(shape),
+        geometry=grid if stretched else None,
+        **{name: np.zeros(size) for name, size in shapes.items()},
+    )
+    normal_index = {"x": 2, "y": 1, "z": 0}[axis]
+    electric, magnetic = {"x": ("Ey", "Hz"), "y": ("Ez", "Hx"), "z": ("Ex", "Hy")}[axis]
+    components, indices = {}, {}
+    for name, size in shapes.items():
+        index = [slice(None)] * 3
+        index[normal_index] = 4
+        indices[name] = tuple(index)
+        transverse = tuple(n for i, n in enumerate(size) if i != normal_index)
+        amplitude = 2 if name == electric else direction * 3 if name == magnetic else 0
+        components[name] = np.full(transverse, amplitude, dtype=complex)
+    source = ModeSource(
+        center=tuple(position if a == axis else 0.5 for a in "xyz"),
+        size=tuple(0 if a == axis else 0.4 for a in "xyz"),
+        direction="+" if direction > 0 else "-",
+        source_time=GaussianPulse(freq0=1, fwidth=0.1),
+    )
+    profile = FieldProfile3D(
+        components=components,
+        indices=indices,
+        axis=axis,
+        direction_sign=direction,
+        omega=2 * np.pi,
+        k_axis=direction * 5.8,
+        phase_ref_coord=0.5,
+        phase_plane_coord=position,
+        grid=grid if stretched else None,
+    )
+    # Construct the oracle on the actual native Yee supports, independently of
+    # the launch planner's phase-reference representation.
+    state = {}
+    for name, size in shapes.items():
+        coordinates = component_coordinates_rectilinear(name, grid)[axis]
+        normal_shape = [1, 1, 1]
+        normal_shape[normal_index] = len(coordinates)
+        amplitude = 2 if name == electric else direction * 3 if name == magnetic else 0
+        values = amplitude * np.exp(-1j * direction * 5.8 * (coordinates - position))
+        state[name] = np.broadcast_to(values.reshape(normal_shape), size)
+    monkeypatch.setattr(
+        mode_launch_module.planar_tfsf,
+        "build_incident_3d_phasor_state",
+        lambda *args, **kwargs: state,
+    )
+    power = mode_launch_module._yee_plane_power_3d(
+        source, profile, fields, resolution=0.1
+    )
+    sampled = {}
+    for name, amplitude in ((electric, 2), (magnetic, direction * 3)):
+        x = component_coordinates_rectilinear(name, grid)[axis]
+        wave = amplitude * np.exp(-1j * direction * 5.8 * (x - position))
+        sampled[name] = np.interp(position, x, wave)
+    expected = (
+        direction
+        * 0.5
+        * np.real(sampled[electric] * np.conj(sampled[magnetic]))
+        * 0.4**2
+    )
+    assert power == pytest.approx(expected, rel=2e-6)
 
 
 def _uniform_3d_fields(shape=(5, 5, 6), resolution=1.0):

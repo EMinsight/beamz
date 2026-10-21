@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from types import SimpleNamespace
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -36,6 +37,17 @@ def _program_and_state(
     )
     simulation = workload.build()
     program = simulation.compile(backend="jax")
+    # This CPU fixture emulates CUDA coefficients, which do not use JAX blocks.
+    from beamz.simulation.material_blocks import MaterialBlocks, material_values
+
+    program = replace(
+        program,
+        coefficients=jax.tree.map(
+            material_values,
+            program.coefficients,
+            is_leaf=lambda value: isinstance(value, MaterialBlocks),
+        ),
+    )
     state = initial_program_state(
         program,
         t=float(simulation.time[0]),

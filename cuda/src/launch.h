@@ -51,6 +51,15 @@ BEAMZ_HD int BeamzPhysicalIndex(const BeamzBuffer& value, int logical) {
 }
 #undef BEAMZ_HD
 
+// Optional streamed electric correction. Scratch is an XLA-owned output, never
+// hidden device allocation. Origin and coefficients are dynamic device inputs.
+struct BeamzTensorLaunch {
+  BeamzBuffer cross;
+  BeamzBuffer origin;
+  BeamzBuffer widths[3];  // z, y, x primal widths (scalar on uniform axes)
+  BeamzBuffer curls[3];   // Ex, Ey, Ez supports within the halo-inclusive box
+};
+
 struct BeamzLaunch {
   int32_t abi_version;
   int32_t cuda_flags;
@@ -73,6 +82,8 @@ struct BeamzLaunch {
   // Separate lower/upper one-cell faces, interleaved by source component.
   // Owned source fields remain contiguous; no field-sized halo concatenation.
   BeamzBuffer shard_halos[6];
+  // Host dispatch only; tensor kernels receive the pointed-to record by value.
+  const BeamzTensorLaunch* tensor = nullptr;
 };
 
 // The phase outputs hold incoming cotangents. Metadata is nondifferentiable;

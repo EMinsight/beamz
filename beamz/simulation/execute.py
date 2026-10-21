@@ -185,12 +185,15 @@ def _energy_terms(program: CompiledProgram):
             )
             if left in active and right in active
         )
-    return terms, cross_terms, domain_measure
+    widths = tuple(
+        jnp.asarray(program.grid.geometry.cell_widths(a)) for a in ("x", "y", "z")
+    )
+    return terms, cross_terms, domain_measure, widths
 
 
 def _field_diagnostics(state: SimulationState, plan) -> tuple[float, float, bool]:
     """Compute integrated electromagnetic energy, maximum field, and finiteness."""
-    terms, cross_terms, domain_measure = plan
+    terms, cross_terms, domain_measure, widths = plan
     energy_density = jnp.asarray(0.0, dtype=jnp.float32)
     max_field = jnp.asarray(0.0, dtype=jnp.float32)
     finite = jnp.asarray(True)
@@ -218,7 +221,11 @@ def _field_diagnostics(state: SimulationState, plan) -> tuple[float, float, bool
         ):
             if component not in centered:
                 centered[component] = update_runtime.collocate_yee_component(
-                    getattr(state, field_name), component, "Node", node_shape
+                    getattr(state, field_name),
+                    component,
+                    "Node",
+                    node_shape,
+                    cell_widths=widths,
                 )
         energy_density = energy_density + float(EPS_0) * jnp.sum(
             material
@@ -933,6 +940,8 @@ def build_scan(program, *, donate_state: bool = False, checkpoint_interval=None)
             and cfg.metric_kind == "isotropic_uniform"
             and not coeffs.e_inverse_offdiagonal.size
         ):
+            from .material_blocks import MaterialBlocks, material_values
+
             dt_mu, dt_eps = dt_scalar / MU_0, dt_scalar / EPS_0
             scales = {}
             for component in "xyz":
@@ -940,9 +949,15 @@ def build_scan(program, *, donate_state: bool = False, checkpoint_interval=None)
                 sigma_e = getattr(coeffs, f"e_conductivity_{component}")
                 epsilon = getattr(coeffs, f"e_permittivity_{component}")
                 scales[f"h_source_{component}"] = dt_mu / (1 + 0.5 * dt_mu * sigma_h)
-                scales[f"e_source_{component}"] = dt_eps / (
-                    epsilon + 0.5 * dt_eps * sigma_e
-                )
+                if isinstance(epsilon, MaterialBlocks) and sigma_e.ndim == 0:
+                    scales[f"e_source_{component}"] = replace(
+                        epsilon,
+                        values=dt_eps / (epsilon.values + 0.5 * dt_eps * sigma_e),
+                    )
+                else:
+                    scales[f"e_source_{component}"] = dt_eps / (
+                        material_values(epsilon) + 0.5 * dt_eps * sigma_e
+                    )
             coeffs = coeffs._replace(**scales)
         # 4. Run the same transition through scan or fori_loop. The choice changes the
         # lowering strategy, not timestep semantics.

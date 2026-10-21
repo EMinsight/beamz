@@ -81,8 +81,8 @@ Discrete solves also check the constitutive arrays on their individual Yee
 supports, using edge or center coordinates according to each component's
 stagger. A symmetric graded mesh is supported; an asymmetric graded mesh,
 clipped/off-center crop, asymmetric tensor, or unavailable/non-closed component
-support is skipped. There is no approximate mirror interpolation. Off-diagonal
-material tensors remain unsupported by the existing high-level mode path.
+support is skipped. There is no approximate mirror interpolation. Full-tensor
+ports use the separate coupled path described below and reject forced symmetry.
 
 `ModeSource.solve_modes()` previews the solver representation, with optional
 validated symmetry, before Yee interpolation, launch aperture processing,
@@ -95,3 +95,11 @@ and final power normalization remain independent of this option; an accepted
 refinement need not retain exact seed parity. Raw `solve_grid` results remain
 unprojected. One-dimensional line profiles used for 2D launches also remain
 unprojected, with an explicit skip diagnostic when symmetry is requested.
+
+## Full-tensor dielectric ports
+
+Lossless real SPD, nonmagnetic 3D tensor ports use a coupled discrete operator
+shared with propagation. Set `ModeSpec(polarization=None, force_symmetry=False)`.
+Uniform and rectilinear grids are supported; normal spacing must be locally
+uniform and the material longitudinally invariant. Unsupported combinations fail
+explicitly. Source launch and monitor projection retain dielectric cross terms.
