@@ -168,13 +168,22 @@ def solve_modes(
             )
         return array[:, None] if not is_plane else array.T
 
+    # solve_grid takes local (tangent, tangent, normal) tensors; normal_axis
+    # labels its output fields but does not rotate input material components.
+    order = tuple(i for i in range(3) if i != axis_index) + (axis_index,)
+    epsilon = (
+        plane,
+        solver_plane(eps if eps_yy is None else eps_yy),
+        solver_plane(eps if eps_zz is None else eps_zz),
+    )
+    permeability = tuple(solver_plane(v) for v in (mu_xx, mu_yy, mu_zz))
     result = solve_grid(
-        eps_xx=plane,
-        eps_yy=solver_plane(eps_yy),
-        eps_zz=solver_plane(eps_zz),
-        mu_xx=solver_plane(mu_xx),
-        mu_yy=solver_plane(mu_yy),
-        mu_zz=solver_plane(mu_zz),
+        eps_xx=cast(np.ndarray, epsilon[order[0]]),
+        eps_yy=epsilon[order[1]],
+        eps_zz=epsilon[order[2]],
+        mu_xx=permeability[order[0]],
+        mu_yy=permeability[order[1]],
+        mu_zz=permeability[order[2]],
         x_edges=edges[0],
         y_edges=edges[1],
         freqs=[float(omega) / (2.0 * np.pi)],

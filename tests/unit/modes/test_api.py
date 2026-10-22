@@ -11,6 +11,7 @@ import beamz.devices.modes.discrete as discrete_module
 from beamz.devices.modes._scipy import _pml_average_all_sides
 from beamz.devices.modes.constants import C_0
 from beamz.devices.modes.discrete import ModePlaneSpec, solve_beamz_mode
+from beamz.devices.modes.plane import solve_modes
 from beamz.devices.modes.solver import solve_grid
 from beamz.devices.modes.specs import ModeData, ModeSpec
 from beamz.lattice import component_shape_3d
@@ -115,8 +116,18 @@ def test_mode_data_validates_and_snapshots_rectilinear_plot_coordinates():
         )
 
 
-def test_discrete_mode_solver_forwards_diagonal_material_components(monkeypatch):
-    spec = _plane_spec("x")
+@pytest.mark.parametrize(
+    "axis,order,cross",
+    [
+        ("x", (3, 4, 2), (0.3, 0.1, 0.2)),
+        ("y", (2, 4, 3), (0.2, 0.1, 0.3)),
+        ("z", (2, 3, 4), (0.1, 0.2, 0.3)),
+    ],
+)
+def test_discrete_mode_solver_rotates_material_components(
+    monkeypatch, axis, order, cross
+):
+    spec = _plane_spec(axis)
     shape = spec.scalar_permittivity.shape
     spec = replace(
         spec,
@@ -124,6 +135,13 @@ def test_discrete_mode_solver_forwards_diagonal_material_components(monkeypatch)
             "xx": np.full(shape, 2.0),
             "yy": np.full(shape, 3.0),
             "zz": np.full(shape, 4.0),
+        },
+        diagonal_permeability={
+            a * 2: np.full(shape, v / 2) for a, v in zip("xyz", (2, 3, 4), strict=True)
+        },
+        offdiagonal_permittivity={
+            a: np.full(shape, v)
+            for a, v in zip(("xy", "xz", "yz"), (0.1, 0.2, 0.3), strict=True)
         },
     )
     seen = {}
@@ -136,9 +154,52 @@ def test_discrete_mode_solver_forwards_diagonal_material_components(monkeypatch)
     with pytest.raises(RuntimeError, match="captured"):
         solve_beamz_mode(spec)
 
-    assert np.all(seen["eps_xx"] == 2.0)
-    assert np.all(seen["eps_yy"] == 3.0)
-    assert np.all(seen["eps_zz"] == 4.0)
+    for a, v in zip("xyz", order, strict=True):
+        np.testing.assert_array_equal(seen[f"eps_{a}{a}"], v)
+        np.testing.assert_array_equal(seen[f"mu_{a}{a}"], v / 2)
+    for a, v in zip(("xy", "xz", "yz"), cross, strict=True):
+        np.testing.assert_array_equal(seen[f"eps_{a}"], v)
+
+
+@pytest.mark.parametrize(
+    "axis,order", [("x", (2, 0, 1)), ("y", (0, 2, 1)), ("z", (0, 1, 2))]
+)
+@pytest.mark.parametrize("sign", ("+", "-"))
+@pytest.mark.parametrize("magnetic", (False, True))
+def test_preview_index_is_invariant_under_rotating_anisotropic_guide(
+    axis, order, sign, magnetic
+):
+    eps, x_edges, y_edges = _strip()
+    epsilon = (eps, 1.2 * eps, 1.5 * eps)
+    mu = tuple(np.full_like(eps, v) if magnetic else None for v in (1.1, 1.3, 1.6))
+    expected = solve_grid(
+        eps_xx=epsilon[0],
+        eps_yy=epsilon[1],
+        eps_zz=epsilon[2],
+        mu_xx=mu[0],
+        mu_yy=mu[1],
+        mu_zz=mu[2],
+        x_edges=x_edges,
+        y_edges=y_edges,
+        freqs=[C_0 / 1.55],
+        num_modes=7,
+        direction=sign,
+    ).n_complex.values[0, 0]
+    global_eps = [epsilon[i].T for i in order]
+    global_mu = [None if mu[i] is None else mu[i].T for i in order]
+    neff, _ = solve_modes(
+        global_eps[0],
+        omega=2 * np.pi * C_0 / 1.55,
+        dL=0.1e-6,
+        direction=sign + axis,
+        eps_yy=global_eps[1],
+        eps_zz=global_eps[2],
+        mu_xx=global_mu[0],
+        mu_yy=global_mu[1],
+        mu_zz=global_mu[2],
+        grid_edges=(np.asarray(y_edges) * 1e-6, np.asarray(x_edges) * 1e-6),
+    )
+    np.testing.assert_allclose(neff[0], expected, rtol=1e-9)
 
 
 def test_grid_solve_returns_sorted_modes_fields_and_diagnostics():
