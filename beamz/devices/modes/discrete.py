@@ -396,17 +396,21 @@ def _solve_beamz_mode(
         name: _transpose_between_axes(values, spec.transverse_axes, solver_axes)
         for name, values in spec.diagonal_permeability.items()
     }
+    # Material components, like their sample axes above, must be in the local
+    # (tangent, tangent, normal) frame expected by solve_grid.
+    u, v, n = (*solver_axes, spec.axis)
+    fallback_eps = diagonal_eps.get("xx", eps_solver)
     result = _solve_candidate_pool(
         candidate_cache,
-        eps_xx=diagonal_eps.get("xx", eps_solver),
-        eps_yy=diagonal_eps.get("yy"),
-        eps_zz=diagonal_eps.get("zz"),
-        eps_xy=cross_eps.get("xy"),
-        eps_xz=cross_eps.get("xz"),
-        eps_yz=cross_eps.get("yz"),
-        mu_xx=diagonal_mu.get("xx"),
-        mu_yy=diagonal_mu.get("yy"),
-        mu_zz=diagonal_mu.get("zz"),
+        eps_xx=diagonal_eps.get(u * 2, fallback_eps),
+        eps_yy=diagonal_eps.get(v * 2, fallback_eps),
+        eps_zz=diagonal_eps.get(n * 2, fallback_eps),
+        eps_xy=cross_eps.get("".join(sorted(u + v))),
+        eps_xz=cross_eps.get("".join(sorted(u + n))),
+        eps_yz=cross_eps.get("".join(sorted(v + n))),
+        mu_xx=diagonal_mu.get(u * 2),
+        mu_yy=diagonal_mu.get(v * 2),
+        mu_zz=diagonal_mu.get(n * 2),
         x_edges=x_edges,
         y_edges=y_edges,
         freqs=[spec.frequency],
