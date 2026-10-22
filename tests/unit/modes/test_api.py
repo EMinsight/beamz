@@ -159,6 +159,7 @@ def test_discrete_mode_solver_rotates_material_components(
         np.testing.assert_array_equal(seen[f"mu_{a}{a}"], v / 2)
     for a, v in zip(("xy", "xz", "yz"), cross, strict=True):
         np.testing.assert_array_equal(seen[f"eps_{a}"], v)
+        np.testing.assert_array_equal(seen[f"eps_{a[::-1]}"], v)
 
 
 @pytest.mark.parametrize(
