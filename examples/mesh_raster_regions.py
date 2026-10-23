@@ -1,0 +1,417 @@
+"""Prototype: rasterize isotropic scenes near geometry and fill uniform regions.
+
+The local grids use the original grid edges and two guard cells around each
+object. The returned namespace has cell and Yee tensors but is not a public
+RasterResult. Restrict use to isotropic, piecewise-uniform materials; verify
+all reconstructed fields against a full-grid raster for each new scene type.
+"""
+
+from __future__ import annotations
+
+from time import perf_counter
+from types import SimpleNamespace
+
+import numpy as np
+
+
+def geometry_bounds(geometry) -> tuple[np.ndarray, np.ndarray]:
+    from beamz.design.raster import Box, ExtrudedPolygon, Mesh
+
+    if isinstance(geometry, Box):
+        return np.asarray(geometry.minimum), np.asarray(geometry.maximum)
+    if isinstance(geometry, ExtrudedPolygon):
+        xy = np.asarray(geometry.polygon.exterior)
+        return np.r_[xy.min(axis=0), geometry.z_min], np.r_[
+            xy.max(axis=0), geometry.z_max
+        ]
+    if isinstance(geometry, Mesh):
+        vertices = np.asarray(geometry.vertices)
+        return vertices.min(axis=0), vertices.max(axis=0)
+    raise TypeError(f"Unsupported raster geometry: {type(geometry).__name__}")
+
+
+def occupied_region(scene, grid, guard_cells: int = 2) -> tuple[tuple[int, int], ...]:
+    if not scene.objects:
+        raise ValueError("The occupied-region method requires at least one object")
+    lower, upper = zip(
+        *(geometry_bounds(obj.geometry) for obj in scene.objects), strict=True
+    )
+    bounds_min = np.min(lower, axis=0)
+    bounds_max = np.max(upper, axis=0)
+    region = []
+    for edges, minimum, maximum in zip(grid.edges, bounds_min, bounds_max, strict=True):
+        first = max(
+            0, int(np.searchsorted(edges, minimum, side="right")) - 1 - guard_cells
+        )
+        last = min(
+            len(edges) - 1,
+            int(np.searchsorted(edges, maximum, side="left")) + guard_cells,
+        )
+        if first >= last:
+            raise ValueError("Scene object is outside the raster grid")
+        region.append((first, last))
+    return tuple(region)
+
+
+def padded_array(
+    local: np.ndarray, region: tuple[tuple[int, int], ...], grid, fill: float
+) -> np.ndarray:
+    local_counts = tuple(end - start for start, end in region)
+    global_counts = tuple(len(edges) - 1 for edges in grid.edges)
+    full_shape = (local.shape[0],) + tuple(
+        global_count + local_count - region_count
+        for global_count, local_count, region_count in zip(
+            global_counts[::-1], local.shape[1:], local_counts[::-1], strict=True
+        )
+    )
+    full = np.full(full_shape, fill, dtype=local.dtype)
+    x, y, z = region
+    full[
+        :,
+        z[0] : z[0] + local.shape[1],
+        y[0] : y[0] + local.shape[2],
+        x[0] : x[0] + local.shape[3],
+    ] = local
+    return full
+
+
+def rasterize_occupied(scene, grid, options):
+    from beamz.design.raster import Grid, compile_scene
+
+    region = occupied_region(scene, grid)
+    local_grid = Grid(
+        *(
+            edges[start : end + 1]
+            for edges, (start, end) in zip(grid.edges, region, strict=True)
+        )
+    )
+    started = perf_counter()
+    local = compile_scene(scene).rasterize(local_grid, options=options)
+    native_seconds = perf_counter() - started
+    started = perf_counter()
+    background = scene.materials[scene.background_material]
+    fill_values = {
+        "epsilon": float(background.permittivity),
+        "mu": float(background.permeability),
+        "conductivity": float(background.conductivity),
+    }
+    tensors = {
+        name: padded_array(array, region, grid, fill_values[name])
+        for name, array in local.tensors.items()
+    }
+    yee_tensors = {
+        name: padded_array(array, region, grid, fill_values[name.split("_")[0]])
+        for name, array in local.yee_tensors.items()
+    }
+    expand_seconds = perf_counter() - started
+    result = SimpleNamespace(
+        grid_edges=grid.edges,
+        smoothing=local.smoothing,
+        tensors=tensors,
+        yee_tensors=yee_tensors,
+        diagnostics=local.diagnostics,
+    )
+    details = {
+        "region_cells_xyz": [end - start for start, end in region],
+        "region_start_xyz": [start for start, _ in region],
+        "region_stop_xyz": [end for _, end in region],
+        "native_raster_s": native_seconds,
+        "expand_s": expand_seconds,
+    }
+    return result, details
+
+
+def _tile_y_bounds(scene, x_min: float, x_max: float) -> tuple[float, float] | None:
+    """Conservative y bounds of objects crossing an x strip."""
+    from shapely.geometry import Polygon as ShapelyPolygon
+    from shapely.geometry import box as shapely_box
+
+    from beamz.design.raster import Box, ExtrudedPolygon, Mesh
+
+    intervals = []
+    for obj in scene.objects:
+        geometry = obj.geometry
+        lower, upper = geometry_bounds(geometry)
+        if upper[0] < x_min or lower[0] > x_max:
+            continue
+        if isinstance(geometry, ExtrudedPolygon):
+            polygon = ShapelyPolygon(geometry.polygon.exterior)
+            clipped = polygon.intersection(
+                shapely_box(x_min, lower[1], x_max, upper[1])
+            )
+            if clipped.is_empty:
+                continue
+            intervals.append((clipped.bounds[1], clipped.bounds[3]))
+        elif isinstance(geometry, Box):
+            intervals.append((lower[1], upper[1]))
+        elif isinstance(geometry, Mesh):
+            vertices = np.asarray(geometry.vertices)
+            triangles = np.asarray(geometry.triangles)
+            triangle_x = vertices[triangles, 0]
+            crossing = (triangle_x.min(axis=1) <= x_max) & (
+                triangle_x.max(axis=1) >= x_min
+            )
+            if np.any(crossing):
+                crossing_y = vertices[triangles[crossing], 1]
+                intervals.append((float(crossing_y.min()), float(crossing_y.max())))
+            else:
+                intervals.append((lower[1], upper[1]))
+        else:
+            intervals.append((lower[1], upper[1]))
+    if not intervals:
+        return None
+    return min(start for start, _ in intervals), max(stop for _, stop in intervals)
+
+
+def rasterize_tiled_x(scene, grid, options, tile_cells: int, guard_cells: int = 2):
+    """Raster x strips with a tight y range, then fill the known background."""
+    from beamz.design.raster import Grid, compile_scene
+
+    if tile_cells < 1:
+        raise ValueError("tile_cells must be positive")
+    occupied = occupied_region(scene, grid, guard_cells=guard_cells)
+    z_region = occupied[2]
+    background = scene.materials[scene.background_material]
+    fill_values = {
+        "epsilon": float(background.permittivity),
+        "mu": float(background.permeability),
+        "conductivity": float(background.conductivity),
+    }
+    compiled = compile_scene(scene)
+    tensors = {}
+    yee_tensors = {}
+    tiles = []
+    tile_diagnostics = []
+    native_seconds = 0.0
+    expand_seconds = 0.0
+    smoothing = None
+    for x_start in range(occupied[0][0], occupied[0][1], tile_cells):
+        x_stop = min(x_start + tile_cells, occupied[0][1])
+        local_x = (
+            max(0, x_start - guard_cells),
+            min(len(grid.x_edges) - 1, x_stop + guard_cells),
+        )
+        y_bounds = _tile_y_bounds(
+            scene, grid.x_edges[local_x[0]], grid.x_edges[local_x[1]]
+        )
+        if y_bounds is None:
+            continue
+        y_start = max(
+            0,
+            int(np.searchsorted(grid.y_edges, y_bounds[0], side="right"))
+            - 1
+            - guard_cells,
+        )
+        y_stop = min(
+            len(grid.y_edges) - 1,
+            int(np.searchsorted(grid.y_edges, y_bounds[1], side="left")) + guard_cells,
+        )
+        region = (local_x, (y_start, y_stop), z_region)
+        local_grid = Grid(
+            *(
+                edges[start : end + 1]
+                for edges, (start, end) in zip(grid.edges, region, strict=True)
+            )
+        )
+        started = perf_counter()
+        local = compiled.rasterize(local_grid, options=options)
+        native_seconds += perf_counter() - started
+        tile_diagnostics.append(dict(local.diagnostics))
+        started = perf_counter()
+        smoothing = local.smoothing
+        for group_name, destination in (
+            ("tensors", tensors),
+            ("yee_tensors", yee_tensors),
+        ):
+            for name, local_array in getattr(local, group_name).items():
+                if name not in destination:
+                    local_counts = tuple(end - start for start, end in region)
+                    global_counts = tuple(len(edges) - 1 for edges in grid.edges)
+                    global_shape = (local_array.shape[0],) + tuple(
+                        global_count + local_count - region_count
+                        for global_count, local_count, region_count in zip(
+                            global_counts[::-1],
+                            local_array.shape[1:],
+                            local_counts[::-1],
+                            strict=True,
+                        )
+                    )
+                    destination[name] = np.full(
+                        global_shape,
+                        fill_values[name.split("_")[0]],
+                        dtype=local_array.dtype,
+                    )
+                global_x_stop = x_stop + int(
+                    x_stop == len(grid.x_edges) - 1
+                    and local_array.shape[3] > local_x[1] - local_x[0]
+                )
+                local_start = x_start - local_x[0]
+                local_stop = global_x_stop - local_x[0]
+                destination[name][
+                    :,
+                    z_region[0] : z_region[0] + local_array.shape[1],
+                    y_start : y_start + local_array.shape[2],
+                    x_start:global_x_stop,
+                ] = local_array[:, :, :, local_start:local_stop]
+        expand_seconds += perf_counter() - started
+        tiles.append(
+            {
+                "x_start": x_start,
+                "x_stop": x_stop,
+                "region_cells_xyz": [end - start for start, end in region],
+            }
+        )
+    result = SimpleNamespace(
+        grid_edges=grid.edges,
+        smoothing=smoothing,
+        tensors=tensors,
+        yee_tensors=yee_tensors,
+        diagnostics={"tiles": tile_diagnostics},
+    )
+    return result, {
+        "tiles": tiles,
+        "native_raster_s": native_seconds,
+        "expand_s": expand_seconds,
+    }
+
+
+def rasterize_split_substrate(
+    scene, grid, options, core_tile_cells: int = 0, substrate_priority: int = 10
+):
+    """Raster a remote, full-width substrate interface apart from the device."""
+    from beamz.design.raster import Box, Grid, Scene, compile_scene
+
+    substrate_objects = [
+        obj
+        for obj in scene.objects
+        if isinstance(obj.geometry, Box) and obj.priority == substrate_priority
+    ]
+    if len(substrate_objects) != 1:
+        raise ValueError("Split raster needs one full-width substrate box")
+    substrate = substrate_objects[0]
+    if not np.allclose(
+        substrate.geometry.minimum[:2],
+        (grid.x_edges[0], grid.y_edges[0]),
+        rtol=0,
+        atol=1e-15,
+    ) or not np.allclose(
+        substrate.geometry.maximum[:2],
+        (grid.x_edges[-1], grid.y_edges[-1]),
+        rtol=0,
+        atol=1e-15,
+    ):
+        raise ValueError("Split substrate must span the entire x-y grid")
+    core_scene = Scene(
+        scene.materials,
+        tuple(obj for obj in scene.objects if obj is not substrate),
+        scene.background_material,
+    )
+    substrate_scene = Scene(scene.materials, (substrate,), scene.background_material)
+    core_region = occupied_region(core_scene, grid)
+    interface_edge = int(
+        np.searchsorted(grid.z_edges, substrate.geometry.maximum[2], side="left")
+    )
+    substrate_region = (
+        (0, len(grid.x_edges) - 1),
+        (0, len(grid.y_edges) - 1),
+        (max(0, interface_edge - 3), min(len(grid.z_edges) - 1, interface_edge + 3)),
+    )
+    if substrate_region[2][1] >= core_region[2][0]:
+        raise ValueError("Substrate and core regions overlap")
+
+    def raster_local(part_scene, region):
+        local_grid = Grid(
+            *(
+                edges[start : end + 1]
+                for edges, (start, end) in zip(grid.edges, region, strict=True)
+            )
+        )
+        started = perf_counter()
+        result = compile_scene(part_scene).rasterize(local_grid, options=options)
+        return result, perf_counter() - started
+
+    if core_tile_cells:
+        core_grid = Grid(
+            *(
+                edges[start : end + 1]
+                for edges, (start, end) in zip(grid.edges, core_region, strict=True)
+            )
+        )
+        started = perf_counter()
+        core, core_tiles = rasterize_tiled_x(
+            core_scene, core_grid, options, core_tile_cells
+        )
+        core_seconds = perf_counter() - started
+    else:
+        core, core_seconds = raster_local(core_scene, core_region)
+        core_tiles = None
+    lower, substrate_seconds = raster_local(substrate_scene, substrate_region)
+    started = perf_counter()
+    background = scene.materials[scene.background_material]
+    silicon = scene.materials[substrate.material_id]
+    filled_tensors = {}
+    filled_yee = {}
+    for group_name, destination in (
+        ("tensors", filled_tensors),
+        ("yee_tensors", filled_yee),
+    ):
+        core_group = getattr(core, group_name)
+        substrate_group = getattr(lower, group_name)
+        if set(core_group) != set(substrate_group):
+            raise ValueError("Split material fields differ")
+        for name, core_array in core_group.items():
+            lower_array = substrate_group[name]
+            material_name = name.split("_")[0]
+            component_count = max(core_array.shape[0], lower_array.shape[0])
+            template = np.broadcast_to(
+                core_array, (component_count, *core_array.shape[1:])
+            )
+            fill = float(
+                getattr(
+                    background,
+                    {
+                        "epsilon": "permittivity",
+                        "mu": "permeability",
+                        "conductivity": "conductivity",
+                    }[material_name],
+                )
+            )
+            silicon_value = float(
+                getattr(
+                    silicon,
+                    {
+                        "epsilon": "permittivity",
+                        "mu": "permeability",
+                        "conductivity": "conductivity",
+                    }[material_name],
+                )
+            )
+            global_array = padded_array(template, core_region, grid, fill)
+            substrate_start = substrate_region[2][0]
+            global_array[:, :substrate_start] = silicon_value
+            z_start = substrate_region[2][0]
+            z_stop = z_start + lower_array.shape[1]
+            global_array[:, z_start:z_stop] = np.broadcast_to(
+                lower_array, (component_count, *lower_array.shape[1:])
+            )
+            destination[name] = global_array
+    expand_seconds = perf_counter() - started
+    result = SimpleNamespace(
+        grid_edges=grid.edges,
+        smoothing=core.smoothing,
+        tensors=filled_tensors,
+        yee_tensors=filled_yee,
+        diagnostics={
+            "core": dict(core.diagnostics),
+            "substrate": dict(lower.diagnostics),
+        },
+    )
+    details = {
+        "core_region_cells_xyz": [end - start for start, end in core_region],
+        "substrate_region_cells_xyz": [end - start for start, end in substrate_region],
+        "core_native_s": core_seconds,
+        "core_tiles": core_tiles,
+        "substrate_native_s": substrate_seconds,
+        "expand_s": expand_seconds,
+    }
+    return result, details

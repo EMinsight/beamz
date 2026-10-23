@@ -108,6 +108,16 @@ fine = compiled.rasterize(fine_grid)
 Passing `cache_directory=` enables atomic, schema-versioned NPZ caching with
 corrupt-cache recovery.
 
+For large domains with small occupied regions, see
+[`examples/mesh_raster_regions.py`](../../../examples/mesh_raster_regions.py).
+It demonstrates rasterizing the original scene on guarded subgrids and filling
+known uniform material fields outside them. A separate full-width substrate
+interface can be rasterized apart from a distant device layer. This is a
+standalone prototype for isotropic, piecewise-uniform materials; compare all
+cell and Yee tensors with a full raster before using it on another geometry.
+When every material has unit relative permeability, the native rasterizer
+also fills magnetic Yee supports directly without integration.
+
 ## Standalone versus simulation use
 
 Standalone rasterization accepts uniform and nonuniform rectilinear grids.
