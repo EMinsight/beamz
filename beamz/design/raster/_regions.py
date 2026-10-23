@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from beamz.design.dispersion import PoleResidue
 from beamz.design.materials import Material
 
 from .engine import RasterOptions, compile_scene
@@ -29,7 +30,7 @@ def _validate_region_inputs(scene: Scene, grid: Grid, options: RasterOptions) ->
     if not scene.objects:
         raise ValueError("Region rasterization requires at least one object.")
     for material in scene.materials:
-        if not isinstance(material, Material):
+        if not isinstance(material, Material) or isinstance(material, PoleResidue):
             raise ValueError("Region rasterization requires nondispersive materials.")
         for value in (
             material.permittivity,
@@ -121,6 +122,21 @@ def occupied_region(scene, grid, guard_cells: int = 2) -> tuple[tuple[int, int],
     return tuple(region)
 
 
+def _isotropic_array(shape, fill: float, dtype) -> np.ndarray:
+    array = np.zeros(shape, dtype=dtype)
+    array[: min(3, shape[0])] = fill
+    return array
+
+
+def _promote_components(array: np.ndarray, count: int) -> np.ndarray:
+    """Expand compact tensors without copying diagonal values off diagonal."""
+    if array.shape[0] == count:
+        return array
+    expanded = np.zeros((count, *array.shape[1:]), dtype=array.dtype)
+    expanded[:3] = array[:3]
+    return expanded
+
+
 def padded_array(
     local: np.ndarray, region: tuple[tuple[int, int], ...], grid, fill: float
 ) -> np.ndarray:
@@ -132,7 +148,7 @@ def padded_array(
             global_counts[::-1], local.shape[1:], local_counts[::-1], strict=True
         )
     )
-    full = np.full(full_shape, fill, dtype=local.dtype)
+    full = _isotropic_array(full_shape, fill, local.dtype)
     x, y, z = region
     full[
         :,
@@ -258,11 +274,16 @@ def rasterize_tiled_x(scene, grid, options, tile_cells: int, guard_cells: int = 
                             strict=True,
                         )
                     )
-                    destination[name] = np.full(
+                    destination[name] = _isotropic_array(
                         global_shape,
                         fill_values[name.split("_")[0]],
-                        dtype=local_array.dtype,
+                        local_array.dtype,
                     )
+                component_count = max(destination[name].shape[0], local_array.shape[0])
+                destination[name] = _promote_components(
+                    destination[name], component_count
+                )
+                local_array = _promote_components(local_array, component_count)
                 global_x_stop = x_stop + int(
                     x_stop == len(grid.x_edges) - 1
                     and local_array.shape[3] > local_x[1] - local_x[0]
@@ -395,9 +416,7 @@ def rasterize_split_substrate(
             lower_array = substrate_group[name]
             material_name = name.split("_")[0]
             component_count = max(core_array.shape[0], lower_array.shape[0])
-            template = np.broadcast_to(
-                core_array, (component_count, *core_array.shape[1:])
-            )
+            template = _promote_components(core_array, component_count)
             fill = float(
                 getattr(
                     background,
@@ -420,11 +439,13 @@ def rasterize_split_substrate(
             )
             global_array = padded_array(template, core_region, grid, fill)
             substrate_start = substrate_region[2][0]
-            global_array[:, :substrate_start] = silicon_value
+            global_array[:, :substrate_start] = _isotropic_array(
+                (component_count, 1, 1, 1), silicon_value, global_array.dtype
+            )
             z_start = substrate_region[2][0]
             z_stop = z_start + lower_array.shape[1]
-            global_array[:, z_start:z_stop] = np.broadcast_to(
-                lower_array, (component_count, *lower_array.shape[1:])
+            global_array[:, z_start:z_stop] = _promote_components(
+                lower_array, component_count
             )
             destination[name] = global_array
     expand_seconds = perf_counter() - started
