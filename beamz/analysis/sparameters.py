@@ -142,9 +142,7 @@ def _resample_complex_matrix(freq_src, values_src, freq_dst):
         return src
     out = np.empty((len(freq_dst), src.shape[1]), dtype=np.complex128)
     for col in range(src.shape[1]):
-        re = np.interp(freq_dst, freq_src, np.real(src[:, col]), left=0.0, right=0.0)
-        im = np.interp(freq_dst, freq_src, np.imag(src[:, col]), left=0.0, right=0.0)
-        out[:, col] = re + 1j * im
+        out[:, col] = np.interp(freq_dst, freq_src, src[:, col], left=0.0, right=0.0)
     return out
 
 
