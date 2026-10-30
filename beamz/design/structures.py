@@ -362,8 +362,28 @@ class Circle(PlanarStructure):
         return diameter, diameter, self.depth or None
 
 
+class _AnnularStructure(PlanarStructure):
+    """Shared operations for shapes described by inner and outer radii."""
+
+    __slots__ = ()
+    inner_radius: float
+    outer_radius: float
+
+    def scale(self, s_x, s_y=None, s_z=None):
+        if s_y is not None and not np.isclose(float(s_x), float(s_y)):
+            return PlanarStructure.scale(self, s_x, s_y, s_z)
+        return self.updated_copy(
+            inner_radius=self.inner_radius * float(s_x),
+            outer_radius=self.outer_radius * float(s_x),
+        )
+
+    def _mesh_feature_sizes(self):
+        wall = self.outer_radius - self.inner_radius
+        return wall, wall, self.depth or None
+
+
 @dataclass(frozen=True, eq=False, slots=True)
-class Ring(PlanarStructure):
+class Ring(_AnnularStructure):
     position: Any = (0.0, 0.0)
     inner_radius: float = 1.0
     outer_radius: float = 2.0
@@ -403,21 +423,9 @@ class Ring(PlanarStructure):
             object.__setattr__(self, name, value)
         _normalize_common(self)
 
-    def scale(self, s_x, s_y=None, s_z=None):
-        if s_y is not None and not np.isclose(float(s_x), float(s_y)):
-            return PlanarStructure.scale(self, s_x, s_y, s_z)
-        return self.updated_copy(
-            inner_radius=self.inner_radius * float(s_x),
-            outer_radius=self.outer_radius * float(s_x),
-        )
-
-    def _mesh_feature_sizes(self):
-        wall = self.outer_radius - self.inner_radius
-        return wall, wall, self.depth or None
-
 
 @dataclass(frozen=True, eq=False, slots=True)
-class CircularBend(PlanarStructure):
+class CircularBend(_AnnularStructure):
     position: Any = (0.0, 0.0)
     inner_radius: float = 1.0
     outer_radius: float = 2.0
@@ -492,18 +500,6 @@ class CircularBend(PlanarStructure):
         ):
             return self.updated_copy(rotation=(self.rotation + float(angle)) % 360.0)
         return PlanarStructure.rotate(self, angle, axis, point)
-
-    def scale(self, s_x, s_y=None, s_z=None):
-        if s_y is not None and not np.isclose(float(s_x), float(s_y)):
-            return PlanarStructure.scale(self, s_x, s_y, s_z)
-        return self.updated_copy(
-            inner_radius=self.inner_radius * float(s_x),
-            outer_radius=self.outer_radius * float(s_x),
-        )
-
-    def _mesh_feature_sizes(self):
-        wall = self.outer_radius - self.inner_radius
-        return wall, wall, self.depth or None
 
 
 @dataclass(frozen=True, eq=False, slots=True)
