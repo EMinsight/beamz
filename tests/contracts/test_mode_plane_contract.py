@@ -24,14 +24,21 @@ def test_mode_plane_outer_padding_scales_with_aperture():
 
 @pytest.mark.unit
 @pytest.mark.parametrize("force_symmetry", [False, True])
-def test_mode_monitor_uses_shared_finite_aperture_policy(monkeypatch, force_symmetry):
+@pytest.mark.parametrize(
+    "padding, expected_shape", [(None, (24, 26)), (0, (8, 10)), ((2, 4), (16, 14))]
+)
+def test_mode_monitor_uses_shared_finite_aperture_policy(
+    monkeypatch, force_symmetry, padding, expected_shape
+):
     resolution = 0.1
     shape = (40, 50, 60)
     monitor = ModeMonitor(
         center=(3.0, 2.5, 2.0),
         size=(0.0, 1.0, 0.8),
         freqs=np.asarray([1.0]),
-        mode_spec=ModeSpec(num_modes=1, force_symmetry=force_symmetry),
+        mode_spec=ModeSpec(
+            num_modes=1, force_symmetry=force_symmetry, solver_padding_cells=padding
+        ),
         name="mode",
     )
     materials = MaterialRegion(
@@ -91,4 +98,4 @@ def test_mode_monitor_uses_shared_finite_aperture_policy(monkeypatch, force_symm
     assert seen["force_symmetry"] is force_symmetry
     assert seen["aperture_pad_cells"] == MODE_PLANE_APERTURE_PAD_CELLS
     assert seen["aperture_window_alpha"] == MODE_PLANE_APERTURE_WINDOW_ALPHA
-    assert seen["scalar_permittivity"].shape == (24, 26)
+    assert seen["scalar_permittivity"].shape == expected_shape

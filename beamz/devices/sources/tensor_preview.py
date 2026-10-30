@@ -71,6 +71,7 @@ def solve_tensor_mode_plane(
                     solver=solver,
                     force_symmetry=spec.force_symmetry,
                     min_aperture_fraction=spec.min_aperture_fraction,
+                    solver_padding_cells=spec.solver_padding_cells,
                 )
                 for index in range(spec.num_modes)
             ]
