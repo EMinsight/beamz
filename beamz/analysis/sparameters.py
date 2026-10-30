@@ -136,8 +136,8 @@ def _resample_complex_matrix(freq_src, values_src, freq_dst):
             )
         src = src.reshape(src.shape[0], -1)
 
-    if np.allclose(freq_src, freq_dst, rtol=1e-9, atol=0.0) and src.shape[0] == len(
-        freq_dst
+    if src.shape[0] == len(freq_dst) and np.allclose(
+        freq_src, freq_dst, rtol=1e-9, atol=0.0
     ):
         return src
     out = np.empty((len(freq_dst), src.shape[1]), dtype=np.complex128)
