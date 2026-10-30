@@ -508,6 +508,7 @@ def solve_mode_plane_3d(
     solver=solve_beamz_mode,
     grid=None,
     force_symmetry=False,
+    min_aperture_fraction: float | None = 0.5,
 ) -> DiscreteMode:
     """Solve one finite 3D mode plane and return globally indexed fields."""
     axis_index = _AXIS_POS_3D[axis]
@@ -634,6 +635,7 @@ def solve_mode_plane_3d(
             target_neff=target,
             num_modes=int(num_modes),
             force_symmetry=force_symmetry,
+            min_aperture_fraction=min_aperture_fraction,
             aperture_pad_cells=MODE_PLANE_APERTURE_PAD_CELLS,
             aperture_window_alpha=MODE_PLANE_APERTURE_WINDOW_ALPHA,
             grid=local_plane["grid"],

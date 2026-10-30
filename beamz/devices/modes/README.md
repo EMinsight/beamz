@@ -103,3 +103,18 @@ shared with propagation. Set `ModeSpec(polarization=None, force_symmetry=False)`
 Uniform and rectilinear grids are supported; normal spacing must be locally
 uniform and the material longitudinally invariant. Unsupported combinations fail
 explicitly. Source launch and monitor projection retain dielectric cross terms.
+
+## 3D mode selection
+
+Previews, source launch and modal projection use the same padded eigenproblem
+and discrete field preparation. The aperture defines injection/integration support.
+`ModeSpec(min_aperture_fraction=0.5)` prefers modes with at least half their
+area-weighted transverse electric intensity inside that aperture, retaining
+polarization/neff ordering. Heterogeneous planes search up to 64 candidates
+(or the initial pool if larger), then fail if the requested confined mode is
+unavailable. This fraction is a spatial diagnostic, not modal power or energy.
+Set it to `None` for unrestricted radiation or coupled-guide mode inspection.
+
+Resolve the complete requested family before assigning indices, and share the
+final candidate pool per preview frequency. This prevents duplicate selections
+and repeated eigensolves while preserving per-mode field preparation.

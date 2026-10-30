@@ -34,6 +34,13 @@ class ModeSpec:
         Project 2D transverse solver planes about validated physical material/grid
         mirrors. One-dimensional line profiles remain unprojected.
         Applied before Yee interpolation and independent Maxwell refinement.
+    min_aperture_fraction : float or None, default=0.5
+        In 3D, prefer modes with at least this fraction of area-weighted transverse
+        electric intensity inside the aperture, within the requested polarization.
+        Preserve decreasing-neff order within that group. A heterogeneous plane
+        adaptively searches up to at least 64 candidates, then fails explicitly
+        if the requested confined mode is unavailable. None restores unrestricted
+        polarization/neff ordering. This fraction is not modal power or energy.
 
     Examples
     --------
@@ -55,8 +62,16 @@ class ModeSpec:
     target_neff: float | None = None
     num_freqs: int | None = None
     force_symmetry: bool = False
+    min_aperture_fraction: float | None = 0.5
 
     def __post_init__(self) -> None:
+        if self.min_aperture_fraction is not None and (
+            not np.isfinite(self.min_aperture_fraction)
+            or not 0 <= self.min_aperture_fraction <= 1
+        ):
+            raise ValueError(
+                "min_aperture_fraction must be between zero and one or None"
+            )
         if not isinstance(self.force_symmetry, bool):
             raise TypeError("force_symmetry must be a bool")
         object.__setattr__(self, "num_modes", max(1, int(self.num_modes)))
