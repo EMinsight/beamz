@@ -293,6 +293,7 @@ def _build_discrete_port_projection_3d(
         else str(spec.polarization).lower(),
         target_neff=mode_spec.target_neff,
         force_symmetry=mode_spec.force_symmetry,
+        min_aperture_fraction=mode_spec.min_aperture_fraction,
         num_modes=num_modes,
         snapped_region=snapped_region,
         material_origin_zyx=origin,

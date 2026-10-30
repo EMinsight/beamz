@@ -613,7 +613,7 @@ def test_mode_source_can_create_config_from_source_time_plane():
     np.testing.assert_allclose(sampled, expected)
 
 
-def test_mode_source_solves_modes_and_analysis_plots(monkeypatch):
+def test_mode_source_solves_modes_and_analysis_plots():
     sim = bz.Simulation(
         size=(6.0, 6.0, 6.0),
         sources=[],
@@ -630,17 +630,6 @@ def test_mode_source_solves_modes_and_analysis_plots(monkeypatch):
         source_time=source_time,
         mode_spec=bz.ModeSpec(num_modes=2, polarization="te", target_neff=2.3),
     )
-    seen = {}
-
-    def fake_solve_modes(**kwargs):
-        eps = np.asarray(kwargs["eps"])
-        seen["eps_shape"] = eps.shape
-        seen["direction"] = kwargs["direction"]
-        fields = np.ones((2, 3, *eps.shape), dtype=np.complex128)
-        return np.array([2.4 + 0.0j, 1.8 + 0.0j]), fields, fields, 0
-
-    monkeypatch.setattr("beamz.devices.sources.solve.solve_modes", fake_solve_modes)
-
     modes = source.solve_modes(sim, freqs=[source_time.freq0])
     from beamz.analysis.plotting import plot_mode_field_components
 
@@ -656,11 +645,11 @@ def test_mode_source_solves_modes_and_analysis_plots(monkeypatch):
     assert not hasattr(source, "with_modes")
     assert not hasattr(source, "mode_e_field")
     assert not hasattr(modes, "plot_field_components")
-    assert seen["eps_shape"] == (4, 2)
-    assert seen["direction"] == "+x"
+    assert modes.eps_profiles.shape == (1, *modes.e_fields.shape[-2:])
+    assert modes.solver_direction == "+x"
     assert axes.shape == (2, 2)
-    np.testing.assert_allclose(neffs, [2.4 + 0.0j, 1.8 + 0.0j])
-    np.testing.assert_allclose(modes.neffs[0], [2.4 + 0.0j, 1.8 + 0.0j])
+    assert np.all(np.isfinite(modes.neffs))
+    np.testing.assert_allclose(neffs, modes.neffs[0])
     plt.close(fig)
 
 
