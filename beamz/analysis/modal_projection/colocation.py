@@ -40,18 +40,10 @@ def _interpolate_plane_matrix_2d(
         return arr.copy()
     mid = np.empty((src0.size, dst1.size), dtype=np.complex128)
     for row in range(src0.size):
-        mid[row, :] = np.interp(dst1, src1, np.real(arr[row, :])) + 1j * np.interp(
-            dst1,
-            src1,
-            np.imag(arr[row, :]),
-        )
+        mid[row, :] = np.interp(dst1, src1, arr[row, :])
     out = np.empty((dst0.size, dst1.size), dtype=np.complex128)
     for col in range(dst1.size):
-        out[:, col] = np.interp(dst0, src0, np.real(mid[:, col])) + 1j * np.interp(
-            dst0,
-            src0,
-            np.imag(mid[:, col]),
-        )
+        out[:, col] = np.interp(dst0, src0, mid[:, col])
     return out
 
 
