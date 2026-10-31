@@ -156,13 +156,18 @@ def test_unrestricted_preview_retains_radiation_candidates_for_inspection(
     )
 
 
+@pytest.mark.parametrize("padding", [None, 0, (2, 4)])
 @pytest.mark.parametrize("axis,direction", [("x", "+"), ("y", "-")])
 def test_preview_launch_and_projection_share_the_mode_family(
-    preview_fixture, axis, direction
+    preview_fixture, axis, direction, padding
 ):
     sim, source = preview_fixture(
         num_modes=3, confinement=0.5, axis=axis, direction=direction
     )
+    source = source.updated_copy(
+        mode_spec=replace(source.mode_spec, solver_padding_cells=padding)
+    )
+    sim = sim.updated_copy(sources=[source])
     monitor = bz.ModeMonitor(
         center=source.center,
         size=source.size,
@@ -184,6 +189,14 @@ def test_preview_launch_and_projection_share_the_mode_family(
         with patch("beamz.devices.sources.mode_launch.solve_mode_plane_3d", launch):
             sim.updated_copy(sources=[src]).compile(backend="jax")
     assert len(launched) == 3
+    for mode in launched:
+        assert (
+            mode.diagnostics["solver_padding_cells"]
+            == source.mode_spec.solver_padding_cells
+        )
+        assert (
+            mode.diagnostics["solver_bounds"] == preview.diagnostics[0]["solver_bounds"]
+        )
     np.testing.assert_allclose(preview.neffs[0], [m.neff for m in launched], rtol=1e-9)
     # The short run supplies real stored monitor/material metadata; these checks
     # concern basis identity, not converged transmission or propagated power.
@@ -198,6 +211,10 @@ def test_preview_launch_and_projection_share_the_mode_family(
     with patch("beamz.analysis.mode_projection.solve_mode_plane_3d", projection):
         result.mode("review")
     assert len(projected) == 3
+    for mode in projected:
+        assert (
+            mode.diagnostics["solver_bounds"] == preview.diagnostics[0]["solver_bounds"]
+        )
     projected.sort(key=lambda m: m.diagnostics["mode_index"])
     np.testing.assert_allclose([m.neff for m in projected], preview.neffs[0], rtol=1e-9)
     # Public modal extraction uses the positive-direction basis and reports
@@ -219,9 +236,10 @@ def test_preview_launch_and_projection_share_the_mode_family(
     )
 
 
+@pytest.mark.parametrize("padding", [None, 0, (2, 2)])
 @pytest.mark.parametrize("outside", ["neighbor", "substrate"])
 def test_preview_and_launch_share_material_window_and_select_wire(
-    preview_fixture, outside
+    preview_fixture, outside, padding
 ):
     from scipy.ndimage import label
 
@@ -241,6 +259,9 @@ def test_preview_and_launch_share_material_window_and_select_wire(
             center=(0.1e-6, 2e-6, 1.4e-6), size=(0, 0.8e-6, 0.8e-6)
         )
         expected_peak = (1.2e-6, 1.6e-6)
+    source = source.updated_copy(
+        mode_spec=replace(source.mode_spec, solver_padding_cells=padding)
+    )
     sim = sim.updated_copy(material_grid=replace(material, permittivity=eps))
     with patch.object(discrete, "solve_grid", wraps=discrete.solve_grid) as solve:
         preview = source.solve_modes(sim)
@@ -251,7 +272,7 @@ def test_preview_and_launch_share_material_window_and_select_wire(
     with patch.object(discrete, "solve_grid", wraps=discrete.solve_grid) as solve:
         program = sim.updated_copy(sources=[source]).compile(backend="jax")
     np.testing.assert_array_equal(preview_material, solve.call_args.kwargs["eps_xx"])
-    assert label(preview_material > 5)[1] == 2
+    assert label(preview_material > 5)[1] == (2 if padding is None else 1)
     assert label(preview.eps_profiles[0] > 5)[1] == 1
     peaks = [
         sim.grid.z_edges[

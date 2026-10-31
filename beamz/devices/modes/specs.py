@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from numbers import Integral
 from typing import Any
 
 import numpy as np
@@ -42,6 +43,16 @@ class ModeSpec:
         if the requested confined mode is unavailable. None restores unrestricted
         polarization/neff ordering. This fraction is not modal power or energy.
 
+    solver_padding_cells : int or tuple[int, int] or None, default=None
+        Extra cells on each side of the 3D solve aperture. None retains automatic
+        padding; zero disables extra padding. A pair specifies (width, height):
+        (y, z) for x-normal, (x, z) for y-normal, (x, y) for z-normal planes.
+        Counts refer to actual cells, including on nonuniform grids. Bounds clip
+        to the simulation domain; the minimum two-cell solver support remains.
+        The declared aperture stays fixed. Small padding can clip returned Yee
+        field support and move the taper inward; its parameter stays fixed.
+        Two-dimensional line solves do not use this setting.
+
     Examples
     --------
     >>> spec = ModeSpec(num_modes=4, mode_index=1, polarization="te")
@@ -64,7 +75,24 @@ class ModeSpec:
     force_symmetry: bool = False
     min_aperture_fraction: float | None = 0.5
 
+    solver_padding_cells: int | tuple[int, int] | None = None
+
     def __post_init__(self) -> None:
+        padding = self.solver_padding_cells
+        if padding is not None:
+            values = padding if isinstance(padding, tuple) else (padding, padding)
+            if len(values) != 2 or any(
+                isinstance(value, bool) or not isinstance(value, Integral)
+                for value in values
+            ):
+                raise TypeError(
+                    "solver_padding_cells must be an integer, a pair of integers, or None"
+                )
+            if any(value < 0 for value in values):
+                raise ValueError("solver_padding_cells must be nonnegative")
+            object.__setattr__(
+                self, "solver_padding_cells", tuple(int(value) for value in values)
+            )
         if self.min_aperture_fraction is not None and (
             not np.isfinite(self.min_aperture_fraction)
             or not 0 <= self.min_aperture_fraction <= 1
