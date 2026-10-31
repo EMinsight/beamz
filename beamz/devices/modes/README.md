@@ -135,9 +135,11 @@ spec = ModeSpec(polarization="te", solver_padding_cells=(4, 8))
 Preview, launch, and modal projection use the same setting. Cell counts follow
 the actual grid, so physical padding distances vary on nonuniform meshes and
 under refinement. Bounds clip at the simulation boundary, and the minimum
-two-cell solver support remains even with zero padding. Injection/integration
-apertures, Yee support, and tapering are unchanged. This option applies only to
-3D mode planes; 2D line solves retain their existing behavior.
+two-cell solver support remains even with zero padding. The declared aperture
+stays fixed, but padding below the usual two-cell injection margin can clip
+returned Yee field support and move the taper inward. The taper parameter stays
+fixed; its spatial window follows the clipped component support. This option
+applies only to 3D mode planes; 2D line solves retain their existing behavior.
 
 Per-mode diagnostics expose `solver_padding_cells` (`None` means automatic)
 and `solver_bounds`, a mapping from transverse axis to `(lower, upper)` in

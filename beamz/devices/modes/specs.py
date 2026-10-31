@@ -49,7 +49,8 @@ class ModeSpec:
         (y, z) for x-normal, (x, z) for y-normal, (x, y) for z-normal planes.
         Counts refer to actual cells, including on nonuniform grids. Bounds clip
         to the simulation domain; the minimum two-cell solver support remains.
-        This does not change injection/integration support or aperture tapering.
+        The declared aperture stays fixed. Small padding can clip returned Yee
+        field support and move the taper inward; its parameter stays fixed.
         Two-dimensional line solves do not use this setting.
 
     Examples
