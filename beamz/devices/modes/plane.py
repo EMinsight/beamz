@@ -370,7 +370,7 @@ def _local_mode_plane_spec(
     offset_index,
     resolution,
     snapped_region=None,
-    aperture_pad_cells=2,
+    aperture_pad_cells: int | tuple[int, int] = 2,
     normal_halo_cells=0,
     material_origin_zyx=(0, 0, 0),
     grid=None,
@@ -390,7 +390,12 @@ def _local_mode_plane_spec(
     )
     local_counts = dict(counts)
     crop_slices = []
-    pad = max(0, int(aperture_pad_cells))
+    padding = (
+        aperture_pad_cells
+        if isinstance(aperture_pad_cells, tuple)
+        else (aperture_pad_cells, aperture_pad_cells)
+    )
+    pads = _plane_extent_by_axis(axis, *padding)
     extents = _plane_extent_by_axis(axis, width, height)
 
     for transverse_axis in _TRANSVERSE_AXES_3D[axis]:
@@ -408,6 +413,7 @@ def _local_mode_plane_spec(
                 counts[transverse_axis],
                 min_cells=2,
             )
+        pad = max(0, int(pads[transverse_axis]))
         start = int(interval.start) - pad
         stop = int(interval.stop) + pad
         start, stop = _ensure_min_interval(start, stop, counts[transverse_axis])
@@ -508,6 +514,8 @@ def solve_mode_plane_3d(
     solver=solve_beamz_mode,
     grid=None,
     force_symmetry=False,
+    min_aperture_fraction: float | None = 0.5,
+    solver_padding_cells: int | tuple[int, int] | None = None,
 ) -> DiscreteMode:
     """Solve one finite 3D mode plane and return globally indexed fields."""
     axis_index = _AXIS_POS_3D[axis]
@@ -524,7 +532,11 @@ def solve_mode_plane_3d(
         offset_index=offset_index,
         resolution=resolution,
         snapped_region=snapped_region,
-        aperture_pad_cells=mode_plane_outer_pad_cells(width, height, resolution),
+        aperture_pad_cells=(
+            mode_plane_outer_pad_cells(width, height, resolution)
+            if solver_padding_cells is None
+            else solver_padding_cells
+        ),
         normal_halo_cells=TENSOR_MODE_NORMAL_HALO if yee_tensors else 0,
         material_origin_zyx=material_origin_zyx,
         grid=grid,
@@ -634,10 +646,30 @@ def solve_mode_plane_3d(
             target_neff=target,
             num_modes=int(num_modes),
             force_symmetry=force_symmetry,
+            min_aperture_fraction=min_aperture_fraction,
             aperture_pad_cells=MODE_PLANE_APERTURE_PAD_CELLS,
             aperture_window_alpha=MODE_PLANE_APERTURE_WINDOW_ALPHA,
             grid=local_plane["grid"],
         )
+    )
+    bounds = {}
+    counts = _axis_counts_from_grid_shape(local_plane["grid_shape"])
+    for transverse_axis in _TRANSVERSE_AXES_3D[axis]:
+        lower = local_plane["axis_origins"][transverse_axis]
+        local_grid = local_plane["grid"]
+        extent = (
+            counts[transverse_axis] * resolution
+            if local_grid is None
+            else local_grid.axis_edges(transverse_axis)[-1]
+        )
+        bounds[transverse_axis] = (float(lower), float(lower + extent))
+    mode = replace(
+        mode,
+        diagnostics={
+            **mode.diagnostics,
+            "solver_padding_cells": solver_padding_cells,
+            "solver_bounds": bounds,
+        },
     )
     return _shift_discrete_mode_to_global(
         mode,

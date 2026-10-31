@@ -230,11 +230,7 @@ def solve_mode_plane(
     materials = getattr(fields, "material_grid", None)
     if materials is None and hasattr(simulation, "_material_grid"):
         materials = simulation._material_grid()
-    if (
-        materials is not None
-        and materials.uses_full_permittivity
-        and len(materials.shape) == 3
-    ):
+    if materials is not None and len(materials.shape) == 3:
         from .tensor_preview import solve_tensor_mode_plane
 
         return solve_tensor_mode_plane(

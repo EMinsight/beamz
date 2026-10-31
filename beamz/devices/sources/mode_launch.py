@@ -514,6 +514,8 @@ def _plan_3d_mode_source(
         polarization=source.mode_spec.polarization,
         target_neff=source.mode_spec.target_neff,
         force_symmetry=source.mode_spec.force_symmetry,
+        min_aperture_fraction=source.mode_spec.min_aperture_fraction,
+        solver_padding_cells=source.mode_spec.solver_padding_cells,
         num_modes=max(
             int(source.mode_spec.num_modes),
             int(source.mode_spec.mode_index) + 1,

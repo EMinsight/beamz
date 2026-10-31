@@ -103,3 +103,46 @@ shared with propagation. Set `ModeSpec(polarization=None, force_symmetry=False)`
 Uniform and rectilinear grids are supported; normal spacing must be locally
 uniform and the material longitudinally invariant. Unsupported combinations fail
 explicitly. Source launch and monitor projection retain dielectric cross terms.
+
+## 3D mode selection
+
+Previews, source launch and modal projection use the same padded eigenproblem
+and discrete field preparation. The aperture defines injection/integration support.
+`ModeSpec(min_aperture_fraction=0.5)` prefers modes with at least half their
+area-weighted transverse electric intensity inside that aperture, retaining
+polarization/neff ordering. Heterogeneous planes search up to 64 candidates
+(or the initial pool if larger), then fail if the requested confined mode is
+unavailable. This fraction is a spatial diagnostic, not modal power or energy.
+Set it to `None` for unrestricted radiation or coupled-guide mode inspection.
+
+Resolve the complete requested family before assigning indices, and share the
+final candidate pool per preview frequency. This prevents duplicate selections
+and repeated eigensolves while preserving per-mode field preparation.
+
+## Configurable 3D solve padding
+
+`ModeSpec(solver_padding_cells=None)` preserves automatic padding: half the
+larger aperture extent in nominal grid cells, rounded up and clamped to 8–48
+cells per side. Set `solver_padding_cells=0` to remove extra padding, an integer
+for equal padding, or `(width_cells, height_cells)` for independent directions.
+The pair maps to `(y, z)` for x-normal ports, `(x, z)` for y-normal ports, and
+`(x, y)` for z-normal ports. For example:
+
+```python
+spec = ModeSpec(polarization="te", solver_padding_cells=(4, 8))
+```
+
+Preview, launch, and modal projection use the same setting. Cell counts follow
+the actual grid, so physical padding distances vary on nonuniform meshes and
+under refinement. Bounds clip at the simulation boundary, and the minimum
+two-cell solver support remains even with zero padding. The declared aperture
+stays fixed, but padding below the usual two-cell injection margin can clip
+returned Yee field support and move the taper inward. The taper parameter stays
+fixed; its spatial window follows the clipped component support. This option
+applies only to 3D mode planes; 2D line solves retain their existing behavior.
+
+Per-mode diagnostics expose `solver_padding_cells` (`None` means automatic)
+and `solver_bounds`, a mapping from transverse axis to `(lower, upper)` in
+metres in the solver's global coordinate frame. Preview includes these in
+`ModeData.diagnostics`. Small padding can truncate evanescent tails: check
+convergence rather than assuming zero padding improves accuracy.

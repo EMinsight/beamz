@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
+from dataclasses import fields as dataclass_fields
 from typing import Any, Literal, TypedDict, cast
 
 import numpy as np
@@ -96,8 +97,16 @@ class ModePlaneSpec:
     yee_refinement: bool = True
     grid: RectilinearGrid | None = None
     force_symmetry: bool = False
+    min_aperture_fraction: float | None = None
 
     def __post_init__(self) -> None:
+        if self.min_aperture_fraction is not None and (
+            not np.isfinite(self.min_aperture_fraction)
+            or not 0 <= self.min_aperture_fraction <= 1
+        ):
+            raise ValueError(
+                "min_aperture_fraction must be between zero and one or None"
+            )
         if not isinstance(self.force_symmetry, bool):
             raise TypeError("force_symmetry must be a bool")
         eps = readonly_array(self.scalar_permittivity, dtype=np.complex128)
@@ -337,7 +346,10 @@ def _solve_candidate_pool(cache: _SolveCache[Result] | None, **kwargs) -> Result
 
 
 def _solve_beamz_mode(
-    spec: ModePlaneSpec, *, candidate_cache: _SolveCache[Result] | None = None
+    spec: ModePlaneSpec,
+    *,
+    candidate_cache: _SolveCache[Result] | None = None,
+    basis_cache: dict | None = None,
 ) -> DiscreteMode:
 
     if not isinstance(spec, ModePlaneSpec):
@@ -355,8 +367,49 @@ def _solve_beamz_mode(
             or spec.grid.metric_kind == "isotropic_uniform"
         )
     ):
-        return _solve_mode_in_x_frame(spec, candidate_cache=candidate_cache)
+        return _solve_mode_in_x_frame(
+            spec, candidate_cache=candidate_cache, basis_cache=basis_cache
+        )
 
+    requested = max(spec.num_modes or 1, spec.mode_index + 1)
+    # One family has one final pool, independent of which member is prepared.
+    # This cache is request-local (one preview frequency), never process-global.
+    key = (
+        (
+            solve_grid,
+            requested,
+            cache_token(
+                {
+                    f.name: getattr(spec, f.name)
+                    for f in dataclass_fields(spec)
+                    if f.name != "mode_index"
+                }
+            ),
+        )
+        if basis_cache is not None
+        else None
+    )
+    if basis_cache is not None and key in basis_cache:
+        basis = basis_cache[key]
+    else:
+        basis = _resolve_mode_basis(spec, candidate_cache=candidate_cache)
+        if basis_cache is not None:
+            basis_cache[key] = basis
+    return _prepare_discrete_mode(spec, basis)
+
+
+@dataclass(frozen=True)
+class _ResolvedModeBasis:
+    result: Result
+    candidates: tuple[_ModeCandidate, ...]
+    candidate_count: int
+    qualifying_count: int | None
+
+
+def _resolve_mode_basis(
+    spec: ModePlaneSpec, *, candidate_cache=None
+) -> _ResolvedModeBasis:
+    """Resolve the shared requested family before assigning any output indices."""
     solver_axes = _solver_axes_for_axis(spec.axis)
     eps_solver = _transpose_between_axes(
         spec.scalar_permittivity, spec.transverse_axes, solver_axes
@@ -374,14 +427,16 @@ def _solve_beamz_mode(
         }
     x_edges = tuple(float(v) for v in solver_edges[solver_axes[0]])
     y_edges = tuple(float(v) for v in solver_edges[solver_axes[1]])
+    requested = max(spec.num_modes or 1, spec.mode_index + 1)
     mode_count = (
         spec.num_modes if spec.num_modes is not None else 2 * (spec.mode_index + 1) + 5
     )
 
+    mode_count = max(mode_count, requested)
+
     # A single eigenpair cannot be reordered by polarization. Search a shared
     # candidate pool for all requested modes before selecting the TE/TM family.
     if spec.polarization is not None:
-        requested = max(spec.mode_index + 1, spec.num_modes or 0)
         mode_count = max(mode_count, 2 * requested + 5)
 
     diagonal_eps = {
@@ -400,8 +455,7 @@ def _solve_beamz_mode(
     # (tangent, tangent, normal) frame expected by solve_grid.
     u, v, n = (*solver_axes, spec.axis)
     fallback_eps = diagonal_eps.get("xx", eps_solver)
-    result = _solve_candidate_pool(
-        candidate_cache,
+    candidate_kwargs = dict(
         eps_xx=diagonal_eps.get(u * 2, fallback_eps),
         eps_yy=diagonal_eps.get(v * 2, fallback_eps),
         eps_zz=diagonal_eps.get(n * 2, fallback_eps),
@@ -422,13 +476,61 @@ def _solve_beamz_mode(
         target_neff=spec.target_neff,
         normal_axis=_AXIS_INDEX[spec.axis],
     )
+
+    def solve_candidates(count):
+        return _solve_candidate_pool(
+            candidate_cache, **{**candidate_kwargs, "num_modes": count}
+        )
+
+    result = solve_candidates(mode_count)
     candidates = _candidate_modes(result, spec)
+    # A dense substrate spectrum can fill the initial search pool without any
+    # mode of the requested port. Expand only for heterogeneous cross sections.
+    search_limit = min(max(64, mode_count), max(1, 2 * eps_solver.size - 3))
+
+    def confined_count():
+        minimum = spec.min_aperture_fraction
+        if minimum is None:
+            return 0
+        return sum(
+            _aperture_fraction(c, spec) >= minimum
+            and (
+                spec.polarization is None
+                or _polarization_fraction(c["fields"], spec.axis, spec.polarization)
+                >= 0.5
+            )
+            for c in candidates
+        )
+
+    qualifying = None
+    if spec.min_aperture_fraction is not None and np.ptp(np.real(eps_solver)) > 1e-12:
+        while confined_count() < requested and mode_count < search_limit:
+            mode_count = min(2 * mode_count, search_limit)
+            result = solve_candidates(mode_count)
+            candidates = _candidate_modes(result, spec)
+        qualifying = confined_count()
     candidates = _sort_modes(candidates, spec)
+    return _ResolvedModeBasis(result, tuple(candidates), mode_count, qualifying)
+
+
+def _prepare_discrete_mode(
+    spec: ModePlaneSpec, basis: _ResolvedModeBasis
+) -> DiscreteMode:
+    """Prepare one member without modifying the shared candidate fields."""
+    result, candidates, mode_count = (
+        basis.result,
+        basis.candidates,
+        basis.candidate_count,
+    )
+    solver_axes = _solver_axes_for_axis(spec.axis)
+    if basis.qualifying_count is not None and spec.mode_index >= basis.qualifying_count:
+        raise ValueError(
+            "No requested mode meets min_aperture_fraction in the candidate pool; enlarge the aperture, adjust target_neff or num_modes, or explicitly disable aperture preference with min_aperture_fraction=None"
+        )
     if spec.mode_index >= len(candidates):
         raise ValueError(
             f"Requested mode_index={spec.mode_index}, but only {len(candidates)} modes are available"
         )
-
     selected = candidates[spec.mode_index]
     phase_component = _select_phase_reference_component(
         spec.axis, spec.polarization, selected["fields"]
@@ -646,6 +748,9 @@ def _solve_beamz_mode(
         "solver_direction": spec.solver_direction,
         "mode_index": spec.mode_index,
         "selected_neff": complex(selected["neff"]),
+        "candidate_count": mode_count,
+        "aperture_fraction": _aperture_fraction(selected, spec),
+        "min_aperture_fraction": spec.min_aperture_fraction,
         "phase_reference": "dominant_h_real_positive",
         "time_convention": (
             "exp(+i omega t); E at integer steps, H at half steps"
@@ -695,7 +800,10 @@ def _solve_beamz_mode(
 
 
 def _solve_mode_in_x_frame(
-    spec: ModePlaneSpec, *, candidate_cache: _SolveCache[Result] | None = None
+    spec: ModePlaneSpec,
+    *,
+    candidate_cache: _SolveCache[Result] | None = None,
+    basis_cache: dict | None = None,
 ) -> DiscreteMode:
     """Solve a y/z port in an x-normal frame, then transform it back.
 
@@ -765,7 +873,9 @@ def _solve_mode_in_x_frame(
         offdiagonal_permittivity=rotated_cross,
         grid=canonical_grid,
     )
-    mode = _solve_beamz_mode(canonical, candidate_cache=candidate_cache)
+    mode = _solve_beamz_mode(
+        canonical, candidate_cache=candidate_cache, basis_cache=basis_cache
+    )
     determinant = -1 if spec.axis == "y" else 1
     phase_component = (
         mode.phase_reference_component[0]
@@ -867,21 +977,42 @@ def _field_plane(
 def _sort_modes(
     candidates: list[_ModeCandidate], spec: ModePlaneSpec
 ) -> list[_ModeCandidate]:
-    if spec.polarization is None:
-        return sorted(
-            candidates, key=lambda item: float(np.real(item["neff"])), reverse=True
+    def rank(item):
+        polarization = (
+            spec.polarization is None
+            or _polarization_fraction(item["fields"], spec.axis, spec.polarization)
+            >= 0.5
         )
-
-    def matches(item: _ModeCandidate) -> bool:
-        return (
-            _polarization_fraction(item["fields"], spec.axis, spec.polarization) >= 0.5
+        confined = (
+            spec.min_aperture_fraction is None
+            or _aperture_fraction(item, spec) >= spec.min_aperture_fraction
         )
+        return polarization, confined, float(np.real(item["neff"]))
 
-    matching = [item for item in candidates if matches(item)]
-    rest = [item for item in candidates if not matches(item)]
-    return sorted(
-        matching, key=lambda item: float(np.real(item["neff"])), reverse=True
-    ) + sorted(rest, key=lambda item: float(np.real(item["neff"])), reverse=True)
+    return sorted(candidates, key=rank, reverse=True)
+
+
+def _aperture_fraction(candidate: _ModeCandidate, spec: ModePlaneSpec) -> float:
+    """Area-weighted transverse electric intensity inside the injection aperture.
+
+    This is a selection diagnostic, not electromagnetic energy or modal power.
+    Grouping by a threshold preserves neff ordering among confined modes.
+    """
+    axes = spec.transverse_axes
+    extents = {a: v for a, v in zip(axes, (spec.height, spec.width), strict=True)}
+    edges = [_axis_edges(spec, a) for a in axes]
+    centers = [(e[:-1] + e[1:]) / 2 for e in edges]
+    masks = [
+        abs(c - spec.center[_AXIS_INDEX[a]]) <= 0.5 * extents[a]
+        for a, c in zip(axes, centers, strict=True)
+    ]
+    area = np.multiply.outer(*(np.diff(e) for e in edges))
+    intensity = sum(abs(candidate["fields"]["E" + a]) ** 2 for a in axes)
+    density = intensity * area
+    return float(
+        np.sum(density * np.logical_and.outer(*masks))
+        / max(float(np.sum(density)), np.finfo(float).tiny)
+    )
 
 
 def _polarization_fraction(

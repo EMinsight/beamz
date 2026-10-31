@@ -1,10 +1,13 @@
-"""Public previews of the same discrete modes used by tensor-port launches."""
+"""Public 3D previews of the same discrete modes used by port launches."""
 
 from __future__ import annotations
+
+from functools import partial
 
 import numpy as np
 
 from beamz.devices._placement import snap_mode_source_region_grid
+from beamz.devices.modes.discrete import _solve_beamz_mode
 from beamz.devices.modes.plane import solve_mode_plane_3d
 from beamz.devices.modes.specs import ModeData
 from beamz.lattice import component_axis_offsets_3d
@@ -17,7 +20,7 @@ def solve_tensor_mode_plane(
     from .specs import plane_axis_and_spans
 
     if np.any(np.asarray(materials.conductivity) != 0):
-        raise ValueError("Tensor mode previews require lossless materials")
+        raise ValueError("3D mode previews require lossless materials")
     axis, center, spans = plane_axis_and_spans(plane)
     offset = getattr(simulation, "coordinate_offset", (0.0, 0.0, 0.0))
     center = tuple(c + o for c, o in zip(center, offset, strict=True))
@@ -38,6 +41,8 @@ def solve_tensor_mode_plane(
     )
     solved = []
     for frequency in frequencies:
+        # Share the finalized candidate basis, but prepare each mode separately.
+        solver = partial(_solve_beamz_mode, basis_cache={})
         solved.append(
             [
                 solve_mode_plane_3d(
@@ -63,7 +68,10 @@ def solve_tensor_mode_plane(
                     num_modes=spec.num_modes,
                     snapped_region=snapped,
                     grid=grid,
+                    solver=solver,
                     force_symmetry=spec.force_symmetry,
+                    min_aperture_fraction=spec.min_aperture_fraction,
+                    solver_padding_cells=spec.solver_padding_cells,
                 )
                 for index in range(spec.num_modes)
             ]
@@ -102,6 +110,7 @@ def solve_tensor_mode_plane(
         - offset[{"x": 0, "y": 1, "z": 2}[a]]
         for a, s in zip(transverse, crop, strict=True)
     )
+
     return ModeData(
         frequencies=np.asarray(frequencies),
         neffs=np.array([[m.neff for m in modes] for modes in solved]),
@@ -119,7 +128,10 @@ def solve_tensor_mode_plane(
         transverse_axes=transverse,
         diagnostics=tuple(
             {
-                "contract": "discrete_tensor_preview",
+                **modes[0].diagnostics,
+                "contract": "discrete_tensor_preview"
+                if materials.uses_full_permittivity
+                else "discrete_preview",
                 "modes": tuple(m.diagnostics for m in modes),
             }
             for modes in solved
