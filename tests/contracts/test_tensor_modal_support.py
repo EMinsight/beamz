@@ -1,6 +1,8 @@
 """Unsupported tensor ports must never silently acquire a diagonal basis."""
 
+from dataclasses import dataclass, field
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 import pytest
@@ -10,11 +12,19 @@ from beamz.devices.modes.plane import solve_mode_plane_3d
 from beamz.simulation.results import _snapshot_material_region
 
 
+@dataclass(frozen=True)
+class _Captured:
+    """Stand-in mode carrying the spec the solver received."""
+
+    spec: Any
+    diagnostics: dict = field(default_factory=dict)
+
+
 def _solve(tensors, **kwargs):
     shape = (12, 12, 40)
 
     def capture(spec):
-        return spec
+        return _Captured(spec)
 
     return solve_mode_plane_3d(
         np.ones(shape),
@@ -68,7 +78,7 @@ def test_tensor_outside_local_normal_support_does_not_reject(monkeypatch):
     tensors = _tensors()
     tensors["epsilon"][3, :, :, 30] = 0.2
     result = _solve(tensors)
-    assert set(result.diagonal_permittivity) == {"xx", "yy", "zz"}
+    assert set(result.spec.diagonal_permittivity) == {"xx", "yy", "zz"}
 
 
 def test_incomplete_context_does_not_wrap_negative_indices():
