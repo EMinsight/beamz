@@ -26,7 +26,7 @@
 - **GPU-accelerated**, achieving high **GCUPS performance**.
 - **Multi-GPU** runs, handling **large-scale simulations** with _billions of cells_.
 - CPU-capable for **fast prototyping**, even on your laptop.
-- Dedicated CUDA-backend for acceleration beyond default Jax.
+- Dedicated CUDA backend for acceleration beyond default JAX.
 - **CPML**, absorbing layers and PEC boundaries.
 - **Unidirectional mode sources** (single freq. and broadband, Huygens fields + TFSF, TE/TM).
 - **3D Gaussian sources**, e.g. for grating coupler simulations.
@@ -34,7 +34,7 @@
 - Integrated **FDFD mode solver** and **rasterization module**.
 - Regular and **rectilinear meshing**.
 - Full-tensor and diagonal Farjadpour (polarized averaging) **subpixel-smoothing**.
-- Simple **GDS**, **GMSH** and **STL** import and export.
+- Simple **GDS**, **Gmsh** and **STL** import and export.
 - Streamlined, integrated **parametric design** module.
 - 2D and 3D topology **inverse design** with autodiff or adjoint method.
 
@@ -46,15 +46,15 @@ Try out notebooks from our growing **[example library](https://beamz.tech/simula
 - [1) Mode Sources and Monitors (3D)](https://beamz.tech/examples/modal_sources_monitors)
 - [2) Waveguide Crossing with Cosine Tapers (3D)](https://beamz.tech/examples/cosine_waveguide_crossing)
 - [3) Grating Coupler (3D)](https://www.beamz.tech/examples/grating_coupler)
-- [4) Microring Resooator (3D)](https://www.beamz.tech/examples/ring_resonator_add_drop)
-- [5) 1x4 MMI Powersplitter (3D)](https://www.beamz.tech/examples/mmi1x4_power_splitter)
+- [4) Microring Resonator (3D)](https://www.beamz.tech/examples/ring_resonator_add_drop)
+- [5) 1x4 MMI Power Splitter (3D)](https://www.beamz.tech/examples/mmi1x4_power_splitter)
 - [6) GDSFactory PDK 1x2 MMI (3D)](https://www.beamz.tech/examples/gdsfactory_component_sparameters)
 - [7) Inverse-designed Mode Converter (2D)](examples/notebooks/topology_mode_converter.ipynb)
 - [8) Broadband Inverse-designed Wavelength Demultiplexer](examples/notebooks/topology_broadband_demultiplexer.ipynb)
 - [9) Inverse Design: 1-to-3 Splitter](examples/notebooks/topology_inverse_design_splitter.ipynb)
-- [9) 3D Topology Waveguide Bend](examples/notebooks/topology_bend_3d.ipynb)
-- [10) Scheduled Four-channel WDM](examples/notebooks/topology_wdm_4channel.ipynb)
-- [11) Choosing Interface Smoothing: Volume, Diagonal or Full Tensor (3D)](examples/notebooks/interface_smoothing_choice.ipynb)
+- [10) 3D Topology Waveguide Bend](examples/notebooks/topology_bend_3d.ipynb)
+- [11) Scheduled Four-channel WDM](examples/notebooks/topology_wdm_4channel.ipynb)
+- [12) Choosing Interface Smoothing: Volume, Diagonal or Full Tensor (3D)](examples/notebooks/interface_smoothing_choice.ipynb)
 
 
 ## Integration 
@@ -92,7 +92,7 @@ For a ready-to-use CUDA and Jupyter development environment, see the
 
 ## Mission
 
-BeamZ aims to become the FDTD engine of choice for **photonic simulations** in industry and research, including photonic circuits, inverse design, metamaterials, fiber optics, nanophotonics, sensors (planned), active photonic devices (planned), and RF (planned), focusing on **streamlined workflows** and bringing multi-physics GPU-acceleration for **maximum performance in large-scale simulations** to everyone. - [_Detailed roadmap coming soon_.](www.beamz.tech/roadmap)
+BeamZ aims to become the FDTD engine of choice for **photonic simulations** in industry and research, including photonic circuits, inverse design, metamaterials, fiber optics, nanophotonics, sensors (planned), active photonic devices (planned), and RF (planned), focusing on **streamlined workflows** and bringing multi-physics GPU-acceleration for **maximum performance in large-scale simulations** to everyone. - [_Detailed roadmap coming soon_.](https://www.beamz.tech/roadmap)
 
 
 ## Contributing
